@@ -28,55 +28,18 @@ export default React.memo(function AppearanceSettingsScreen() {
     const router = useRouter();
     const deviceType = useDeviceType();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
-    const [viewInline, setViewInline] = useSettingMutable('viewInline');
-    const [expandTodos, setExpandTodos] = useSettingMutable('expandTodos');
-    const [showLineNumbers, setShowLineNumbers] = useSettingMutable('showLineNumbers');
-    const [showLineNumbersInToolViews, setShowLineNumbersInToolViews] = useSettingMutable('showLineNumbersInToolViews');
-    const [wrapLinesInDiffs, setWrapLinesInDiffs] = useSettingMutable('wrapLinesInDiffs');
-    const [alwaysShowContextSize, setAlwaysShowContextSize] = useSettingMutable('alwaysShowContextSize');
-    const [agentInputActionBarLayout, setAgentInputActionBarLayout] = useSettingMutable('agentInputActionBarLayout');
-    const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
-    const [compactSessionView, setCompactSessionView] = useSettingMutable('compactSessionView');
-    const [compactSessionViewMinimal, setCompactSessionViewMinimal] = useSettingMutable('compactSessionViewMinimal');
-    const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
-    const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
-    const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
+    const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
-    const [sessionsRightPaneDefaultOpen, setSessionsRightPaneDefaultOpen] = useLocalSettingMutable('sessionsRightPaneDefaultOpen');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [editorFocusModeEnabled, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
-    const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
+    const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
-
-    const groupingMenuItems = React.useMemo(() => {
-        return [
-            {
-                id: 'project',
-                title: t('settingsFeatures.sessionListGrouping.projectTitle'),
-                subtitle: t('settingsFeatures.sessionListGrouping.projectSubtitle'),
-            },
-            {
-                id: 'date',
-                title: t('settingsFeatures.sessionListGrouping.dateTitle'),
-                subtitle: t('settingsFeatures.sessionListGrouping.dateSubtitle'),
-            },
-        ];
-    }, []);
-
-    const selectGrouping = React.useCallback((itemId: string, section: 'active' | 'inactive') => {
-        if (itemId !== 'project' && itemId !== 'date') return;
-        if (section === 'active') {
-            setSessionListActiveGroupingV1(itemId);
-            return;
-        }
-        setSessionListInactiveGroupingV1(itemId);
-    }, [setSessionListActiveGroupingV1, setSessionListInactiveGroupingV1]);
 
     const uiFontScalePresets = React.useMemo(() => {
         return {
@@ -106,6 +69,26 @@ export default React.memo(function AppearanceSettingsScreen() {
         return [
             { id: 'preview', title: t('settingsAppearance.detailsPaneTabsBehaviorOptions.preview') },
             { id: 'persistent', title: t('settingsAppearance.detailsPaneTabsBehaviorOptions.persistent') },
+        ];
+    }, []);
+
+    const itemDensityMenuItems = React.useMemo(() => {
+        return [
+            {
+                id: 'comfortable',
+                title: t('settingsAppearance.itemDensityOptions.comfortable'),
+                subtitle: t('settingsAppearance.itemDensityOptions.comfortableDescription'),
+            },
+            {
+                id: 'cozy',
+                title: t('settingsAppearance.itemDensityOptions.cozy'),
+                subtitle: t('settingsAppearance.itemDensityOptions.cozyDescription'),
+            },
+            {
+                id: 'compact',
+                title: t('settingsAppearance.itemDensityOptions.compact'),
+                subtitle: t('settingsAppearance.itemDensityOptions.compactDescription'),
+            },
         ];
     }, []);
 
@@ -152,6 +135,7 @@ export default React.memo(function AppearanceSettingsScreen() {
             {/* Theme Settings */}
             <ItemGroup title={t('settingsAppearance.theme')} footer={t('settingsAppearance.themeDescription')}>
                 <Item
+                    testID="settings-appearance-themePreference-cycle"
                     title={t('settings.appearance')}
                     subtitle={themePreference === 'adaptive' ? t('settingsAppearance.themeDescriptions.adaptive') : themePreference === 'light' ? t('settingsAppearance.themeDescriptions.light') : t('settingsAppearance.themeDescriptions.dark')}
                     icon={<Ionicons name="contrast-outline" size={29} color={theme.colors.status.connecting} />}
@@ -215,6 +199,28 @@ export default React.memo(function AppearanceSettingsScreen() {
                     items={textSizeMenuItems as any}
                     onSelect={selectUiFontSize}
                 />
+                <DropdownMenu
+                    open={openItemDensityMenu}
+                    onOpenChange={setOpenItemDensityMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={uiItemDensity as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: t('settingsAppearance.itemDensity'),
+                        subtitle: t('settingsAppearance.itemDensityDescription'),
+                        icon: <Ionicons name="list-outline" size={29} color={theme.colors.accent.orange} />,
+                        showSelectedSubtitle: false,
+                    }}
+                    items={itemDensityMenuItems as any}
+                    onSelect={(itemId) => {
+                        if (itemId !== 'comfortable' && itemId !== 'cozy' && itemId !== 'compact') return;
+                        setUiItemDensity(itemId as any);
+                    }}
+                />
             </ItemGroup>
 
             {/* Text Settings */}
@@ -237,7 +243,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 />
             </ItemGroup> */}
 
-            {/* Display Settings */}
+            {/* Layout */}
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
                 <Item
                     title={t('settingsAppearance.multiPanePanels')}
@@ -251,20 +257,6 @@ export default React.memo(function AppearanceSettingsScreen() {
                         />
                     }
                     disabled={!panelsSupported}
-                    showChevron={false}
-                />
-                <Item
-                    title={t('settingsAppearance.sessionsRightPaneDefaultOpen')}
-                    subtitle={t('settingsAppearance.sessionsRightPaneDefaultOpenDescription')}
-                    icon={<Ionicons name="documents-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={
-                        <Switch
-                            value={sessionsRightPaneDefaultOpen}
-                            onValueChange={setSessionsRightPaneDefaultOpen}
-                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
-                        />
-                    }
-                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
                     showChevron={false}
                 />
                 <DropdownMenu
@@ -304,184 +296,10 @@ export default React.memo(function AppearanceSettingsScreen() {
                     disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
                     showChevron={false}
                 />
-                <Item
-                    title={t('settingsAppearance.compactSessionView')}
-                    subtitle={t('settingsAppearance.compactSessionViewDescription')}
-                    icon={<Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={compactSessionView}
-                            onValueChange={setCompactSessionView}
-                        />
-                    }
-                />
-                {compactSessionView ? (
-                    <Item
-                        title={t('settingsAppearance.compactSessionViewMinimal')}
-                        subtitle={t('settingsAppearance.compactSessionViewMinimalDescription')}
-                        icon={<Ionicons name="remove-outline" size={29} color={theme.colors.accent.indigo} />}
-                        rightElement={
-                            <Switch
-                                value={compactSessionViewMinimal}
-                                onValueChange={setCompactSessionViewMinimal}
-                            />
-                        }
-                    />
-                ) : null}
-                <Item
-                    title={t('settingsFeatures.hideInactiveSessions')}
-                    subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
-                    icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.accent.orange} />}
-                    rightElement={
-                        <Switch
-                            value={hideInactiveSessions}
-                            onValueChange={setHideInactiveSessions}
-                        />
-                    }
-                    showChevron={false}
-                />
-                <DropdownMenu
-                    open={openGroupingMenu === 'active'}
-                    onOpenChange={(next) => setOpenGroupingMenu(next ? 'active' : null)}
-                    variant="selectable"
-                    search={false}
-                    selectedId={sessionListActiveGroupingV1 as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    itemTrigger={{
-                        title: t('settingsFeatures.sessionListActiveGrouping'),
-                        subtitle: t('settingsFeatures.sessionListActiveGroupingSubtitle'),
-                        icon: <Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />,
-                        showSelectedSubtitle: false,
-                    }}
-                    items={groupingMenuItems}
-                    onSelect={(itemId) => selectGrouping(itemId, 'active')}
-                />
-                <DropdownMenu
-                    open={openGroupingMenu === 'inactive'}
-                    onOpenChange={(next) => setOpenGroupingMenu(next ? 'inactive' : null)}
-                    variant="selectable"
-                    search={false}
-                    selectedId={sessionListInactiveGroupingV1 as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    itemTrigger={{
-                        title: t('settingsFeatures.sessionListInactiveGrouping'),
-                        subtitle: t('settingsFeatures.sessionListInactiveGroupingSubtitle'),
-                        icon: <Ionicons name="calendar-outline" size={29} color={theme.colors.success} />,
-                        showSelectedSubtitle: false,
-                    }}
-                    items={groupingMenuItems}
-                    onSelect={(itemId) => selectGrouping(itemId, 'inactive')}
-                />
-                <Item
-                    title={t('settingsAppearance.inlineToolCalls')}
-                    subtitle={t('settingsAppearance.inlineToolCallsDescription')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={viewInline}
-                            onValueChange={setViewInline}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.expandTodoLists')}
-                    subtitle={t('settingsAppearance.expandTodoListsDescription')}
-                    icon={<Ionicons name="checkmark-done-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={expandTodos}
-                            onValueChange={setExpandTodos}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.showLineNumbersInDiffs')}
-                    subtitle={t('settingsAppearance.showLineNumbersInDiffsDescription')}
-                    icon={<Ionicons name="list-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={showLineNumbers}
-                            onValueChange={setShowLineNumbers}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.showLineNumbersInToolViews')}
-                    subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
-                    icon={<Ionicons name="code-working-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={showLineNumbersInToolViews}
-                            onValueChange={setShowLineNumbersInToolViews}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.wrapLinesInDiffs')}
-                    subtitle={t('settingsAppearance.wrapLinesInDiffsDescription')}
-                    icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={wrapLinesInDiffs}
-                            onValueChange={setWrapLinesInDiffs}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.alwaysShowContextSize')}
-                    subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
-                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={
-                        <Switch
-                            value={alwaysShowContextSize}
-                            onValueChange={setAlwaysShowContextSize}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.agentInputActionBarLayout')}
-                    subtitle={t('settingsAppearance.agentInputActionBarLayoutDescription')}
-                    icon={<Ionicons name="menu-outline" size={29} color={theme.colors.accent.indigo} />}
-                    detail={
-                        agentInputActionBarLayout === 'auto'
-                            ? t('settingsAppearance.agentInputActionBarLayoutOptions.auto')
-                            : agentInputActionBarLayout === 'wrap'
-                                ? t('settingsAppearance.agentInputActionBarLayoutOptions.wrap')
-                                : agentInputActionBarLayout === 'scroll'
-                                    ? t('settingsAppearance.agentInputActionBarLayoutOptions.scroll')
-                                    : t('settingsAppearance.agentInputActionBarLayoutOptions.collapsed')
-                    }
-                    onPress={() => {
-                        const order: Array<typeof agentInputActionBarLayout> = ['auto', 'wrap', 'scroll', 'collapsed'];
-                        const idx = Math.max(0, order.indexOf(agentInputActionBarLayout));
-                        const next = order[(idx + 1) % order.length]!;
-                        setAgentInputActionBarLayout(next);
-                    }}
-                />
-                <Item
-                    title={t('settingsAppearance.agentInputChipDensity')}
-                    subtitle={t('settingsAppearance.agentInputChipDensityDescription')}
-                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.indigo} />}
-                    detail={
-                        agentInputChipDensity === 'auto'
-                            ? t('settingsAppearance.agentInputChipDensityOptions.auto')
-                            : agentInputChipDensity === 'labels'
-                                ? t('settingsAppearance.agentInputChipDensityOptions.labels')
-                                : t('settingsAppearance.agentInputChipDensityOptions.icons')
-                    }
-                    onPress={() => {
-                        const order: Array<typeof agentInputChipDensity> = ['auto', 'labels', 'icons'];
-                        const idx = Math.max(0, order.indexOf(agentInputChipDensity));
-                        const next = order[(idx + 1) % order.length]!;
-                        setAgentInputChipDensity(next);
-                    }}
-                />
+            </ItemGroup>
+
+            {/* Style */}
+            <ItemGroup title={t('settingsAppearance.avatarStyle')}>
                 <Item
                     title={t('settingsAppearance.avatarStyle')}
                     subtitle={t('settingsAppearance.avatarStyleDescription')}
