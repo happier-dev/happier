@@ -10,11 +10,7 @@ import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredCon
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { readIntFlagValue } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-
-function sleep(ms: number): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { delay } from '@/utils/time';
 
 function isTerminalStatus(status: unknown): status is 'succeeded' | 'failed' | 'cancelled' | 'timeout' {
   return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'timeout';
@@ -92,7 +88,7 @@ export async function cmdSessionRunWait(
       console.log(chalk.green('✓'), `run finished: ${status}`);
       return;
     }
-    await sleep(pollIntervalMs);
+    await delay(pollIntervalMs);
   }
 
   if (json) {
