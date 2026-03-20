@@ -45,7 +45,7 @@ const machinePromptAssetsDiscoverMock = vi.hoisted(() => vi.fn<() => Promise<Pro
         },
     ],
 })));
-const machinePromptAssetsReadMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetReadResponseV1>>(async () => ({
+const machinePromptAssetsDownloadMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetReadResponseV1>>(async () => ({
     ok: true,
     item: {
         assetTypeId: 'agents.skill',
@@ -236,7 +236,7 @@ vi.mock('@/sync/ops/machinePromptAssets', () => ({
     machinePromptAssetsDelete: machinePromptAssetsDeleteMock,
     machinePromptAssetsListTypes: machinePromptAssetsListTypesMock,
     machinePromptAssetsDiscover: machinePromptAssetsDiscoverMock,
-    machinePromptAssetsRead: machinePromptAssetsReadMock,
+    machinePromptAssetsDownload: machinePromptAssetsDownloadMock,
 }));
 
 vi.mock('@/sync/ops/promptLibrary/promptBundles', () => ({
@@ -269,7 +269,7 @@ describe('PromptAssetsScreen', () => {
         routerPushSpy.mockReset();
         machinePromptAssetsListTypesMock.mockClear();
         machinePromptAssetsDiscoverMock.mockClear();
-        machinePromptAssetsReadMock.mockClear();
+        machinePromptAssetsDownloadMock.mockClear();
         machinePromptAssetsDeleteMock.mockClear();
         createPromptBundleArtifactMock.mockClear();
         createPromptDocMock.mockClear();
@@ -329,7 +329,7 @@ describe('PromptAssetsScreen', () => {
             importedItem?.props?.onPress?.();
         });
 
-        expect(machinePromptAssetsReadMock).toHaveBeenCalledWith(
+        expect(machinePromptAssetsDownloadMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', externalRef: { name: 'refactor' }, directory: '/Users/test/repo' }),
             undefined,
@@ -454,7 +454,7 @@ describe('PromptAssetsScreen', () => {
                 },
             ],
         });
-        machinePromptAssetsReadMock.mockResolvedValueOnce({
+        machinePromptAssetsDownloadMock.mockResolvedValueOnce({
             ok: true,
             item: {
                 assetTypeId: 'claude.command',
