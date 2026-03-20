@@ -3,6 +3,33 @@ import { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes
 import { AES256Encryption } from './encryptor';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 
+const ARTIFACT_HEADER_DEFAULT_VERSION = 1;
+const ARTIFACT_HEADER_MAX_VERSION = 1;
+const UNSAFE_HEADER_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const RESERVED_HEADER_KEYS = new Set(['v', 'kind', 'title', 'sessions', 'draft']);
+
+function sanitizeArtifactHeaderPassthrough(header: Record<string, unknown>): Record<string, unknown> {
+    const sanitized: Record<string, unknown> = {};
+    for (const key of Object.keys(header)) {
+        if (UNSAFE_HEADER_KEYS.has(key) || RESERVED_HEADER_KEYS.has(key)) {
+            continue;
+        }
+        sanitized[key] = header[key];
+    }
+    return sanitized;
+}
+
+function sanitizeArtifactHeaderVersion(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return ARTIFACT_HEADER_DEFAULT_VERSION;
+    }
+    const normalized = Math.floor(value);
+    if (normalized < ARTIFACT_HEADER_DEFAULT_VERSION || normalized > ARTIFACT_HEADER_MAX_VERSION) {
+        return ARTIFACT_HEADER_DEFAULT_VERSION;
+    }
+    return normalized;
+}
+
 export class ArtifactEncryption {
     private encryptor: AES256Encryption;
     
@@ -36,30 +63,29 @@ export class ArtifactEncryption {
                 return null;
             }
             // Validate structure
-            const header = decrypted[0] as any;
+            const header = decrypted[0] as Record<string, unknown>;
             if (typeof header !== 'object' || header === null || Array.isArray(header)) {
                 return null;
             }
             const title = typeof header.title === 'string' ? header.title : null;
-            const vRaw = (header as any).v;
-            const v = typeof vRaw === 'number' && Number.isFinite(vRaw) ? Math.floor(vRaw) : 1;
-            const kindRaw = typeof (header as any).kind === 'string' ? String((header as any).kind).trim() : '';
+            const v = sanitizeArtifactHeaderVersion(header.v);
+            const kindRaw = typeof header.kind === 'string' ? String(header.kind).trim() : '';
             const kind = kindRaw || 'artifact.legacy';
 
-            const sessionsRaw = (header as any).sessions;
+            const sessionsRaw = header.sessions;
             const sessions = Array.isArray(sessionsRaw)
                 ? sessionsRaw.map((v: unknown) => String(v ?? '').trim()).filter(Boolean)
                 : undefined;
-            const draftRaw = (header as any).draft;
+            const draftRaw = header.draft;
             const draft = typeof draftRaw === 'boolean' ? draftRaw : undefined;
 
             return {
-                ...header,
+                ...sanitizeArtifactHeaderPassthrough(header),
                 v,
                 kind,
                 title,
-                sessions,
-                draft,
+                ...(sessions ? { sessions } : {}),
+                ...(draft !== undefined ? { draft } : {}),
             };
         } catch (error) {
             console.error('Failed to decrypt artifact header:', error);

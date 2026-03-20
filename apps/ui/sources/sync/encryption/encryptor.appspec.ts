@@ -3,6 +3,16 @@ import { SecretBoxEncryption, BoxEncryption, AES256Encryption } from './encrypto
 import { getRandomBytes } from '@/platform/cryptoRandom';
 
 describe('SecretBoxEncryption', () => {
+    it('should preserve top-level undefined values', async () => {
+        const secretKey = getRandomBytes(32);
+        const encryptor = new SecretBoxEncryption(secretKey);
+
+        const encrypted = await encryptor.encrypt([undefined]);
+        const decrypted = await encryptor.decrypt(encrypted);
+
+        expect(decrypted).toEqual([undefined]);
+    });
+
     it('should encrypt and decrypt single Uint8Array', async () => {
         const secretKey = getRandomBytes(32);
         const encryptor = new SecretBoxEncryption(secretKey);
@@ -287,6 +297,16 @@ describe('BoxEncryption', () => {
 });
 
 describe('AES256Encryption', () => {
+    it('should preserve top-level undefined values', async () => {
+        const secretKey = getRandomBytes(32);
+        const encryptor = new AES256Encryption(secretKey);
+
+        const encrypted = await encryptor.encrypt([undefined]);
+        const decrypted = await encryptor.decrypt(encrypted);
+
+        expect(decrypted).toEqual([undefined]);
+    });
+
     it('should encrypt and decrypt single Uint8Array', async () => {
         const secretKey = getRandomBytes(32);
         const encryptor = new AES256Encryption(secretKey);
