@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 
-(globalThis as any).__DEV__ = false;
+const globalWithDev = globalThis as typeof globalThis & { __DEV__?: boolean };
+let previousDev: boolean | undefined;
 
 vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
 vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { app: {} } } } }));
@@ -9,6 +10,16 @@ vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { app: {} } }
 import { loadAppConfig } from './appConfig';
 
 describe('loadAppConfig (filesPreviewMaxBytes env)', () => {
+    beforeEach(() => {
+        previousDev = globalWithDev.__DEV__;
+        globalWithDev.__DEV__ = false;
+    });
+
+    afterEach(() => {
+        if (previousDev === undefined) delete globalWithDev.__DEV__;
+        else globalWithDev.__DEV__ = previousDev;
+    });
+
     const previous = {
         canonical: process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES,
         legacyHappy: process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES,
@@ -37,4 +48,3 @@ describe('loadAppConfig (filesPreviewMaxBytes env)', () => {
         }
     });
 });
-
