@@ -33,13 +33,14 @@ vi.mock('./encryption', () => ({
     decodeBase64: vi.fn((data: string) => data),
     encodeBase64: vi.fn((data: any) => data),
     decrypt: vi.fn((data: any) => data),
-    encrypt: vi.fn((data: any) => data)
+    encrypt: vi.fn((data: any) => data),
+    getRandomBytes: vi.fn((len: number) => new Uint8Array(len)),
 }));
 
 // Mock configuration
-vi.mock('./configuration', () => ({
+vi.mock('@/configuration', () => ({
     configuration: {
-        serverUrl: 'https://api.example.com'
+        apiServerUrl: 'https://api.example.com'
     }
 }));
 
@@ -239,6 +240,27 @@ describe('Api server error handling', () => {
             consoleSpy.mockRestore();
         });
 
+        it('should return null when Axios aborts bootstrap on timeout (ECONNABORTED)', async () => {
+            connectionState.reset();
+            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            mockPost.mockRejectedValue({ code: 'ECONNABORTED' });
+
+            const result = await api.getOrCreateSession({
+                tag: 'test-tag',
+                metadata: testMetadata,
+                state: null
+            });
+
+            expect(result).toBeNull();
+            expect(connectionState.isOffline()).toBe(true);
+            expect(consoleSpy).toHaveBeenCalledWith(
+                expect.stringContaining('server unreachable')
+            );
+
+            consoleSpy.mockRestore();
+        });
+
         it('should return null when session endpoint returns 404', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -318,6 +340,46 @@ describe('Api server error handling', () => {
             }
         });
 
+        it('throws a stable auth status error on 401 so callers can stop retrying', async () => {
+            connectionState.reset();
+
+            mockPost.mockRejectedValue({
+                response: { status: 401 },
+                isAxiosError: true,
+            });
+
+            await expect(api.getOrCreateSession({
+                tag: 'test-tag',
+                metadata: testMetadata,
+                state: null,
+            })).rejects.toMatchObject({
+                name: 'HttpStatusError',
+                response: { status: 401 },
+            });
+
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
+        it('throws a stable auth status error on 403 so callers can stop retrying', async () => {
+            connectionState.reset();
+
+            mockPost.mockRejectedValue({
+                response: { status: 403 },
+                isAxiosError: true,
+            });
+
+            await expect(api.getOrCreateSession({
+                tag: 'test-tag',
+                metadata: testMetadata,
+                state: null,
+            })).rejects.toMatchObject({
+                name: 'HttpStatusError',
+                response: { status: 403 },
+            });
+
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
         it('should re-throw non-connection errors', async () => {
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -366,34 +428,55 @@ describe('Api server error handling', () => {
             expect(config?.timeout).toBe(5_000);
         });
 
-        it('should return minimal machine object when server is unreachable (ECONNREFUSED)', async () => {
+        it('includes contentPublicKey when registering a machine with dataKey credentials', async () => {
+            const dataKeyCredential = {
+                token: 'fake-token',
+                encryption: {
+                    type: 'dataKey' as const,
+                    publicKey: new Uint8Array(32).fill(1),
+                    machineKey: new Uint8Array(32).fill(2),
+                },
+            };
+
+            const dataKeyApi = await ApiClient.create(dataKeyCredential as any);
+
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+
+            await dataKeyApi.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+            } as any);
+
+            const body = mockPost.mock.calls[0]?.[1];
+            expect(body?.contentPublicKey).toEqual(dataKeyCredential.encryption.publicKey);
+        });
+
+        it('throws (instead of returning a synthetic machine) when server is unreachable (ECONNREFUSED)', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
             // Mock axios to throw connection refused error
-            mockPost.mockRejectedValue({ code: 'ECONNREFUSED' });
+            const connectionError = { code: 'ECONNREFUSED' };
+            mockPost.mockRejectedValue(connectionError);
 
-            const result = await api.getOrCreateMachine({
+            await expect(api.getOrCreateMachine({
                 machineId: 'test-machine',
                 metadata: testMachineMetadata,
                 daemonState: {
                     status: 'running',
                     pid: 1234
                 }
-            });
-
-            expect(result).toEqual({
-                id: 'test-machine',
-                encryptionKey: expect.any(Uint8Array),
-                encryptionVariant: 'legacy',
-                metadata: testMachineMetadata,
-                metadataVersion: 0,
-                daemonState: {
-                    status: 'running',
-                    pid: 1234
-                },
-                daemonStateVersion: 0,
-            });
+            })).rejects.toBe(connectionError);
             expect(connectionState.isOffline()).toBe(true);
 
             expect(consoleSpy).toHaveBeenCalledWith(
@@ -425,30 +508,106 @@ describe('Api server error handling', () => {
             consoleSpy.mockRestore();
         });
 
-        it('should return minimal machine object when server endpoint returns 404', async () => {
+        it('throws a stable error on 410 machine revoked (do not enter offline mode)', async () => {
+            connectionState.reset();
+            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            mockPost.mockRejectedValue({
+                response: { status: 410, data: { error: 'machine_revoked' } },
+                isAxiosError: true,
+            });
+
+            await expect(
+                api.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                }),
+            ).rejects.toMatchObject({ name: 'MachineRevokedError', machineId: 'test-machine' });
+
+            expect(connectionState.isOffline()).toBe(false);
+            expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('server unreachable'));
+
+            consoleSpy.mockRestore();
+        });
+
+        it('throws a stable error when server rejects machine registration due to content public key mismatch', async () => {
+            connectionState.reset();
+
+            const dataKeyCredential = {
+                token: 'fake-token',
+                encryption: {
+                    type: 'dataKey' as const,
+                    publicKey: new Uint8Array(32).fill(1),
+                    machineKey: new Uint8Array(32).fill(2),
+                },
+            };
+            const dataKeyApi = await ApiClient.create(dataKeyCredential as any);
+
+            mockPost.mockRejectedValue({
+                response: { status: 400, data: { error: 'invalid-params', reason: 'content_public_key_mismatch' } },
+                isAxiosError: true,
+            });
+
+            await expect(
+                dataKeyApi.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                } as any),
+            ).rejects.toMatchObject({ name: 'MachineContentPublicKeyMismatchError' });
+
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
+        it('does not misclassify unrelated invalid-params machine registration failures as content key mismatches', async () => {
+            connectionState.reset();
+
+            const dataKeyCredential = {
+                token: 'fake-token',
+                encryption: {
+                    type: 'dataKey' as const,
+                    publicKey: new Uint8Array(32).fill(1),
+                    machineKey: new Uint8Array(32).fill(2),
+                },
+            };
+            const dataKeyApi = await ApiClient.create(dataKeyCredential as any);
+
+            const unrelatedError = {
+                response: { status: 400, data: { error: 'invalid-params', reason: 'missing_machine_name' } },
+                isAxiosError: true,
+            };
+            mockPost.mockRejectedValue(unrelatedError);
+
+            await expect(
+                dataKeyApi.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                } as any),
+            ).rejects.not.toMatchObject({ name: 'MachineContentPublicKeyMismatchError' });
+            await expect(
+                dataKeyApi.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                } as any),
+            ).rejects.toBe(unrelatedError);
+
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
+        it('throws (instead of returning a synthetic machine) when server endpoint returns 404', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
             // Mock axios to return 404
-            mockPost.mockRejectedValue({
+            const endpointError = {
                 response: { status: 404 },
                 isAxiosError: true
-            });
+            };
+            mockPost.mockRejectedValue(endpointError);
 
-            const result = await api.getOrCreateMachine({
+            await expect(api.getOrCreateMachine({
                 machineId: 'test-machine',
                 metadata: testMachineMetadata
-            });
-
-            expect(result).toEqual({
-                id: 'test-machine',
-                encryptionKey: expect.any(Uint8Array),
-                encryptionVariant: 'legacy',
-                metadata: testMachineMetadata,
-                metadataVersion: 0,
-                daemonState: null,
-                daemonStateVersion: 0,
-            });
+            })).rejects.toBe(endpointError);
             expect(connectionState.isOffline()).toBe(true);
 
             // New unified format via connectionState.fail()

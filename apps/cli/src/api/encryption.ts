@@ -5,7 +5,9 @@ import {
   encodeBase64 as encodeBase64Protocol,
   deriveBoxPublicKeyFromSeed,
   openBoxBundle,
+  parseSerializedJsonValue,
   sealBoxBundle,
+  stringifySerializedJsonValue,
   type Base64Variant,
 } from '@happier-dev/protocol';
 
@@ -75,7 +77,7 @@ export function libsodiumDecryptForSecretKey(
  */
 export function encryptLegacy(data: any, secret: Uint8Array): Uint8Array {
   const nonce = getRandomBytes(tweetnacl.secretbox.nonceLength);
-  const encrypted = tweetnacl.secretbox(new TextEncoder().encode(safeJsonStringify(data)), nonce, secret);
+  const encrypted = tweetnacl.secretbox(new TextEncoder().encode(stringifySerializedJsonValue(data)), nonce, secret);
   const result = new Uint8Array(nonce.length + encrypted.length);
   result.set(nonce);
   result.set(encrypted, nonce.length);
@@ -97,7 +99,7 @@ export function decryptLegacy(data: Uint8Array, secret: Uint8Array): any | null 
     // Callers should handle the null case appropriately
     return null;
   }
-  return JSON.parse(new TextDecoder().decode(decrypted));
+  return parseSerializedJsonValue(new TextDecoder().decode(decrypted));
 }
 
 /**
@@ -110,7 +112,7 @@ export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
   const nonce = getRandomBytes(12); // GCM uses 12-byte nonces
   const cipher = createCipheriv('aes-256-gcm', dataKey, nonce);
 
-  const plaintext = new TextEncoder().encode(safeJsonStringify(data));
+  const plaintext = new TextEncoder().encode(stringifySerializedJsonValue(data));
   const encrypted = Buffer.concat([
     cipher.update(plaintext),
     cipher.final()
@@ -126,15 +128,6 @@ export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
   bundle.set(new Uint8Array(authTag), 13 + encrypted.length);
 
   return bundle;
-}
-
-function safeJsonStringify(data: unknown): string {
-  return JSON.stringify(data, (_key, value) => {
-    if (typeof value === 'bigint') {
-      return `${value}n`;
-    }
-    return value;
-  });
 }
 
 /**
@@ -168,7 +161,7 @@ export function decryptWithDataKey(bundle: Uint8Array, dataKey: Uint8Array): any
       decipher.final()
     ]);
 
-    return JSON.parse(new TextDecoder().decode(decrypted));
+    return parseSerializedJsonValue(new TextDecoder().decode(decrypted));
   } catch (error) {
     // Decryption failed
     return null;

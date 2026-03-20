@@ -1,7 +1,7 @@
 import {
-  type AgentRuntimeDescriptorV1,
-  type DirectSessionsProviderId,
-  type DirectSessionsSource,
+  AgentRuntimeDescriptorV1Schema,
+  DirectSessionsProviderIdSchema,
+  DirectSessionsSourceSchema,
 } from '@happier-dev/protocol';
 import {
   readOpenCodeSessionRuntimeHandleFromMetadata,
@@ -9,120 +9,41 @@ import {
   resolvePersistedCodexRuntimeIdentity,
   type CodexBackendMode,
 } from '@happier-dev/agents';
+import * as z from 'zod';
 
 import type { Credentials } from '@/persistence';
 import { fetchSessionById, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
-  return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
-}
-
-function isDirectSessionsProviderId(value: unknown): value is DirectSessionsProviderId {
-  return value === 'codex' || value === 'claude' || value === 'opencode';
-}
-
-function parseDirectSessionsSource(value: unknown): DirectSessionsSource | null {
-  if (!isObjectRecord(value) || typeof value.kind !== 'string') return null;
-
-  switch (value.kind) {
-    case 'codexHome': {
-      if (value.home !== 'user' && value.home !== 'connectedService') return null;
-      if (typeof value.connectedServiceId !== 'undefined' && typeof value.connectedServiceId !== 'string') return null;
-      if (typeof value.connectedServiceProfileId !== 'undefined' && typeof value.connectedServiceProfileId !== 'string') return null;
-      if (typeof value.homePath !== 'undefined' && typeof value.homePath !== 'string') return null;
-      return {
-        kind: 'codexHome',
-        home: value.home,
-        ...(typeof value.connectedServiceId === 'string' ? { connectedServiceId: value.connectedServiceId } : {}),
-        ...(typeof value.connectedServiceProfileId === 'string' ? { connectedServiceProfileId: value.connectedServiceProfileId } : {}),
-        ...(typeof value.homePath === 'string' ? { homePath: value.homePath } : {}),
-      };
-    }
-    case 'claudeConfig': {
-      if (typeof value.configDir !== 'undefined' && typeof value.configDir !== 'string') return null;
-      if (typeof value.projectId !== 'undefined' && typeof value.projectId !== 'string') return null;
-      return {
-        kind: 'claudeConfig',
-        ...(typeof value.configDir === 'string' ? { configDir: value.configDir } : {}),
-        ...(typeof value.projectId === 'string' ? { projectId: value.projectId } : {}),
-      };
-    }
-    case 'opencodeServer': {
-      if (typeof value.baseUrl !== 'undefined' && typeof value.baseUrl !== 'string') return null;
-      if (typeof value.directory !== 'undefined' && typeof value.directory !== 'string') return null;
-      return {
-        kind: 'opencodeServer',
-        ...(typeof value.baseUrl === 'string' ? { baseUrl: value.baseUrl } : {}),
-        ...(typeof value.directory === 'string' ? { directory: value.directory } : {}),
-      };
-    }
-    default:
-      return null;
-  }
-}
-
-type ParsedDirectSessionMetadata = Readonly<{
-  path?: string;
-  directSessionV1: Readonly<{
-    v: 1;
-    providerId: DirectSessionsProviderId;
-    machineId: string;
-    remoteSessionId: string;
-    source: DirectSessionsSource;
-    linkedAtMs: number;
-    codexBackendMode?: CodexBackendMode;
-    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
-  }>;
-  codexBackendMode?: CodexBackendMode;
-}>;
-
-function parseDirectSessionMetadata(metadata: unknown): ParsedDirectSessionMetadata | null {
-  if (!isObjectRecord(metadata)) return null;
-  const directSession = isObjectRecord(metadata.directSessionV1) ? metadata.directSessionV1 : null;
-  if (!directSession) return null;
-  if (directSession.v !== 1) return null;
-  if (!isDirectSessionsProviderId(directSession.providerId)) return null;
-  if (typeof directSession.machineId !== 'string' || directSession.machineId.trim().length === 0) return null;
-  if (typeof directSession.remoteSessionId !== 'string' || directSession.remoteSessionId.trim().length === 0) return null;
-  const source = parseDirectSessionsSource(directSession.source);
-  if (!source) return null;
-  if (typeof directSession.linkedAtMs !== 'number' || !Number.isFinite(directSession.linkedAtMs) || directSession.linkedAtMs < 0) return null;
-
-  const agentRuntimeDescriptorV1 = isObjectRecord(directSession.agentRuntimeDescriptorV1)
-    ? (directSession.agentRuntimeDescriptorV1 as AgentRuntimeDescriptorV1)
-    : undefined;
-
-  return {
-    ...(typeof metadata.path === 'string' ? { path: metadata.path } : {}),
-    directSessionV1: {
-      v: 1,
-      providerId: directSession.providerId,
-      machineId: directSession.machineId,
-      remoteSessionId: directSession.remoteSessionId,
-      source,
-      linkedAtMs: directSession.linkedAtMs,
-      ...(normalizeCodexBackendMode(directSession.codexBackendMode) ? { codexBackendMode: normalizeCodexBackendMode(directSession.codexBackendMode) ?? undefined } : {}),
-      ...(agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1 } : {}),
-    },
-    ...(normalizeCodexBackendMode(metadata.codexBackendMode) ? { codexBackendMode: normalizeCodexBackendMode(metadata.codexBackendMode) ?? undefined } : {}),
-  };
-}
+const DirectSessionMetadataSchema = z
+  .object({
+    path: z.string().optional(),
+    directSessionV1: z
+      .object({
+        v: z.literal(1),
+        providerId: DirectSessionsProviderIdSchema,
+        machineId: z.string().min(1),
+        remoteSessionId: z.string().min(1),
+        source: DirectSessionsSourceSchema,
+        linkedAtMs: z.number().int().min(0),
+        codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+        agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+      })
+      .passthrough(),
+    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+  })
+  .passthrough();
 
 export type LoadedLinkedDirectSession = Readonly<{
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   sessionPath: string | null;
-  providerId: DirectSessionsProviderId;
+  providerId: z.infer<typeof DirectSessionsProviderIdSchema>;
   machineId: string;
   remoteSessionId: string;
-  source: DirectSessionsSource;
+  source: z.infer<typeof DirectSessionsSourceSchema>;
   codexBackendMode: CodexBackendMode | null;
-}>;
+}>; 
 
 type CanonicalCodexRuntimeDescriptor = Readonly<{
   providerId: 'codex';
@@ -150,11 +71,11 @@ function readNestedDirectSessionRuntimeDescriptor(metadata: Record<string, unkno
 }
 
 function resolveCanonicalDirectSource(params: Readonly<{
-  providerId: DirectSessionsProviderId;
-  source: DirectSessionsSource;
+  providerId: z.infer<typeof DirectSessionsProviderIdSchema>;
+  source: z.infer<typeof DirectSessionsSourceSchema>;
   codexRuntimeDescriptor: CanonicalCodexRuntimeDescriptor | null;
   openCodeRuntimeDescriptor: CanonicalOpenCodeRuntimeDescriptor;
-}>): DirectSessionsSource {
+}>): z.infer<typeof DirectSessionsSourceSchema> {
   if (params.providerId === 'codex' && params.source.kind === 'codexHome') {
     const runtime = params.codexRuntimeDescriptor;
     if (!runtime) return params.source;
@@ -198,26 +119,26 @@ export async function loadLinkedDirectSession(params: Readonly<{
     return { ok: false, errorCode: 'provider_unavailable', error: 'session_metadata_unavailable' };
   }
 
-  const parsed = parseDirectSessionMetadata(metadata);
-  if (!parsed) {
+  const parsed = DirectSessionMetadataSchema.safeParse(metadata);
+  if (!parsed.success) {
     return { ok: false, errorCode: 'invalid_request', error: 'session_is_not_direct' };
   }
 
-  const direct = parsed.directSessionV1;
+  const direct = parsed.data.directSessionV1;
   if (typeof params.machineId === 'string' && params.machineId.trim().length > 0 && direct.machineId !== params.machineId) {
     return { ok: false, errorCode: 'invalid_request', error: 'machine_mismatch' };
   }
 
-  const sessionPath = typeof parsed.path === 'string' && parsed.path.trim().length > 0 ? parsed.path.trim() : null;
-  const nestedRuntimeDescriptor = readNestedDirectSessionRuntimeDescriptor(parsed);
-  const codexRuntimeDescriptor = (nestedRuntimeDescriptor.codex ?? readSessionMetadataRuntimeDescriptor(parsed, 'codex')) as CanonicalCodexRuntimeDescriptor | null;
-  const openCodeRuntimeDescriptor = (nestedRuntimeDescriptor.opencode ?? readOpenCodeSessionRuntimeHandleFromMetadata(parsed)) as CanonicalOpenCodeRuntimeDescriptor;
+  const sessionPath = typeof parsed.data.path === 'string' && parsed.data.path.trim().length > 0 ? parsed.data.path.trim() : null;
+  const nestedRuntimeDescriptor = readNestedDirectSessionRuntimeDescriptor(parsed.data);
+  const codexRuntimeDescriptor = (nestedRuntimeDescriptor.codex ?? readSessionMetadataRuntimeDescriptor(parsed.data, 'codex')) as CanonicalCodexRuntimeDescriptor | null;
+  const openCodeRuntimeDescriptor = (nestedRuntimeDescriptor.opencode ?? readOpenCodeSessionRuntimeHandleFromMetadata(parsed.data)) as CanonicalOpenCodeRuntimeDescriptor;
   const remoteSessionId = direct.providerId === 'codex'
     ? (codexRuntimeDescriptor?.vendorSessionId ?? direct.remoteSessionId)
     : direct.providerId === 'opencode'
       ? (openCodeRuntimeDescriptor?.vendorSessionId ?? direct.remoteSessionId)
       : direct.remoteSessionId;
-  const persistedCodexBackendMode = codexRuntimeDescriptor?.backendMode ?? resolvePersistedCodexRuntimeIdentity(parsed)?.backendMode ?? null;
+  const persistedCodexBackendMode = codexRuntimeDescriptor?.backendMode ?? resolvePersistedCodexRuntimeIdentity(parsed.data)?.backendMode ?? null;
   return {
     ok: true,
     session: {

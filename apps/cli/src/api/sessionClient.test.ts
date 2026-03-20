@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ApiSessionClient } from './session/sessionClient';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
@@ -9,13 +11,91 @@ const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
 }));
 
+let mockSocket: any;
+let mockUserSocket: any;
+
 vi.mock('socket.io-client', () => ({
     io: mockIo
 }));
 
+vi.mock('./session/connection/createSessionSocketTransport', () => ({
+    createSessionSocketTransport: () => ({
+        socket: mockSocket,
+        transport: {
+            connect: async () => {},
+            disconnect: async () => {},
+            destroy: async () => {},
+            isConnected: () => true,
+            onConnected: () => () => {},
+            onDisconnected: () => () => {},
+            onError: () => () => {},
+        },
+    }),
+}));
+
+vi.mock('@happier-dev/connection-supervisor', () => ({
+    DEFAULT_MANAGED_CONNECTION_POLICY: {},
+    createManagedConnectionSupervisor: (params: {
+        createTransport: () => unknown;
+        onConnected?: () => Promise<void> | void;
+        onDisconnected?: () => Promise<void> | void;
+        onAuthFailed?: () => Promise<void> | void;
+    }) => ({
+        start: async () => {
+            params.createTransport();
+            await params.onConnected?.();
+        },
+        stop: async () => {},
+    }),
+}));
+
+type SocketEventHandler = (...args: unknown[]) => void;
+
+function createMockSocket() {
+    const listeners = new Map<string, Set<SocketEventHandler>>();
+    const socket: any = {
+        connected: false,
+        on: vi.fn((event: string, handler: SocketEventHandler) => {
+            const bucket = listeners.get(event) ?? new Set<SocketEventHandler>();
+            bucket.add(handler);
+            listeners.set(event, bucket);
+            return socket;
+        }),
+        off: vi.fn((event: string, handler?: SocketEventHandler) => {
+            if (!handler) {
+                listeners.delete(event);
+                return socket;
+            }
+            listeners.get(event)?.delete(handler);
+            return socket;
+        }),
+        connect: vi.fn(() => {
+            socket.connected = true;
+            return socket;
+        }),
+        disconnect: vi.fn(() => {
+            socket.connected = false;
+            return socket;
+        }),
+        close: vi.fn(() => {
+            socket.connected = false;
+            return socket;
+        }),
+        removeAllListeners: vi.fn(() => {
+            listeners.clear();
+            return socket;
+        }),
+        emit: vi.fn(),
+        emitWithAck: vi.fn(),
+        timeout: vi.fn(() => socket),
+        volatile: {
+            emit: vi.fn(),
+        },
+    };
+    return socket;
+}
+
 describe('ApiSessionClient connection handling', () => {
-    let mockSocket: any;
-    let mockUserSocket: any;
     let consoleSpy: any;
     let mockSession: any;
     let originalArgv: string[];
@@ -34,30 +114,13 @@ describe('ApiSessionClient connection handling', () => {
         consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
         // Mock socket.io client
-        mockSocket = {
-            connected: false,
-            connect: vi.fn(),
-            on: vi.fn(),
-            off: vi.fn(),
-            disconnect: vi.fn(),
-            close: vi.fn(),
-            emit: vi.fn(),
-        };
-
-        mockUserSocket = {
-            connected: false,
-            connect: vi.fn(),
-            on: vi.fn(),
-            off: vi.fn(),
-            disconnect: vi.fn(),
-            close: vi.fn(),
-            emit: vi.fn(),
-        };
+        mockSocket = createMockSocket();
+        mockUserSocket = createMockSocket();
 
         mockIo.mockReset();
         mockIo
-            .mockImplementationOnce(() => mockSocket)
             .mockImplementationOnce(() => mockUserSocket)
+            .mockImplementationOnce(() => mockSocket)
             .mockImplementation(() => mockSocket);
 
         // Create a proper mock session with metadata
@@ -177,6 +240,44 @@ describe('ApiSessionClient connection handling', () => {
         process.argv = process.argv.filter((arg) => arg !== '--started-by');
         mockSession.metadata.startedBy = undefined;
         mockSession.metadata.startedFromDaemon = undefined;
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('filters historical catch-up user messages from delivery for daemon-started sessions', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const { configuration } = await import('@/configuration');
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'historical daemon prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                messages: [
+                    {
+                        id: 'm-daemon-old-1',
+                        seq: 1,
+                        content: { t: 'encrypted', c: ciphertext },
+                        createdAt: Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                    },
+                ],
+                nextAfterSeq: null,
+            },
+        });
+
+        mockSession.metadata.startedBy = 'daemon';
 
         const client = createClient('token', mockSession);
         const onUserMessage = vi.fn();
@@ -521,13 +622,167 @@ describe('ApiSessionClient connection handling', () => {
             }),
         );
         expect(sendUserTextMessageSpy).toHaveBeenCalledTimes(1);
-        expect(sendUserTextMessageSpy).toHaveBeenCalledWith('run nightly health check');
+        expect(sendUserTextMessageSpy).toHaveBeenCalledWith(
+            'run nightly health check',
+            expect.objectContaining({
+                meta: {
+                    source: 'daemon-initial-prompt',
+                    sentFrom: 'cli',
+                },
+            }),
+        );
         expect(process.env.HAPPIER_DAEMON_INITIAL_PROMPT).toBeUndefined();
+    });
+
+    it('routes session user-message RPC through the runtime queue and transcript commit path', async () => {
+        mockSocket.connected = true;
+        mockSocket.timeout = vi.fn().mockReturnThis();
+        mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+            ok: true,
+            id: 'msg-rpc-1',
+            seq: 1,
+            localId: 'rpc-local-1',
+            didWrite: true,
+        });
+
+        const client = createClient('fake-token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        const result = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, {
+            text: 'hello from session send',
+            localId: 'rpc-local-1',
+            meta: {
+                source: 'cli',
+                sentFrom: 'cli',
+                permissionMode: 'default',
+            },
+        });
+        await flushQueuedCommits(client);
+
+        expect(result).toEqual({ ok: true });
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                localId: 'rpc-local-1',
+                content: { type: 'text', text: 'hello from session send' },
+                meta: expect.objectContaining({
+                    source: 'cli',
+                    sentFrom: 'cli',
+                    permissionMode: 'default',
+                }),
+            }),
+        );
+        expect(mockSocket.emitWithAck).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: mockSession.id,
+                localId: 'rpc-local-1',
+                echoToSender: true,
+            }),
+        );
+    });
+
+    it('reuses one generated localId for queued RPC user messages and their transcript echo suppression', async () => {
+        mockSocket.connected = true;
+        mockSocket.timeout = vi.fn().mockReturnThis();
+        mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+            ok: true,
+            id: 'msg-rpc-2',
+            seq: 2,
+        });
+
+        const client = createClient('fake-token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        const result = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, {
+            text: 'hello without explicit local id',
+            meta: {
+                source: 'cli',
+                sentFrom: 'cli',
+            },
+        });
+        await flushQueuedCommits(client);
+
+        const emittedLocalId = String((mockSocket.emitWithAck.mock.calls[0]?.[1] as any)?.localId ?? '');
+        expect(emittedLocalId).not.toBe('');
+        expect(result).toEqual({ ok: true });
+        expect(onUserMessage).toHaveBeenCalledTimes(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                localId: emittedLocalId,
+                content: { type: 'text', text: 'hello without explicit local id' },
+            }),
+        );
+
+        const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
+        expect(typeof updateHandler).toBe('function');
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'hello without explicit local id' },
+            localId: emittedLocalId,
+            meta: { sentFrom: 'cli', source: 'cli' },
+        };
+        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+        updateHandler({
+            id: 'update-rpc-2',
+            seq: 2,
+            createdAt: Date.now(),
+            body: {
+                t: 'new-message',
+                sid: mockSession.id,
+                message: {
+                    id: 'msg-rpc-2',
+                    seq: 2,
+                    localId: emittedLocalId,
+                    content: { t: 'encrypted', c: encrypted },
+                },
+            },
+        } as any);
+
+        expect(onUserMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves whitespace in queued RPC user messages', async () => {
+        mockSocket.connected = true;
+        mockSocket.timeout = vi.fn().mockReturnThis();
+        mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+            ok: true,
+            id: 'msg-rpc-3',
+            seq: 3,
+            localId: 'rpc-local-3',
+        });
+
+        const client = createClient('fake-token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        const text = '  keep trailing newline\n';
+        const result = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, {
+            text,
+            localId: 'rpc-local-3',
+            meta: {
+                source: 'cli',
+                sentFrom: 'cli',
+            },
+        });
+        await flushQueuedCommits(client);
+
+        expect(result).toEqual({ ok: true });
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                localId: 'rpc-local-3',
+                content: { type: 'text', text },
+            }),
+        );
     });
 
     it('runs one transcript catch-up on first callback attach to recover missed startup user messages', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
+        const createdAt = Date.now();
 
         const plaintext = {
             role: 'user',
@@ -543,7 +798,7 @@ describe('ApiSessionClient connection handling', () => {
                         id: 'm-catchup-1',
                         seq: 1,
                         content: { t: 'encrypted', c: ciphertext },
-                        createdAt: 2222,
+                        createdAt,
                     },
                 ],
                 nextAfterSeq: null,
@@ -567,7 +822,7 @@ describe('ApiSessionClient connection handling', () => {
             expect.objectContaining({
                 role: 'user',
                 content: { type: 'text', text: 'missed startup prompt' },
-                createdAt: 2222,
+                createdAt,
             }),
         );
 
@@ -579,6 +834,7 @@ describe('ApiSessionClient connection handling', () => {
         try {
             const axiosMod = await import('axios');
             const axios = axiosMod.default as any;
+            const createdAt = Date.now();
 
             const plaintext = {
                 role: 'user',
@@ -601,7 +857,7 @@ describe('ApiSessionClient connection handling', () => {
                                 id: 'm-catchup-race-1',
                                 seq: 1,
                                 content: { t: 'encrypted', c: ciphertext },
-                                createdAt: 3333,
+                                createdAt,
                             },
                         ],
                         nextAfterSeq: null,
@@ -625,7 +881,7 @@ describe('ApiSessionClient connection handling', () => {
                 expect.objectContaining({
                     role: 'user',
                     content: { type: 'text', text: 'missed by first poll, recovered by retry' },
-                    createdAt: 3333,
+                    createdAt,
                 }),
             );
 
@@ -906,21 +1162,23 @@ describe('ApiSessionClient connection handling', () => {
         }).not.toThrow();
     });
 
-    it('should emit correct events on socket connection', () => {
+    it('registers the session-scoped RPC and update handlers on the supervised socket', () => {
         const client = createClient('fake-token', mockSession);
 
-        // Should have set up event listeners
-        expect(mockSocket.on).toHaveBeenCalledWith('connect', expect.any(Function));
-        expect(mockSocket.on).toHaveBeenCalledWith('disconnect', expect.any(Function));
+        expect(mockSocket.on).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.any(Function));
+        expect(mockSocket.on).toHaveBeenCalledWith('update', expect.any(Function));
+        expect(mockSocket.on).toHaveBeenCalledWith('session', expect.any(Function));
+        expect(mockSocket.on).toHaveBeenCalledWith('connect_error', expect.any(Function));
         expect(mockSocket.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
-    it('close closes both the session-scoped and user-scoped sockets', async () => {
+    it('close tears down the supervised session socket and closes the user-scoped socket', async () => {
         const client = createClient('fake-token', mockSession);
 
         await client.close();
 
-        expect(mockSocket.close).toHaveBeenCalledTimes(1);
+        expect(mockSocket.disconnect).toHaveBeenCalledTimes(1);
+        expect(mockSocket.removeAllListeners).toHaveBeenCalledTimes(1);
         expect(mockUserSocket.close).toHaveBeenCalledTimes(1);
     });
 
@@ -936,8 +1194,57 @@ describe('ApiSessionClient connection handling', () => {
         await expect(promise).resolves.toBe(false);
     });
 
-    it('emits messages even when disconnected (socket.io will buffer)', async () => {
-        mockSocket.connected = false;
+    it('queues outbound messages while disconnected and flushes them after reconnect', async () => {
+        const socketHandlers = new Map<string, Set<(...args: any[]) => void>>();
+        const registerSocketHandler = (event: string, handler: (...args: any[]) => void) => {
+            const handlers = socketHandlers.get(event) ?? new Set<(...args: any[]) => void>();
+            handlers.add(handler);
+            socketHandlers.set(event, handlers);
+        };
+        const triggerSocketEvent = (event: string, ...args: any[]) => {
+            for (const handler of socketHandlers.get(event) ?? []) {
+                handler(...args);
+            }
+        };
+
+        mockSocket = {
+            connected: false,
+            connect: vi.fn(),
+            on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+                registerSocketHandler(event, handler);
+                return mockSocket;
+            }),
+            off: vi.fn((event: string, handler?: (...args: any[]) => void) => {
+                if (!handler) {
+                    socketHandlers.delete(event);
+                    return mockSocket;
+                }
+                const handlers = socketHandlers.get(event);
+                handlers?.delete(handler);
+                if (handlers && handlers.size === 0) {
+                    socketHandlers.delete(event);
+                }
+                return mockSocket;
+            }),
+            disconnect: vi.fn(),
+            close: vi.fn(),
+            emit: vi.fn(),
+            timeout: vi.fn(function timeout() {
+                return mockSocket;
+            }),
+            emitWithAck: vi.fn().mockResolvedValue({
+                ok: true,
+                id: 'msg-1',
+                seq: 1,
+                localId: 'queued-local-id',
+            }),
+        };
+
+        mockIo.mockReset();
+        mockIo
+            .mockImplementationOnce(() => mockSocket)
+            .mockImplementationOnce(() => mockUserSocket)
+            .mockImplementation(() => mockSocket);
 
         const client = createClient('fake-token', mockSession);
 
@@ -950,16 +1257,28 @@ describe('ApiSessionClient connection handling', () => {
         } as const;
 
         client.sendClaudeSessionMessage(payload);
+        await flushQueuedCommits(client);
+
+        expect(mockSocket.emit).not.toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: mockSession.id,
+            }),
+        );
+        expect(mockSocket.emitWithAck).not.toHaveBeenCalled();
+
+        mockSocket.connected = true;
+        triggerSocketEvent('connect');
 
         await flushQueuedCommits(client);
 
-        expect(mockSocket.emit).toHaveBeenCalledWith(
+        expect(mockSocket.emitWithAck).toHaveBeenCalledWith(
             'message',
             expect.objectContaining({
                 sid: mockSession.id,
                 message: expect.any(String),
                 localId: expect.any(String),
-            })
+            }),
         );
     });
 
@@ -1143,11 +1462,62 @@ describe('ApiSessionClient connection handling', () => {
             expect(onUserMessageEvent).not.toHaveBeenCalled();
         });
 
-        it('does not deliver self-sent CLI user messages to onUserMessage callback (prevents ACK echo loops)', async () => {
+        it('delivers CLI-sent user messages from another client to onUserMessage callback', async () => {
             const client = createClient('fake-token', mockSession);
 
             const onUserMessage = vi.fn();
             client.onUserMessage(onUserMessage);
+
+            const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
+            expect(typeof updateHandler).toBe('function');
+
+            const plaintext = {
+                role: 'user',
+                content: { type: 'text', text: 'hello from cli' },
+                meta: { sentFrom: 'cli' },
+            };
+            const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+            updateHandler({
+                id: 'update-2',
+                seq: 2,
+                createdAt: Date.now(),
+                body: {
+                    t: 'new-message',
+                    sid: mockSession.id,
+                    message: {
+                        id: 'msg-2',
+                        seq: 2,
+                        localId: 'local-2',
+                        content: { t: 'encrypted', c: encrypted },
+                    },
+                },
+            } as any);
+
+            expect(onUserMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    content: expect.objectContaining({ text: 'hello from cli' }),
+                    localId: 'local-2',
+                }),
+            );
+        });
+
+        it('does not deliver self-sent CLI user messages while awaiting their echo update', async () => {
+            mockSocket.connected = true;
+            mockSocket.timeout = vi.fn().mockReturnThis();
+            mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+                ok: true,
+                id: 'msg-2',
+                seq: 2,
+                localId: 'local-2',
+            });
+
+            const client = createClient('fake-token', mockSession);
+
+            const onUserMessage = vi.fn();
+            client.onUserMessage(onUserMessage);
+
+            await client.sendUserTextMessageCommitted('hello from cli', { localId: 'local-2' });
 
             const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
             expect(typeof updateHandler).toBe('function');
