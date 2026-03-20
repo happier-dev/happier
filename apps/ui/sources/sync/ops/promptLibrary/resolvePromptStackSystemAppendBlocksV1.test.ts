@@ -48,6 +48,7 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     };
 
     const blocks = await resolvePromptStackSystemAppendBlocksV1({
+      surface: 'coding',
       promptStacksV1: {
         v: 1,
         surfaces: {
@@ -87,6 +88,7 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     };
 
     const blocks = await resolvePromptStackSystemAppendBlocksV1({
+      surface: 'coding',
       promptStacksV1: {
         v: 1,
         surfaces: {
@@ -123,6 +125,7 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     };
 
     const blocks = await resolvePromptStackSystemAppendBlocksV1({
+      surface: 'coding',
       promptStacksV1: {
         v: 1,
         surfaces: {
@@ -152,6 +155,7 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     };
 
     const blocks = await resolvePromptStackSystemAppendBlocksV1({
+      surface: 'coding',
       promptStacksV1: {
         v: 1,
         surfaces: {
@@ -174,5 +178,55 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     });
 
     expect(blocks).toEqual(['Hello']);
+  });
+
+  it('returns voice blocks without mixing in coding or profile entries', async () => {
+    const artifactsById: Record<string, DecryptedArtifact> = {
+      coding: createPromptDocArtifact({ id: 'coding', markdown: 'Hello from coding' }),
+      voice: createPromptDocArtifact({ id: 'voice', markdown: 'Hello from voice' }),
+      profile: createPromptDocArtifact({ id: 'profile', markdown: 'Hello from profile' }),
+    };
+
+    const blocks = await resolvePromptStackSystemAppendBlocksV1({
+      surface: 'voice',
+      promptStacksV1: {
+        v: 1,
+        surfaces: {
+          coding: [
+            {
+              id: 'coding-entry',
+              ref: { kind: 'doc', artifactId: 'coding' },
+              enabled: true,
+              placement: 'system_append',
+              editPolicy: 'user_only',
+            },
+          ],
+          voice: [
+            {
+              id: 'voice-entry',
+              ref: { kind: 'doc', artifactId: 'voice' },
+              enabled: true,
+              placement: 'system_append',
+              editPolicy: 'user_only',
+            },
+          ],
+          profilesById: {
+            p1: [
+              {
+                id: 'profile-entry',
+                ref: { kind: 'doc', artifactId: 'profile' },
+                enabled: true,
+                placement: 'system_append',
+                editPolicy: 'user_only',
+              },
+            ],
+          },
+        },
+      },
+      profileId: 'p1',
+      artifactsById,
+    });
+
+    expect(blocks).toEqual(['Hello from voice']);
   });
 });
