@@ -58,5 +58,31 @@ describe('permission RPC routing', () => {
 
     expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'npm --version' } });
   });
-});
 
+  it('does not let the local permission bridge steal remote approvals when it activates first', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s1');
+
+    const { ClaudeLocalPermissionBridge } = await import('../localPermissions/localPermissionBridge');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+    handler.onMessage(bashToolUseMessage());
+
+    const permissionPromise = handler.handleToolCall('Bash', { command: 'npm --version' }, defaultMode, {
+      signal: new AbortController().signal,
+    });
+
+    const permissionRpc = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionRpc).toBeDefined();
+    await permissionRpc?.({ id: 'toolu_1', approved: true });
+
+    const result = await Promise.race([
+      permissionPromise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('permission routing timed out')), 50)),
+    ]);
+
+    expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'npm --version' } });
+  });
+});
