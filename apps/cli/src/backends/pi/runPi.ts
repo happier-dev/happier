@@ -2,6 +2,7 @@ import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
+import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
 import { buildPiToolsForPermissionMode } from '@/backends/pi/acp/backend';
@@ -18,17 +19,20 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     providerName: 'Pi',
     waitingForCommandLabel: 'Pi',
     agentMessageType: 'pi',
+    supportsMcpServers: false,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode).join(','),
-    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) =>
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) =>
       createPiAcpRuntime({
         directory,
+        machineId,
         session,
         messageBuffer,
         mcpServers,
         permissionHandler,
         onThinkingChange: setThinking,
+        memoryRecallGuidanceEnabled,
         getPermissionMode,
       }),
     onAttachMetadataSnapshotMissing: (error) => {
@@ -37,6 +41,6 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
         error ?? undefined,
       );
     },
-    formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
+    formatPromptErrorMessage: formatProviderPromptErrorMessage,
   });
 }

@@ -20,6 +20,7 @@ describe('Kimi ACP runtime backend lifecycle', () => {
 
     const runtime = createKimiAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createKimiSessionFixture(),
       messageBuffer: createKimiMessageBufferFixture(),
       mcpServers: {},

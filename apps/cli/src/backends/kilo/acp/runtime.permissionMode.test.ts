@@ -37,6 +37,7 @@ function createSessionFixture(): AcpRuntimeSessionClient {
   return {
     keepAlive() {},
     sendAgentMessage() {},
+    sendTranscriptDraftDelta() {},
     async sendAgentMessageCommitted() {},
     async sendUserTextMessageCommitted() {},
     updateMetadata(_updater: (metadata: Metadata) => Metadata) {},
@@ -72,6 +73,7 @@ describe('Kilo ACP runtime permission mode wiring', () => {
 
     const runtime = createKiloAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createSessionFixture() as unknown as ApiSessionClient,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},

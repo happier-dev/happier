@@ -1,7 +1,7 @@
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
 import { PiRpcBackend } from '@/backends/pi/rpc/PiRpcBackend';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { providers } from '@happier-dev/agents';
 
 export interface PiBackendOptions extends AgentFactoryOptions {
@@ -37,12 +37,16 @@ export function buildPiRpcArgs(opts?: Readonly<{ permissionMode?: PermissionMode
 }
 
 export function createPiBackend(options: PiBackendOptions): AgentBackend {
-  const env = { ...(options.env ?? {}) };
+  const env = Object.fromEntries(
+    Object.entries(options.env ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+  const processEnv = { ...process.env, ...env };
   const thinkingLevel = providers.pi.resolvePiThinkingLevelFromEnv(env);
+  const launch = requireProviderCliLaunchSpec('pi', { processEnv });
   return new PiRpcBackend({
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'pi' }) ?? 'pi',
-    args: buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel }),
+    command: launch.command,
+    args: [...launch.args, ...buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel })],
     env: {
       ...env,
       NODE_ENV: 'production',
