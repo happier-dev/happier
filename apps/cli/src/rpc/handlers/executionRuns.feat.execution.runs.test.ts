@@ -312,6 +312,40 @@ function createCancelRaceBackend(params: Readonly<{
 }
 
 describe('executionRuns session RPC handlers', () => {
+  it('passes resolved account settings into built-in backend creation', async () => {
+    const createBackend = vi.fn(() => createStaticBackend('ok'));
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend,
+          sendAcp: () => {},
+          resolveAccountSettings: async () => ({ codexBackendMode: 'mcp' }),
+        });
+      },
+    });
+
+    await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Delegate.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    expect(createBackend).toHaveBeenCalledWith(expect.objectContaining({
+      backendId: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      accountSettings: { codexBackendMode: 'mcp' },
+    }));
+  });
+
   it('starts and lists a review run', async () => {
     const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
 
@@ -1819,6 +1853,44 @@ describe('executionRuns session RPC handlers', () => {
     expect(started?.ok).toBe(false);
     expect(started?.errorCode).toBe('VOICE_AGENT_UNSUPPORTED');
     expect(String(started?.error ?? '')).toContain('claude');
+  });
+
+  it('passes configured ACP backend targets through to the execution-run backend factory', async () => {
+    const seenTargets: unknown[] = [];
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: ({ backendId, backendTarget }) => {
+            seenTargets.push(backendTarget);
+            if (backendId !== 'customAcp') {
+              throw new Error(`Unexpected backend: ${backendId}`);
+            }
+            if (backendTarget?.kind !== 'configuredAcpBackend' || backendTarget.backendId !== 'review-bot') {
+              throw new Error('Missing configured ACP backend target');
+            }
+            return createStaticBackend('configured ok');
+          },
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      instructions: 'Review the changes',
+    });
+
+    expect(started?.runId).toEqual(expect.any(String));
+    expect(seenTargets).toEqual([{ kind: 'configuredAcpBackend', backendId: 'review-bot' }]);
   });
 
   it('returns voice_agent.commit results via execution.run.action', async () => {

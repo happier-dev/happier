@@ -1,8 +1,14 @@
 import { z } from 'zod';
-import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import {
+  AcpConfigOptionOverridesV1Schema,
+  AgentRuntimeDescriptorV1Schema,
+  SessionAttachMetadataIdentityPolicySchema,
+  SessionMcpSelectionV1Schema,
+} from '@happier-dev/protocol';
 
 import { PERMISSION_MODES } from '@/api/types';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
+import { resolveCanonicalCodexBackendMode } from './registerSessionHandlers';
 
 import type { SpawnSessionOptions } from './registerSessionHandlers';
 
@@ -33,19 +39,25 @@ export const SpawnSessionTerminalSchema = z.object({
   }).optional(),
 });
 
-export const SpawnDaemonSessionRequestSchema = z.object({
+const SpawnDaemonSessionRequestCompatSchema = z.object({
   directory: z.string(),
   machineId: z.string().trim().min(1).optional(),
   spawnNonce: z.string().trim().min(1).optional(),
   initialPrompt: z.string().optional(),
   sessionId: z.string().trim().min(1).optional(),
   existingSessionId: z.string().trim().min(1).optional(),
+  attachMetadataIdentityPolicy: SessionAttachMetadataIdentityPolicySchema.optional(),
   resume: z.string().trim().min(1).optional(),
   experimentalCodexAcp: z.boolean().optional(),
+  codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+  agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
   permissionMode: SpawnSessionPermissionModeSchema.optional(),
   permissionModeUpdatedAt: z.number().int().optional(),
+  agentModeId: z.string().trim().min(1).optional(),
+  agentModeUpdatedAt: z.number().int().optional(),
   modelId: z.string().optional(),
   modelUpdatedAt: z.number().int().optional(),
+  sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
   backendTarget: SpawnBackendTargetSchema.optional(),
   token: z.string().optional(),
   terminal: SpawnSessionTerminalSchema.optional(),
@@ -58,6 +70,20 @@ export const SpawnDaemonSessionRequestSchema = z.object({
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
 });
 
+export const SpawnDaemonSessionRequestSchema = SpawnDaemonSessionRequestCompatSchema.transform((request) => {
+  const { experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...rest } = request;
+  const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+    codexBackendMode,
+    experimentalCodexAcp: _experimentalCodexAcp,
+    agentRuntimeDescriptorV1: request.agentRuntimeDescriptorV1,
+  });
+
+  return {
+    ...rest,
+    ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
+  };
+});
+
 export type SpawnDaemonSessionRequest = z.infer<typeof SpawnDaemonSessionRequestSchema>;
 
 const SPAWN_SESSION_OPTION_KEYS = [
@@ -67,12 +93,17 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'initialPrompt',
   'sessionId',
   'resume',
-  'experimentalCodexAcp',
+  'codexBackendMode',
+  'agentRuntimeDescriptorV1',
   'existingSessionId',
+  'attachMetadataIdentityPolicy',
   'permissionMode',
   'permissionModeUpdatedAt',
+  'agentModeId',
+  'agentModeUpdatedAt',
   'modelId',
   'modelUpdatedAt',
+  'sessionConfigOptionOverrides',
   'approvedNewDirectoryCreation',
   'backendTarget',
   'token',
