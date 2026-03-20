@@ -274,4 +274,703 @@ describe('AgentInput (action bar scroll layout)', () => {
 
         act(() => tree!.unmount());
     });
+
+    it('keeps stop ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    onAbort={() => {}}
+                    showAbortButton
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-permission-chip',
+                'agent-input-agent-chip',
+                'agent-input-abort',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-abort',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps delivery extra chips ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    onAbort={() => {}}
+                    showAbortButton
+                    extraActionChips={[{
+                        key: 'execution-run-delivery',
+                        controlId: 'delivery',
+                        render: () => React.createElement('View', { testID: 'agent-input-delivery-chip' }),
+                    }]}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-abort',
+                'agent-input-delivery-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-abort',
+            'agent-input-delivery-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps attachments ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'attachments-add',
+                        controlId: 'attachments',
+                        collapsedAction: () => ({
+                            id: 'attachments',
+                            label: 'Attach',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-attachments-chip' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-attachments-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-attachments-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps files ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    sessionId="session-1"
+                    onFileViewerPress={() => {}}
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'session-open-source-control',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'session-open-source-control',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps linked files ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'project-file-link',
+                        controlId: 'linkedFiles',
+                        collapsedAction: () => ({
+                            id: 'linked-files',
+                            label: 'common.linkFile',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-link-file' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-link-file',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-link-file',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps review comments ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'review-comments',
+                        controlId: 'reviewComments',
+                        collapsedAction: () => ({
+                            id: 'review-comments',
+                            label: '1 draft review comment',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-review-comments-chip' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-review-comments-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-review-comments-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps connected services ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'new-session-connected-services-auth',
+                        controlId: 'connectedServices',
+                        collapsedAction: () => ({
+                            id: 'connected-services',
+                            label: 'connectedServices.authChip.label',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-connected-services-chip' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-connected-services-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-connected-services-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps storage ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'new-session-storage',
+                        controlId: 'storage',
+                        collapsedAction: () => ({
+                            id: 'storage',
+                            label: 'sessionsList.storageDirectTab',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-storage-chip' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-storage-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-storage-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps shortcut chips ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[
+                        {
+                            key: 'new-session-action:review.start',
+                            controlId: 'shortcuts',
+                            collapsedAction: () => ({
+                                id: 'new-session-action:review.start',
+                                label: 'Review',
+                                icon: null,
+                                onPress: () => {},
+                            }),
+                            render: () => React.createElement('View', { testID: 'agent-input-shortcut-review-chip' }),
+                        } as any,
+                        {
+                            key: 'new-session-action:subagents.delegate.start',
+                            controlId: 'shortcuts',
+                            collapsedAction: () => ({
+                                id: 'new-session-action:subagents.delegate.start',
+                                label: 'Delegate',
+                                icon: null,
+                                onPress: () => {},
+                            }),
+                            render: () => React.createElement('View', { testID: 'agent-input-shortcut-delegate-chip' }),
+                        } as any,
+                    ]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-shortcut-review-chip',
+                'agent-input-shortcut-delegate-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-shortcut-review-chip',
+            'agent-input-shortcut-delegate-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps mcp ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'new-session-mcp',
+                        controlId: 'mcp',
+                        collapsedAction: () => ({
+                            id: 'new-session-mcp',
+                            label: 'newSession.mcpChipLabel',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-mcp-chip' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-mcp-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-mcp-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
+
+    it('keeps automation ahead of machine and path when scroll layout merges both chip rows', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
+
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    extraActionChips={[{
+                        key: 'new-session-automate',
+                        controlId: 'automation',
+                        collapsedAction: () => ({
+                            id: 'new-session-automate',
+                            label: 'newSession.automationChip.default',
+                            icon: null,
+                            onPress: () => {},
+                        }),
+                        render: () => React.createElement('View', { testID: 'agent-input-automation-chip' }),
+                    } as any]}
+                />
+            );
+        });
+
+        const orderedTestIds = tree!.root
+            .findAll((node: any) => typeof node?.props?.testID === 'string')
+            .map((node: any) => node.props.testID)
+            .filter((testID: string) => [
+                'agent-input-agent-chip',
+                'agent-input-permission-chip',
+                'agent-input-automation-chip',
+                'agent-input-machine-chip',
+                'agent-input-path-chip',
+            ].includes(testID));
+
+        expect(orderedTestIds).toEqual([
+            'agent-input-agent-chip',
+            'agent-input-permission-chip',
+            'agent-input-automation-chip',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+        ]);
+
+        act(() => tree!.unmount());
+    });
 });

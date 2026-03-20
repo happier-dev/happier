@@ -65,7 +65,10 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -73,12 +76,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'agentInputChipDensity') return 'labels';
         if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
         return null;
-        },
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-    }));
+    },
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -132,5 +137,6 @@ describe('AgentInput (attachments drag overlay)', () => {
 
         const overlay = tree!.root.findByProps({ testID: 'agent-input-drop-overlay' });
         expect(overlay.props.pointerEvents).toBe('none');
-    }, 60_000);
+        expect(overlay.props.style.backgroundColor).toBe('rgba(0, 0, 0, 0.45)');
+    }, 120_000);
 });

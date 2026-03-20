@@ -58,7 +58,10 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -66,15 +69,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'agentInputChipDensity') return 'labels';
         if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
         return null;
-        },
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-    }));
+    },
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -246,6 +251,30 @@ describe('AgentInput (send button accessibility)', () => {
         act(() => tree!.unmount());
     });
 
+    it('prefers an explicit submit accessibility label override when provided', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value="hello"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    submitAccessibilityLabel="automations.create.createButtonTitle"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const send = findSendPressable(tree!);
+        expect(send.props.accessibilityRole).toBe('button');
+        expect(send.props.accessibilityLabel).toBe('automations.create.createButtonTitle');
+        act(() => tree!.unmount());
+    });
+
     it('sets an accessibility hint when send is disabled because input is empty (no sessionId, no mic)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
@@ -295,6 +324,51 @@ describe('AgentInput (send button accessibility)', () => {
             send.props.onPress();
         });
         expect(onSend).toHaveBeenCalledTimes(1);
+
+        act(() => tree!.unmount());
+    });
+
+    it('uses the latest onSend callback after rerendering', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const firstOnSend = vi.fn();
+        const secondOnSend = vi.fn();
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    sessionId="session-1"
+                    value="hello"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={firstOnSend}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        act(() => {
+            tree!.update(
+                <AgentInput
+                    sessionId="session-1"
+                    value="hello"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={secondOnSend}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const send = findSendPressable(tree!);
+        act(() => {
+            send.props.onPress();
+        });
+
+        expect(firstOnSend).not.toHaveBeenCalled();
+        expect(secondOnSend).toHaveBeenCalledTimes(1);
 
         act(() => tree!.unmount());
     });
@@ -406,6 +480,51 @@ describe('AgentInput (send button accessibility)', () => {
         const octicons = send.findAllByType('Octicons' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
 
+        act(() => tree!.unmount());
+    });
+
+    it('does not leave raw string children under non-Text host views on web', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    machineName="Machine"
+                    currentPath="/tmp/project"
+                    permissionMode="default"
+                    onPermissionModeChange={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                />
+            );
+        });
+
+        const invalidStrings: Array<{ parentType: string | null; value: string }> = [];
+        const walk = (node: any, parentType: string | null) => {
+            if (node == null) return;
+            if (typeof node === 'string') {
+                if (parentType !== 'Text') invalidStrings.push({ parentType, value: node });
+                return;
+            }
+            if (Array.isArray(node)) {
+                for (const child of node) walk(child, parentType);
+                return;
+            }
+            const nextParent = typeof node.type === 'string' ? node.type : parentType;
+            const children = Array.isArray(node.children) ? node.children : [];
+            for (const child of children) walk(child, nextParent);
+        };
+
+        walk(tree!.toJSON(), null);
+
+        expect(invalidStrings).toEqual([]);
         act(() => tree!.unmount());
     });
 });

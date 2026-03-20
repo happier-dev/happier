@@ -58,7 +58,10 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+  return {
+    ...actual,
   useSetting: (key: string) => {
     if (key === 'profiles') return [];
     if (key === 'agentInputEnterToSend') return true;
@@ -75,12 +78,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
     agentInputChipDensity: 'labels',
     sessionPermissionModeApplyTiming: 'immediate',
     agentInputHistoryScope: 'perSession',
-      }),
-      useSessionMessages: () => ({ messages: [], isLoaded: true }),
-      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-      useSessionMessagesById: () => ({}),
-      useSessionMessagesVersion: () => 0,
-    }));
+  }),
+  useSessionMessages: () => ({ messages: [], isLoaded: true }),
+  useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+  useSessionMessagesById: () => ({}),
+  useSessionMessagesVersion: () => 0,
+  useSessionMessagesReducerState: () => null,
+  };
+});
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
   useUserMessageHistory: () => ({
@@ -192,6 +197,38 @@ function findMultiTextInput(tree: renderer.ReactTestRenderer) {
 describe('AgentInput (history navigation)', () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('does not send on Enter when sending is disabled', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    let tree: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(
+        <AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          isSendDisabled={true}
+          disabled={false}
+          showAbortButton={false}
+        />
+      );
+    });
+
+    const input = findMultiTextInput(tree!);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+    });
+
+    expect(handled).toBe(false);
+    expect(mocks.onSend).not.toHaveBeenCalled();
+    expect(mocks.historyReset).not.toHaveBeenCalled();
   });
 
   it('intercepts ArrowUp at start-of-input on web and applies history text', async () => {

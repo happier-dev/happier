@@ -25,75 +25,65 @@ vi.mock('react-native', async () => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                    colors: {
-                        input: { background: '#fff' },
-                        accent: { indigo: '#5856D6' },
-                        box: {
-                            error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
-                            warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
-                        },
-                        button: {
-                            primary: { background: '#000', tint: '#fff' },
-                            secondary: { tint: '#000', surface: '#fff' },
-                        },
-                    radio: { active: '#000', inactive: '#ddd' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    divider: '#ddd',
-                    success: '#0a0',
-                    textDestructive: '#a00',
-                    surfacePressed: '#eee',
-                    permission: {
-                        acceptEdits: '#0a0',
-                        bypass: '#0a0',
-                        plan: '#0a0',
-                        readOnly: '#0a0',
-                        safeYolo: '#0a0',
-                        yolo: '#0a0',
-                    },
-                    surfaceHighest: '#fafafa',
+vi.mock('react-native-unistyles', () => {
+    const createFallbackToken = (value: string) => {
+        const token: any = new Proxy(
+            {},
+            {
+                get: (_target, prop) => {
+                    if (prop === Symbol.toPrimitive) return () => value;
+                    if (prop === 'toString') return () => value;
+                    if (prop === 'valueOf') return () => value;
+                    return token;
                 },
-            };
-            return typeof styles === 'function' ? styles(theme) : styles;
-        },
-    },
-    useUnistyles: () => ({
-            theme: {
-                colors: {
-                    input: { background: '#fff' },
-                    accent: { indigo: '#5856D6' },
-                    box: {
-                        error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
-                        warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
-                    },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000', surface: '#fff' },
-                    },
-                radio: { active: '#000', inactive: '#ddd' },
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                success: '#0a0',
-                textDestructive: '#a00',
-                surfacePressed: '#eee',
-                permission: {
-                    acceptEdits: '#0a0',
-                    bypass: '#0a0',
-                    plan: '#0a0',
-                    readOnly: '#0a0',
-                    safeYolo: '#0a0',
-                    yolo: '#0a0',
-                },
-                surfaceHighest: '#fafafa',
             },
+        );
+        return token;
+    };
+
+    const fallback = createFallbackToken('#000');
+    const withFallback = <T extends Record<string, any>>(obj: T): T =>
+        new Proxy(obj, {
+            get: (target, prop) => (prop in target ? (target as any)[prop] : fallback),
+        });
+
+    const theme = {
+        colors: withFallback({
+            input: withFallback({ background: '#111' }),
+            text: '#fff',
+            textSecondary: '#aaa',
+            textTertiary: '#888',
+            divider: '#333',
+            surface: '#000',
+            surfacePressed: '#111',
+            overlay: withFallback({ scrim: 'rgba(0,0,0,0.4)', text: '#fff' }),
+            radio: withFallback({ active: '#0af', inactive: '#555', dot: '#0af' }),
+            button: withFallback({
+                secondary: withFallback({ tint: '#0af' }),
+                primary: withFallback({ tint: '#0af' }),
+            }),
+            permission: withFallback({
+                acceptEdits: '#0a0',
+                bypass: '#f00',
+                plan: '#0af',
+                readOnly: '#777',
+                safeYolo: '#fb0',
+                yolo: '#f0f',
+            }),
+        }),
+    };
+
+    const runtime = {
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    };
+
+    return {
+        useUnistyles: () => ({ theme, runtime }),
+        StyleSheet: {
+            create: (value: any) => (typeof value === 'function' ? value(theme, runtime) : value),
         },
-    }),
-}));
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
@@ -116,7 +106,10 @@ vi.mock('@/components/ui/text/Text', () => ({
         React.createElement(React.Fragment, null, props.children),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -131,12 +124,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-        }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-    }));
+    }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -259,9 +254,13 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    getProfileEnvironmentVariables: () => ({}),
-}));
+vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
+    return {
+        ...actual,
+        getProfileEnvironmentVariables: () => [],
+    };
+});
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     resolveProfileById: () => null,
@@ -301,7 +300,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
+    Typography: { default: () => ({}), mono: () => ({}), header: () => ({}) },
 }));
 
 vi.mock('./ResumeChip', () => ({
@@ -317,6 +316,7 @@ vi.mock('./PathAndResumeRow', () => ({
 
 vi.mock('./actionBarLogic', () => ({
     getHasAnyAgentInputActions: () => false,
+    shouldShowSecondaryControlRow: () => false,
     shouldShowPathAndResumeRow: () => false,
 }));
 

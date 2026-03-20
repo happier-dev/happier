@@ -24,7 +24,10 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -43,7 +46,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionMessagesById: () => ({}),
     useSessionMessagesVersion: () => 0,
     useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-}));
+    useSessionMessagesReducerState: () => null,
+    };
+});
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     useUserMessageHistory: () => ({ reset: () => {}, moveUp: () => {}, moveDown: () => {}, setText: () => {} }),
@@ -167,7 +172,7 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (chip ordering)', () => {
-    it('renders permissions, then backend, then mode', async () => {
+    it('keeps the engine controls grouped ahead of permission in wrap layout', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -231,14 +236,138 @@ describe('AgentInput (chip ordering)', () => {
         const allNodes = flattenJson(tree!.toJSON() as JsonNode);
         const pressables = allNodes.filter((n) => n.type === 'Pressable');
 
-        const permissionIndex = pressables.findIndex((n) => pressableContainsIcon(n, 'Octicons', 'gear'));
+        const permissionIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-permission-chip');
         const agentIndex = pressables.findIndex((n) => pressableContainsIcon(n, 'Octicons', 'cpu'));
-        const modeIndex = pressables.findIndex((n) => (n.props as any)?.accessibilityLabel === 'agentInput.mode.badgeA11y');
+        const modeIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-session-mode-chip');
 
         expect(permissionIndex).toBeGreaterThanOrEqual(0);
         expect(agentIndex).toBeGreaterThanOrEqual(0);
         expect(modeIndex).toBeGreaterThanOrEqual(0);
-        expect(permissionIndex).toBeLessThan(agentIndex);
         expect(agentIndex).toBeLessThan(modeIndex);
-    });
+        expect(modeIndex).toBeLessThan(permissionIndex);
+    }, 90_000);
+
+    it('keeps machine on the secondary wrap row after the send button and before path/resume', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AgentInput, {
+                    value: '',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    onMachineClick: () => {},
+                    machineName: 'Local dev machine',
+                    onPathClick: () => {},
+                    currentPath: '/workspace/app',
+                    onResumeClick: () => {},
+                    resumeSessionId: 'session-1',
+                }),
+            );
+        });
+
+        type JsonNode =
+            | renderer.ReactTestRendererJSON
+            | renderer.ReactTestRendererJSON[]
+            | string
+            | number
+            | null;
+
+        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
+            if (!node) return out;
+            if (typeof node === 'string' || typeof node === 'number') return out;
+            if (Array.isArray(node)) {
+                for (const entry of node) flattenJson(entry, out);
+                return out;
+            }
+            out.push(node);
+            if (node.children) flattenJson(node.children as JsonNode, out);
+            return out;
+        }
+
+        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const sendIndex = allNodes.findIndex((node) => node.props?.testID === 'new-session-composer-send');
+        const machineIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-machine-chip');
+        const pathIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-path-chip');
+
+        expect(sendIndex).toBeGreaterThanOrEqual(0);
+        expect(machineIndex).toBeGreaterThan(sendIndex);
+        expect(pathIndex).toBeGreaterThan(machineIndex);
+    }, 90_000);
+
+    it('keeps recipient ahead of delivery in the primary wrap row', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AgentInput, {
+                    value: '',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    onPermissionClick: () => {},
+                    extraActionChips: [
+                        {
+                            key: 'participants-recipient',
+                            controlId: 'recipient',
+                            collapsedOptionsPopover: {
+                                title: 'session.participants.sendToTitle',
+                                options: [{ id: 'lead', label: 'Lead' }],
+                                selectedOptionId: 'lead',
+                                onSelect: () => {},
+                            },
+                            render: () => React.createElement('Pressable', { testID: 'agent-input-recipient-chip' }),
+                        },
+                        {
+                            key: 'execution-run-delivery',
+                            controlId: 'delivery',
+                            collapsedOptionsPopover: {
+                                title: 'runs.delivery.title',
+                                options: [{ id: 'interrupt', label: 'Interrupt' }],
+                                selectedOptionId: 'interrupt',
+                                onSelect: () => {},
+                            },
+                            render: () => React.createElement('Pressable', { testID: 'agent-input-delivery-chip' }),
+                        },
+                    ],
+                }),
+            );
+        });
+
+        type JsonNode =
+            | renderer.ReactTestRendererJSON
+            | renderer.ReactTestRendererJSON[]
+            | string
+            | number
+            | null;
+
+        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
+            if (!node) return out;
+            if (typeof node === 'string' || typeof node === 'number') return out;
+            if (Array.isArray(node)) {
+                for (const entry of node) flattenJson(entry, out);
+                return out;
+            }
+            out.push(node);
+            if (node.children) flattenJson(node.children as JsonNode, out);
+            return out;
+        }
+
+        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const permissionIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-permission-chip');
+        const recipientIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-recipient-chip');
+        const deliveryIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-delivery-chip');
+
+        expect(permissionIndex).toBeGreaterThanOrEqual(0);
+        expect(recipientIndex).toBeGreaterThan(permissionIndex);
+        expect(deliveryIndex).toBeGreaterThan(recipientIndex);
+    }, 90_000);
+
 });

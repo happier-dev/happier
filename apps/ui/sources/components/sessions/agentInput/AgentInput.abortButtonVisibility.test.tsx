@@ -42,7 +42,10 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -57,15 +60,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-        }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-    }));
+    }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -181,10 +186,11 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
     computeAcpConfigOptionControls: () => null,
 }));
 
+const agentInputModulePromise = import('./AgentInput');
+
 describe('AgentInput (abort button visibility)', () => {
     it('does not render the stop button when showAbortButton is false (even if onAbort exists)', async () => {
-        const { AgentInput } = await import('./AgentInput');
-
+        const { AgentInput } = await agentInputModulePromise;
         let tree: renderer.ReactTestRenderer;
         act(() => {
             tree = renderer.create(
@@ -208,8 +214,7 @@ describe('AgentInput (abort button visibility)', () => {
     });
 
     it('renders the stop button when showAbortButton is true and onAbort exists', async () => {
-        const { AgentInput } = await import('./AgentInput');
-
+        const { AgentInput } = await agentInputModulePromise;
         let tree: renderer.ReactTestRenderer;
         act(() => {
             tree = renderer.create(
@@ -228,6 +233,9 @@ describe('AgentInput (abort button visibility)', () => {
 
         const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
         expect(stopIcons).toHaveLength(1);
+
+        const abortButtons = tree!.root.findAll((n: any) => n?.props?.testID === 'agent-input-abort');
+        expect(abortButtons.length).toBeGreaterThanOrEqual(1);
 
         act(() => tree!.unmount());
     });

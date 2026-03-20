@@ -2,10 +2,8 @@ import React from 'react';
 
 import type { CustomModalInjectedProps } from '@/modal';
 
-import {
-    AgentInputChipPickerPanel,
-    type AgentInputChipPickerOption,
-} from './AgentInputChipPickerPanel';
+import { AgentInputChipPickerSurface } from './AgentInputChipPickerSurface';
+import type { AgentInputChipPickerOption } from './AgentInputChipPickerPanel';
 
 export type AgentInputChipPickerModalOption = AgentInputChipPickerOption;
 
@@ -19,7 +17,7 @@ export type AgentInputChipPickerModalProps = Readonly<CustomModalInjectedProps &
 
 export function AgentInputChipPickerModal(props: AgentInputChipPickerModalProps) {
     return (
-        <AgentInputChipPickerPanel
+        <AgentInputChipPickerSurface
             title={props.title}
             options={props.options}
             selectedOptionId={props.selectedOptionId}

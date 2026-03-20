@@ -276,6 +276,7 @@ vi.mock('./PathAndResumeRow', () => ({
 
 vi.mock('./actionBarLogic', () => ({
     getHasAnyAgentInputActions: () => false,
+    shouldShowSecondaryControlRow: () => false,
     shouldShowPathAndResumeRow: () => false,
 }));
 

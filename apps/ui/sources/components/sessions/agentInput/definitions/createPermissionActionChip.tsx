@@ -1,0 +1,31 @@
+import * as React from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { Pressable, type View } from 'react-native';
+
+import { Text } from '@/components/ui/text/Text';
+
+export function createPermissionActionChip(params: Readonly<{
+    anchorRef: React.RefObject<View | null>;
+    tint: string;
+    showLabel: boolean;
+    label: string | null;
+    chipStyle: (pressed: boolean) => any;
+    textStyle: any;
+    onPress: () => void;
+}>): React.ReactNode {
+    return (
+        <Pressable
+            ref={params.anchorRef}
+            key="permission"
+            testID="agent-input-permission-chip"
+            onPress={params.onPress}
+            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+            style={(state) => params.chipStyle(state.pressed)}
+        >
+            <Ionicons name="shield-outline" size={18} color={params.tint} />
+            {params.showLabel && params.label ? (
+                <Text style={params.textStyle}>{params.label}</Text>
+            ) : null}
+        </Pressable>
+    );
+}
