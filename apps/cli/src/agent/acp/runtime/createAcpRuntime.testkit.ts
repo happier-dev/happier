@@ -79,6 +79,7 @@ export function createSessionClientWithMetadata(opts?: {
   const session: AcpRuntimeSessionClient = {
     keepAlive: () => {},
     sendAgentMessage: () => {},
+    sendTranscriptDraftDelta: () => {},
     sendAgentMessageCommitted: async (_provider, body, _opts) => {
       committed.push(body);
       opts?.onSendAgentMessageCommitted?.(body);
@@ -97,6 +98,7 @@ export function createBasicSessionClient(): AcpRuntimeSessionClient {
   return {
     keepAlive: () => {},
     sendAgentMessage: () => {},
+    sendTranscriptDraftDelta: () => {},
     sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
     sendUserTextMessageCommitted: async (_text, _opts) => {},
     fetchRecentTranscriptTextItemsForAcpImport: async () => [],
