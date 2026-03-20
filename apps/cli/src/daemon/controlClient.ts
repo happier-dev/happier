@@ -8,8 +8,9 @@ import { clearDaemonState, readDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { projectPath } from '@/projectPath';
 import { readFileSync, statSync } from 'fs';
-import { join } from 'path';
 import { configuration } from '@/configuration';
+import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { resolveComparableCliVersion } from './resolveComparableCliVersion';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number;
@@ -18,10 +19,14 @@ export type DaemonControlRequestOptions = {
 const DEFAULT_DAEMON_HTTP_TIMEOUT_MS = 10_000;
 const DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS = 120_000;
 const DEFAULT_DAEMON_PING_TIMEOUT_MS = 3_000;
+const DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = 12_000;
+const DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS = 10_000;
 const DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS = 60_000;
 const DAEMON_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_HTTP_TIMEOUT';
 const DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT';
 const DAEMON_PING_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PING_TIMEOUT_MS';
+const DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS';
+const DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_ENV_KEY = 'HAPPIER_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS';
 
 function resolveDaemonStateAgeMs(state: unknown): number | null {
   if (state && typeof state === 'object') {
@@ -90,6 +95,24 @@ function resolveDaemonPingTimeoutMs(): number {
     min: 100,
     max: 300_000,
   });
+}
+
+function resolveDaemonStopWaitForDeathTimeoutMs(): number {
+  const rawExplicit = process.env[DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_ENV_KEY];
+  if (rawExplicit !== undefined && String(rawExplicit).trim().length > 0) {
+    return resolvePositiveIntValue(rawExplicit, DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS, {
+      min: 0,
+      max: 300_000,
+    });
+  }
+
+  const rawDrainGrace = process.env[DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_ENV_KEY];
+  const drainGraceMs = resolvePositiveIntValue(rawDrainGrace, DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS, {
+    min: 0,
+    max: 120_000,
+  });
+
+  return Math.max(DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS, drainGraceMs + 2_000);
 }
 
 async function daemonPost(path: string, body?: any, options: DaemonControlRequestOptions = {}): Promise<{ error?: string } | any> {
@@ -196,8 +219,17 @@ export async function stopDaemonSession(sessionId: string): Promise<boolean> {
   return result.success || false;
 }
 
-export async function spawnDaemonSession(directory: string, sessionId?: string): Promise<any> {
-  const result = await daemonPost('/spawn-session', { directory, sessionId });
+export async function spawnDaemonSession(directory: string, sessionId?: string): Promise<any>;
+export async function spawnDaemonSession(request: SpawnDaemonSessionRequest): Promise<any>;
+export async function spawnDaemonSession(
+  directoryOrRequest: string | SpawnDaemonSessionRequest,
+  sessionId?: string,
+): Promise<any> {
+  const request = typeof directoryOrRequest === 'string'
+    ? { directory: directoryOrRequest, ...(sessionId ? { sessionId } : {}) }
+    : directoryOrRequest;
+
+  const result = await daemonPost('/spawn-session', request);
   return result;
 }
 
@@ -269,7 +301,9 @@ export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolea
  * 
  * @returns true if versions match, false if versions differ or no daemon running
  */
-export async function isDaemonRunningCurrentlyInstalledHappyVersion(): Promise<boolean> {
+export async function isDaemonRunningCurrentlyInstalledHappyVersion(params: Readonly<{
+  expectedMachineId?: string | null;
+}> = {}): Promise<boolean> {
   logger.debug('[DAEMON CONTROL] Checking if daemon is running same version');
   const runningDaemon = await checkIfDaemonRunningAndCleanupStaleState();
   if (!runningDaemon) {
@@ -282,12 +316,24 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(): Promise<b
     logger.debug('[DAEMON CONTROL] No daemon state found, returning false');
     return false;
   }
+
+  const expectedMachineId = typeof params.expectedMachineId === 'string' ? params.expectedMachineId.trim() : '';
+  if (expectedMachineId) {
+    const stateMachineId = typeof state.machineId === 'string' ? state.machineId.trim() : '';
+    if (!stateMachineId || stateMachineId !== expectedMachineId) {
+      logger.debug(
+        `[DAEMON CONTROL] Running daemon machine mismatch. expected=${expectedMachineId} actual=${stateMachineId || 'missing'}`,
+      );
+      return false;
+    }
+  }
   
   try {
-    // Read package.json on demand from disk - so we are guaranteed to get the latest version
-    const packageJsonPath = join(projectPath(), 'package.json');
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-    const currentCliVersion = packageJson.version;
+    const currentCliVersion = resolveComparableCliVersion({
+      fallbackVersion: configuration.currentCliVersion,
+      projectRootPath: projectPath(),
+      readFileSyncImpl: readFileSync,
+    });
     
     logger.debug(`[DAEMON CONTROL] Current CLI version: ${currentCliVersion}, Daemon started with version: ${state.startedWithCliVersion}`);
     return currentCliVersion === state.startedWithCliVersion;
@@ -321,7 +367,7 @@ export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
       await stopDaemonHttp({ stopSessions: params.stopSessions === true });
 
       // Wait for daemon to die
-      await waitForProcessDeath(state.pid, 2000);
+      await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs());
       logger.debug('Daemon stopped gracefully via HTTP');
       return;
     } catch (error) {

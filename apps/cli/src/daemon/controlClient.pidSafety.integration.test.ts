@@ -101,6 +101,7 @@ describe.sequential('daemon control client PID safety', () => {
 
     const app = createDaemonControlApp({
       getChildren: () => [],
+      machineId: 'machine_local',
       stopSession: async () => false,
       spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
       requestShutdown: () => {},
@@ -203,6 +204,7 @@ describe.sequential('daemon control client PID safety', () => {
 
       const app = createDaemonControlApp({
         getChildren: () => [],
+        machineId: 'machine_local',
         stopSession: async () => false,
         spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
         requestShutdown: () => {},

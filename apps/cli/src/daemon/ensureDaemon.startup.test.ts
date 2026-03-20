@@ -4,13 +4,13 @@ vi.mock('./controlClient', () => ({
   isDaemonRunningCurrentlyInstalledHappyVersion: vi.fn(),
 }));
 
-vi.mock('@/utils/spawnHappyCLI', () => ({
-  spawnHappyCLI: vi.fn(),
+vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
+  spawnDetachedDaemonStartSync: vi.fn(),
 }));
 
 import { ensureDaemonRunningForSessionCommand } from './ensureDaemon';
 import { isDaemonRunningCurrentlyInstalledHappyVersion } from './controlClient';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 
 describe('ensureDaemonRunningForSessionCommand', () => {
   afterEach(() => {
@@ -26,14 +26,14 @@ describe('ensureDaemonRunningForSessionCommand', () => {
       .mockResolvedValueOnce(true);
 
     const unref = vi.fn();
-    vi.mocked(spawnHappyCLI).mockReturnValue({ unref } as any);
+    vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref } as any);
 
     vi.useFakeTimers();
     const promise = ensureDaemonRunningForSessionCommand();
     await vi.advanceTimersByTimeAsync(1000);
     await promise;
 
-    expect(spawnHappyCLI).toHaveBeenCalledWith(['daemon', 'start-sync'], expect.any(Object));
+    expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
     expect(unref).toHaveBeenCalledTimes(1);
     expect(isRunning).toHaveBeenCalledTimes(3);
   });
