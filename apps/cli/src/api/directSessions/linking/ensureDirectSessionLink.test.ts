@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { buildOpenCodeAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 const fetchSessionsPageMock = vi.fn();
 const fetchSessionByIdMock = vi.fn();
@@ -46,18 +47,14 @@ describe('ensureDirectSessionLink', () => {
       providerId: 'codex',
       remoteSessionId: 'thread_legacy',
       codexBackendMode: 'mcp',
-      runtimeDescriptor: {
-        v: 1,
-        providerId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          vendorSessionId: 'thread_runtime',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceProfileId: 'work',
-          homePath: '/tmp/connected-codex-home',
-        },
-      } satisfies AgentRuntimeDescriptorV1,
+      runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
+        backendMode: 'appServer',
+        vendorSessionId: 'thread_runtime',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'work',
+        homePath: '/tmp/connected-codex-home',
+      }),
       source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
       titleHint: 'Codex linked session',
       directoryHint: '/repo',
@@ -107,34 +104,32 @@ describe('ensureDirectSessionLink', () => {
       },
     });
 
-    const runtimeDescriptor = {
-      v: 1,
-      providerId: 'codex',
-      provider: {
-        backendMode: 'mcp',
-        vendorSessionId: 'thread_top_level',
-        home: 'user',
-        providerExtra: {
-          owner: 'codex',
-          schemaId: 'codex.agentRuntimeDescriptorExtra',
-          v: 1,
-          runtimeAffinity: {
-            backendMode: 'appServer',
-            vendorSessionId: 'thread_runtime',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-          },
-        },
-      },
-    } satisfies AgentRuntimeDescriptorV1;
-
     await ensureDirectSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       providerId: 'codex',
       remoteSessionId: 'thread_legacy',
       codexBackendMode: 'mcp',
-      runtimeDescriptor,
+      runtimeDescriptor: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'mcp',
+          vendorSessionId: 'thread_top_level',
+          home: 'user',
+          providerExtra: {
+            owner: 'codex',
+            schemaId: 'codex.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeAffinity: {
+              backendMode: 'appServer',
+              vendorSessionId: 'thread_runtime',
+              home: 'connectedService',
+              connectedServiceId: 'openai-codex',
+            },
+          },
+        },
+      },
       source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex' },
       titleHint: 'Codex linked session',
       directoryHint: '/repo',
@@ -176,16 +171,12 @@ describe('ensureDirectSessionLink', () => {
       machineId: 'machine_1',
       providerId: 'opencode',
       remoteSessionId: 'oc_legacy',
-      runtimeDescriptor: {
-        v: 1,
-        providerId: 'opencode',
-        provider: {
-          backendMode: 'server',
-          vendorSessionId: 'oc_runtime',
-          serverBaseUrl: 'http://127.0.0.1:4096/',
-          serverBaseUrlExplicit: true,
-        },
-      } satisfies AgentRuntimeDescriptorV1,
+      runtimeDescriptor: buildOpenCodeAgentRuntimeDescriptorV1({
+        backendMode: 'server',
+        vendorSessionId: 'oc_runtime',
+        serverBaseUrl: 'http://127.0.0.1:4096/',
+        serverBaseUrlExplicit: true,
+      }),
       source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' },
       titleHint: 'OpenCode linked session',
       directoryHint: '/repo',
@@ -246,7 +237,7 @@ describe('ensureDirectSessionLink', () => {
           serverBaseUrl: 'http://127.0.0.1:4096/',
           serverBaseUrlExplicit: true,
         },
-      } satisfies AgentRuntimeDescriptorV1,
+      } as any,
       source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' },
       titleHint: 'OpenCode linked session',
       directoryHint: '/repo',
@@ -278,33 +269,31 @@ describe('ensureDirectSessionLink', () => {
       },
     });
 
-    const runtimeDescriptor = {
-      v: 1,
-      providerId: 'opencode',
-      provider: {
-        backendMode: 'acp',
-        vendorSessionId: 'oc_top_level',
-        serverBaseUrl: 'http://legacy.example/',
-        providerExtra: {
-          owner: 'opencode',
-          schemaId: 'opencode.agentRuntimeDescriptorExtra',
-          v: 1,
-          runtimeHandle: {
-            backendMode: 'server',
-            vendorSessionId: 'oc_runtime',
-            serverBaseUrl: 'http://127.0.0.1:4096/',
-            serverBaseUrlExplicit: true,
-          },
-        },
-      },
-    } satisfies AgentRuntimeDescriptorV1;
-
     await ensureDirectSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
       providerId: 'opencode',
       remoteSessionId: 'oc_legacy',
-      runtimeDescriptor,
+      runtimeDescriptor: {
+        v: 1,
+        providerId: 'opencode',
+        provider: {
+          backendMode: 'acp',
+          vendorSessionId: 'oc_top_level',
+          serverBaseUrl: 'http://legacy.example/',
+          providerExtra: {
+            owner: 'opencode',
+            schemaId: 'opencode.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeHandle: {
+              backendMode: 'server',
+              vendorSessionId: 'oc_runtime',
+              serverBaseUrl: 'http://127.0.0.1:4096/',
+              serverBaseUrlExplicit: true,
+            },
+          },
+        },
+      },
       source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/', directory: '/repo' },
       titleHint: 'OpenCode linked session',
       directoryHint: '/repo',

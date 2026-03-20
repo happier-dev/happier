@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 
-import { type CodexBackendMode } from '@happier-dev/agents';
+import {
+  buildCodexAgentRuntimeDescriptor,
+  buildOpenCodeAgentRuntimeDescriptor,
+  type CodexBackendMode,
+} from '@happier-dev/agents';
 import {
   readCanonicalAgentRuntimeDescriptorV1ForProvider,
   type AgentRuntimeDescriptorV1,
@@ -154,54 +158,6 @@ function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
   return value === 'mcp' || value === 'acp' || value === 'appServer' ? value : null;
 }
 
-function createCodexAgentRuntimeDescriptorV1(params: Readonly<{
-  backendMode: CodexBackendMode;
-  vendorSessionId: string;
-  home: 'user' | 'connectedService';
-  connectedServiceId?: string;
-  connectedServiceProfileId?: string;
-  homePath?: string;
-}>): AgentRuntimeDescriptorV1 {
-  return {
-    v: 1,
-    providerId: 'codex',
-    provider: {
-      backendMode: params.backendMode,
-      vendorSessionId: params.vendorSessionId,
-      home: params.home,
-      ...(typeof params.connectedServiceId === 'string' && params.connectedServiceId.trim().length > 0
-        ? { connectedServiceId: params.connectedServiceId.trim() }
-        : {}),
-      ...(typeof params.connectedServiceProfileId === 'string' && params.connectedServiceProfileId.trim().length > 0
-        ? { connectedServiceProfileId: params.connectedServiceProfileId.trim() }
-        : {}),
-      ...(typeof params.homePath === 'string' && params.homePath.trim().length > 0
-        ? { homePath: params.homePath.trim() }
-        : {}),
-    },
-  };
-}
-
-function createOpenCodeAgentRuntimeDescriptorV1(params: Readonly<{
-  backendMode: 'server' | 'acp';
-  vendorSessionId: string;
-  serverBaseUrl?: string;
-  serverBaseUrlExplicit?: boolean;
-}>): AgentRuntimeDescriptorV1 {
-  return {
-    v: 1,
-    providerId: 'opencode',
-    provider: {
-      backendMode: params.backendMode,
-      vendorSessionId: params.vendorSessionId,
-      ...(typeof params.serverBaseUrl === 'string' && params.serverBaseUrl.trim().length > 0
-        ? { serverBaseUrl: params.serverBaseUrl.trim() }
-        : {}),
-      ...(params.serverBaseUrlExplicit === true ? { serverBaseUrlExplicit: true } : {}),
-    },
-  };
-}
-
 function resolveCodexRuntimeSourceAffinity(source: DirectSessionsSource): Readonly<{
   home: 'user' | 'connectedService';
   connectedServiceId?: string;
@@ -209,12 +165,11 @@ function resolveCodexRuntimeSourceAffinity(source: DirectSessionsSource): Readon
   homePath?: string;
 }> {
   if (source.kind !== 'codexHome' || source.home !== 'connectedService') {
-    const homePath = source.kind === 'codexHome' && typeof source.homePath === 'string' && source.homePath.trim().length > 0
-      ? source.homePath.trim()
-      : undefined;
     return {
       home: 'user',
-      ...(homePath ? { homePath } : {}),
+      ...(typeof (source as any).homePath === 'string' && (source as any).homePath.trim().length > 0
+        ? { homePath: (source as any).homePath.trim() }
+        : {}),
     };
   }
 
@@ -280,7 +235,7 @@ function resolveCodexDirectSessionLinkIdentity(params: Readonly<{
     remoteSessionId,
     codexBackendMode,
     source,
-    runtimeDescriptor: createCodexAgentRuntimeDescriptorV1({
+    runtimeDescriptor: buildCodexAgentRuntimeDescriptor({
       backendMode: codexBackendMode,
       vendorSessionId: remoteSessionId,
       home: canonicalRuntimeDescriptor?.home ?? sourceAffinity.home,
@@ -324,7 +279,7 @@ function resolveOpenCodeDirectSessionLinkIdentity(params: Readonly<{
 
   return {
     remoteSessionId,
-    runtimeDescriptor: createOpenCodeAgentRuntimeDescriptorV1({
+    runtimeDescriptor: buildOpenCodeAgentRuntimeDescriptor({
       backendMode,
       vendorSessionId: remoteSessionId,
       ...(serverBaseUrl ? { serverBaseUrl } : {}),
