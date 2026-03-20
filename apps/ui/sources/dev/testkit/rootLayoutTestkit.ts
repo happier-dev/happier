@@ -3,7 +3,19 @@ import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protoc
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
     features?: Omit<
         Partial<RootLayoutFeatures['features']>,
-        'attachments' | 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'voice' | 'social' | 'auth' | 'encryption' | 'e2ee'
+        | 'attachments'
+        | 'automations'
+        | 'connectedServices'
+        | 'updates'
+        | 'sharing'
+        | 'sessions'
+        | 'machines'
+        | 'terminal'
+        | 'voice'
+        | 'social'
+        | 'auth'
+        | 'encryption'
+        | 'e2ee'
     > &
         Readonly<{
         attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
@@ -11,6 +23,9 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         connectedServices?: Partial<RootLayoutFeatures['features']['connectedServices']>;
         updates?: Partial<RootLayoutFeatures['features']['updates']>;
         sharing?: Partial<RootLayoutFeatures['features']['sharing']>;
+        sessions?: Partial<RootLayoutFeatures['features']['sessions']>;
+        machines?: Partial<RootLayoutFeatures['features']['machines']>;
+        terminal?: Partial<RootLayoutFeatures['features']['terminal']>;
         voice?: Partial<RootLayoutFeatures['features']['voice']>;
         social?: Partial<RootLayoutFeatures['features']['social']>;
         auth?: Partial<RootLayoutFeatures['features']['auth']>;
@@ -55,6 +70,27 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             contentKeys: { enabled: true },
             pendingQueueV2: { enabled: false },
         },
+        sessions: {
+            enabled: false,
+            handoff: {
+                enabled: false,
+            },
+        },
+        machines: {
+            enabled: false,
+            transfer: {
+                enabled: false,
+                directPeer: {
+                    enabled: false,
+                },
+                serverRouted: {
+                    enabled: false,
+                },
+            },
+        },
+        terminal: {
+            embeddedPty: { enabled: false },
+        },
         voice: { enabled: false, happierVoice: { enabled: false } },
         social: {
             friends: {
@@ -86,21 +122,28 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             uploadTimeoutMs: 20_000,
             contextWindowMs: 30 * 60 * 1_000,
         },
-          voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
-          encryption: {
-              storagePolicy: 'required_e2ee',
-              allowAccountOptOut: false,
-              defaultAccountMode: 'e2ee',
-              plainAccountSettingsAtRest: 'server_sealed',
-              plainAccountCredentialsAtRest: 'server_sealed',
-          },
-          server: {},
-          social: {
-              friends: {
-                  allowUsername: false,
-                  requiredIdentityProviderId: 'github',
-              },
-          },
+        voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+        encryption: {
+            storagePolicy: 'required_e2ee',
+            allowAccountOptOut: false,
+            defaultAccountMode: 'e2ee',
+            plainAccountSettingsAtRest: 'server_sealed',
+            plainAccountCredentialsAtRest: 'server_sealed',
+        },
+        machines: {
+            transfer: {
+                serverRouted: {
+                    maxBytes: null,
+                },
+            },
+        },
+        server: {},
+        social: {
+            friends: {
+                allowUsername: false,
+                requiredIdentityProviderId: 'github',
+            },
+        },
         oauth: { providers: { github: { enabled: true, configured: true } } },
         auth: {
             methods: [],
@@ -143,6 +186,9 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextAuth: Partial<RootLayoutFeatures['features']['auth']> = nextFeatures.auth ?? {};
     const nextSocial: Partial<RootLayoutFeatures['features']['social']> = nextFeatures.social ?? {};
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
+    const nextSessions: Partial<RootLayoutFeatures['features']['sessions']> = nextFeatures.sessions ?? {};
+    const nextMachines: Partial<RootLayoutFeatures['features']['machines']> = nextFeatures.machines ?? {};
+    const nextTerminal: Partial<RootLayoutFeatures['features']['terminal']> = nextFeatures.terminal ?? {};
     const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
     const nextEncryption: Partial<RootLayoutFeatures['features']['encryption']> = nextFeatures.encryption ?? {};
     const nextE2ee: Partial<RootLayoutFeatures['features']['e2ee']> = nextFeatures.e2ee ?? {};
@@ -190,6 +236,34 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             sharing: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.sharing,
                 ...nextSharing,
+            },
+            sessions: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.sessions,
+                ...nextSessions,
+                handoff: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.sessions.handoff,
+                    ...(nextSessions.handoff ?? {}),
+                },
+            },
+            machines: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.machines,
+                ...nextMachines,
+                transfer: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.machines.transfer,
+                    ...(nextMachines.transfer ?? {}),
+                    directPeer: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.transfer.directPeer,
+                        ...(nextMachines.transfer?.directPeer ?? {}),
+                    },
+                    serverRouted: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.machines.transfer.serverRouted,
+                        ...(nextMachines.transfer?.serverRouted ?? {}),
+                    },
+                },
+            },
+            terminal: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.terminal,
+                ...nextTerminal,
             },
             voice: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.voice,

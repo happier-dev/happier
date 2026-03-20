@@ -6,20 +6,39 @@ import { installVitestRnShim } from './vitestRnShim';
 // Clear it by default so feature tests can opt-in explicitly per case.
 process.env.HAPPIER_FEATURE_POLICY_ENV = '';
 
+// Some browser-oriented libraries (e.g. xterm add-ons) ship UMD bundles that expect a `self` global.
+// Define it up-front so Vitest can import those modules in Node without crashing during module eval.
+const g = globalThis as any;
+if (!Object.prototype.hasOwnProperty.call(g, 'self') || g.self == null) {
+    try {
+        Object.defineProperty(g, 'self', {
+            value: g,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+        });
+    } catch {
+        g.self = g;
+    }
+}
+
 const ORIGINAL_WINDOW = (globalThis as any).window;
 const ORIGINAL_DOCUMENT = (globalThis as any).document;
 const ORIGINAL_NAVIGATOR = (globalThis as any).navigator;
+const ORIGINAL_SELF = (globalThis as any).self;
 const ORIGINAL_WINDOW_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'window');
 const ORIGINAL_DOCUMENT_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'document');
 const ORIGINAL_NAVIGATOR_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'navigator');
+const ORIGINAL_SELF_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'self');
 const HAD_WINDOW = Object.prototype.hasOwnProperty.call(globalThis as any, 'window');
 const HAD_DOCUMENT = Object.prototype.hasOwnProperty.call(globalThis as any, 'document');
 const HAD_NAVIGATOR = Object.prototype.hasOwnProperty.call(globalThis as any, 'navigator');
+const HAD_SELF = Object.prototype.hasOwnProperty.call(globalThis as any, 'self');
 
 function restoreDomGlobalsToOriginal(): void {
     const g = globalThis as any;
 
-    const restore = (key: 'window' | 'document' | 'navigator', had: boolean, value: unknown) => {
+    const restore = (key: 'window' | 'document' | 'navigator' | 'self', had: boolean, value: unknown) => {
         if (had) {
             try {
                 g[key] = value;
@@ -29,7 +48,9 @@ function restoreDomGlobalsToOriginal(): void {
                         ? ORIGINAL_WINDOW_DESCRIPTOR
                         : key === 'document'
                             ? ORIGINAL_DOCUMENT_DESCRIPTOR
-                            : ORIGINAL_NAVIGATOR_DESCRIPTOR;
+                            : key === 'navigator'
+                                ? ORIGINAL_NAVIGATOR_DESCRIPTOR
+                                : ORIGINAL_SELF_DESCRIPTOR;
                 if (originalDescriptor?.configurable) {
                     // Node can expose DOM-like globals (e.g. navigator) as accessor-only properties.
                     // Re-define them as data properties for test determinism.
@@ -53,6 +74,7 @@ function restoreDomGlobalsToOriginal(): void {
     restore('window', HAD_WINDOW, ORIGINAL_WINDOW);
     restore('document', HAD_DOCUMENT, ORIGINAL_DOCUMENT);
     restore('navigator', HAD_NAVIGATOR, ORIGINAL_NAVIGATOR);
+    restore('self', HAD_SELF, ORIGINAL_SELF);
 }
 
 type StorageLike = Readonly<{
@@ -192,6 +214,62 @@ vi.mock('@shopify/react-native-skia', () => ({
     rrect: () => ({}),
 }));
 
+// `react-native-reanimated` requires native bindings; provide a lightweight mock for node/Vitest.
+vi.mock('react-native-reanimated', () => {
+    type SharedValue<T> = { value: T };
+
+    const useSharedValue = <T,>(initial: T): SharedValue<T> => ({ value: initial });
+    const useDerivedValue = <T,>(factory: () => T): SharedValue<T> => ({ value: factory() });
+
+    const runOnJS = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
+    const runOnUI = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
+
+    const useAnimatedStyle = <T,>(factory: () => T): T => factory();
+    const useAnimatedProps = <T,>(factory: () => T): T => factory();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const useAnimatedReaction = (prepare: () => any, react: (value: any, previous: any) => void) => {
+        try {
+            const value = prepare();
+            react(value, undefined);
+        } catch {
+            // ignore
+        }
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withTiming = (value: any) => value;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withSpring = (value: any) => value;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withRepeat = (value: any) => value;
+    const cancelAnimation = () => {};
+
+    const Animated = {
+        View: 'Animated.View',
+        ScrollView: 'Animated.ScrollView',
+        Text: 'Animated.Text',
+        createAnimatedComponent: (component: unknown) => component,
+    } as const;
+
+    return {
+        __esModule: true,
+        default: Animated,
+        ...Animated,
+        cancelAnimation,
+        runOnJS,
+        runOnUI,
+        useAnimatedProps,
+        useAnimatedReaction,
+        useAnimatedStyle,
+        useDerivedValue,
+        useSharedValue,
+        withRepeat,
+        withSpring,
+        withTiming,
+    };
+});
+
 // `react-native-typography` relies on React Native's platform resolution (e.g. systemWeights.web.js),
 // which Node/Vitest cannot resolve via CJS `require("../helpers/systemWeights")`. Provide a minimal
 // stub so components can render without pulling in platform-specific internals.
@@ -235,6 +313,17 @@ vi.mock('expo-image', () => ({
 vi.mock('@shopify/flash-list', () => ({
     FlashList: 'FlashList',
 }));
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+    const flashListModule = await import('@shopify/flash-list');
+    return {
+        FlashList: flashListModule.FlashList,
+        flashListRuntime: {
+            Component: flashListModule.FlashList,
+            usingFallback: false,
+            reason: null,
+        },
+    };
+});
 
 // `expo-secure-store` is native; stub its async API for token storage tests.
 vi.mock('expo-secure-store', () => ({
@@ -277,6 +366,12 @@ vi.mock('react-native-unistyles', () => {
             surfaceHighest: '#f0f0f0',
             divider: '#eaeaea',
             shadow: { color: '#000000', opacity: 0.1 },
+            overlay: {
+                scrim: 'rgba(0, 0, 0, 0.45)',
+                scrimStrong: 'rgba(0, 0, 0, 0.6)',
+                text: '#FFFFFF',
+                textSecondary: 'rgba(255, 255, 255, 0.9)',
+            },
 
             //
             // System components
