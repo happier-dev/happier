@@ -9,6 +9,19 @@ describe('localSettingsParse', () => {
         expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
         expect(parsed.sessionsListStorageTab).toBe('persisted');
+        expect(parsed.activityBadgesEnabled).toBe(true);
+        expect(parsed.activityBadgeShowUnread).toBe(true);
+        expect(parsed.activityBadgeShowPendingPermissionRequests).toBe(true);
+        expect(parsed.activityBadgeShowPendingUserActionRequests).toBe(true);
+        expect(parsed.activityBadgeShowQueuedUserInput).toBe(true);
+        expect(parsed.activityBadgeShowFriendRequestsInboxCount).toBe(true);
+        expect(parsed.activityBadgeShowDesktopNonNumericDot).toBe(true);
+        expect(parsed.localNotificationsEnabled).toBe(true);
+        expect(parsed.localNotificationsShowReady).toBe(true);
+        expect(parsed.localNotificationsShowReadyMessageText).toBe(true);
+        expect(parsed.localNotificationsShowPendingPermissionRequests).toBe(true);
+        expect(parsed.localNotificationsShowPendingUserActionRequests).toBe(true);
+        expect(parsed.localNotificationsForegroundBehavior).toBe('full');
         expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
         expect(typeof (parsed as any).sidebarWidthBasisPx).toBe('number');
         expect((parsed as any).bottomPaneHeightPx).toBe(320);
@@ -48,5 +61,29 @@ describe('localSettingsParse', () => {
     it('accepts the middle ui item density selection', () => {
         const parsed = localSettingsParse({ uiItemDensity: 'cozy' });
         expect(parsed.uiItemDensity).toBe('cozy');
+    });
+
+    it('accepts explicit badge and local notification toggles', () => {
+        const parsed = localSettingsParse({
+            activityBadgesEnabled: false,
+            activityBadgeShowUnread: false,
+            activityBadgeShowFriendRequestsInboxCount: false,
+            localNotificationsEnabled: false,
+            localNotificationsShowReady: false,
+            localNotificationsShowReadyMessageText: false,
+            localNotificationsShowPendingPermissionRequests: false,
+            localNotificationsShowPendingUserActionRequests: false,
+            localNotificationsForegroundBehavior: 'silent',
+        });
+
+        expect(parsed.activityBadgesEnabled).toBe(false);
+        expect(parsed.activityBadgeShowUnread).toBe(false);
+        expect(parsed.activityBadgeShowFriendRequestsInboxCount).toBe(false);
+        expect(parsed.localNotificationsEnabled).toBe(false);
+        expect(parsed.localNotificationsShowReady).toBe(false);
+        expect(parsed.localNotificationsShowReadyMessageText).toBe(false);
+        expect(parsed.localNotificationsShowPendingPermissionRequests).toBe(false);
+        expect(parsed.localNotificationsShowPendingUserActionRequests).toBe(false);
+        expect(parsed.localNotificationsForegroundBehavior).toBe('silent');
     });
 });
