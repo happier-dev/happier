@@ -13,6 +13,7 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
         const acp = makeSettings({ codexBackendMode: 'acp' });
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'codex',
+            settings: acp,
             experiments: getAgentResumeExperimentsFromSettings('codex', acp),
             resumeSessionId: '',
         })).toEqual([INSTALLABLE_KEYS.CODEX_ACP]);
@@ -20,6 +21,7 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
         const mcp = makeSettings({ codexBackendMode: 'mcp' });
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'codex',
+            settings: mcp,
             experiments: getAgentResumeExperimentsFromSettings('codex', mcp),
             resumeSessionId: 'x1',
         })).toEqual([]);
@@ -29,6 +31,7 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
         const settings = makeSettings({ codexBackendMode: 'acp' });
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'claude',
+            settings,
             experiments: getAgentResumeExperimentsFromSettings('claude', settings),
             resumeSessionId: 'x1',
         })).toEqual([]);
@@ -46,7 +49,8 @@ describe('getNewSessionPreflightIssues', () => {
                 [CODEX_ACP_DEP_ID]: okCapability({ installed: false }),
             }),
         });
-        // Codex ACP can run via npx fallback now; do not block new sessions when the optional dep isn't installed.
+        // Codex ACP is handled via background install + daemon fresh-session fallback, so the wizard
+        // should not hard-block when the optional dependency is not installed yet.
         expect(issues).toEqual([]);
     });
 });

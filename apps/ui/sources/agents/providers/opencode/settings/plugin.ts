@@ -1,33 +1,33 @@
 import { OPENCODE_PROVIDER_FIELDS } from '@happier-dev/agents';
 
-import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
+import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
 
 export const OPENCODE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     providerId: 'opencode',
-    title: 'OpenCode',
+    title: { key: 'settingsProviders.plugins.opencode.title' },
     icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
     settings: OPENCODE_PROVIDER_FIELDS,
     uiSections: [
         {
             id: 'opencodeBackendMode',
-            title: 'Backend mode',
-            footer: 'Server mode unlocks questions and native forking. ACP mode is a legacy fallback.',
+            title: { key: 'settingsProviders.plugins.opencode.sections.backendMode.title' },
+            footer: { key: 'settingsProviders.plugins.opencode.sections.backendMode.footer' },
             fields: [
                 {
                     key: 'opencodeBackendMode',
                     kind: 'enum',
-                    title: 'OpenCode backend mode',
-                    subtitle: 'Choose the integration backend.',
+                    title: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.title' },
+                    subtitle: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.subtitle' },
                     enumOptions: [
                         {
                             id: 'server',
-                            title: 'Server (recommended)',
-                            subtitle: 'Uses OpenCode server APIs for richer features and reliability.',
+                            title: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.options.server.title' },
+                            subtitle: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.options.server.subtitle' },
                         },
                         {
                             id: 'acp',
-                            title: 'ACP (legacy)',
-                            subtitle: 'Routes OpenCode through ACP; fewer features.',
+                            title: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.options.acp.title' },
+                            subtitle: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.options.acp.subtitle' },
                         },
                     ],
                 },
@@ -35,14 +35,14 @@ export const OPENCODE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
         },
         {
             id: 'opencodeServer',
-            title: 'Server connection',
-            footer: 'Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead.',
+            title: { key: 'settingsProviders.plugins.opencode.sections.server.title' },
+            footer: { key: 'settingsProviders.plugins.opencode.sections.server.footer' },
             fields: [
                 {
                     key: 'opencodeServerBaseUrl',
                     kind: 'text',
-                    title: 'Existing OpenCode server URL',
-                    subtitle: 'Optional override for a user-managed OpenCode server.',
+                    title: { key: 'settingsProviders.plugins.opencode.fields.opencodeServerBaseUrl.title' },
+                    subtitle: { key: 'settingsProviders.plugins.opencode.fields.opencodeServerBaseUrl.subtitle' },
                     binding: {
                         kind: 'perActiveServer',
                         fallbackSettingKey: 'opencodeServerBaseUrl',
