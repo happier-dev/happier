@@ -6,8 +6,6 @@ import {
   DaemonMcpServersPreviewRequestSchema,
   type DaemonMcpServersPreviewResponse,
   DaemonMcpServersTestRequestSchema,
-  redactBugReportSensitiveText,
-  trimBugReportTextToMaxBytes,
   type DaemonMcpServersTestErrorCode,
   type DaemonMcpServersDetectResponse,
   type DaemonMcpServersDetectWarningV1,
@@ -30,13 +28,13 @@ import {
 } from '@/mcp/servers/resolveMcpValueRefPlaintext';
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
 import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
+import { redactMcpServerProbeError } from '@/mcp/servers/redactMcpServerProbeError';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { resolveSessionMcpPreview } from '@/mcp/preview/resolveSessionMcpPreview';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
 function redactErrorText(raw: unknown): string {
-  const text = raw instanceof Error ? raw.message : String(raw ?? '');
-  return trimBugReportTextToMaxBytes(redactBugReportSensitiveText(text), 512).trim() || 'unknown error';
+  return redactMcpServerProbeError(raw);
 }
 
 function nowMs(depsNowMs: (() => number) | undefined): number {
