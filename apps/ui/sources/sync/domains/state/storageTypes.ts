@@ -2,10 +2,12 @@ import { z } from "zod";
 import type { PermissionMode } from "@/constants/PermissionModes";
 import type { ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import { 
+    createAgentRuntimeDescriptorV1Schema,
     createAcpConfigOptionOverridesV1Schema,
     createAcpSessionModeOverrideV1Schema,
     createModelOverrideV1Schema,
     createSessionPermissionModeSchema,
+    createSessionRollbackRangesV1Schema,
     createSessionTerminalMetadataSchema,
     createSessionSystemSessionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
@@ -30,6 +32,8 @@ const MetadataObjectSchema = z.object({
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
+    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+    agentRuntimeDescriptorV1: createAgentRuntimeDescriptorV1Schema(z).optional(),
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
     opencodeBackendMode: z.enum(['server', 'acp']).optional(),
@@ -66,12 +70,34 @@ const MetadataObjectSchema = z.object({
             description: z.string().optional(),
         })),
     }).optional(),
+    sessionModesV1: z.object({
+        v: z.literal(1),
+        provider: z.string(),
+        updatedAt: z.number(),
+        currentModeId: z.string(),
+        availableModes: z.array(z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+        })),
+    }).optional(),
     /**
      * ACP session models (if supported by the provider's ACP agent).
      *
      * NOTE: This is an UNSTABLE ACP feature and may be unsupported by some agents.
      */
     acpSessionModelsV1: z.object({
+        v: z.literal(1),
+        provider: z.string(),
+        updatedAt: z.number(),
+        currentModelId: z.string(),
+        availableModels: z.array(z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+        })),
+    }).optional(),
+    sessionModelsV1: z.object({
         v: z.literal(1),
         provider: z.string(),
         updatedAt: z.number(),
@@ -102,6 +128,24 @@ const MetadataObjectSchema = z.object({
             })).optional(),
         })),
     }).optional(),
+    sessionConfigOptionsV1: z.object({
+        v: z.literal(1),
+        provider: z.string(),
+        updatedAt: z.number(),
+        configOptions: z.array(z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string().optional(),
+            type: z.string(),
+            currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+            options: z.array(z.object({
+                value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                name: z.string(),
+                description: z.string().optional(),
+            })).optional(),
+        })),
+    }).optional(),
+    sessionRollbackRangesV1: createSessionRollbackRangesV1Schema(z).optional(),
     /**
      * Desired ACP session mode override selected by the user (UI/CLI).
      *
@@ -110,10 +154,12 @@ const MetadataObjectSchema = z.object({
      * - `acpSessionModeOverrideV1` is the user's requested mode, applied by the runner when possible.
      */
     acpSessionModeOverrideV1: createAcpSessionModeOverrideV1Schema(z).optional(),
+    sessionModeOverrideV1: createAcpSessionModeOverrideV1Schema(z).optional(),
     /**
      * Desired ACP config option overrides selected by the user (UI/CLI).
      */
     acpConfigOptionOverridesV1: createAcpConfigOptionOverridesV1Schema(z).optional(),
+    sessionConfigOptionOverridesV1: createAcpConfigOptionOverridesV1Schema(z).optional(),
     acpConfiguredBackendV1: z.object({
         v: z.literal(1),
         updatedAt: z.number(),
@@ -253,6 +299,7 @@ export type AgentState = z.infer<typeof AgentStateSchema>;
 
 export interface Session {
     id: string,
+    serverId?: string,
     seq: number,
     /**
      * Session content encryption mode. Missing means legacy/unknown and should be treated as `e2ee`.
@@ -273,6 +320,9 @@ export interface Session {
      */
     pendingVersion?: number,
     pendingCount?: number,
+    lastViewedSessionSeq?: number | null,
+    pendingPermissionRequestCount?: number,
+    pendingUserActionRequestCount?: number,
     metadata: Metadata | null,
     metadataVersion: number,
     agentState: AgentState | null,
@@ -449,7 +499,7 @@ export interface ScmCapabilities {
     writeBranchCheckout?: boolean;
     readStash?: boolean;
     writeStash?: boolean;
-    workspaceWorktreeCreate: boolean;
+    worktreeCreate: boolean;
     changeSetModel?: 'index' | 'working-copy';
     supportedDiffAreas?: Array<'included' | 'pending' | 'both'>;
     operationLabels?: {
@@ -482,6 +532,12 @@ export interface ScmWorkingSnapshot {
         rootPath: string | null;
         backendId?: 'git' | 'sapling' | null;
         mode?: '.git' | '.sl' | null;
+        worktrees?: Array<{
+            path: string;
+            branch: string | null;
+            isCurrent: boolean;
+            isMain?: boolean;
+        }>;
     };
     capabilities?: ScmCapabilities;
     branch: {
