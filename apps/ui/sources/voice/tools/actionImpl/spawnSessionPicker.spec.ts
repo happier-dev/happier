@@ -50,7 +50,12 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     const res = await spawnSessionWithPickerForVoiceTool({ tag: 'T', initialMessage: 'Hi' });
 
     expect(res).toMatchObject({ type: 'success', sessionId: 's_new' });
-    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'm2', directory: '/tmp/s2', agent: 'claude', serverId: 'server-a' }));
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm2',
+      directory: '/tmp/s2',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-a',
+    }));
     expect(refreshSessions).toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_new', expect.any(Function));
     expect(sendMessage).toHaveBeenCalledWith('s_new', 'Hi');
