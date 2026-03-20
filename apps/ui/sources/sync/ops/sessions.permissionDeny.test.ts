@@ -3,14 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 
-const { mockSessionRPC } = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
+const { mockSessionRpcWithPreferredSessionScope } = vi.hoisted(() => ({
+    mockSessionRpcWithPreferredSessionScope: vi.fn(),
 }));
 
-vi.mock('../api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope', () => ({
+    sessionRpcWithPreferredSessionScope: (...args: unknown[]) => mockSessionRpcWithPreferredSessionScope(...args),
 }));
 
 // sessions.ts imports sync, which pulls native modules in node/vitest.
@@ -48,24 +46,25 @@ function buildSession(sessionId: string): Session {
 describe('sessionDeny', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
-        mockSessionRPC.mockReset();
+        mockSessionRpcWithPreferredSessionScope.mockReset();
     });
 
     it('clears local thinking state after a deny/abort permission decision', async () => {
         const sessionId = 's_permission_deny';
         storage.getState().applySessions([buildSession(sessionId)]);
         storage.getState().markSessionOptimisticThinking(sessionId);
-        mockSessionRPC.mockResolvedValue(undefined);
+        mockSessionRpcWithPreferredSessionScope.mockResolvedValue(undefined);
 
         await sessionDeny(sessionId, 'perm_1', undefined, undefined, 'abort');
 
         const session = storage.getState().sessions[sessionId];
         expect(session?.thinking).toBe(false);
         expect(session?.optimisticThinkingAt ?? null).toBeNull();
-        expect(mockSessionRPC).toHaveBeenCalledWith(
+        expect(session?.thinkingGraceUntil ?? null).toBeNull();
+        expect(mockSessionRpcWithPreferredSessionScope).toHaveBeenCalledWith({
             sessionId,
-            'permission',
-            expect.objectContaining({ id: 'perm_1', approved: false, decision: 'abort' }),
-        );
+            method: 'permission',
+            payload: expect.objectContaining({ id: 'perm_1', approved: false, decision: 'abort' }),
+        });
     });
 });

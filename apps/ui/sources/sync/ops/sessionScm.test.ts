@@ -7,15 +7,23 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 const sessionRpcMock = vi.hoisted(() => vi.fn());
 const machineRpcMock = vi.hoisted(() => vi.fn());
 const getStateMock = vi.hoisted(() => vi.fn());
+const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: sessionRpcMock,
+vi.mock('@/sync/api/session/apiSocket', () => ({
+  apiSocket: {
         machineRPC: machineRpcMock,
-    },
+  },
 }));
 
-vi.mock('../domains/state/storage', () => ({
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
+    sessionRpcWithServerScope: (params: unknown) => sessionRpcMock(params),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdMock(sessionId),
+}));
+
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: getStateMock,
     },
@@ -26,6 +34,8 @@ describe('sessionScm', () => {
         sessionRpcMock.mockReset();
         machineRpcMock.mockReset();
         getStateMock.mockReset();
+        resolvePreferredServerIdForSessionIdMock.mockReset();
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
     });
 
     it('returns unsupported fallback when status snapshot rpc payload is null', async () => {
@@ -149,6 +159,12 @@ describe('sessionScm', () => {
         expect(response.success).toBe(true);
         expect(machineRpcMock).toHaveBeenCalledTimes(1);
         expect(sessionRpcMock).toHaveBeenCalledTimes(1);
+        expect(sessionRpcMock).toHaveBeenCalledWith({
+            sessionId: 'session-1',
+            serverId: 'server-owned',
+            method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
+            payload: {},
+        });
     });
 
     it('does not fall back to session RPC for inactive sessions', async () => {

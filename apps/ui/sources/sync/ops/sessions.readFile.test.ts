@@ -1,8 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRpcCallError } from '../runtime/rpcErrors';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-type SessionReadFileRpcResponse = Readonly<{ success: boolean; content: string }> | null;
+type SessionReadFileRpcResponse =
+    | Readonly<{
+        success: boolean;
+        content?: string;
+        downloadId?: string;
+        chunkSizeBytes?: number;
+        sizeBytes?: number;
+        name?: string;
+        contentBase64?: string;
+        isLast?: boolean;
+        error?: string;
+    }>
+    | null;
 const sessionRPCSpy = vi.fn(
     async (_sessionId: string, _method: string, _payload: unknown): Promise<SessionReadFileRpcResponse> => ({
         success: true,
@@ -32,7 +44,7 @@ vi.mock('../domains/state/storage', () => ({
 
 describe('sessionReadFile', () => {
     it('prefers machine RPC and resolves relative paths against the session cwd', async () => {
-        const { sessionReadFile } = await import('./sessions');
+        const { sessionReadFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -55,7 +67,7 @@ describe('sessionReadFile', () => {
     });
 
     it('returns a stable failure response when the RPC returns an unsupported shape', async () => {
-        const { sessionReadFile } = await import('./sessions');
+        const { sessionReadFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -72,12 +84,66 @@ describe('sessionReadFile', () => {
         sessionRPCSpy.mockResolvedValueOnce(null);
 
         const res = await sessionReadFile('s1', 'src/a.ts');
-        expect(res).toMatchObject({ success: false });
+        expect(res.success).toBe(false);
+        if (res.success) {
+            throw new Error('Expected sessionReadFile to fail');
+        }
         expect(typeof res.error).toBe('string');
     });
 
+    it('falls back to files.download.* for active sessions when direct machine readFile is unavailable', async () => {
+        const { sessionReadFile } = await import('./sessionFileSystem');
+
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: true,
+                    metadata: {
+                        path: '~/repo',
+                        machineId: 'm1',
+                    },
+                },
+            },
+        });
+
+        machineRPCSpy.mockRejectedValueOnce(
+            createRpcCallError({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
+        );
+        sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string, payload: any) => {
+            if (method === RPC_METHODS.FILES_DOWNLOAD_INIT) {
+                expect(payload).toEqual({ path: 'src/a.ts' });
+                return {
+                    success: true,
+                    downloadId: 'd1',
+                    chunkSizeBytes: 3,
+                    sizeBytes: 5,
+                    name: 'a.ts',
+                };
+            }
+            if (method === RPC_METHODS.FILES_DOWNLOAD_CHUNK) {
+                if (payload.index === 0) {
+                    return { success: true, contentBase64: 'aGVs', isLast: false };
+                }
+                return { success: true, contentBase64: 'bG8=', isLast: true };
+            }
+            if (method === RPC_METHODS.FILES_DOWNLOAD_FINALIZE) {
+                return { success: true };
+            }
+            return { success: false, error: `unexpected method ${method}` };
+        });
+
+        const res = await sessionReadFile('s1', 'src/a.ts');
+        expect(res).toEqual({ success: true, content: 'aGVsbG8=' });
+        expect(machineRPCSpy).toHaveBeenCalledWith('m1', 'readFile', { path: '~/repo/src/a.ts' });
+        const sessionMethods = sessionRPCSpy.mock.calls.map((call) => call[1]);
+        expect(sessionMethods).not.toContain(RPC_METHODS.READ_FILE);
+        expect(sessionMethods.filter((method) => method === RPC_METHODS.FILES_DOWNLOAD_INIT).length).toBeGreaterThan(0);
+        expect(sessionMethods.filter((method) => method === RPC_METHODS.FILES_DOWNLOAD_CHUNK)).toHaveLength(2);
+        expect(sessionMethods.at(-1)).toBe(RPC_METHODS.FILES_DOWNLOAD_FINALIZE);
+    });
+
     it('does not fall back to session RPC for inactive sessions', async () => {
-        const { sessionReadFile } = await import('./sessions');
+        const { sessionReadFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -106,7 +172,7 @@ describe('sessionReadFile', () => {
     });
 
     it('fails closed when inactive session has no machine target', async () => {
-        const { sessionReadFile } = await import('./sessions');
+        const { sessionReadFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {

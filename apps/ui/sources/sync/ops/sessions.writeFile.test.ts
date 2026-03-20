@@ -32,7 +32,7 @@ vi.mock('../domains/state/storage', () => ({
 
 describe('sessionWriteFile', () => {
     it('base64-encodes UTF-8 content before calling the writeFile RPC', async () => {
-        const { sessionWriteFile } = await import('./sessions');
+        const { sessionWriteFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -52,16 +52,21 @@ describe('sessionWriteFile', () => {
 
         expect(res.success).toBe(true);
         expect(machineRPCSpy).toHaveBeenCalledTimes(1);
-        expect(machineRPCSpy).toHaveBeenCalledWith('m1', 'writeFile', {
+        const payload = machineRPCSpy.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+        expect(payload).toBeDefined();
+        if (!payload) {
+            throw new Error('Expected machineRPC to be called with a payload');
+        }
+        expect(payload).toMatchObject({
             path: '~/repo/src/a.ts',
             content: 'aGVsbG8=',
-            expectedHash: undefined,
         });
+        expect(Object.prototype.hasOwnProperty.call(payload, 'expectedHash')).toBe(false);
         expect(sessionRPCSpy).not.toHaveBeenCalled();
     });
 
     it('returns a stable errorCode when the RPC method is unavailable', async () => {
-        const { sessionWriteFile } = await import('./sessions');
+        const { sessionWriteFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -83,11 +88,14 @@ describe('sessionWriteFile', () => {
 
         const res = await sessionWriteFile('s1', 'src/a.ts', 'hello');
         expect(res.success).toBe(false);
+        if (res.success) {
+            throw new Error('Expected sessionWriteFile to fail');
+        }
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
     });
 
     it('returns a stable failure response when the RPC returns an unsupported shape', async () => {
-        const { sessionWriteFile } = await import('./sessions');
+        const { sessionWriteFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -104,15 +112,16 @@ describe('sessionWriteFile', () => {
         sessionRPCSpy.mockResolvedValueOnce(null);
 
         const res = await sessionWriteFile('s1', 'src/a.ts', 'hello');
-        expect(res).toMatchObject({
-            success: false,
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
+        expect(res.success).toBe(false);
+        if (res.success) {
+            throw new Error('Expected sessionWriteFile to fail');
+        }
+        expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(typeof res.error).toBe('string');
     });
 
     it('fails closed when inactive session has no machine target', async () => {
-        const { sessionWriteFile } = await import('./sessions');
+        const { sessionWriteFile } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -136,6 +145,9 @@ describe('sessionWriteFile', () => {
 
         const res = await sessionWriteFile('s1', 'src/a.ts', 'hello');
         expect(res.success).toBe(false);
+        if (res.success) {
+            throw new Error('Expected sessionWriteFile to fail');
+        }
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(machineRPCSpy).not.toHaveBeenCalled();
         expect(sessionRPCSpy).not.toHaveBeenCalled();

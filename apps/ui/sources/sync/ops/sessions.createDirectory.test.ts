@@ -17,7 +17,7 @@ vi.mock('../api/session/apiSocket', () => ({
 
 describe('sessionCreateDirectory', () => {
     it('calls the createDirectory RPC with the provided path', async () => {
-        const { sessionCreateDirectory } = await import('./sessions');
+        const { sessionCreateDirectory } = await import('./sessionFileSystem');
         sessionRPCSpy.mockClear();
 
         const res = await sessionCreateDirectory('s1', 'tmp/new-folder');
@@ -26,25 +26,29 @@ describe('sessionCreateDirectory', () => {
     }, 60_000);
 
     it('returns a stable errorCode when the RPC method is not found', async () => {
-        const { sessionCreateDirectory } = await import('./sessions');
+        const { sessionCreateDirectory } = await import('./sessionFileSystem');
         sessionRPCSpy.mockRejectedValueOnce(
             createRpcCallError({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
         );
 
         const res = await sessionCreateDirectory('s1', 'tmp/new-folder');
         expect(res.success).toBe(false);
+        if (res.success) {
+            throw new Error('Expected sessionCreateDirectory to fail');
+        }
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
     });
 
     it('returns a stable failure response when the RPC returns an unsupported shape', async () => {
-        const { sessionCreateDirectory } = await import('./sessions');
+        const { sessionCreateDirectory } = await import('./sessionFileSystem');
         sessionRPCSpy.mockResolvedValueOnce(null);
 
         const res = await sessionCreateDirectory('s1', 'tmp/new-folder');
-        expect(res).toMatchObject({
-            success: false,
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
+        expect(res.success).toBe(false);
+        if (res.success) {
+            throw new Error('Expected sessionCreateDirectory to fail');
+        }
+        expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(typeof res.error).toBe('string');
     });
 });

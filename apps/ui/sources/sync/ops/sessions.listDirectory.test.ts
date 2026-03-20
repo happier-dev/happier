@@ -35,7 +35,7 @@ vi.mock('../domains/state/storage', () => ({
 
 describe('sessionListDirectory', () => {
     it('prefers machine RPC and resolves relative paths against session cwd', async () => {
-        const { sessionListDirectory } = await import('./sessions');
+        const { sessionListDirectory } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -58,7 +58,7 @@ describe('sessionListDirectory', () => {
     });
 
     it('does not fall back to session RPC for inactive sessions', async () => {
-        const { sessionListDirectory } = await import('./sessions');
+        const { sessionListDirectory } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -86,7 +86,7 @@ describe('sessionListDirectory', () => {
     });
 
     it('resolves machine target from project fallback for inactive sessions', async () => {
-        const { sessionListDirectory } = await import('./sessions');
+        const { sessionListDirectory } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {
@@ -119,7 +119,7 @@ describe('sessionListDirectory', () => {
     });
 
     it('fails closed for inactive sessions when no machine target is available', async () => {
-        const { sessionListDirectory } = await import('./sessions');
+        const { sessionListDirectory } = await import('./sessionFileSystem');
 
         getStateSpy.mockReturnValue({
             sessions: {

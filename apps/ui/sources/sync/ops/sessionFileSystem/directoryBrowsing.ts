@@ -1,15 +1,12 @@
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { apiSocket } from '../../api/session/apiSocket';
-import { assertRpcResponseWithSuccess } from '../../runtime/assertRpcResponseWithSuccess';
 import { readRpcErrorCode } from '../../runtime/rpcErrors';
 import {
-  canUseSessionRpc,
-  readMachineTargetForSession,
-  resolveMachinePathFromSessionBase,
-  shouldFallbackToSessionRpc,
-} from '../sessionMachineTarget';
-import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from './_shared';
+  INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+  callSessionMachineRpcWithFallback,
+  rebasePathRequestToMachineTarget,
+  resolveDefaultSessionRpcFallbackRoute,
+} from '../../runtime/sessionMachineRpcFallback';
 
 type SessionCreateDirectoryRequest = Readonly<{ path: string }>;
 
@@ -18,48 +15,27 @@ export type SessionCreateDirectoryResponse =
   | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 export async function sessionCreateDirectory(sessionId: string, path: string): Promise<SessionCreateDirectoryResponse> {
-  try {
-    const machineTarget = readMachineTargetForSession(sessionId);
-    if (machineTarget) {
-      try {
-        const request: SessionCreateDirectoryRequest = {
-          path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
-        };
-        const response = await apiSocket.machineRPC<SessionCreateDirectoryResponse, SessionCreateDirectoryRequest>(
-          machineTarget.machineId,
-          RPC_METHODS.CREATE_DIRECTORY,
-          request,
-        );
-        return assertRpcResponseWithSuccess<SessionCreateDirectoryResponse>(response);
-      } catch (error) {
-        if (!shouldFallbackToSessionRpc(sessionId, error)) {
-          throw error;
-        }
-      }
-    }
-
-    if (!canUseSessionRpc(sessionId)) {
-      return {
+  const request: SessionCreateDirectoryRequest = { path };
+  return await callSessionMachineRpcWithFallback<SessionCreateDirectoryResponse, SessionCreateDirectoryRequest, Extract<SessionCreateDirectoryResponse, { success: false }>>({
+    sessionId,
+    request,
+    machineMethod: RPC_METHODS.CREATE_DIRECTORY,
+    sessionMethod: RPC_METHODS.CREATE_DIRECTORY,
+    toMachineRequest: rebasePathRequestToMachineTarget,
+    resolveFallbackRoute: async () => resolveDefaultSessionRpcFallbackRoute({
+      sessionId,
+      inactiveResponse: {
         success: false,
         error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
         errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-      };
-    }
-
-    const request: SessionCreateDirectoryRequest = { path };
-    const response = await apiSocket.sessionRPC<SessionCreateDirectoryResponse, SessionCreateDirectoryRequest>(
-      sessionId,
-      RPC_METHODS.CREATE_DIRECTORY,
-      request,
-    );
-    return assertRpcResponseWithSuccess<SessionCreateDirectoryResponse>(response);
-  } catch (error) {
-    return {
+      },
+    }),
+    errorResponse: (error) => ({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
       errorCode: readRpcErrorCode(error),
-    };
-  }
+    }),
+  });
 }
 
 type SessionListDirectoryRequest = Readonly<{ path: string }>;
@@ -76,46 +52,25 @@ export type SessionListDirectoryResponse =
   | Readonly<{ success: false; error: string }>;
 
 export async function sessionListDirectory(sessionId: string, path: string): Promise<SessionListDirectoryResponse> {
-  try {
-    const machineTarget = readMachineTargetForSession(sessionId);
-    if (machineTarget) {
-      try {
-        const request: SessionListDirectoryRequest = {
-          path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
-        };
-        const response = await apiSocket.machineRPC<SessionListDirectoryResponse, SessionListDirectoryRequest>(
-          machineTarget.machineId,
-          RPC_METHODS.LIST_DIRECTORY,
-          request,
-        );
-        return assertRpcResponseWithSuccess<SessionListDirectoryResponse>(response);
-      } catch (error) {
-        if (!shouldFallbackToSessionRpc(sessionId, error)) {
-          throw error;
-        }
-      }
-    }
-
-    if (!canUseSessionRpc(sessionId)) {
-      return {
+  const request: SessionListDirectoryRequest = { path };
+  return await callSessionMachineRpcWithFallback<SessionListDirectoryResponse, SessionListDirectoryRequest, Extract<SessionListDirectoryResponse, { success: false }>>({
+    sessionId,
+    request,
+    machineMethod: RPC_METHODS.LIST_DIRECTORY,
+    sessionMethod: RPC_METHODS.LIST_DIRECTORY,
+    toMachineRequest: rebasePathRequestToMachineTarget,
+    resolveFallbackRoute: async () => resolveDefaultSessionRpcFallbackRoute({
+      sessionId,
+      inactiveResponse: {
         success: false,
         error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-      };
-    }
-
-    const request: SessionListDirectoryRequest = { path };
-    const response = await apiSocket.sessionRPC<SessionListDirectoryResponse, SessionListDirectoryRequest>(
-      sessionId,
-      RPC_METHODS.LIST_DIRECTORY,
-      request,
-    );
-    return assertRpcResponseWithSuccess<SessionListDirectoryResponse>(response);
-  } catch (error) {
-    return {
+      },
+    }),
+    errorResponse: (error) => ({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+    }),
+  });
 }
 
 type SessionGetDirectoryTreeRequest = Readonly<{ path: string; maxDepth: number }>;
@@ -138,45 +93,23 @@ export async function sessionGetDirectoryTree(
   path: string,
   maxDepth: number,
 ): Promise<SessionGetDirectoryTreeResponse> {
-  try {
-    const machineTarget = readMachineTargetForSession(sessionId);
-    if (machineTarget) {
-      try {
-        const request: SessionGetDirectoryTreeRequest = {
-          path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
-          maxDepth,
-        };
-        const response = await apiSocket.machineRPC<SessionGetDirectoryTreeResponse, SessionGetDirectoryTreeRequest>(
-          machineTarget.machineId,
-          RPC_METHODS.GET_DIRECTORY_TREE,
-          request,
-        );
-        return assertRpcResponseWithSuccess<SessionGetDirectoryTreeResponse>(response);
-      } catch (error) {
-        if (!shouldFallbackToSessionRpc(sessionId, error)) {
-          throw error;
-        }
-      }
-    }
-
-    if (!canUseSessionRpc(sessionId)) {
-      return {
+  const request: SessionGetDirectoryTreeRequest = { path, maxDepth };
+  return await callSessionMachineRpcWithFallback<SessionGetDirectoryTreeResponse, SessionGetDirectoryTreeRequest, Extract<SessionGetDirectoryTreeResponse, { success: false }>>({
+    sessionId,
+    request,
+    machineMethod: RPC_METHODS.GET_DIRECTORY_TREE,
+    sessionMethod: RPC_METHODS.GET_DIRECTORY_TREE,
+    toMachineRequest: rebasePathRequestToMachineTarget,
+    resolveFallbackRoute: async () => resolveDefaultSessionRpcFallbackRoute({
+      sessionId,
+      inactiveResponse: {
         success: false,
         error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-      };
-    }
-
-    const request: SessionGetDirectoryTreeRequest = { path, maxDepth };
-    const response = await apiSocket.sessionRPC<SessionGetDirectoryTreeResponse, SessionGetDirectoryTreeRequest>(
-      sessionId,
-      RPC_METHODS.GET_DIRECTORY_TREE,
-      request,
-    );
-    return assertRpcResponseWithSuccess<SessionGetDirectoryTreeResponse>(response);
-  } catch (error) {
-    return {
+      },
+    }),
+    errorResponse: (error) => ({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+    }),
+  });
 }
