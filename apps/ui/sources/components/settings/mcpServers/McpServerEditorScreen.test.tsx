@@ -9,6 +9,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const setMcpSettingsSpy = vi.fn();
+const modalAlertSpy = vi.fn();
 let localSearchParamsValue: { serverId?: string } = { serverId: 'server-1' };
 let liveMcpSettings: {
     v: 1;
@@ -33,6 +34,7 @@ let liveMcpSettings: {
     }>;
 };
 let liveSecrets: SavedSecret[] = [];
+let liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
 const liveSettingListeners = new Set<() => void>();
 
 function notifyLiveSettingListeners() {
@@ -64,9 +66,11 @@ function resetLiveSettings() {
         }],
     };
     liveSecrets = [];
+    liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
     localSearchParamsValue = { serverId: 'server-1' };
     liveSettingListeners.clear();
     setMcpSettingsSpy.mockReset();
+    modalAlertSpy.mockReset();
 }
 
 function updateLiveSecrets(next: SavedSecret[]) {
@@ -208,7 +212,7 @@ vi.mock('@/text', () => ({
 
 vi.mock('@/modal', () => ({
     Modal: {
-        alert: vi.fn(),
+        alert: modalAlertSpy,
         confirm: vi.fn(async () => true),
     },
 }));
@@ -223,7 +227,7 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }],
+    useAllMachines: () => liveMachines,
     useSettingMutable: (key: string) => {
         const ReactModule = require('react') as typeof React;
         const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
@@ -495,5 +499,39 @@ describe('McpServerEditorScreen', () => {
         const addBindingExpanderAfterOpen = tree.root.findAllByType('InlineAddExpander')[0];
         expect(tree.root.findAllByType('McpServerBindingEditor')).toHaveLength(0);
         expect(addBindingExpanderAfterOpen?.props.isOpen).toBe(true);
+    });
+
+    it('keeps a draft binding on all machines when no machine-scoped target can be selected', async () => {
+        localSearchParamsValue = {};
+        liveMachines = [];
+        liveMcpSettings = {
+            v: 1,
+            strictMode: false,
+            servers: [],
+            bindings: [],
+        };
+
+        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(McpServerEditorScreen));
+        });
+
+        const addBindingExpander = tree.root.findAllByType('InlineAddExpander')[0];
+        await act(async () => {
+            addBindingExpander.props.onOpenChange?.(true);
+        });
+
+        expect(findItemByTitle(tree, 'settings.mcpServersBindingMachine')).toBeNull();
+        expect(tree.root.findAll((node) => String(node.type) === 'Text' && node.props.children === 'settings.mcpServersBindingTargetAllMachines')).toHaveLength(1);
+
+        const targetMenu = tree.root.findAllByType('DropdownMenu')[0];
+        await act(async () => {
+            targetMenu.props.onSelect?.('machine');
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'settings.mcpServersNoMachineSelected');
+        expect(tree.root.findAll((node) => String(node.type) === 'Text' && node.props.children === 'settings.mcpServersBindingTargetAllMachines')).toHaveLength(1);
+        expect(findItemByTitle(tree, 'settings.mcpServersBindingMachine')).toBeNull();
     });
 });
