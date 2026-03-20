@@ -82,15 +82,18 @@ export class HappierPipeline {
     expoAppScheme: string = "",
     expoAppName: string = "",
     expoAppBundleId: string = "",
+    containerPlatform: string = "linux/amd64",
   ): Promise<Directory> {
     const workdir = "/repo"
     const ext = path.extname(artifactName || "") || ".apk"
     const internalArtifact = `/tmp/happier-ui-mobile-android${ext}`
     const internalOutJson = "/tmp/eas_build_android.json"
 
-    let container = dag
-      .container({ platform: "linux/amd64" })
+    let container = dag.container({ platform: containerPlatform })
       .from("ghcr.io/cirruslabs/android-sdk:34")
+      // EAS local builds can generate millions of files under /tmp. Keep them off the container
+      // filesystem snapshot to avoid exploding the Dagger engine cache.
+      .withMountedTemp("/tmp")
       .withExec([
         "bash",
         "-lc",
@@ -118,11 +121,15 @@ export class HappierPipeline {
       .withMountedDirectory(workdir, repo)
       .withWorkdir(workdir)
       .withExec(["git", "init"])
+      .withEnvVariable("HAPPIER_PIPELINE_LOCAL_RUNTIME", "dagger")
       .withSecretVariable("EXPO_TOKEN", expoToken)
       .withSecretVariable("SENTRY_AUTH_TOKEN", sentryAuthToken)
       .withEnvVariable("EAS_CLI_VERSION", easCliVersion)
       .withEnvVariable("HAPPIER_INSTALL_SCOPE", "ui,protocol,agents")
       .withEnvVariable("HAPPIER_UI_VENDOR_WEB_ASSETS", "0")
+      // Hint to EAS local builds to keep their working dir under /tmp (temp-mounted above).
+      // If ignored by EAS, it's harmless.
+      .withEnvVariable("EAS_LOCAL_BUILD_WORKINGDIR", "/tmp/eas-workdir")
       .withEnvVariable("npm_config_registry", "https://registry.npmjs.org")
       .withEnvVariable("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org")
       .withMountedCache("/root/.cache/yarn", dag.cacheVolume("happier-yarn-cache"))
