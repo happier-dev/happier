@@ -153,48 +153,14 @@ describe("resolveServerFeaturePayload", () => {
                     capabilities: {
                         server: {
                             canonicalServerUrl: "https://stack.example.test",
+                        },
+                    },
+                }),
+                fromPartial({
+                    capabilities: {
+                        server: {
                             retention: {
-                                policyVersion: 1,
                                 enabled: true,
-                                sessions: {
-                                    mode: "keep_forever",
-                                },
-                                accountChanges: {
-                                    mode: "keep_forever",
-                                },
-                                voiceSessionLeases: {
-                                    mode: "keep_forever",
-                                },
-                                userFeedItems: {
-                                    mode: "keep_forever",
-                                },
-                                sessionShareAccessLogs: {
-                                    mode: "keep_forever",
-                                },
-                                publicShareAccessLogs: {
-                                    mode: "keep_forever",
-                                },
-                                terminalAuthRequests: {
-                                    mode: "keep_forever",
-                                },
-                                accountAuthRequests: {
-                                    mode: "keep_forever",
-                                },
-                                authPairingSessions: {
-                                    mode: "keep_forever",
-                                },
-                                repeatKeys: {
-                                    mode: "keep_forever",
-                                },
-                                globalLocks: {
-                                    mode: "keep_forever",
-                                },
-                                automationRuns: {
-                                    mode: "keep_forever",
-                                },
-                                automationRunEvents: {
-                                    mode: "keep_forever",
-                                },
                             },
                         },
                     },
@@ -203,7 +169,6 @@ describe("resolveServerFeaturePayload", () => {
         );
 
         expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
-        expect(payload.capabilities.server.retention.policyVersion).toBe(1);
         expect(payload.capabilities.server.retention.enabled).toBe(true);
     });
 
