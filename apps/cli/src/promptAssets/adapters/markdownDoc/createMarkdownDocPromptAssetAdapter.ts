@@ -1,13 +1,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 
 import {
   PromptAssetDeleteRequest,
   PromptAssetDiscoverRequest,
   type PromptAssetDiscoveryItemV1,
-  type PromptAssetMutationErrorCodeV1,
   PromptAssetMutationResponseV1,
   PromptAssetReadRequest,
   PromptAssetReadResponseV1,
@@ -18,6 +16,8 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PromptAssetAdapter } from '@/promptAssets/types';
+import { toPromptAssetMutationError, toPromptAssetReadError } from '@/promptAssets/shared/promptAssetResponses';
+import { resolveScopedPromptAssetRoot } from '@/promptAssets/shared/resolveScopedPromptAssetRoot';
 
 type MarkdownDocPromptAssetAdapterConfig = Readonly<{
   assetTypeId: string;
@@ -31,35 +31,13 @@ type MarkdownDocPromptAssetAdapterConfig = Readonly<{
   capabilities?: PromptAssetCapabilitiesV1;
 }>;
 
-function resolveHomedir(depsHomedir?: (() => string) | undefined): string {
-  return typeof depsHomedir === 'function' ? depsHomedir() : os.homedir();
-}
-
 function resolveRootPath(params: Readonly<{
   scope: 'user' | 'project';
   directory?: string | null | undefined;
   homedir?: () => string;
   config: MarkdownDocPromptAssetAdapterConfig;
 }>): { ok: true; rootPath: string; displayRoot: string } | { ok: false; error: string } {
-  if (params.scope === 'project') {
-    const directory = typeof params.directory === 'string' ? params.directory.trim() : '';
-    if (!directory) return { ok: false, error: 'directory is required for project-scoped prompt assets' };
-    if (!isAbsolute(directory)) {
-      return { ok: false, error: 'directory must be an absolute path for project-scoped prompt assets' };
-    }
-    return {
-      ok: true,
-      rootPath: join(directory, ...params.config.projectRootPath),
-      displayRoot: params.config.projectRootDisplayPath,
-    };
-  }
-
-  const homeDirectory = resolveHomedir(params.homedir);
-  return {
-    ok: true,
-    rootPath: join(homeDirectory, ...params.config.userRootPath),
-    displayRoot: params.config.userRootDisplayPath,
-  };
+  return resolveScopedPromptAssetRoot(params);
 }
 
 function isSymlinkPath(path: string): boolean {
@@ -186,29 +164,6 @@ function buildDocReadItem(params: Readonly<{
   };
 }
 
-type PromptAssetMutationErrorResponseV1 = Extract<PromptAssetMutationResponseV1, { ok: false }>;
-type PromptAssetReadErrorResponseV1 = Extract<PromptAssetReadResponseV1, { ok: false }>;
-
-function toReadError(
-  errorCode: PromptAssetMutationErrorCodeV1,
-  error: string,
-): PromptAssetReadErrorResponseV1 {
-  return { ok: false, errorCode, error };
-}
-
-function toMutationError(
-  errorCode: PromptAssetMutationErrorCodeV1,
-  error: string,
-  currentDigest?: string | null,
-): PromptAssetMutationErrorResponseV1 {
-  return {
-    ok: false,
-    errorCode,
-    error,
-    ...(currentDigest !== undefined ? { currentDigest } : {}),
-  };
-}
-
 export function createMarkdownDocPromptAssetAdapter(
   config: MarkdownDocPromptAssetAdapterConfig,
   params?: Readonly<{ homedir?: () => string }>,
@@ -260,16 +215,16 @@ export function createMarkdownDocPromptAssetAdapter(
         homedir: params?.homedir,
         config,
       });
-      if (!root.ok) return toReadError('invalid_request', root.error);
+      if (!root.ok) return toPromptAssetReadError('invalid_request', root.error);
 
       const relativePath = readRelativePathFromExternalRef(request.externalRef);
-      if (!relativePath) return toReadError('invalid_request', 'externalRef.relativePath is required');
+      if (!relativePath) return toPromptAssetReadError('invalid_request', 'externalRef.relativePath is required');
 
       const absolutePath = join(root.rootPath, relativePath.split('/').join(sep));
       if (resolvesThroughSymlink(root.rootPath, absolutePath)) {
-        return toReadError('access_denied', 'prompt asset path resolves through a symlink');
+        return toPromptAssetReadError('access_denied', 'prompt asset path resolves through a symlink');
       }
-      if (!existsSync(absolutePath)) return toReadError('not_found', 'prompt asset not found');
+      if (!existsSync(absolutePath)) return toPromptAssetReadError('not_found', 'prompt asset not found');
       const markdown = readFileSync(absolutePath, 'utf8');
 
       return {
@@ -291,18 +246,18 @@ export function createMarkdownDocPromptAssetAdapter(
         homedir: params?.homedir,
         config,
       });
-      if (!root.ok) return toMutationError('invalid_request', root.error);
+      if (!root.ok) return toPromptAssetMutationError('invalid_request', root.error);
 
       const relativePath = readRelativePathFromTargetPath(request.targetPath);
-      if (!relativePath) return toMutationError('invalid_request', 'targetPath must be a relative markdown path');
+      if (!relativePath) return toPromptAssetMutationError('invalid_request', 'targetPath must be a relative markdown path');
 
       const absolutePath = join(root.rootPath, relativePath.split('/').join(sep));
       if (resolvesThroughSymlink(root.rootPath, absolutePath)) {
-        return toMutationError('access_denied', 'prompt asset path resolves through a symlink');
+        return toPromptAssetMutationError('access_denied', 'prompt asset path resolves through a symlink');
       }
       const currentDigest = existsSync(absolutePath) ? computeMarkdownDigest(readFileSync(absolutePath, 'utf8')) : null;
       if (request.expectedDigest && request.expectedDigest !== currentDigest) {
-        return toMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
+        return toPromptAssetMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
       }
 
       const preview = {
@@ -331,7 +286,7 @@ export function createMarkdownDocPromptAssetAdapter(
     },
 
     async writeBundle(_request: PromptAssetWriteBundleRequest): Promise<PromptAssetMutationResponseV1> {
-      return toMutationError('unsupported', 'bundle writes are not supported for this prompt asset type');
+      return toPromptAssetMutationError('unsupported', 'bundle writes are not supported for this prompt asset type');
     },
 
     async delete(request: PromptAssetDeleteRequest): Promise<PromptAssetMutationResponseV1> {
@@ -341,19 +296,19 @@ export function createMarkdownDocPromptAssetAdapter(
         homedir: params?.homedir,
         config,
       });
-      if (!root.ok) return toMutationError('invalid_request', root.error);
+      if (!root.ok) return toPromptAssetMutationError('invalid_request', root.error);
 
       const relativePath = readRelativePathFromExternalRef(request.externalRef);
-      if (!relativePath) return toMutationError('invalid_request', 'externalRef.relativePath is required');
+      if (!relativePath) return toPromptAssetMutationError('invalid_request', 'externalRef.relativePath is required');
 
       const absolutePath = join(root.rootPath, relativePath.split('/').join(sep));
       if (resolvesThroughSymlink(root.rootPath, absolutePath)) {
-        return toMutationError('access_denied', 'prompt asset path resolves through a symlink');
+        return toPromptAssetMutationError('access_denied', 'prompt asset path resolves through a symlink');
       }
       const currentDigest = existsSync(absolutePath) ? computeMarkdownDigest(readFileSync(absolutePath, 'utf8')) : null;
-      if (!currentDigest) return toMutationError('not_found', 'prompt asset not found');
+      if (!currentDigest) return toPromptAssetMutationError('not_found', 'prompt asset not found');
       if (request.expectedDigest && request.expectedDigest !== currentDigest) {
-        return toMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
+        return toPromptAssetMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
       }
 
       const preview = {
