@@ -228,6 +228,52 @@ describe('built-in Happier tools', () => {
     });
   });
 
+  it('rejects disabled action-backed tools before execution', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'review_start',
+      args: { instructions: 'Check this' },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName,
+        isActionEnabled: (id) => id !== 'review.start',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
+  it('rejects disabled action_execute calls before execution', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_execute',
+      args: { actionId: 'review.start', input: { sessionId: 'sess-1' } },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName,
+        isActionEnabled: (id) => id !== 'review.start',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
   it('dispatches action_execute through the shared action executor hook', async () => {
     const executeActionByToolName = vi.fn(
       async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
@@ -256,6 +302,47 @@ describe('built-in Happier tools', () => {
         toolName: 'action_execute',
         args: { actionId: 'review.start', input: { sessionId: 'sess-1', instructions: 'Check this', engineIds: ['claude'] } },
         defaultSessionId: 'sess-1',
+      },
+    });
+  });
+
+  it('dispatches execution_run_start with a backendTarget and defaults', async () => {
+    const startExecutionRun = vi.fn(async (_sessionId: string, request: unknown) => ok(request));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review.',
+      },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun,
+        executeActionByToolName: async () => unsupported(),
+      },
+    });
+
+    expect(startExecutionRun).toHaveBeenCalledWith('sess-1', {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
       },
     });
   });
