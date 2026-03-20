@@ -2,10 +2,12 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { makeToolCall } from './ToolView.testHelpers';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ensureSidechainMessagesLoadedMock = vi.fn();
+const chainTranscriptListSpy = vi.fn();
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -44,7 +46,7 @@ vi.mock('react-native', async () => {
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: () => false,
     useSetting: (key: string) => {
-        if (key === 'permissionPromptSurface') return 'composer';
+        if (key === 'permissionPromptSurface') return 'transcript';
         return false;
     },
     useSessionTranscriptDraftMessages: () => [],
@@ -66,6 +68,13 @@ vi.mock('@/components/tools/catalog', () => ({
 
 vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
     StructuredResultView: () => null,
+}));
+
+vi.mock('@/components/sessions/transcript/ChainTranscriptList', () => ({
+    ChainTranscriptList: (props: any) => {
+        chainTranscriptListSpy(props);
+        return React.createElement('ChainTranscriptList', props, props.footer);
+    },
 }));
 
 vi.mock('@/components/ui/media/CodeView', () => ({
@@ -121,5 +130,83 @@ describe('ToolFullView (permission pending)', () => {
         });
 
         expect(tree!.root.findAllByType('PermissionFooter' as any).length).toBe(0);
+    });
+
+    it('renders PermissionFooter when transcript fallback is forced for details-only views', async () => {
+        const { ToolFullView } = await import('./ToolFullView');
+
+        const tool = makeToolCall({
+            name: 'edit',
+            state: 'running',
+            input: {},
+            result: null,
+            completedAt: null,
+            description: 'edit',
+            permission: { id: 'perm1', status: 'pending' },
+        });
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ToolFullView, {
+                    tool,
+                    metadata: null,
+                    messages: [],
+                    sessionId: 's1',
+                    forcePermissionFooterInTranscript: true,
+                }),
+            );
+        });
+
+        expect(tree!.root.findAllByType('PermissionFooter' as any).length).toBe(1);
+    });
+
+    it('forces transcript permission prompts through the child transcript list when details-only fallback is active', async () => {
+        const { ToolFullView } = await import('./ToolFullView');
+
+        const tool = makeToolCall({
+            name: 'SubAgent',
+            state: 'running',
+            input: {},
+            result: null,
+            completedAt: null,
+            description: 'Subagent',
+        });
+
+        const childToolMessage: Message = {
+            kind: 'tool-call',
+            id: 'child-1',
+            localId: null,
+            createdAt: 2,
+            tool: makeToolCall({
+                id: 'child-tool-1',
+                name: 'Bash',
+                state: 'running',
+                input: { command: 'pwd' },
+                result: null,
+                completedAt: null,
+                description: 'pwd',
+                permission: { id: 'perm-1', kind: 'command', status: 'pending' },
+            }),
+            children: [],
+        };
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ToolFullView, {
+                    tool,
+                    metadata: null,
+                    messages: [childToolMessage],
+                    sessionId: 's1',
+                    forcePermissionFooterInTranscript: true,
+                }),
+            );
+        });
+
+        expect(tree).toBeDefined();
+        expect(chainTranscriptListSpy).toHaveBeenCalledWith(expect.objectContaining({
+            forcePermissionPromptsInTranscript: true,
+        }));
     });
 });

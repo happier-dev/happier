@@ -18,8 +18,10 @@ vi.mock('react-native', () => ({
     AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
 }));
 
+const routerPush = vi.fn();
+
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
+    useRouter: () => ({ push: routerPush }),
 }));
 
 vi.mock('@/text', () => ({
@@ -68,6 +70,72 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
 }));
 
 describe('PermissionPromptCard (preview)', () => {
+    it('hides the open-details action when the prompt location is not durably addressable', async () => {
+        toolDetailSetting = 'summary';
+        mockedToolName = 'edit';
+        mockedToolInput = { path: 'file.ts' };
+        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
+        const { PermissionPromptCard } = await import('./PermissionPromptCard');
+
+        const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                <PermissionPromptCard
+                    request={request}
+                    location={{
+                        kind: 'top',
+                        messageId: 'v0k1hmbmnud',
+                        seq: null,
+                    }}
+                    sessionId="session-1"
+                    metadata={null}
+                    canApprovePermissions={true}
+                />,
+            );
+        });
+
+        expect(() => tree!.root.findByProps({ testID: 'permission-prompt-view-tool' })).toThrow();
+    });
+
+    it('opens nested tool routes with stable encoded route ids', async () => {
+        toolDetailSetting = 'summary';
+        mockedToolName = 'edit';
+        mockedToolInput = { path: 'file.ts' };
+        mockedHeaderText = { normalizedToolName: 'edit', title: 'Edit', subtitle: null, statusText: null };
+        routerPush.mockReset();
+        const { PermissionPromptCard } = await import('./PermissionPromptCard');
+
+        const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                <PermissionPromptCard
+                    request={request}
+                    location={{
+                        kind: 'nested',
+                        parentMessageId: 'tool:call:parent/1',
+                        messageId: 'tool:call:child/2',
+                        seq: 12,
+                    }}
+                    sessionId="session-1"
+                    metadata={null}
+                    canApprovePermissions={true}
+                />,
+            );
+        });
+
+        const viewToolButton = tree!.root.findByProps({ testID: 'permission-prompt-view-tool' });
+
+        await act(async () => {
+            viewToolButton.props.onPress();
+        });
+
+        expect(routerPush).toHaveBeenCalledWith('/session/session-1/message/tool%3Acall%3Aparent%2F1?jumpChildId=tool%3Acall%3Achild%2F2');
+    });
+
     it('renders a tool preview when detail level is not title', async () => {
         toolDetailSetting = 'summary';
         mockedToolName = 'edit';

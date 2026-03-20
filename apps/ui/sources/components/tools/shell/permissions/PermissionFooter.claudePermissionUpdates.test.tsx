@@ -81,6 +81,20 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
     }),
 }));
 
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        getAgentBehavior: () => ({
+            permissions: {
+                footer: {
+                    usePermissionUpdates: true,
+                },
+            },
+        }),
+    };
+});
+
 describe('PermissionFooter (Claude permission updates)', () => {
     beforeEach(() => {
         ops.sessionAllow.mockClear();
@@ -126,7 +140,7 @@ describe('PermissionFooter (Claude permission updates)', () => {
         );
     });
 
-    it('approves allow-for-session using updatedPermissions addRules', async () => {
+    it('approves allow-for-session using a tool-wide allowlist update for shell tools', async () => {
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
             tree = renderer.create(
@@ -156,16 +170,47 @@ describe('PermissionFooter (Claude permission updates)', () => {
             's1',
             'p1',
             expect.objectContaining({
-                allowedTools: ['Bash(pwd)'],
+                allowedTools: ['Bash'],
                 updatedPermissions: [
                     {
                         type: 'addRules',
                         behavior: 'allow',
                         destination: 'session',
-                        rules: [{ toolName: 'Bash', ruleContent: 'pwd' }],
+                        rules: [{ toolName: 'Bash' }],
                     },
                 ],
             }),
+        );
+    });
+
+    it('treats tool-wide shell allowlists as approved-for-session state', async () => {
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(PermissionFooter, {
+                    permission: {
+                        id: 'p1',
+                        status: 'approved',
+                        allowedTools: ['Bash'],
+                    },
+                    sessionId: 's1',
+                    toolName: 'Bash',
+                    toolInput: { command: 'git status' },
+                    metadata: { flavor: 'opencode' },
+                }),
+            );
+        });
+
+        const buttons = tree.root.findAllByType('TouchableOpacity' as any);
+        const allowForToolButton = buttons.find((btn) => {
+            const texts = btn.findAllByType('Text' as any);
+            return texts.some((t) => t.props.children === 'claude.permissions.yesForTool');
+        });
+        expect(allowForToolButton).toBeTruthy();
+        expect(allowForToolButton!.props.style).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ borderLeftColor: '#000' }),
+            ]),
         );
     });
 

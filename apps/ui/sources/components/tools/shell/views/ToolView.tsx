@@ -25,6 +25,10 @@ import {
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
 import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
+import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
+import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 
 
 interface ToolViewProps {
@@ -34,10 +38,12 @@ interface ToolViewProps {
     onPress?: () => void;
     sessionId?: string;
     messageId?: string;
+    forcePermissionPromptsInTranscript?: boolean;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
         permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
+        disableToolNavigation?: boolean;
     };
 }
 
@@ -89,22 +95,29 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
 
-    const handleOpen = React.useCallback(() => {
-        if (onPress) {
-            onPress();
-        } else if (sessionId && messageId) {
-            router.push(`/session/${sessionId}/message/${messageId}`);
-        }
-    }, [onPress, sessionId, messageId, router]);
-
-    const canOpen = !!(onPress || (sessionId && messageId));
-
     const handleToggleExpanded = React.useCallback(() => {
         setIsExpanded((v) => !v);
     }, []);
 
     const normalizedToolName = headerModel.normalizedToolName;
     let knownTool = headerModel.knownTool;
+    const routeMessageId = React.useMemo(() => {
+        if (props.interaction?.disableToolNavigation === true) return null;
+        return buildToolCallMessageRouteId({
+            toolId: typeof toolForRendering.id === 'string' ? toolForRendering.id : null,
+            fallbackMessageId: messageId,
+        });
+    }, [messageId, props.interaction?.disableToolNavigation, toolForRendering.id]);
+
+    const handleOpen = React.useCallback(() => {
+        if (onPress) {
+            onPress();
+        } else if (sessionId && routeMessageId) {
+            router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+        }
+    }, [onPress, routeMessageId, router, sessionId]);
+
+    const canOpen = !!(onPress || (sessionId && routeMessageId));
 
     const description: string | null = headerModel.subtitle;
     const status: string | null = headerModel.statusText;
@@ -142,8 +155,21 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
     const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
+
+    const transcriptSidechainId = React.useMemo(() => {
+        return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
+    }, [normalizedToolName, toolForRendering]);
+
+    useEnsureSidechainsLoaded({
+        enabled:
+            isExpanded &&
+            isSubAgentTranscriptToolName(normalizedToolName),
+        sessionId,
+        sidechainIds: [transcriptSidechainId],
+    });
+
     const inlineDetailLevel =
-        normalizedToolName === 'Task' && effectiveDetailLevel === 'full'
+        isGenericSubAgentToolName(normalizedToolName) && effectiveDetailLevel === 'full'
             ? 'summary'
             : effectiveDetailLevel;
 
@@ -240,7 +266,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         toolForRendering.id ??
         `${sessionId ?? 'no-session'}:${normalizedToolName}:${toolForRendering.createdAt}`;
 
-    const resolvedPermissionPromptSurface = resolvePermissionPromptSurface(permissionPromptSurface);
+    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript
+        ? 'transcript'
+        : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
 
     const headerDescription = effectiveDetailLevel === 'title' ? null : description;
