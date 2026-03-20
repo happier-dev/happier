@@ -1,6 +1,7 @@
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import type { AgentState } from '@/api/types';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { createAgentLocalControlState } from '@/agent/localControl/createAgentLocalControlState';
 
 type Mode = 'local' | 'remote';
 
@@ -27,6 +28,7 @@ export function createLocalRemoteModeController(params: {
   mountRemoteUi: () => void;
   unmountRemoteUi: () => Promise<void>;
   setRemoteUiAllowsSwitchToLocal: (allowed: boolean) => void;
+  buildAgentStateForMode?: (currentState: AgentState, nextMode: Mode) => AgentState;
 }) {
   let lastPublishedMode: Mode | null = null;
 
@@ -38,10 +40,16 @@ export function createLocalRemoteModeController(params: {
 
     updateAgentStateBestEffort(
       params.session,
-      (currentState) => ({
-        ...currentState,
-        controlledByUser: nextMode === 'local',
-      }),
+      (currentState) => (params.buildAgentStateForMode
+        ? params.buildAgentStateForMode(currentState, nextMode)
+        : {
+          ...currentState,
+          controlledByUser: nextMode === 'local',
+          localControl: createAgentLocalControlState({
+            attached: nextMode === 'local',
+            topology: 'exclusive',
+          }),
+        }),
       '[localControl]',
       'publish_mode_state',
     );
