@@ -22,8 +22,17 @@ process.exit(3);
       await chmod(scriptPath, 0o755);
       process.env.HAPPIER_OPENCODE_PATH = scriptPath;
 
-      await expect(startManagedOpenCodeServer({ timeoutMs: 5_000 })).rejects.toThrow(/signal=/);
-      await expect(startManagedOpenCodeServer({ timeoutMs: 5_000 })).rejects.toThrow(/no output captured/i);
+      let errorMessage = '';
+      try {
+        await startManagedOpenCodeServer({ timeoutMs: 5_000 });
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(errorMessage).toMatch(/signal=/);
+      expect(errorMessage).toMatch(/no output captured/i);
+      expect(errorMessage).toContain('Output:\n<no output captured>');
+      expect(errorMessage).not.toContain('Output:\\n<no output captured>');
     } finally {
       if (prevCmd === undefined) delete process.env.HAPPIER_OPENCODE_PATH;
       else process.env.HAPPIER_OPENCODE_PATH = prevCmd;
@@ -31,4 +40,3 @@ process.exit(3);
     }
   });
 });
-

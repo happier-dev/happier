@@ -2,7 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { readOpenCodeSessionAffinityFromMetadata } from '../utils/opencodeSessionAffinity';
-import { resolveOpenCodeCliCommand } from '../utils/resolveOpenCodeCliCommand';
+import { resolveOpenCodeCliLaunchSpec } from '../utils/resolveOpenCodeCliCommand';
 import type { OpenCodeSessionBundle } from '../../../session/handoff/types';
 
 type ExecFileAsync = (command: string, args: readonly string[]) => Promise<Readonly<{ stdout: string; stderr: string }>>;
@@ -16,7 +16,8 @@ export async function exportOpenCodeSessionBundle(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<OpenCodeSessionBundle> {
   const execFile = params.execFile ?? execFileAsync;
-  const result = await execFile(resolveOpenCodeCliCommand(params.processEnv), ['export', params.remoteSessionId]);
+  const launch = resolveOpenCodeCliLaunchSpec(params.processEnv);
+  const result = await execFile(launch.command, [...launch.args, 'export', params.remoteSessionId]);
   const affinity = readOpenCodeSessionAffinityFromMetadata(params.metadata);
 
   return {

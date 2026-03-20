@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -63,6 +63,19 @@ async function createFakeExecutable(name: string): Promise<string> {
   return commandPath;
 }
 
+async function createNodeShebangExecutable(name: string): Promise<{ commandPath: string; runtimePath: string }> {
+  const root = await mkdtemp(join(tmpdir(), 'happier-opencode-cli-node-'));
+  const commandPath = join(root, name);
+  const runtimeDir = join(root, 'runtime');
+  const runtimePath = join(runtimeDir, 'node');
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(commandPath, '#!/usr/bin/env node\nprocess.stdout.write("ok\\n")\n', 'utf8');
+  await chmod(commandPath, 0o755);
+  await writeFile(runtimePath, '#!/bin/sh\nexit 0\n', 'utf8');
+  await chmod(runtimePath, 0o755);
+  return { commandPath, runtimePath };
+}
+
 describe('createOpenCodeTuiSupervisor', () => {
   it('spawns the resolved opencode attach command with inherited stdio and tracks attachment state', async () => {
     const proc = createSpawnedProcessHarness();
@@ -124,5 +137,49 @@ describe('createOpenCodeTuiSupervisor', () => {
 
     await expect(attachPromise).resolves.toBe(false);
     expect(supervisor.isAttached()).toBe(false);
+  });
+
+  it('invokes onExit only once when the child emits both error and exit after startup', async () => {
+    const proc = createSpawnedProcessHarness();
+    const onExit = vi.fn();
+    const spawnProcess = vi.fn(() => proc.child as any);
+    const supervisor = createOpenCodeTuiSupervisor({ spawnProcess, onExit });
+
+    await expect(supervisor.attach({
+      baseUrl: 'http://127.0.0.1:4096',
+      directory: '/tmp/workspace',
+      sessionId: 'session-1',
+    })).resolves.toBe(true);
+
+    proc.emitError(new Error('late error'));
+    proc.emitExit();
+
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(supervisor.isAttached()).toBe(false);
+  });
+
+  it('wraps node-shebang opencode CLIs with the configured JS runtime when attaching', async () => {
+    const proc = createSpawnedProcessHarness();
+    const spawnProcess = vi.fn(() => proc.child as any);
+    const { commandPath, runtimePath } = await createNodeShebangExecutable('opencode');
+    const supervisor = createOpenCodeTuiSupervisor({
+      spawnProcess,
+      env: {
+        HAPPIER_OPENCODE_PATH: commandPath,
+        HAPPIER_JS_RUNTIME_PATH: runtimePath,
+      } as NodeJS.ProcessEnv,
+    });
+
+    await expect(supervisor.attach({
+      baseUrl: 'http://127.0.0.1:4096',
+      directory: '/tmp/workspace',
+      sessionId: 'session-1',
+    })).resolves.toBe(true);
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      runtimePath,
+      [commandPath, 'attach', 'http://127.0.0.1:4096', '--dir', '/tmp/workspace', '--session', 'session-1'],
+      expect.objectContaining({ stdio: 'inherit' }),
+    );
   });
 });

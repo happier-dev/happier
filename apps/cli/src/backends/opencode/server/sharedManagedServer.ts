@@ -1,7 +1,8 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { configuration } from '@/configuration';
+import { resolveOpenCodeCliLaunchSpec, type ProviderCliLaunchSpec } from '@/backends/opencode/utils/resolveOpenCodeCliCommand';
 
 import {
   getOpenCodeServerProcessInfoBestEffort,
@@ -21,6 +22,7 @@ export type SharedManagedOpenCodeServerState = Readonly<{
 }>;
 
 type ManagedServerProcessInfo = OpenCodeServerProcessInfo;
+type ManagedServerLaunchSpec = ProviderCliLaunchSpec;
 
 type ResolveDeps = Readonly<{
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -29,6 +31,7 @@ type ResolveDeps = Readonly<{
   isPidAlive: (pid: number) => boolean;
   probeHealth: (baseUrl: string) => Promise<boolean>;
   getProcessInfo?: (pid: number) => Promise<ManagedServerProcessInfo | null>;
+  resolveLaunchSpec?: () => ManagedServerLaunchSpec | null;
   killPid?: (pid: number) => Promise<boolean> | boolean;
   startServer: (params?: {
     onSpawned?: (started: Readonly<{ baseUrl: string; pid: number }>) => void | Promise<void>;
@@ -86,13 +89,13 @@ export async function resolveSharedManagedOpenCodeServerBaseUrl(
       if (state.status === 'failed') {
         if (deps.getProcessInfo && deps.killPid) {
           const info = await deps.getProcessInfo(state.pid).catch(() => null);
-          if (looksLikeOpenCodeServe(info)) {
+          if (looksLikeManagedOpenCodeServe(info, state.baseUrl, deps.resolveLaunchSpec)) {
             await invokeKillPidBestEffort(deps.killPid, state.pid);
           }
         }
       } else if (deps.getProcessInfo && deps.killPid) {
         const info = await deps.getProcessInfo(state.pid).catch(() => null);
-        if (looksLikeOpenCodeServe(info)) {
+        if (looksLikeManagedOpenCodeServe(info, state.baseUrl, deps.resolveLaunchSpec)) {
           await invokeKillPidBestEffort(deps.killPid, state.pid);
         }
       }
@@ -208,6 +211,7 @@ export async function ensureSharedManagedOpenCodeServerBaseUrl(params: Readonly<
     isPidAlive: isOpenCodeServerPidAlive,
     probeHealth: params.probeHealth,
     getProcessInfo: async (pid) => await getProcessInfoBestEffort(pid),
+    resolveLaunchSpec: resolveManagedOpenCodeLaunchSpecBestEffort,
     killPid: killPidBestEffort,
     startServer: async (startParams) => {
       const started = await startManagedOpenCodeServer({
@@ -228,16 +232,146 @@ type StopDeps = Readonly<{
   isPidAlive: (pid: number) => boolean;
   probeHealth: (baseUrl: string) => Promise<boolean>;
   getProcessInfo: (pid: number) => Promise<ManagedServerProcessInfo | null>;
+  resolveLaunchSpec?: () => ManagedServerLaunchSpec | null;
   killPid: (pid: number) => Promise<boolean> | boolean;
 }>;
 
 function looksLikeOpenCodeServe(info: ManagedServerProcessInfo | null): boolean {
   if (!info) return false;
-  const name = info.name.toLowerCase();
   const cmd = info.cmd.toLowerCase();
-  if (name.includes('opencode')) return true;
-  if (cmd.includes('opencode') && cmd.includes('serve')) return true;
+  return cmd.includes('opencode') && cmd.includes('serve');
+}
+
+function splitCommandLine(raw: string): readonly string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: '"' | '\'' | null = null;
+  let escaping = false;
+
+  for (const char of raw) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === '\'') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaping) current += '\\';
+  if (current.length > 0) tokens.push(current);
+  return tokens;
+}
+
+function normalizeCommandToken(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function matchesExecutableToken(
+  actualToken: string | undefined,
+  processName: string,
+  expectedCommand: string,
+): boolean {
+  if (!actualToken) return false;
+  const normalizedActual = normalizeCommandToken(actualToken);
+  const normalizedExpected = normalizeCommandToken(expectedCommand);
+  const actualBase = normalizeCommandToken(basename(actualToken));
+  const expectedBase = normalizeCommandToken(basename(expectedCommand));
+  const nameBase = normalizeCommandToken(basename(processName));
+  return normalizedActual === normalizedExpected
+    || actualBase === expectedBase
+    || nameBase === expectedBase;
+}
+
+function parseManagedOpenCodeServerBaseUrl(baseUrl: string): Readonly<{ hostname: string; port: string }> | null {
+  try {
+    const url = new URL(baseUrl);
+    if (!url.hostname || !url.port) return null;
+    return { hostname: url.hostname.toLowerCase(), port: url.port };
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeManagedOpenCodeServe(
+  info: ManagedServerProcessInfo | null,
+  baseUrl: string,
+  resolveLaunchSpec?: () => ManagedServerLaunchSpec | null,
+  options?: Readonly<{
+    allowBroadHeuristicFallback?: boolean;
+  }>,
+): boolean {
+  if (!info) return false;
+
+  const allowBroadHeuristicFallback = options?.allowBroadHeuristicFallback !== false;
+
+  const endpoint = parseManagedOpenCodeServerBaseUrl(baseUrl);
+  const tokens = splitCommandLine(info.cmd);
+  const normalizedTokens = tokens.map((token) => normalizeCommandToken(token));
+  const expectedEndpointTokens = endpoint
+    ? {
+      hostname: endpoint.hostname,
+      port: endpoint.port,
+    }
+    : null;
+  const expectsServeTokens = expectedEndpointTokens
+    ? normalizedTokens.includes('serve')
+      && normalizedTokens.includes(`--hostname=${expectedEndpointTokens.hostname}`)
+      && normalizedTokens.includes(`--port=${expectedEndpointTokens.port}`)
+    : false;
+  if (!expectedEndpointTokens || !expectsServeTokens) {
+    return allowBroadHeuristicFallback ? looksLikeOpenCodeServe(info) : false;
+  }
+
+  const launchSpec = resolveLaunchSpec?.() ?? null;
+  if (!launchSpec) {
+    return allowBroadHeuristicFallback ? looksLikeOpenCodeServe(info) : false;
+  }
+
+  if (matchesExecutableToken(tokens[0], info.name, launchSpec.command)) {
+    const expectedArgs = [
+      ...launchSpec.args.map((arg) => normalizeCommandToken(arg)),
+      'serve',
+      `--hostname=${expectedEndpointTokens.hostname}`,
+      `--port=${expectedEndpointTokens.port}`,
+    ];
+    const actualArgs = normalizedTokens.slice(1);
+    if (expectedArgs.every((token, index) => actualArgs[index] === token)) {
+      return true;
+    }
+  }
+
   return false;
+}
+
+function resolveManagedOpenCodeLaunchSpecBestEffort(): ManagedServerLaunchSpec | null {
+  try {
+    return resolveOpenCodeCliLaunchSpec();
+  } catch {
+    return null;
+  }
 }
 
 async function getProcessInfoBestEffort(pid: number): Promise<ManagedServerProcessInfo | null> {
@@ -277,7 +411,9 @@ export async function stopSharedManagedOpenCodeServerFromState(
     }
 
     const info = await deps.getProcessInfo(state.pid).catch(() => null);
-    if (looksLikeOpenCodeServe(info)) {
+    if (looksLikeManagedOpenCodeServe(info, state.baseUrl, deps.resolveLaunchSpec, {
+      allowBroadHeuristicFallback: false,
+    })) {
       const didKill = await invokeKillPidBestEffort(deps.killPid, state.pid);
       await deps.removeState().catch(() => {});
       return { didKill };
@@ -318,6 +454,7 @@ export async function stopSharedManagedOpenCodeServerFromEnvBestEffort(): Promis
     isPidAlive: isOpenCodeServerPidAlive,
     probeHealth: async (baseUrl) => await probeOpenCodeHealthBestEffort(baseUrl),
     getProcessInfo: async (pid) => await getProcessInfoBestEffort(pid),
+    resolveLaunchSpec: resolveManagedOpenCodeLaunchSpecBestEffort,
     killPid: killPidBestEffort,
   }).then(() => {}).catch(() => {});
 }

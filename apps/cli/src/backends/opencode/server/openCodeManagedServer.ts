@@ -3,22 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 
 import { logger } from '@/ui/logger';
-import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 import { resolveOpenCodeServerAuthHeadersFromEnv } from './openCodeServerAuth';
 import { resolveOpenCodeManagedServerChildEnv } from './openCodeManagedServerEnv';
 import { terminateManagedOpenCodeServerPidBestEffort } from './terminateManagedOpenCodeServerPidBestEffort';
 import { waitForOpenCodeServerHealth } from './waitForOpenCodeServerHealth';
-
-function readPositiveIntEnv(name: string): number | null {
-  const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
-  if (!raw) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return null;
-  if (!Number.isInteger(n)) return null;
-  if (n <= 0) return null;
-  return n;
-}
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
 async function resolveEphemeralPort(hostname: string): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
@@ -36,8 +27,9 @@ async function resolveEphemeralPort(hostname: string): Promise<number> {
   });
 }
 
-function resolveOpenCodeCommand(): string {
-  return requireProviderCliCommand('opencode');
+function resolveOpenCodeCommand(): Readonly<{ command: string; args: readonly string[] }> {
+  const launch = requireProviderCliLaunchSpec('opencode');
+  return { command: launch.command, args: launch.args };
 }
 
 export async function startManagedOpenCodeServer(params: Readonly<{
@@ -60,8 +52,9 @@ export async function startManagedOpenCodeServer(params: Readonly<{
     ? Math.floor(params.timeoutMs)
     : (readPositiveIntEnv('HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS') ?? 30_000);
 
-  const cmd = resolveOpenCodeCommand();
-  const args = [`serve`, `--hostname=${hostname}`, `--port=${port}`];
+  const launch = resolveOpenCodeCommand();
+  const cmd = launch.command;
+  const args = [...launch.args, `serve`, `--hostname=${hostname}`, `--port=${port}`];
   const healthHeaders = resolveOpenCodeServerAuthHeadersFromEnv();
 
   logger.debug('[OpenCodeServer] Spawning managed server', { cmd, args });
@@ -87,11 +80,15 @@ export async function startManagedOpenCodeServer(params: Readonly<{
       return;
     }
     closePromise = (async () => {
-      try {
-        if (proc.pid) {
+      if (proc.pid) {
+        try {
           await terminateManagedOpenCodeServerPidBestEffort(proc.pid);
           return;
+        } catch {
+          // fall through to direct kill
         }
+      }
+      try {
         proc.kill();
       } catch {
         // best-effort only
@@ -131,7 +128,8 @@ export async function startManagedOpenCodeServer(params: Readonly<{
       const codeLabel = code ?? 'unknown';
       const signalLabel = signal ?? 'none';
       reject(new Error(
-        `OpenCode server exited before ready (code=${codeLabel}, signal=${signalLabel}). Output:\\n${output || '<no output captured>'}`,
+        `OpenCode server exited before ready (code=${codeLabel}, signal=${signalLabel}). Output:
+${output || '<no output captured>'}`,
       ));
     });
     proc.on('error', (error) => {
@@ -149,7 +147,8 @@ export async function startManagedOpenCodeServer(params: Readonly<{
         clearTimeout(timer);
         void close();
         const message = error instanceof Error ? error.message : String(error);
-        reject(new Error(`OpenCode server did not become healthy: ${message}. Output:\\n${output || '<no output captured>'}`));
+        reject(new Error(`OpenCode server did not become healthy: ${message}. Output:
+${output || '<no output captured>'}`));
       });
   });
 

@@ -55,6 +55,7 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   sessionCreate: (opts?: { permission?: unknown[] }) => Promise<OpenCodeSession>;
   sessionGet: (opts: { sessionId: string }) => Promise<OpenCodeSession>;
   sessionMessagesList: (opts: { sessionId: string }) => Promise<unknown[]>;
+  sessionDiff: (opts: { sessionId: string; messageId?: string }) => Promise<unknown[]>;
   sessionStatusList: () => Promise<Record<string, { type?: string }>>;
   globalConfigGet: () => Promise<{ model?: string }>;
   agentsList: () => Promise<ReadonlyArray<{ name: string; description?: string }>>;
@@ -80,9 +81,9 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
-function resolveSseReconnectDelayMs(attempt: number): number {
-  const baseRaw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SSE_RECONNECT_BASE_DELAY_MS ?? ''), 10);
-  const maxRaw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SSE_RECONNECT_MAX_DELAY_MS ?? ''), 10);
+function resolveSseReconnectDelayMs(attempt: number, env: NodeJS.ProcessEnv): number {
+  const baseRaw = Number.parseInt(String(env.HAPPIER_OPENCODE_SSE_RECONNECT_BASE_DELAY_MS ?? ''), 10);
+  const maxRaw = Number.parseInt(String(env.HAPPIER_OPENCODE_SSE_RECONNECT_MAX_DELAY_MS ?? ''), 10);
   const baseMs = Number.isFinite(baseRaw) && baseRaw > 0 ? Math.trunc(baseRaw) : 250;
   const maxMs = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.trunc(maxRaw) : 5_000;
 
@@ -124,12 +125,13 @@ async function sleepUntilOrAbort(ms: number, signal: AbortSignal): Promise<void>
   });
 }
 
-export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer; baseUrlOverride?: string | null }>): Promise<OpenCodeServerRuntimeClient> {
+export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer; baseUrlOverride?: string | null; env?: NodeJS.ProcessEnv }>): Promise<OpenCodeServerRuntimeClient> {
+  const env = params.env ?? process.env;
   const baseUrlOverrideRaw = typeof params.baseUrlOverride === 'string' ? params.baseUrlOverride.trim() : '';
-  const envUrlRaw = typeof process.env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? process.env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
+  const envUrlRaw = typeof env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
   const usingManagedServer = baseUrlOverrideRaw.length === 0 && envUrlRaw.length === 0;
 
-  const headers = resolveOpenCodeServerAuthHeadersFromEnv();
+  const headers = resolveOpenCodeServerAuthHeadersFromEnv(env);
 
   let directoryOverride = '';
   const resolveDirectory = (): string => {
@@ -249,6 +251,17 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
     sessionMessagesList: async ({ sessionId }) => {
       const raw = await fetchJson<unknown>({
         url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/message`, { directory: resolveDirectory() }),
+        method: 'GET',
+        headers,
+      });
+      return Array.isArray(raw) ? raw : [];
+    },
+    sessionDiff: async ({ sessionId, messageId }) => {
+      const raw = await fetchJson<unknown>({
+        url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/diff`, {
+          directory: resolveDirectory(),
+          ...(messageId ? { messageID: messageId } : {}),
+        }),
         method: 'GET',
         headers,
       });
@@ -420,7 +433,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
             if (disposed || signal.aborted || localAbort.signal.aborted) break;
             logger.debug('[OpenCodeServer] SSE stream ended; reconnecting (best-effort)', error);
             await refreshBaseUrlIfManagedBestEffort();
-            const delayMs = resolveSseReconnectDelayMs(attempt);
+            const delayMs = resolveSseReconnectDelayMs(attempt, env);
             attempt += 1;
             await sleepUntilOrAbort(delayMs, combinedAbort.signal);
           } finally {

@@ -9,6 +9,8 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 import { buildChangeTitleInstruction, shouldAppendChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
+import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodePermissionRequest, OpenCodeQuestionRequest, OpenCodeSession } from './types';
 import { createOpenCodeServerRuntimeClient, type OpenCodeServerRuntimeClient } from './client';
@@ -36,6 +38,9 @@ import {
 } from './openCodeUserMessageIds';
 import { buildOpenCodeSessionPermissionRuleset } from '@/backends/openCodeFamily/permission/openCodeFamilyPermissionPolicy';
 import { resolvePreferredChangeTitleToolNameForProvider } from '@/agent/prompting/coding/providerToolAliasRegistry';
+import { extractOpenCodeFileDiff } from '../utils/extractOpenCodeFileDiff';
+import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../utils/opencodeSessionAffinity';
+import { extractOpenCodeSessionDiffPayload } from './extractOpenCodeSessionDiffPayload';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -57,6 +62,27 @@ function isPromiseLike<T>(value: PromiseLike<T> | T | void): value is PromiseLik
   return Boolean(value) && typeof (value as PromiseLike<T>).then === 'function';
 }
 
+async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<
+  | { type: 'resolved'; value: T }
+  | { type: 'rejected'; error: unknown }
+  | { type: 'timeout' }
+> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ type: 'resolved' as const, value })).catch((error) => ({ type: 'rejected' as const, error })),
+      new Promise<{ type: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ type: 'timeout' }), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 function normalizeEnvVar(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -67,6 +93,7 @@ export type OpenCodeServerRuntimeDeps = Readonly<{
 
 export function createOpenCodeServerRuntime(params: {
   directory: string;
+  env?: NodeJS.ProcessEnv;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
@@ -76,6 +103,7 @@ export function createOpenCodeServerRuntime(params: {
 }, deps: OpenCodeServerRuntimeDeps = {}) {
   const provider: ACPProvider = 'opencode';
   const createClient = deps.createClient ?? createOpenCodeServerRuntimeClient;
+  const env = params.env ?? process.env;
 
   let client: OpenCodeServerRuntimeClient | null = null;
   let sessionId: string | null = null;
@@ -94,6 +122,8 @@ export function createOpenCodeServerRuntime(params: {
   let turnPromptActive = false;
   let turnActivitySeen = false;
   let turnUserMessageId: string | null = null;
+  let turnPromptLocalId: string | null = null;
+  let turnPromptTextForBackfill = '';
   let turnPrePromptMessageIdsAll: ReadonlySet<string> | null = null;
   let turnPreexistingMessageIds: ReadonlySet<string> | null = null;
   const turnStreamedAssistantMessageIds = new Set<string>();
@@ -102,6 +132,7 @@ export function createOpenCodeServerRuntime(params: {
   let turnAssistantBackfillFirstAttemptAtMs: number | null = null;
   let turnAssistantBackfillIdleAttempted = false;
   let idleSignalSeen = false;
+  let idleSignalSeenViaControlPlane = false;
   let statusPollBusySeen = false;
   let resolveOnIdleInFlight = false;
   let turnControlAbort: AbortController | null = null;
@@ -114,6 +145,12 @@ export function createOpenCodeServerRuntime(params: {
   const observedRemoteTextMessageIds = new Set<string>();
   let liveHistorySyncPromise: Promise<void> | null = null;
   let queuedLiveHistorySyncAllowAssistantReplies = false;
+  const turnChangeCollector = new TurnChangeSetCollector({
+    provider,
+    snapshotUnifiedDiff: true,
+  });
+  let turnChangeCollectorEpoch = 0;
+  let turnStartSeqInclusive = 0;
 
   let turnStreamKey: string | null = null;
   const accumulatedTextByPartKey = new Map<string, string>();
@@ -129,6 +166,7 @@ export function createOpenCodeServerRuntime(params: {
     if (client) return client;
     client = await createClient({
       directory: params.directory,
+      env,
       messageBuffer: params.messageBuffer,
     });
     return client;
@@ -152,12 +190,12 @@ export function createOpenCodeServerRuntime(params: {
         const id = normalizeString((p as any)?.id);
         if (!id) return false;
         if (defaultProviderId && id === defaultProviderId) return true;
-        const env = Array.isArray((p as any)?.env) ? (p as any).env : [];
-        if (!Array.isArray(env) || env.length === 0) return false;
-        return env.some((k: unknown) => {
+        const requiredEnvKeys = Array.isArray((p as any)?.env) ? (p as any).env : [];
+        if (!Array.isArray(requiredEnvKeys) || requiredEnvKeys.length === 0) return false;
+        return requiredEnvKeys.some((k: unknown) => {
           const key = normalizeString(k);
           if (!key) return false;
-          return normalizeEnvVar(process.env[key]) !== '';
+          return normalizeEnvVar(env[key]) !== '';
         });
       });
 
@@ -194,6 +232,13 @@ export function createOpenCodeServerRuntime(params: {
       const updatedAt = Date.now();
       await params.session.updateMetadata((prev) => ({
         ...prev,
+        sessionModesV1: {
+          v: 1,
+          provider,
+          updatedAt,
+          currentModeId,
+          availableModes,
+        },
         acpSessionModesV1: {
           v: 1,
           provider,
@@ -223,6 +268,8 @@ export function createOpenCodeServerRuntime(params: {
     void c.subscribeGlobalEvents({
       signal: controller.signal,
       onEvent: (evt) => {
+        const eventSequence = nextProviderEventSequence + 1;
+        nextProviderEventSequence = eventSequence;
         const processEvent = (): Promise<void> | void => {
           try {
             return handleEvent(evt);
@@ -231,8 +278,16 @@ export function createOpenCodeServerRuntime(params: {
           }
         };
 
+        const finalizeEvent = (): void => {
+          completedProviderEventSequence = Math.max(completedProviderEventSequence, eventSequence);
+          if (idleSignalSeen && turnPromptActive) {
+            void maybeResolveTurnOnIdleSignal();
+          }
+        };
+
         const trackPendingEventWork = (work: Promise<void>): Promise<void> => {
-          const tracked = work.finally(() => {
+          const tracked = Promise.resolve(work).finally(() => {
+            finalizeEvent();
             if (pendingEventWork === tracked) pendingEventWork = null;
           });
           pendingEventWork = tracked;
@@ -248,7 +303,10 @@ export function createOpenCodeServerRuntime(params: {
         }
 
         const maybePendingWork = processEvent();
-        if (!isPromiseLike(maybePendingWork)) return maybePendingWork;
+        if (!isPromiseLike(maybePendingWork)) {
+          finalizeEvent();
+          return maybePendingWork;
+        }
         return trackPendingEventWork(Promise.resolve(maybePendingWork));
       },
     }).catch((error) => {
@@ -259,6 +317,9 @@ export function createOpenCodeServerRuntime(params: {
 
   let currentThinking = false;
   let pendingEventWork: Promise<void> | null = null;
+  let nextProviderEventSequence = 0;
+  let completedProviderEventSequence = 0;
+  let pendingTurnToolForwardingWork = new Set<Promise<void>>();
   const setThinking = (value: boolean) => {
     if (value === currentThinking) return;
     currentThinking = value;
@@ -267,11 +328,14 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const resetTurnEventState = () => {
+    pendingTurnToolForwardingWork = new Set<Promise<void>>();
     clearStreamWriters();
     turnStreamKey = null;
     turnPromptActive = false;
     turnActivitySeen = false;
     turnUserMessageId = null;
+    turnPromptLocalId = null;
+    turnPromptTextForBackfill = '';
     turnPrePromptMessageIdsAll = null;
     turnPreexistingMessageIds = null;
     turnStreamedAssistantMessageIds.clear();
@@ -280,6 +344,7 @@ export function createOpenCodeServerRuntime(params: {
     turnAssistantBackfillFirstAttemptAtMs = null;
     turnAssistantBackfillIdleAttempted = false;
     idleSignalSeen = false;
+    idleSignalSeenViaControlPlane = false;
     statusPollBusySeen = false;
     resolveOnIdleInFlight = false;
     sidechainIdByRemoteSessionId.clear();
@@ -304,11 +369,18 @@ export function createOpenCodeServerRuntime(params: {
     inFlightQuestionIds = null;
   };
 
+  const beginFreshTurnChangeCollection = (): void => {
+    turnChangeCollectorEpoch += 1;
+    turnChangeCollector.beginTurn();
+    turnStartSeqInclusive = params.session.getLastObservedMessageSeq?.() ?? 0;
+  };
+
   const resolveTurn = () => {
     if (!turnDeferred) return;
     const d = turnDeferred;
     turnDeferred = null;
     resetTurnEventState();
+    beginFreshTurnChangeCollection();
     d.resolve();
   };
 
@@ -317,66 +389,161 @@ export function createOpenCodeServerRuntime(params: {
     const d = turnDeferred;
     turnDeferred = null;
     resetTurnEventState();
+    beginFreshTurnChangeCollection();
     d.reject(error);
   };
 
+  const collectNativeTurnDiffBestEffort = async (): Promise<void> => {
+    if (!sessionId) return;
+    if (!turnUserMessageId) return;
+    const messageId = turnUserMessageId;
+    const c = await ensureClient();
+    const diffOutcome = await raceWithTimeout(c.sessionDiff({ sessionId, messageId }), nativeSessionDiffTimeoutMs);
+    if (diffOutcome.type === 'timeout') {
+      logger.debug('[OpenCodeServer] Native session diff timed out (non-fatal)', {
+        sessionId,
+        messageId,
+        timeoutMs: nativeSessionDiffTimeoutMs,
+      });
+      return;
+    }
+    if (diffOutcome.type === 'rejected') {
+      logger.debug('[OpenCodeServer] Native session diff failed (non-fatal)', {
+        sessionId,
+        messageId,
+        error: diffOutcome.error,
+      });
+      return;
+    }
+    const raw = diffOutcome.value;
+    const payload = extractOpenCodeSessionDiffPayload(raw);
+    if (payload.unifiedDiffs.length > 0) {
+      turnChangeCollector.observeUnifiedDiffSnapshot({
+        unifiedDiff: payload.unifiedDiffs.join('\n'),
+        source: 'provider_native',
+        confidence: 'exact',
+      });
+      return;
+    }
+    for (const diff of payload.textDiffs) {
+      turnChangeCollector.observeTextDiff({
+        filePath: diff.filePath,
+        oldText: diff.oldText,
+        newText: diff.newText,
+        source: 'provider_native',
+        confidence: 'exact',
+      });
+    }
+  };
+
+  const emitTurnDiffToolIfPresent = async (): Promise<void> => {
+    const endSeqInclusive = params.session.getLastObservedMessageSeq?.() ?? turnStartSeqInclusive;
+    const turnChangeSet = turnChangeCollector.flushTurn({
+      sessionId: params.session.sessionId,
+      turnId: turnUserMessageId ?? `opencode-server-turn-${randomUUID()}`,
+      seqRange: {
+        startSeqInclusive: turnStartSeqInclusive,
+        endSeqInclusive: Math.max(turnStartSeqInclusive, endSeqInclusive),
+      },
+      status: 'completed',
+    });
+    if (!turnChangeSet) return;
+    emitCanonicalTurnDiffTool({
+      turnChangeSet,
+      protocol: 'acp',
+      rawToolName: 'OpenCodeDiff',
+      sendToolCall: ({ toolName, input, callId }) => {
+        const resolvedCallId = callId ?? randomUUID();
+        params.session.sendAgentMessage(
+          provider,
+          { type: 'tool-call', callId: resolvedCallId, name: toolName, input, id: randomUUID() },
+        );
+        return resolvedCallId;
+      },
+      sendToolResult: ({ callId, output }) => {
+        params.session.sendAgentMessage(
+          provider,
+          { type: 'tool-result', callId, output, id: randomUUID() },
+        );
+      },
+    });
+  };
+
   const pollSleepMs = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw >= 25 ? Math.trunc(raw) : configuration.pendingQueueIdleWakePollIntervalMs;
     // Clamp to keep control-plane polling responsive without excessive churn.
     return Math.max(25, Math.min(2_000, configured));
   })();
 
+  const turnActivePollSleepMs = (() => {
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_ACTIVE_CONTROL_POLL_INTERVAL_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw >= 25 ? Math.trunc(raw) : Math.min(pollSleepMs, 250);
+    return Math.max(25, Math.min(2_000, configured));
+  })();
+
   const turnPreexistingSnapshotLimit = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_TURN_PREEXISTING_SNAPSHOT_LIMIT ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_TURN_PREEXISTING_SNAPSHOT_LIMIT ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 200;
     return Math.max(10, Math.min(2_000, configured));
   })();
 
   const abortTimeoutMs = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_ABORT_TIMEOUT_MS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_ABORT_TIMEOUT_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 2_500;
     // Keep abort responsive but allow slow local servers a moment to drain.
     return Math.max(25, Math.min(30_000, configured));
   })();
 
+  const nativeSessionDiffTimeoutMs = (() => {
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_SESSION_DIFF_TIMEOUT_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 2_500;
+    return Math.max(25, Math.min(30_000, configured));
+  })();
+
+  const idlePendingToolForwardingTimeoutMs = (() => {
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_IDLE_PENDING_TOOL_FORWARDING_TIMEOUT_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 2_500;
+    return Math.max(25, Math.min(30_000, configured));
+  })();
+
   const prePromptIdleWaitMs = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_PREPROMPT_IDLE_WAIT_MS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_PREPROMPT_IDLE_WAIT_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 30_000;
     return Math.max(0, Math.min(300_000, configured));
   })();
 
   const streamDeltaFlushIntervalMs = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 50;
     return Math.max(0, Math.min(2_000, configured));
   })();
 
   const streamDeltaMaxChars = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_MAX_CHARS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_MAX_CHARS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 8_000;
     return Math.max(256, Math.min(200_000, configured));
   })();
 
   const controlPlaneMaxConsecutiveFailures = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 3;
     return Math.max(1, Math.min(100, configured));
   })();
 
   const controlPlaneFailureGraceMs = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 10_000;
     return Math.max(250, Math.min(300_000, configured));
   })();
 
   const controlPlaneDisconnectMessage = (() => {
-    const raw = normalizeEnvVar(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_MESSAGE);
+    const raw = normalizeEnvVar(env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_MESSAGE);
     return raw || 'OpenCode server connection lost. Please restart OpenCode and try again.';
   })();
 
   const statusPollEnabled = (() => {
-    const raw = normalizeEnvVar(process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED);
+    const raw = normalizeEnvVar(env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED);
     if (!raw) return true;
     if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
     return true;
@@ -426,13 +593,13 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const assistantBackfillMaxAttempts = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_MAX_ATTEMPTS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_MAX_ATTEMPTS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 60;
     return Math.max(1, Math.min(100, configured));
   })();
 
   const assistantBackfillGraceMs = (() => {
-    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_GRACE_MS ?? ''), 10);
+    const raw = Number.parseInt(String(env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_GRACE_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 60_000;
     return Math.max(100, Math.min(300_000, configured));
   })();
@@ -531,13 +698,15 @@ export function createOpenCodeServerRuntime(params: {
     if (statusType !== 'idle' && !missingImpliesIdle) return;
     setThinking(false);
     idleSignalSeen = true;
+    idleSignalSeenViaControlPlane = true;
   };
 
   const maybeResolveTurnOnIdleSignal = async () => {
     if (!turnDeferred) return;
     if (!turnPromptActive) return;
     if (!idleSignalSeen) return;
-    if (!turnActivitySeen) return;
+    if (!turnActivitySeen && !(idleSignalSeenViaControlPlane && statusPollBusySeen)) return;
+    if (completedProviderEventSequence < nextProviderEventSequence) return;
     if (resolveOnIdleInFlight) return;
     resolveOnIdleInFlight = true;
     try {
@@ -557,6 +726,24 @@ export function createOpenCodeServerRuntime(params: {
         questions.some((q) => !handledQs.has(q.id) || inFlightQs.has(q.id));
       if (hasUnhandled) return;
       if (!turnDeferred) return;
+
+      if (pendingTurnToolForwardingWork.size > 0) {
+        const forwardingOutcome = await raceWithTimeout(
+          Promise.allSettled(Array.from(pendingTurnToolForwardingWork)).then(() => undefined),
+          idlePendingToolForwardingTimeoutMs,
+        );
+        if (forwardingOutcome.type === 'timeout') {
+          logger.debug('[OpenCodeServer] Pending tool forwarding timed out before idle turn completion (non-fatal)', {
+            timeoutMs: idlePendingToolForwardingTimeoutMs,
+            pendingCount: pendingTurnToolForwardingWork.size,
+            sessionId,
+            turnUserMessageId,
+          });
+        }
+      }
+
+      if (!turnDeferred) return;
+      if (completedProviderEventSequence < nextProviderEventSequence) return;
       if (pendingTaskChildSessionDiscoveryCallKeys.size > 0) return;
 
       // Ensure Task sidechain imports are committed before the turn completes, otherwise
@@ -567,7 +754,32 @@ export function createOpenCodeServerRuntime(params: {
         await Promise.allSettled(pendingSidechainImports);
       }
 
-      await flushAndClearStreamWriters({ reason: 'turn-end' });
+      const flushOutcome = await raceWithTimeout(
+        flushAndClearStreamWriters({ reason: 'tool-call-boundary' }),
+        idlePendingToolForwardingTimeoutMs,
+      );
+      if (flushOutcome.type === 'timeout') {
+        logger.debug('[OpenCodeServer] Stream flush timed out before idle turn completion (non-fatal)', {
+          timeoutMs: idlePendingToolForwardingTimeoutMs,
+          sessionId,
+          turnUserMessageId,
+        });
+      } else if (flushOutcome.type === 'rejected') {
+        logger.debug('[OpenCodeServer] Stream flush failed before idle turn completion (non-fatal)', {
+          sessionId,
+          turnUserMessageId,
+          error: flushOutcome.error,
+        });
+      }
+      if (!turnUserMessageId && turnPromptLocalId) {
+        turnUserMessageId = await backfillVendorAssignedUserMessageIdBestEffort({
+          localIdRaw: turnPromptLocalId,
+          promptText: turnPromptTextForBackfill,
+          prePromptMessageIds: turnPrePromptMessageIdsAll,
+        });
+      }
+      await collectNativeTurnDiffBestEffort();
+      await emitTurnDiffToolIfPresent();
       params.session.sendAgentMessage(provider, { type: 'task_complete', id: randomUUID() });
       resolveTurn();
     } finally {
@@ -641,28 +853,29 @@ export function createOpenCodeServerRuntime(params: {
     localIdRaw: string | null | undefined;
     promptText: string;
     prePromptMessageIds: ReadonlySet<string> | null;
-  }): Promise<void> => {
+  }): Promise<string | null> => {
     const localId = typeof paramsForBackfill.localIdRaw === 'string' ? paramsForBackfill.localIdRaw.trim() : '';
-    if (!localId) return;
-    if (!sessionId) return;
-    if (resolveOpenCodeUserMessageIdFromMetadata(params.session.getMetadataSnapshot(), localId)) return;
+    if (!localId) return null;
+    if (!sessionId) return null;
+    const existing = resolveOpenCodeUserMessageIdFromMetadata(params.session.getMetadataSnapshot(), localId);
+    if (existing) return existing;
 
     let raw: unknown;
     try {
       const c = await ensureClient();
       raw = await c.sessionMessagesList({ sessionId });
     } catch {
-      return;
+      return null;
     }
 
     const items = extractOpenCodeTextHistoryItems(Array.isArray(raw) ? raw : []);
-    if (items.length === 0) return;
+    if (items.length === 0) return null;
 
     const unseenUserItems = items.filter((item) => {
       if (item.role !== 'user') return false;
       return !paramsForBackfill.prePromptMessageIds || !paramsForBackfill.prePromptMessageIds.has(item.messageId);
     });
-    if (unseenUserItems.length === 0) return;
+    if (unseenUserItems.length === 0) return null;
 
     const normalizedPromptText = paramsForBackfill.promptText.trim();
     let candidateMessageId: string | null = null;
@@ -676,7 +889,7 @@ export function createOpenCodeServerRuntime(params: {
     if (!candidateMessageId) {
       candidateMessageId = unseenUserItems[unseenUserItems.length - 1]!.messageId;
     }
-    if (!candidateMessageId) return;
+    if (!candidateMessageId) return null;
 
     try {
       await params.session.updateMetadata((prev) => {
@@ -688,6 +901,7 @@ export function createOpenCodeServerRuntime(params: {
     }
 
     observedRemoteTextMessageIds.add(candidateMessageId);
+    return candidateMessageId;
   };
 
   const getStreamKeyForMessage = (remoteSessionId: string, messageID: string): string => {
@@ -884,7 +1098,7 @@ export function createOpenCodeServerRuntime(params: {
     await transcriptStreamBridge.flushAll(opts);
   };
 
-    const sendDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
+  const sendDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
     turnActivitySeen = true;
     if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
     if (!sidechainId && sessionId && remoteSessionId === sessionId) {
@@ -913,7 +1127,11 @@ export function createOpenCodeServerRuntime(params: {
     });
   };
 
-  const sendToolFromPart = async (part: ReturnType<typeof parseOpenCodeToolPart>, sidechainId: string | null) => {
+  const sendToolFromPart = async (
+    part: ReturnType<typeof parseOpenCodeToolPart>,
+    sidechainId: string | null,
+    observedTurnChangeCollectorEpoch: number,
+  ) => {
     if (!part) return;
     turnActivitySeen = true;
     if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
@@ -979,6 +1197,21 @@ export function createOpenCodeServerRuntime(params: {
           metadata: asRecord(part.state.metadata) ?? {},
           attachments: Array.isArray((part.state as any).attachments) ? (part.state as any).attachments : undefined,
         };
+        const fileDiff = extractOpenCodeFileDiff(output);
+        if (fileDiff && observedTurnChangeCollectorEpoch === turnChangeCollectorEpoch) {
+          turnChangeCollector.observeTextDiff({
+            filePath: fileDiff.filePath,
+            oldText: fileDiff.oldText,
+            newText: fileDiff.newText,
+            source: 'provider_tool',
+            confidence: 'exact',
+          });
+        } else if (fileDiff) {
+          logger.debug('[OpenCodeServer] Dropping stale tool diff after turn boundary (non-fatal)', {
+            sessionId: part.sessionID,
+            callId,
+          });
+        }
         params.session.sendAgentMessage(
           provider,
           { type: 'tool-result', callId, output, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
@@ -1033,11 +1266,15 @@ export function createOpenCodeServerRuntime(params: {
           { meta },
         );
       }
-
-      if (idleSignalSeen && turnPromptActive) {
-        void maybeResolveTurnOnIdleSignal();
-      }
     }
+  };
+
+  const trackPendingTurnToolForwardingWork = (work: Promise<void>): Promise<void> => {
+    const pendingWorkForObservedTurn = pendingTurnToolForwardingWork;
+    pendingWorkForObservedTurn.add(work);
+    return work.finally(() => {
+      pendingWorkForObservedTurn.delete(work);
+    });
   };
 
   const handleQuestionAsked = async (req: OpenCodeQuestionRequest) => {
@@ -1045,6 +1282,7 @@ export function createOpenCodeServerRuntime(params: {
 
     setThinking(false);
     idleSignalSeen = false;
+    idleSignalSeenViaControlPlane = false;
     if (turnPromptActive) turnActivitySeen = true;
 
     const questions = req.questions
@@ -1139,6 +1377,7 @@ export function createOpenCodeServerRuntime(params: {
     if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
     setThinking(false);
     idleSignalSeen = false;
+    idleSignalSeenViaControlPlane = false;
     if (turnPromptActive) turnActivitySeen = true;
 
     const mode = params.getPermissionMode?.() ?? 'default';
@@ -1230,7 +1469,7 @@ export function createOpenCodeServerRuntime(params: {
       });
   };
 
-  const handleEvent = (evt: OpenCodeGlobalEvent) => {
+  const handleEvent = (evt: OpenCodeGlobalEvent): Promise<void> | void => {
     const payload = evt.payload;
     const type = normalizeString(payload.type);
     const props = payload.properties;
@@ -1248,10 +1487,20 @@ export function createOpenCodeServerRuntime(params: {
 
       const maybeTool = parseOpenCodeToolPart(part);
       if (maybeTool) {
-        void sendToolFromPart(maybeTool, sidechainId).catch((error) => {
+        if (turnPromptActive) {
+          idleSignalSeen = false;
+          idleSignalSeenViaControlPlane = false;
+        }
+        const observedTurnChangeCollectorEpoch = turnChangeCollectorEpoch;
+        const toolWork = sendToolFromPart(maybeTool, sidechainId, observedTurnChangeCollectorEpoch).catch((error) => {
           logger.debug('[OpenCodeServer] tool handler failed (non-fatal)', error);
         });
-        return;
+        void trackPendingTurnToolForwardingWork(toolWork).finally(() => {
+          if (observedTurnChangeCollectorEpoch === turnChangeCollectorEpoch && idleSignalSeen && turnPromptActive) {
+            void maybeResolveTurnOnIdleSignal();
+          }
+        });
+        return toolWork;
       }
       if (!turnPromptActive && sessionID === sessionId) {
         void importLiveCommittedTextHistoryBestEffort({ allowAssistantReplies: false });
@@ -1274,6 +1523,10 @@ export function createOpenCodeServerRuntime(params: {
         if (!shouldTreatMessageIdAsTurnActivity(messageID)) return;
       } else {
         if (!turnPromptActive) return;
+      }
+      if (turnPromptActive) {
+        idleSignalSeen = false;
+        idleSignalSeenViaControlPlane = false;
       }
       const partType = partTypeByPartKey.get(`${sessionID}:${partID}`) ?? '';
       const accumulationKey = `${sessionID}:${messageID}:${partType === 'reasoning' ? 'reasoning' : 'text'}`;
@@ -1322,6 +1575,7 @@ export function createOpenCodeServerRuntime(params: {
         setThinking(false);
         if (turnPromptActive) {
           idleSignalSeen = true;
+          idleSignalSeenViaControlPlane = false;
           void maybeResolveTurnOnIdleSignal();
         }
       }
@@ -1339,6 +1593,7 @@ export function createOpenCodeServerRuntime(params: {
       setThinking(false);
       if (turnPromptActive) {
         idleSignalSeen = true;
+        idleSignalSeenViaControlPlane = false;
         void maybeResolveTurnOnIdleSignal();
       }
       return;
@@ -1360,6 +1615,8 @@ export function createOpenCodeServerRuntime(params: {
       rejectTurn(rec.error ?? new Error('OpenCode session error'));
       return;
     }
+
+    return;
   };
 
   const resetRuntimeState = () => {
@@ -1415,9 +1672,12 @@ export function createOpenCodeServerRuntime(params: {
 
     beginTurn(): void {
       turnInFlight = true;
+      pendingTurnToolForwardingWork = new Set<Promise<void>>();
       turnPromptActive = false;
       turnActivitySeen = false;
       idleSignalSeen = false;
+      idleSignalSeenViaControlPlane = false;
+      beginFreshTurnChangeCollection();
       params.session.sendAgentMessage(provider, { type: 'task_started', id: randomUUID() });
       setThinking(true);
     },
@@ -1447,9 +1707,7 @@ export function createOpenCodeServerRuntime(params: {
         }
         publishDynamicSessionOptionsBestEffort();
         const snapshot = params.session.getMetadataSnapshot();
-        const existingVendorSessionId = typeof (snapshot as any)?.opencodeSessionId === 'string'
-          ? String((snapshot as any).opencodeSessionId).trim()
-          : '';
+        const existingVendorSessionId = readOpenCodeSessionRuntimeHandleFromMetadata(snapshot).vendorSessionId ?? '';
         const marker = snapshot && typeof snapshot === 'object' ? (snapshot as any).opencodeResumeHistoryImportV1 : null;
         const shouldSkipHistoryImport =
           (existingVendorSessionId && existingVendorSessionId === resumeId) ||
@@ -1513,7 +1771,10 @@ export function createOpenCodeServerRuntime(params: {
     },
 
     async sendPrompt(prompt: string): Promise<void> {
-      await this.sendPromptWithMeta?.({ text: prompt, localId: null });
+      const resumeBackfillLocalId = omitCustomMessageIdOnFirstPromptAfterResume
+        ? `opencode-resume-local-${randomUUID()}`
+        : null;
+      await this.sendPromptWithMeta?.({ text: prompt, localId: resumeBackfillLocalId });
     },
 
     async sendPromptWithMeta(paramsWithMeta: { text: string; localId?: string | null }): Promise<void> {
@@ -1550,7 +1811,10 @@ export function createOpenCodeServerRuntime(params: {
       turnPromptActive = true;
       turnActivitySeen = false;
       idleSignalSeen = false;
+      idleSignalSeenViaControlPlane = false;
       turnUserMessageId = messageID ?? null;
+      turnPromptLocalId = typeof paramsWithMeta.localId === 'string' ? paramsWithMeta.localId.trim() : null;
+      turnPromptTextForBackfill = paramsWithMeta.text;
       turnPrePromptMessageIdsAll = null;
       turnPreexistingMessageIds = null;
       handledPermissionIds = new Set<string>();
@@ -1665,7 +1929,7 @@ export function createOpenCodeServerRuntime(params: {
             const timer = setTimeout(() => {
               cleanup();
               resolve();
-            }, pollSleepMs);
+            }, turnPromptActive && !idleSignalSeen ? turnActivePollSleepMs : pollSleepMs);
             timer.unref?.();
 
             controlAbort.signal.addEventListener('abort', onAbort, { once: true });

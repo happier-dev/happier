@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 
 import { readSharedManagedOpenCodeServerStateBestEffort } from '@/backends/opencode/server/sharedManagedServer';
-import { readOpenCodeSessionAffinityFromMetadata } from '@/backends/opencode/utils/opencodeSessionAffinity';
 import { createOpenCodeAttachArgs } from '@/backends/opencode/localControl/createOpenCodeAttachArgs';
-import { resolveOpenCodeCliCommand } from '@/backends/opencode/utils/resolveOpenCodeCliCommand';
+import { resolveOpenCodeCliLaunchSpec } from '@/backends/opencode/utils/resolveOpenCodeCliCommand';
+import type { ProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { resolveOpenCodeProviderAttachTargetWithManagedServerFallback } from './evaluateOpenCodeProviderAttachEligibility';
 
 type SpawnedProcess = Readonly<{
   once: {
@@ -12,41 +13,38 @@ type SpawnedProcess = Readonly<{
   };
 }>;
 
-function normalizeNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 export async function runOpenCodeProviderAttach(params: Readonly<{
   sessionId: string;
   metadata: Record<string, unknown>;
   spawnProcess?: typeof spawn;
   command?: string;
+  commandArgs?: readonly string[];
   env?: NodeJS.ProcessEnv;
   readManagedServerStateFn?: typeof readSharedManagedOpenCodeServerStateBestEffort;
-  resolveCommandFn?: typeof resolveOpenCodeCliCommand;
+  resolveCommandFn?: (env?: NodeJS.ProcessEnv) => ProviderCliLaunchSpec;
 }>): Promise<number> {
-  const vendorSessionId = normalizeNonEmptyString(params.metadata.opencodeSessionId);
-  const directory = normalizeNonEmptyString(params.metadata.path);
-  const affinity = readOpenCodeSessionAffinityFromMetadata(params.metadata);
-  const managedState = await (params.readManagedServerStateFn ?? readSharedManagedOpenCodeServerStateBestEffort)().catch(() => null);
-  const baseUrl = affinity.serverBaseUrl ?? managedState?.baseUrl ?? null;
-
-  if (!vendorSessionId || !directory || affinity.backendMode !== 'server' || !baseUrl) {
+  const target = await resolveOpenCodeProviderAttachTargetWithManagedServerFallback({
+    metadata: params.metadata,
+    readManagedServerStateFn: params.readManagedServerStateFn ?? readSharedManagedOpenCodeServerStateBestEffort,
+  });
+  if (!target.eligible) {
     return 1;
   }
 
   const spawnProcess = params.spawnProcess ?? spawn;
   const env = params.env ?? process.env;
-  const command = params.command ?? (params.resolveCommandFn ?? resolveOpenCodeCliCommand)(env);
+  const launch = params.command && params.commandArgs
+    ? null
+    : (params.resolveCommandFn ?? resolveOpenCodeCliLaunchSpec)(env);
+  const command = params.command ?? launch?.command ?? resolveOpenCodeCliLaunchSpec(env).command;
+  const commandArgs = params.commandArgs ?? launch?.args ?? resolveOpenCodeCliLaunchSpec(env).args;
 
   return await new Promise<number>((resolve) => {
-    const child = spawnProcess(command, createOpenCodeAttachArgs({
-      baseUrl,
-      directory,
-      sessionId: vendorSessionId,
-    }), {
+    const child = spawnProcess(command, [...commandArgs, ...createOpenCodeAttachArgs({
+      baseUrl: target.baseUrl,
+      directory: target.directory,
+      sessionId: target.vendorSessionId,
+    })], {
       stdio: 'inherit',
       shell: false,
       env,

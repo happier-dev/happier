@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ProviderCliLaunchSpec } from '@/backends/opencode/utils/resolveOpenCodeCliCommand';
+
 import { resolveSharedManagedOpenCodeServerBaseUrl, stopSharedManagedOpenCodeServerFromState } from './sharedManagedServer';
 
 describe('resolveSharedManagedOpenCodeServerBaseUrl', () => {
@@ -153,6 +155,84 @@ describe('resolveSharedManagedOpenCodeServerBaseUrl', () => {
       [{ baseUrl: 'http://127.0.0.1:9999', pid: 222, startedAtMs: 9, status: 'starting' }],
       [{ baseUrl: 'http://127.0.0.1:9999', pid: 222, startedAtMs: 9, status: 'ready' }],
     ]);
+  });
+
+  it('kills an unhealthy recorded managed server when the launch spec uses a wrapper path without opencode in the command line', async () => {
+    const wrapperLaunchSpec = {
+      command: 'node',
+      args: ['/tmp/custom-launch.js'],
+      resolvedPath: '/tmp/custom-launch.js',
+      source: 'override',
+    } as const satisfies ProviderCliLaunchSpec;
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({
+        baseUrl: 'http://127.0.0.1:1234',
+        pid: 111,
+        startedAtMs: 1,
+        status: 'failed' as const,
+        lastFailureAtMs: 2,
+      })),
+      writeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => false),
+      getProcessInfo: vi.fn(async () => ({
+        name: 'node',
+        cmd: 'node /tmp/custom-launch.js serve --hostname=127.0.0.1 --port=1234',
+      })),
+      resolveLaunchSpec: vi.fn(() => wrapperLaunchSpec),
+      killPid: vi.fn(() => true),
+      startServer: vi.fn(async (params?: { onSpawned?: (started: { baseUrl: string; pid: number }) => void | Promise<void> }) => {
+        await params?.onSpawned?.({ baseUrl: 'http://127.0.0.1:9999', pid: 222 });
+        return { baseUrl: 'http://127.0.0.1:9999', pid: 222 };
+      }),
+      nowMs: () => 9,
+    };
+
+    const out = await resolveSharedManagedOpenCodeServerBaseUrl(deps);
+
+    expect(out).toEqual({ baseUrl: 'http://127.0.0.1:9999', didStart: true });
+    expect(deps.killPid).toHaveBeenCalledWith(111);
+    expect(deps.startServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not kill an unhealthy recorded pid when the command only matches the broad opencode serve heuristic but not the launch spec identity', async () => {
+    const wrapperLaunchSpec = {
+      command: 'node',
+      args: ['/tmp/custom-launch.js'],
+      resolvedPath: '/tmp/custom-launch.js',
+      source: 'override',
+    } as const satisfies ProviderCliLaunchSpec;
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({
+        baseUrl: 'http://127.0.0.1:1234',
+        pid: 111,
+        startedAtMs: 1,
+        status: 'failed' as const,
+        lastFailureAtMs: 2,
+      })),
+      writeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => false),
+      getProcessInfo: vi.fn(async () => ({
+        name: 'opencode',
+        cmd: 'opencode serve --hostname=127.0.0.1 --port=1234',
+      })),
+      resolveLaunchSpec: vi.fn(() => wrapperLaunchSpec),
+      killPid: vi.fn(() => true),
+      startServer: vi.fn(async (params?: { onSpawned?: (started: { baseUrl: string; pid: number }) => void | Promise<void> }) => {
+        await params?.onSpawned?.({ baseUrl: 'http://127.0.0.1:9999', pid: 222 });
+        return { baseUrl: 'http://127.0.0.1:9999', pid: 222 };
+      }),
+      nowMs: () => 9,
+    };
+
+    const out = await resolveSharedManagedOpenCodeServerBaseUrl(deps);
+
+    expect(out).toEqual({ baseUrl: 'http://127.0.0.1:9999', didStart: true });
+    expect(deps.killPid).not.toHaveBeenCalled();
+    expect(deps.startServer).toHaveBeenCalledTimes(1);
   });
 
   it('starts a new managed server after a failed startup when the recorded pid no longer looks like opencode', async () => {
@@ -329,7 +409,7 @@ describe('stopSharedManagedOpenCodeServerFromState', () => {
     expect(deps.removeState).toHaveBeenCalledTimes(1);
   });
 
-  it('kills the managed server when health probe fails but pid looks like opencode serve', async () => {
+  it('does not kill during stop when health probe fails and launch identity cannot prove ownership', async () => {
     const deps = {
       withLock: async <T>(fn: () => Promise<T>) => await fn(),
       readState: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:1234', pid: 222, startedAtMs: 1, status: 'failed' as const })),
@@ -342,8 +422,36 @@ describe('stopSharedManagedOpenCodeServerFromState', () => {
 
     const out = await stopSharedManagedOpenCodeServerFromState(deps);
 
+    expect(out).toEqual({ didKill: false });
+    expect(deps.killPid).not.toHaveBeenCalled();
+    expect(deps.removeState).toHaveBeenCalledTimes(1);
+  });
+
+  it('kills during stop when health probe fails and launch identity proves ownership', async () => {
+    const wrapperLaunchSpec = {
+      command: 'node',
+      args: ['/tmp/custom-launch.js'],
+      resolvedPath: '/tmp/custom-launch.js',
+      source: 'override',
+    } as const satisfies ProviderCliLaunchSpec;
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:43111', pid: 225, startedAtMs: 1, status: 'failed' as const })),
+      removeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => false),
+      getProcessInfo: vi.fn(async () => ({
+        name: 'node',
+        cmd: 'node /tmp/custom-launch.js serve --hostname=127.0.0.1 --port=43111',
+      })),
+      resolveLaunchSpec: vi.fn(() => wrapperLaunchSpec),
+      killPid: vi.fn(() => true),
+    };
+
+    const out = await stopSharedManagedOpenCodeServerFromState(deps);
+
     expect(out).toEqual({ didKill: true });
-    expect(deps.killPid).toHaveBeenCalledWith(222);
+    expect(deps.killPid).toHaveBeenCalledWith(225);
     expect(deps.removeState).toHaveBeenCalledTimes(1);
   });
 
@@ -355,6 +463,24 @@ describe('stopSharedManagedOpenCodeServerFromState', () => {
       isPidAlive: vi.fn(() => true),
       probeHealth: vi.fn(async () => false),
       getProcessInfo: vi.fn(async () => ({ name: 'node', cmd: 'node some-other-server.js' })),
+      killPid: vi.fn(() => false),
+    };
+
+    const out = await stopSharedManagedOpenCodeServerFromState(deps);
+
+    expect(out).toEqual({ didKill: false });
+    expect(deps.killPid).not.toHaveBeenCalled();
+    expect(deps.removeState).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not kill when only the process name mentions opencode but the command is not an opencode serve process', async () => {
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:1234', pid: 334, startedAtMs: 1, status: 'failed' as const })),
+      removeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => false),
+      getProcessInfo: vi.fn(async () => ({ name: 'opencode-helper', cmd: 'node helper.js' })),
       killPid: vi.fn(() => false),
     };
 
@@ -400,9 +526,37 @@ describe('stopSharedManagedOpenCodeServerFromState', () => {
 
     const out = await stopSharedManagedOpenCodeServerFromState(deps);
 
-    expect(out).toEqual({ didKill: true });
+    expect(out).toEqual({ didKill: false });
     expect(deps.probeHealth).not.toHaveBeenCalled();
-    expect(deps.killPid).toHaveBeenCalledWith(222);
+    expect(deps.killPid).not.toHaveBeenCalled();
+    expect(deps.removeState).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not kill during stop when the command only matches the broad opencode serve heuristic but not the launch spec identity', async () => {
+    const wrapperLaunchSpec = {
+      command: 'node',
+      args: ['/tmp/custom-launch.js'],
+      resolvedPath: '/tmp/custom-launch.js',
+      source: 'override',
+    } as const satisfies ProviderCliLaunchSpec;
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:43111', pid: 226, startedAtMs: 1, status: 'failed' as const })),
+      removeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => false),
+      getProcessInfo: vi.fn(async () => ({
+        name: 'opencode',
+        cmd: 'opencode serve --hostname=127.0.0.1 --port=43111',
+      })),
+      resolveLaunchSpec: vi.fn(() => wrapperLaunchSpec),
+      killPid: vi.fn(() => true),
+    };
+
+    const out = await stopSharedManagedOpenCodeServerFromState(deps);
+
+    expect(out).toEqual({ didKill: false });
+    expect(deps.killPid).not.toHaveBeenCalled();
     expect(deps.removeState).toHaveBeenCalledTimes(1);
   });
 });
