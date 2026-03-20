@@ -75,6 +75,7 @@ export class FakePermissionClient {
       };
       this.metadataWaiters.push(waiter);
 
+      // Avoid lost wakeups if updateMetadata raced before we registered this waiter.
       if (this.metadataVersion !== startVersion) {
         const idx = this.metadataWaiters.indexOf(waiter);
         if (idx >= 0) this.metadataWaiters.splice(idx, 1);
