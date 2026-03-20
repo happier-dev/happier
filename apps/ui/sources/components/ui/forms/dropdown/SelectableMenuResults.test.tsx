@@ -81,4 +81,29 @@ describe('SelectableMenuResults', () => {
         expect(tree).not.toBeNull();
         expect((tree as any).toJSON()).toBe(null);
     });
+
+    it('forwards compact item props to item rows', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SelectableMenuResults
+                    categories={[
+                        { id: 'c1', title: '', items: [{ id: 'a', title: 'Alpha', subtitle: 'Selected subtitle' }] },
+                    ]}
+                    selectedIndex={0}
+                    onSelectionChange={() => {}}
+                    onPressItem={() => {}}
+                    rowVariant="slim"
+                    rowKind="item"
+                    itemProps={{ density: 'compact' }}
+                />,
+            );
+        });
+
+        const item = (tree as any).root.findByType('Item');
+        expect(item.props.density).toBe('compact');
+        expect(item.props.subtitle).toBe('Selected subtitle');
+    });
 });
