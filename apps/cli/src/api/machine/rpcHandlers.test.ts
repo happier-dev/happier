@@ -8,7 +8,7 @@ import tweetnacl from 'tweetnacl';
 import axios from 'axios';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
@@ -34,6 +34,16 @@ const { forkOpenCodeSessionNativeMock } = vi.hoisted(() => ({
 
 const { createCatalogAcpBackendMock } = vi.hoisted(() => ({
   createCatalogAcpBackendMock: vi.fn(async () => null as any),
+}));
+
+const { createCodexAppServerClientMock } = vi.hoisted(() => ({
+  createCodexAppServerClientMock: vi.fn(async () => ({
+    request: vi.fn(async () => ({ threadId: 'codex-thread-forked' })),
+    notify: vi.fn(async () => {}),
+    registerRequestHandler: vi.fn(() => () => {}),
+    registerNotificationHandler: vi.fn(() => () => {}),
+    dispose: vi.fn(async () => {}),
+  })),
 }));
 
 const { fetchServerFeaturesSnapshotMock } = vi.hoisted(() => ({
@@ -88,6 +98,10 @@ vi.mock('@/agent/acp/createCatalogAcpBackend', () => ({
   createCatalogAcpBackend: createCatalogAcpBackendMock,
 }));
 
+vi.mock('@/backends/codex/appServer/client/createCodexAppServerClient', () => ({
+  createCodexAppServerClient: createCodexAppServerClientMock,
+}));
+
 vi.mock('@/features/serverFeaturesClient', () => ({
   fetchServerFeaturesSnapshot: fetchServerFeaturesSnapshotMock,
 }));
@@ -102,6 +116,14 @@ describe('registerMachineRpcHandlers', () => {
     updateSessionMetadataWithRetryMock.mockClear();
     forkOpenCodeSessionNativeMock.mockReset();
     createCatalogAcpBackendMock.mockReset();
+    createCodexAppServerClientMock.mockReset();
+    createCodexAppServerClientMock.mockResolvedValue({
+      request: vi.fn(async () => ({ threadId: 'codex-thread-forked' })),
+      notify: vi.fn(async () => {}),
+      registerRequestHandler: vi.fn(() => () => {}),
+      registerNotificationHandler: vi.fn(() => () => {}),
+      dispose: vi.fn(async () => {}),
+    } as any);
     fetchServerFeaturesSnapshotMock.mockClear();
     fetchServerFeaturesSnapshotMock.mockResolvedValue({
       status: 'ready',
@@ -174,12 +196,462 @@ describe('registerMachineRpcHandlers', () => {
       type: 'resume-session',
       directory: '/tmp',
       sessionId: 'sess_old',
-      agent: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       modelId: '   ',
       modelUpdatedAt: 456,
     });
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ modelId: undefined, modelUpdatedAt: 456 }));
+  });
+
+  it('passes through environmentVariables when resuming a session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      type: 'resume-session',
+      directory: '/tmp',
+      sessionId: 'sess_old',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+      },
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'sess_old',
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+      },
+    }));
+  });
+
+  it('normalizes legacy experimentalCodexAcp spawn requests onto canonical codexBackendMode', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      experimentalCodexAcp: true,
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      codexBackendMode: 'acp',
+    }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({
+      experimentalCodexAcp: true,
+    }));
+  });
+
+  it('passes through mcpSelection when spawning a session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      mcpSelection: {
+        v: 1,
+        managedServersEnabled: false,
+        forceIncludeServerIds: ['portable-playwright'],
+        forceExcludeServerIds: ['workspace-db'],
+      },
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      mcpSelection: {
+        v: 1,
+        managedServersEnabled: false,
+        forceIncludeServerIds: ['portable-playwright'],
+        forceExcludeServerIds: ['workspace-db'],
+      },
+    }));
+  });
+
+  it('passes through sessionConfigOptionOverrides when spawning a session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: 123,
+        overrides: {
+          speed: { updatedAt: 123, value: 'fast' },
+        },
+      },
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: 123,
+        overrides: {
+          speed: { updatedAt: 123, value: 'fast' },
+        },
+      },
+    }));
+  });
+
+  it('passes canonical spawn fields through when spawning a session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      spawnNonce: 'spawn-nonce-1',
+      initialPrompt: 'Summarize the repo',
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 321,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          anthropic: { source: 'connected', profileId: 'work' },
+        },
+      },
+      transcriptStorage: 'direct',
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/tmp',
+      spawnNonce: 'spawn-nonce-1',
+      initialPrompt: 'Summarize the repo',
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 321,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          anthropic: { source: 'connected', profileId: 'work' },
+        },
+      },
+      transcriptStorage: 'direct',
+    }));
+    const firstSpawnCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
+    const forwardedSpawn = firstSpawnCall?.[0] as
+      | {
+          workspaceId?: string;
+          workspaceLocationId?: string;
+          workspaceCheckoutId?: string;
+        }
+      | undefined;
+    expect(forwardedSpawn?.workspaceId).toBeUndefined();
+    expect(forwardedSpawn?.workspaceLocationId).toBeUndefined();
+    expect(forwardedSpawn?.workspaceCheckoutId).toBeUndefined();
+  });
+
+  it('passes canonical spawn fields through when resuming a session and preserves sessionId aliasing', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      type: 'resume-session',
+      sessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      spawnNonce: 'resume-nonce-1',
+      initialPrompt: 'Resume from here',
+      profileId: 'profile-work',
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 654,
+      terminal: {
+        mode: 'tmux',
+        tmux: { sessionName: 'happy', isolated: true },
+      },
+      windowsRemoteSessionConsole: 'visible',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          openai: { source: 'connected', profileId: 'default' },
+        },
+      },
+      transcriptStorage: 'direct',
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      spawnNonce: 'resume-nonce-1',
+      initialPrompt: 'Resume from here',
+      profileId: 'profile-work',
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 654,
+      terminal: {
+        mode: 'tmux',
+        tmux: { sessionName: 'happy', isolated: true },
+      },
+      windowsRemoteSessionConsole: 'visible',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          openai: { source: 'connected', profileId: 'default' },
+        },
+      },
+      transcriptStorage: 'direct',
+    }));
+    const firstResumeCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
+    const resumedSpawn = firstResumeCall?.[0] as
+      | {
+          workspaceId?: string;
+          workspaceLocationId?: string;
+          workspaceCheckoutId?: string;
+        }
+      | undefined;
+    expect(resumedSpawn?.workspaceId).toBeUndefined();
+    expect(resumedSpawn?.workspaceLocationId).toBeUndefined();
+    expect(resumedSpawn?.workspaceCheckoutId).toBeUndefined();
+  });
+
+  it('normalizes legacy experimentalCodexAcp resume requests onto canonical codexBackendMode', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      type: 'resume-session',
+      sessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      experimentalCodexAcp: true,
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      codexBackendMode: 'acp',
+    }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({
+      experimentalCodexAcp: true,
+    }));
+  });
+
+  it('passes agentRuntimeDescriptorV1 through resume requests and derives codexBackendMode from canonical providerExtra affinity', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      type: 'resume-session',
+      sessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'mcp',
+          vendorSessionId: 'codex-session-legacy',
+          providerExtra: {
+            owner: 'codex',
+            schemaId: 'codex.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeAffinity: {
+              backendMode: 'appServer',
+              vendorSessionId: 'codex-session-1',
+            },
+          },
+        },
+      },
+    });
+
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    const spawnArgs = (spawnSession.mock.calls as any[][])[0]?.[0];
+    expect(spawnArgs).toMatchObject({
+      existingSessionId: 'sess_old',
+      codexBackendMode: 'appServer',
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: {
+          backendMode: 'mcp',
+          vendorSessionId: 'codex-session-legacy',
+          providerExtra: {
+            owner: 'codex',
+            schemaId: 'codex.agentRuntimeDescriptorExtra',
+            v: 1,
+            runtimeAffinity: {
+              backendMode: 'appServer',
+              vendorSessionId: 'codex-session-1',
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('passes configured ACP backend backend targets through when resuming a session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      type: 'resume-session',
+      sessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: ' custom-kiro ' },
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'sess_old',
+      directory: '/tmp',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
+    }));
   });
 
   it('normalizes invalid permissionMode to undefined when spawning a session', async () => {
@@ -260,6 +732,61 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS)).toBe(true);
     expect(registered.has(RPC_METHODS.BUGREPORT_GET_LOG_TAIL)).toBe(true);
     expect(registered.has(RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT)).toBe(true);
+  });
+
+  it('registers daemon terminal handlers (disabled when explicitly configured off)', async () => {
+    const prev = process.env.HAPPIER_DAEMON_TERMINAL_ENABLED;
+    process.env.HAPPIER_DAEMON_TERMINAL_ENABLED = '0';
+
+    try {
+      const registered = new Map<string, (params: any) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+
+      registerMachineRpcHandlers({
+        rpcHandlerManager,
+        handlers: {
+          spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+          stopSession: async () => true,
+          requestShutdown: () => {},
+        },
+      });
+
+      const ensure = registered.get((RPC_METHODS as any).DAEMON_TERMINAL_ENSURE);
+      const read = registered.get((RPC_METHODS as any).DAEMON_TERMINAL_STREAM_READ);
+      const input = registered.get((RPC_METHODS as any).DAEMON_TERMINAL_INPUT);
+      const resize = registered.get((RPC_METHODS as any).DAEMON_TERMINAL_RESIZE);
+      const close = registered.get((RPC_METHODS as any).DAEMON_TERMINAL_CLOSE);
+      const restart = registered.get((RPC_METHODS as any).DAEMON_TERMINAL_RESTART);
+
+      expect(ensure).toBeDefined();
+      expect(read).toBeDefined();
+      expect(input).toBeDefined();
+      expect(resize).toBeDefined();
+      expect(close).toBeDefined();
+      expect(restart).toBeDefined();
+
+      expect(await ensure!({ terminalKey: 'k', cols: 80, rows: 24 })).toEqual({
+        ok: false,
+        errorCode: 'terminal_disabled',
+        error: 'terminal_disabled',
+      });
+
+      expect(await read!({ terminalId: 't1', cursor: 0 })).toEqual({
+        ok: false,
+        errorCode: 'terminal_disabled',
+        error: 'terminal_disabled',
+      });
+    } finally {
+      if (typeof prev === 'string') {
+        process.env.HAPPIER_DAEMON_TERMINAL_ENABLED = prev;
+      } else {
+        delete process.env.HAPPIER_DAEMON_TERMINAL_ENABLED;
+      }
+    }
   });
 
   it('registers daemon execution run listing handler', async () => {
@@ -364,9 +891,8 @@ describe('registerMachineRpcHandlers', () => {
       encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'three' } }),
     );
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
-    getSpy
+    const getSpy = vi.spyOn(axios, 'get')
       .mockResolvedValueOnce({
         status: 200,
         data: {
@@ -433,7 +959,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         directory: '/repo',
-        agent: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         approvedNewDirectoryCreation: true,
         existingSessionId: 'sess_new',
       }),
@@ -455,6 +981,129 @@ describe('registerMachineRpcHandlers', () => {
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('Assistant: two');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: three');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one one one');
+  });
+
+  it('archives replay-seeded sessions when spawning the continuation fails', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorMessage: 'spawn failed',
+    } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const sessionEncryptionKey = new Uint8Array(32).fill(5);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(7),
+    });
+
+    const encryptedTwo = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
+    );
+    const encryptedThree = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'three' } }),
+    );
+
+    const postSpy = vi.spyOn(axios, 'post');
+    const getSpy = vi.spyOn(axios, 'get')
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_prev',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: '',
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+            { createdAt: 3, content: { t: 'encrypted', c: encryptedThree } },
+          ],
+        },
+      } as any);
+
+    postSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_new',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: false,
+            activeAt: 0,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({ status: 200, data: { success: true, archivedAt: 11 } } as any);
+
+    const result = await handler!({
+      directory: '/repo',
+      agent: 'claude',
+      approvedNewDirectoryCreation: true,
+      replay: {
+        previousSessionId: 'sess_prev',
+        strategy: 'recent_messages',
+        recentMessagesCount: 2,
+        maxSeedChars: 400,
+      },
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorMessage: 'spawn failed',
+    });
+    expect(postSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/v2/sessions/sess_new/archive'),
+      {},
+      expect.any(Object),
+    );
   });
 
   it('continues a session with a generous default replay recentMessagesCount when not provided', async () => {
@@ -584,7 +1233,10 @@ describe('registerMachineRpcHandlers', () => {
       },
       deps: {
         runReplaySummaryForDialog: async (params: any) => {
-          replaySummaryCalls.push({ dialogCount: params.dialog?.length ?? 0, backendId: params.runner?.backendId ?? '' });
+          replaySummaryCalls.push({
+            dialogCount: params.dialog?.length ?? 0,
+            backendId: params.runner?.backendTarget?.kind === 'builtInAgent' ? params.runner.backendTarget.agentId : '',
+          });
           return 'ON_DEMAND_SUMMARY';
         },
       },
@@ -673,7 +1325,12 @@ describe('registerMachineRpcHandlers', () => {
         previousSessionId: 'sess_prev',
         strategy: 'summary_plus_recent',
         recentMessagesCount: 2,
-        summaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+        summaryRunner: {
+          v: 1,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          modelId: 'default',
+          permissionMode: 'no_tools',
+        },
       },
     });
 
@@ -705,7 +1362,10 @@ describe('registerMachineRpcHandlers', () => {
       },
       deps: {
         runReplaySummaryForDialog: async (params: any) => {
-          replaySummaryCalls.push({ dialogCount: params.dialog?.length ?? 0, backendId: params.runner?.backendId ?? '' });
+          replaySummaryCalls.push({
+            dialogCount: params.dialog?.length ?? 0,
+            backendId: params.runner?.backendTarget?.kind === 'builtInAgent' ? params.runner.backendTarget.agentId : '',
+          });
           return 'ON_DEMAND_SUMMARY';
         },
       },
@@ -800,7 +1460,12 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'replay',
-      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+      replaySummaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
@@ -821,11 +1486,12 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
         requestShutdown: () => {},
       },
     });
@@ -882,6 +1548,19 @@ describe('registerMachineRpcHandlers', () => {
             agentStateVersion: 0,
             dataEncryptionKey: encodeBase64(envelope),
           },
+        },
+      } as any)
+      // resolve fork cutoff -> fetch single transcript row at seq=20
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 20,
+              createdAt: 20,
+              content: { t: 'encrypted', c: encryptedMessages[19] },
+            },
+          ],
         },
       } as any)
       // hydrateReplayDialogFromTranscript -> fetchSessionById(previousSessionId)
@@ -946,9 +1625,13 @@ describe('registerMachineRpcHandlers', () => {
       strategy: 'replay',
     });
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ directory: '/repo', agent: 'claude', existingSessionId: 'sess_child' }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      existingSessionId: 'sess_child',
+    }));
     expect(getSpy).toHaveBeenCalled();
-    expect(getSpy).toHaveBeenCalledTimes(3);
+    expect(getSpy).toHaveBeenCalledTimes(4);
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
     expect(postSpy).toHaveBeenCalledTimes(1);
     const posted = (postSpy as any).mock.calls[0][1] as any;
@@ -958,7 +1641,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: first-unique');
   });
 
-  it('includes session summary in replay seed when available (summary_plus_recent)', async () => {
+  it('rejects message-level fork requests with an uncommitted seq (<= 0)', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -967,11 +1650,104 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const parentMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'claude' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      // fetch parent session record (for fork handler)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain -> fetchSessionById(startingSessionId)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages (beforeSeq=1 yields empty)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { messages: [] },
+      } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'seq', upToSeqInclusive: 0 },
+      strategy: 'replay',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(String((result as any).errorMessage ?? '')).toMatch(/commit|uncommit|seq/i);
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('does not use metadata.summary.text as replay summary fallback for fork replay', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession,
         requestShutdown: () => {},
       },
     });
@@ -997,7 +1773,7 @@ describe('registerMachineRpcHandlers', () => {
       encrypt(sessionEncryptionKey, 'dataKey', {
         path: '/repo',
         flavor: 'claude',
-        summary: { text: 'SUMMARY_OK', updatedAt: 1 },
+        summary: { text: 'TITLE_ONLY_SUMMARY', updatedAt: 1 },
         permissionMode: { v: 1, mode: 'default', updatedAt: 1 },
       }),
     );
@@ -1092,7 +1868,12 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'replay',
-      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+      replaySummaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
@@ -1100,8 +1881,127 @@ describe('registerMachineRpcHandlers', () => {
     expect(postSpy).toHaveBeenCalledTimes(1);
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Summary:');
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('SUMMARY_OK');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('TITLE_ONLY_SUMMARY');
+  });
+
+  it('does not use metadata.summary.text as replay summary fallback for continueWithReplay', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_new' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const sessionEncryptionKey = new Uint8Array(32).fill(5);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(7),
+    });
+
+    const parentMetadataCiphertext = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', {
+        path: '/repo',
+        flavor: 'claude',
+        summary: { text: 'TITLE_ONLY_SUMMARY', updatedAt: 1 },
+      }),
+    );
+
+    const encryptedOne = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'one' } }),
+    );
+    const encryptedTwo = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
+    );
+
+    const getSpy = vi.spyOn(axios, 'get');
+    const postSpy = vi.spyOn(axios, 'post');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_prev',
+            seq: 2,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: parentMetadataCiphertext,
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+          ],
+        },
+      } as any);
+
+    postSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_new',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      directory: '/repo',
+      agent: 'claude',
+      approvedNewDirectoryCreation: true,
+      replay: {
+        previousSessionId: 'sess_prev',
+        strategy: 'summary_plus_recent',
+        recentMessagesCount: 2,
+      },
+    });
+
+    expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
+    const posted = (postSpy as any).mock.calls[0][1] as any;
+    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('TITLE_ONLY_SUMMARY');
   });
 
   it('includes session synopsis artifacts in replay seed when replay summary is requested', async () => {
@@ -1113,11 +2013,12 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
         requestShutdown: () => {},
       },
     });
@@ -1231,7 +2132,12 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'replay',
-      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+      replaySummaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
@@ -1419,6 +2325,11 @@ describe('registerMachineRpcHandlers', () => {
         path: '/repo',
         flavor: 'codex',
         codexSessionId: 'codex_parent',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: { backendMode: 'acp', vendorSessionId: 'codex_parent' },
+        },
         acpSessionModelsV1: {
           v: 1,
           provider: 'codex',
@@ -1492,10 +2403,10 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         directory: '/repo',
-        agent: 'codex',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         approvedNewDirectoryCreation: true,
         resume: 'codex_forked',
-        experimentalCodexAcp: true,
+        codexBackendMode: 'acp',
       }),
     );
 
@@ -1503,7 +2414,259 @@ describe('registerMachineRpcHandlers', () => {
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'codex' });
+    expect(updated.codexBackendMode).toBe('acp');
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', vendorSessionId: 'codex_forked' });
+    expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('shapes OpenCode ACP fork continuation through provider metadata when latest fork uses ACP session/fork', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'opencode',
+      opencodeSessionId: 'op_parent',
+      opencodeBackendMode: 'acp',
+      opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+      opencodeServerBaseUrlExplicit: true,
+      acpSessionModelsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 1,
+        currentModelId: 'openai/gpt-5.2',
+        availableModels: [{ id: 'openai/gpt-5.2', name: 'GPT-5.2' }],
+      },
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 4,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 11,
+            active: true,
+            activeAt: 11,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'opencode' }),
+            metadataVersion: 3,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    const backend = {
+      loadSession: vi.fn(async () => ({ sessionId: 'op_parent' })),
+      forkSession: vi.fn(async () => ({ sessionId: 'op_forked' })),
+      dispose: vi.fn(async () => {}),
+    };
+
+    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+
+    expect(backend.loadSession).toHaveBeenCalledWith('op_parent');
+    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'op_parent' });
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: '/repo',
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        approvedNewDirectoryCreation: true,
+        resume: 'op_forked',
+        environmentVariables: {
+          HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+          HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+          HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'opencode' });
+    expect(updated.opencodeSessionId).toBe('op_forked');
+    expect(updated.opencodeBackendMode).toBe('acp');
+    expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
+    expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
+    expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'opencode', backendMode: 'acp', vendorSessionId: 'op_forked' });
+    expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('uses canonical Codex ACP runtime metadata for latest-fork eligibility', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(9);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const sessionEncryptionKey = new Uint8Array(32).fill(3);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(4),
+    });
+    const parentMetadataCiphertext = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', {
+        path: '/repo',
+        flavor: 'codex',
+        codexSessionId: 'codex_parent',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: { backendMode: 'acp', vendorSessionId: 'codex_parent' },
+        },
+      }),
+    );
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 4,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: parentMetadataCiphertext,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 11,
+            active: true,
+            activeAt: 11,
+            metadata: encodeBase64(encrypt(sessionEncryptionKey, 'dataKey', { path: '/repo', flavor: 'codex' })),
+            metadataVersion: 3,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any);
+
+    const backend = {
+      loadSession: vi.fn(async () => ({ sessionId: 'codex_parent' })),
+      forkSession: vi.fn(async () => ({ sessionId: 'codex_forked' })),
+      dispose: vi.fn(async () => {}),
+    };
+
+    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+
+    expect(backend.loadSession).toHaveBeenCalledWith('codex_parent');
+    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'codex_parent' });
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: '/repo',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        approvedNewDirectoryCreation: true,
+        resume: 'codex_forked',
+        codexBackendMode: 'acp',
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'codex' });
+    expect(updated.codexBackendMode).toBe('acp');
+    expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', vendorSessionId: 'codex_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -1695,33 +2858,40 @@ describe('registerMachineRpcHandlers', () => {
       encodeBase64(encrypt(childKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'child-two' } })),
     ];
 
-    const getSpy = vi.spyOn(axios, 'get');
-    const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      // fetch parent session record (fork handler)
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          session: {
-            id: 'sess_child',
-            seq: 2,
-            createdAt: 10,
-            updatedAt: 11,
-            active: true,
-            activeAt: 11,
-            metadata: childMetadataCiphertext,
-            metadataVersion: 7,
-            agentState: null,
-            agentStateVersion: 0,
-            dataEncryptionKey: encodeBase64(childEnvelope),
-          },
-        },
-      } as any)
-      // hydrate fork chain: fetch child session record
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          session: {
+	    const getSpy = vi.spyOn(axios, 'get');
+	    const postSpy = vi.spyOn(axios, 'post');
+	    getSpy
+	      // fetch parent session record (fork handler)
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          session: {
+	            id: 'sess_child',
+	            seq: 2,
+	            createdAt: 10,
+	            updatedAt: 11,
+	            active: true,
+	            activeAt: 11,
+	            metadata: childMetadataCiphertext,
+	            metadataVersion: 7,
+	            agentState: null,
+	            agentStateVersion: 0,
+	            dataEncryptionKey: encodeBase64(childEnvelope),
+	          },
+	        },
+	      } as any)
+	      // resolveForkCutoffSeqInclusive -> fetchEncryptedTranscriptMessages (target row)
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          messages: [{ seq: 2, createdAt: 21, content: { t: 'encrypted', c: encryptedChildMessages[1] } }],
+	        },
+	      } as any)
+	      // hydrate fork chain: fetch child session record
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          session: {
             id: 'sess_child',
             seq: 2,
             createdAt: 10,
@@ -1800,19 +2970,25 @@ describe('registerMachineRpcHandlers', () => {
 
     updateSessionMetadataWithRetryMock.mockClear();
 
-    const result = await handler!({
-      v: 1,
-      parentSessionId: 'sess_child',
-      forkPoint: { type: 'seq', upToSeqInclusive: 2 },
-      strategy: 'replay',
-    });
-    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_grandchild' });
+	    const result = await handler!({
+	      v: 1,
+	      parentSessionId: 'sess_child',
+	      forkPoint: { type: 'seq', upToSeqInclusive: 2 },
+	      strategy: 'replay',
+	    });
+	    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_grandchild' });
 
-    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
-    expect(postSpy).toHaveBeenCalledTimes(1);
-    const posted = (postSpy as any).mock.calls[0][1] as any;
-    const createdMeta = JSON.parse(String(posted.metadata)) as any;
-    expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: root-unique');
+	    // Ensure the fork-chain hydration actually read both segments (root + child).
+	    const getUrls = getSpy.mock.calls.map((call) => String(call?.[0] ?? ''));
+	    expect(getUrls.join('\n')).toContain('/v2/sessions/sess_root');
+	    expect(getUrls.join('\n')).toContain('/v1/sessions/sess_root/messages');
+	    expect(getUrls.join('\n')).toContain('/v1/sessions/sess_child/messages');
+
+	    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
+	    expect(postSpy).toHaveBeenCalledTimes(1);
+	    const posted = (postSpy as any).mock.calls[0][1] as any;
+	    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+	    expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: root-unique');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: child-one');
   });
 
@@ -1849,6 +3025,19 @@ describe('registerMachineRpcHandlers', () => {
       flavor: 'opencode',
       opencodeSessionId: 'op_ses_parent',
       opencodeBackendMode: 'server',
+      opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+      opencodeServerBaseUrlExplicit: true,
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 123,
+      modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 458,
+        overrides: {
+          sandbox: { updatedAt: 458, value: 'workspace-write' },
+        },
+      },
     });
     const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'opencode' });
 
@@ -1910,21 +3099,791 @@ describe('registerMachineRpcHandlers', () => {
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo',
-      agent: 'opencode',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
       resume: 'op_ses_forked',
-      environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+        HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+      },
     }));
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'opencode' });
     expect(updated.opencodeSessionId).toBe('op_ses_forked');
     expect(updated.opencodeBackendMode).toBe('server');
+    expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
+    expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
     expect(updated.forkV1).toMatchObject({
       v: 1,
       parentSessionId: 'sess_parent',
       parentCutoffSeqInclusive: 5,
       strategy: 'provider_native',
       providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+    });
+  });
+
+  it('forks a Codex app-server session via provider-native conversation fork', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'codex',
+      codexSessionId: 'codex-thread-parent',
+      codexBackendMode: 'appServer',
+      permissionMode: 'acceptEdits',
+      permissionModeUpdatedAt: 123,
+      modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-5.4' },
+    });
+    const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'codex' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            encryptionMode: 'plain',
+            metadata: childMetadataPlain,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(createCodexAppServerClientMock).toHaveBeenCalledWith({ cwd: '/repo' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      resume: 'codex-thread-forked',
+      codexBackendMode: 'appServer',
+    }));
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'codex' });
+    expect(updated.codexSessionId).toBe('codex-thread-forked');
+    expect(updated.codexBackendMode).toBe('appServer');
+    expect(updated.forkV1).toMatchObject({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      parentCutoffSeqInclusive: 5,
+      strategy: 'provider_native',
+      providerHint: { providerId: 'codex', backendMode: 'appServer', vendorSessionId: 'codex-thread-forked' },
+    });
+    expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('accepts legacy codex flavor aliases when resolving provider-native fork support', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'openai',
+      codexSessionId: 'codex-thread-parent',
+      codexBackendMode: 'appServer',
+      sessionModelsV1: { v: 1, provider: 'codex', updatedAt: 1, currentModelId: 'gpt-5.4', availableModels: [] },
+    });
+    const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'codex' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            encryptionMode: 'plain',
+            metadata: childMetadataPlain,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      resume: 'codex-thread-forked',
+      codexBackendMode: 'appServer',
+    }));
+  });
+
+  it('fails when provider-native fork cannot load the child session metadata after spawning', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_parent',
+          seq: 5,
+          createdAt: 1,
+          updatedAt: 2,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({
+            path: '/repo',
+            flavor: 'codex',
+            codexSessionId: 'codex-thread-parent',
+            codexBackendMode: 'appServer',
+          }),
+          metadataVersion: 7,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+    getSpy.mockRejectedValue(new Error('child session fetch failed'));
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'UNEXPECTED',
+      errorMessage: 'child session fetch failed',
+    });
+    expect(stopSession).toHaveBeenCalledWith('sess_child');
+    expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when session metadata does not identify a provider', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 'sess_child' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_parent',
+          seq: 5,
+          createdAt: 1,
+          updatedAt: 2,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo' }),
+          metadataVersion: 7,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'INVALID_REQUEST',
+      errorMessage: 'Session metadata missing agent flavor',
+    });
+  });
+
+  it('returns the actual spawn error when explicit provider-native fork support exists but spawning fails', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+      errorMessage: 'daemon unavailable',
+    } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_parent',
+          seq: 5,
+          createdAt: 1,
+          updatedAt: 2,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({
+            path: '/repo',
+            flavor: 'codex',
+            codexSessionId: 'codex-thread-parent',
+            codexBackendMode: 'appServer',
+          }),
+          metadataVersion: 7,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+      errorMessage: 'daemon unavailable',
+    });
+  });
+
+  it('uses provider-native OpenCode fork for message-level forks while preserving branch-and-edit semantics for user messages', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    forkOpenCodeSessionNativeMock.mockResolvedValueOnce({ vendorSessionId: 'op_ses_forked' });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'opencode',
+      opencodeSessionId: 'op_ses_parent',
+      opencodeBackendMode: 'server',
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 123,
+      modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
+      acpSessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 460,
+        currentModeId: 'build',
+        availableModes: [
+          { id: 'build', name: 'Build' },
+          { id: 'plan', name: 'Plan' },
+        ],
+      },
+      acpSessionModelsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 461,
+        currentModelId: 'openai/gpt-5.2',
+        availableModels: [
+          { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
+        ],
+      },
+      acpConfigOptionsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 462,
+        configOptions: [
+          {
+            id: 'approval',
+            name: 'Approval',
+            type: 'string',
+            currentValue: 'never',
+          },
+        ],
+      },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 458,
+        overrides: {
+          sandbox: { updatedAt: 458, value: 'workspace-write' },
+        },
+      },
+    });
+    const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'opencode' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      // fetch parent session record (fork handler)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // resolve fork cutoff -> fetch single transcript row at seq=3 (user message)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 3,
+              createdAt: 3,
+              localId: 'local-3',
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'USER_BRANCH_EDIT' } } },
+            },
+          ],
+        },
+      } as any)
+      // fetch child session record (metadata patch)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            encryptionMode: 'plain',
+            metadata: childMetadataPlain,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'seq', upToSeqInclusive: 3 },
+      strategy: 'auto',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+
+    // Provider-native fork uses the clicked message seq to resolve vendor message ids (OpenCode exclusive fork cursor).
+    expect(forkOpenCodeSessionNativeMock).toHaveBeenCalledWith(expect.objectContaining({
+      parentHappySessionId: 'sess_parent',
+      parentOpenCodeSessionId: 'op_ses_parent',
+      forkPoint: { type: 'seq', upToSeqInclusive: 3 },
+    }));
+
+    // Stored fork lineage uses an exclusive cutoff when the fork target is a user message.
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'opencode' });
+    expect(updated.forkV1).toMatchObject({ parentCutoffSeqInclusive: 2, strategy: 'provider_native' });
+    expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('does not apply branch-and-edit exclusive cutoff when forking from the first user message', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    forkOpenCodeSessionNativeMock.mockResolvedValueOnce({ vendorSessionId: 'op_ses_forked' });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'opencode',
+      opencodeSessionId: 'op_ses_parent',
+      opencodeBackendMode: 'server',
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 123,
+      modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
+      acpSessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 460,
+        currentModeId: 'build',
+        availableModes: [
+          { id: 'build', name: 'Build' },
+          { id: 'plan', name: 'Plan' },
+        ],
+      },
+      acpSessionModelsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 461,
+        currentModelId: 'openai/gpt-5.2',
+        availableModels: [
+          { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
+        ],
+      },
+      acpConfigOptionsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 462,
+        configOptions: [
+          {
+            id: 'approval',
+            name: 'Approval',
+            type: 'string',
+            currentValue: 'never',
+          },
+        ],
+      },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 458,
+        overrides: {
+          sandbox: { updatedAt: 458, value: 'workspace-write' },
+        },
+      },
+    });
+    const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'opencode' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      // fetch parent session record (fork handler)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // resolve fork cutoff -> fetch single transcript row at seq=1 (user message)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              localId: 'local-1',
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'FIRST_USER' } } },
+            },
+          ],
+        },
+      } as any)
+      // fetch child session record (metadata patch)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            encryptionMode: 'plain',
+            metadata: childMetadataPlain,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'seq', upToSeqInclusive: 1 },
+      strategy: 'auto',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 123,
+      modelId: 'gpt-test',
+      modelUpdatedAt: 456,
+    }));
+
+    // The first user message should not be treated as a "branch-and-edit" fork point.
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'opencode' });
+    expect(updated.forkV1).toMatchObject({ parentCutoffSeqInclusive: 1, strategy: 'provider_native' });
+    expect(updated.permissionMode).toBe('yolo');
+    expect(updated.permissionModeUpdatedAt).toBe(123);
+    expect(updated.modelOverrideV1).toEqual({ v: 1, updatedAt: 456, modelId: 'gpt-test' });
+    expect(updated.acpSessionModesV1).toEqual({
+      v: 1,
+      provider: 'opencode',
+      updatedAt: 460,
+      currentModeId: 'build',
+      availableModes: [
+        { id: 'build', name: 'Build' },
+        { id: 'plan', name: 'Plan' },
+      ],
+    });
+    expect(updated.acpSessionModelsV1).toEqual({
+      v: 1,
+      provider: 'opencode',
+      updatedAt: 461,
+      currentModelId: 'openai/gpt-5.2',
+      availableModels: [
+        { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
+      ],
+    });
+    expect(updated.acpConfigOptionsV1).toEqual({
+      v: 1,
+      provider: 'opencode',
+      updatedAt: 462,
+      configOptions: [
+        {
+          id: 'approval',
+          name: 'Approval',
+          type: 'string',
+          currentValue: 'never',
+        },
+      ],
+    });
+    expect(updated.acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 457, modeId: 'plan' });
+    expect(updated.acpConfigOptionOverridesV1).toEqual({
+      v: 1,
+      updatedAt: 458,
+      overrides: {
+        sandbox: { updatedAt: 458, value: 'workspace-write' },
+      },
     });
   });
 
@@ -1959,37 +3918,91 @@ describe('registerMachineRpcHandlers', () => {
       flavor: 'opencode',
       opencodeSessionId: 'op_ses_parent',
       opencodeBackendMode: 'acp',
+      opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+      opencodeServerBaseUrlExplicit: true,
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 123,
+      modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
+      acpSessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 460,
+        currentModeId: 'build',
+        availableModes: [
+          { id: 'build', name: 'Build' },
+          { id: 'plan', name: 'Plan' },
+        ],
+      },
+      acpSessionModelsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 461,
+        currentModelId: 'openai/gpt-5.2',
+        availableModels: [
+          { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
+        ],
+      },
+      acpConfigOptionsV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 462,
+        configOptions: [
+          {
+            id: 'approval',
+            name: 'Approval',
+            type: 'string',
+            currentValue: 'never',
+          },
+        ],
+      },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 457, modeId: 'plan' },
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 458,
+        overrides: {
+          sandbox: { updatedAt: 458, value: 'workspace-write' },
+        },
+      },
     });
     const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'opencode' });
 
-    const getSpy = vi.spyOn(axios, 'get');
-    const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      // fetch parent session record (for fork handler)
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          session: {
-            id: 'sess_parent',
-            seq: 2,
-            createdAt: 1,
-            updatedAt: 2,
-            active: true,
-            activeAt: 2,
-            encryptionMode: 'plain',
-            metadata: parentMetadataPlain,
-            metadataVersion: 7,
-            agentState: null,
-            agentStateVersion: 0,
-            dataEncryptionKey: null,
-          },
-        },
-      } as any)
-      // hydrateReplayDialogFromTranscript -> fetchSessionById(previousSessionId)
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          session: {
+	    const getSpy = vi.spyOn(axios, 'get');
+	    const postSpy = vi.spyOn(axios, 'post');
+	    getSpy
+	      // fetch parent session record (for fork handler)
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          session: {
+	            id: 'sess_parent',
+	            seq: 2,
+	            createdAt: 1,
+	            updatedAt: 2,
+	            active: true,
+	            activeAt: 2,
+	            encryptionMode: 'plain',
+	            metadata: parentMetadataPlain,
+	            metadataVersion: 7,
+	            agentState: null,
+	            agentStateVersion: 0,
+	            dataEncryptionKey: null,
+	          },
+	        },
+	      } as any)
+	      // resolveForkCutoffSeqInclusive -> fetchEncryptedTranscriptMessages (target row)
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          messages: [
+	            { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi fork' } } } },
+	          ],
+	        },
+	      } as any)
+	      // hydrateReplayDialogFromTranscript -> fetchSessionById(previousSessionId)
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          session: {
             id: 'sess_parent',
             seq: 2,
             createdAt: 1,
@@ -2048,15 +4061,195 @@ describe('registerMachineRpcHandlers', () => {
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo',
-      agent: 'opencode',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
       existingSessionId: 'sess_child',
-      environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+        HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+      },
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 123,
+      modelId: 'gpt-test',
+      modelUpdatedAt: 456,
     }));
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
     expect(postSpy).toHaveBeenCalledTimes(1);
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(createdMeta.opencodeBackendMode).toBe('acp');
+    expect(createdMeta.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
+    expect(createdMeta.opencodeServerBaseUrlExplicit).toBe(true);
+    expect(createdMeta.permissionMode).toBe('yolo');
+    expect(createdMeta.permissionModeUpdatedAt).toBe(123);
+    expect(createdMeta.modelOverrideV1).toEqual({ v: 1, updatedAt: 456, modelId: 'gpt-test' });
+    expect(createdMeta.acpSessionModesV1).toEqual({
+      v: 1,
+      provider: 'opencode',
+      updatedAt: 460,
+      currentModeId: 'build',
+      availableModes: [
+        { id: 'build', name: 'Build' },
+        { id: 'plan', name: 'Plan' },
+      ],
+    });
+    expect(createdMeta.acpSessionModelsV1).toEqual({
+      v: 1,
+      provider: 'opencode',
+      updatedAt: 461,
+      currentModelId: 'openai/gpt-5.2',
+      availableModels: [
+        { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
+      ],
+    });
+    expect(createdMeta.acpConfigOptionsV1).toEqual({
+      v: 1,
+      provider: 'opencode',
+      updatedAt: 462,
+      configOptions: [
+        {
+          id: 'approval',
+          name: 'Approval',
+          type: 'string',
+          currentValue: 'never',
+        },
+      ],
+    });
+    expect(createdMeta.acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 457, modeId: 'plan' });
+    expect(createdMeta.acpConfigOptionOverridesV1).toEqual({
+      v: 1,
+      updatedAt: 458,
+      overrides: {
+        sandbox: { updatedAt: 458, value: 'workspace-write' },
+      },
+    });
+  });
+
+  it('does not inherit non-explicit OpenCode server affinity during replay forks', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'opencode',
+      opencodeSessionId: 'op_ses_parent',
+      opencodeBackendMode: 'server',
+      opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    const postSpy = vi.spyOn(axios, 'post');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
+          ],
+        },
+      } as any);
+
+    postSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'opencode' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      existingSessionId: 'sess_child',
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+      },
+    }));
+    const posted = (postSpy as any).mock.calls[0][1] as any;
+    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+    expect(createdMeta.opencodeBackendMode).toBe('server');
+    expect(createdMeta.opencodeServerBaseUrl).toBeUndefined();
+    expect(createdMeta.opencodeServerBaseUrlExplicit).toBeUndefined();
   });
 
   it('rejects unknown replay agent ids (fail closed)', async () => {
@@ -2093,7 +4286,7 @@ describe('registerMachineRpcHandlers', () => {
 
     const result = await handler!({
       directory: '/repo',
-      agent: 'not-a-real-agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'not-a-real-agent' },
       approvedNewDirectoryCreation: true,
       replay: {
         previousSessionId: 'sess_prev',
@@ -2197,25 +4390,25 @@ describe('registerMachineRpcHandlers', () => {
 
     updateSessionMetadataWithRetryMock.mockClear();
 
-      const result = await handler!({
-        directory: '/repo',
-        agent: 'claude',
-        approvedNewDirectoryCreation: true,
-        replay: {
-          previousSessionId: 'sess_prev',
-          strategy: 'recent_messages',
-          recentMessagesCount: 1,
-          seedMode: 'daemon_initial_prompt',
-        },
-      });
+    const result = await handler!({
+      directory: '/repo',
+      agent: 'claude',
+      approvedNewDirectoryCreation: true,
+      replay: {
+        previousSessionId: 'sess_prev',
+        strategy: 'recent_messages',
+        recentMessagesCount: 1,
+        seedMode: 'daemon_initial_prompt',
+      },
+    });
 
-      expect(spawnSession).toHaveBeenCalledTimes(1);
-      // vitest's Mock type can infer a 0-arg function; use a narrow cast for call inspection.
-      const arg = ((spawnSession as any).mock?.calls?.[0] as any[] | undefined)?.[0] ?? null;
-      expect(arg && typeof arg === 'object' && 'initialPrompt' in arg).toBe(false);
-      expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
-      expect((result as any).seedDraft).toBeUndefined();
-      expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    // vitest's Mock type can infer a 0-arg function; use a narrow cast for call inspection.
+    const arg = ((spawnSession as any).mock?.calls?.[0] as any[] | undefined)?.[0] ?? null;
+    expect(arg && typeof arg === 'object' && 'initialPrompt' in arg).toBe(false);
+    expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
+    expect((result as any).seedDraft).toBeUndefined();
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
   });
 
   it('includes stack diagnostics context for bug report collection when stack env is set', async () => {
@@ -2501,9 +4694,18 @@ describe('registerMachineRpcHandlers', () => {
         stop: () => {},
         reloadSettings: async () => {},
         ensureUpToDate: async () => {},
+        getEmbeddingsDiagnostics: () => ({
+          mode: 'disabled' as const,
+          presetId: null,
+          providerKind: null,
+          modelId: null,
+          runtimeState: 'unavailable' as const,
+          usingFallback: false,
+        }),
 	        getSettings: () => ({
 	          v: 1,
           enabled: false,
+          enabledAtMs: 0,
           indexMode: 'hints',
           defaultScope: { type: 'global' as const },
           backfillPolicy: 'new_only' as const,
@@ -2539,22 +4741,24 @@ describe('registerMachineRpcHandlers', () => {
 	            failureBackoffMaxMs: 3_600_000,
 	          },
           embeddings: {
-            enabled: false,
-            provider: 'local_transformers',
-            modelId: '',
-            wFts: 1,
-            wEmb: 1,
+            mode: 'disabled',
+            presetId: 'balanced',
+            custom: null,
+            blend: {
+              ftsWeight: 1,
+              embeddingWeight: 1,
+            },
           },
           budgets: {
             maxDiskMbLight: 64,
             maxDiskMbDeep: 512,
           },
-          worker: {
-            tickIntervalMs: 10_000,
-            inventoryRefreshIntervalMs: 60_000,
-            maxSessionsPerTick: 2,
-            sessionListPageLimit: 50,
-          },
+	          worker: {
+	            tickIntervalMs: 10_000,
+	            inventoryRefreshIntervalMs: 60_000,
+	            maxSessionsPerTick: 2,
+	            sessionListPageLimit: 50,
+	          },
 	        }),
 	        getTier1DbPath: () => null,
 	        getDeepDbPath: () => null,
@@ -2565,4 +4769,55 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_GET_WINDOW)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_STATUS)).toBe(true);
   });
+
+  it('registers direct sessions handlers', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_LINK_ENSURE)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_STATUS_GET)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST)).toBe(true);
+  });
+
+  it('registers session handoff handlers', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_START)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_PREPARE_TARGET)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_COMMIT)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_ABORT)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_STATUS_GET)).toBe(true);
+  });
+
 });
