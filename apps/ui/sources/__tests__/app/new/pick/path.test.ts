@@ -7,25 +7,41 @@ type PathSelectorProps = {
     favoriteDirectories: string[];
     onChangeFavoriteDirectories: (next: string[]) => void;
     onSubmitSelectedPath: (path: string) => void;
+    machineBrowse?: {
+        enabled: boolean;
+        machineId: string | null;
+    };
 };
 type NavigationState = {
     index: number;
-    routes: Array<{ key: string }>;
+    routes: Array<{ key: string; name?: string; path?: string; params?: Record<string, unknown> }>;
 };
 
-function cloneNavigationState(state: { index: number; routes: ReadonlyArray<{ key: string }> }): NavigationState {
+function cloneNavigationState(state: { index: number; routes: ReadonlyArray<{ key: string; name?: string; path?: string; params?: Record<string, unknown> }> }): NavigationState {
     return {
         index: state.index,
-        routes: state.routes.map((route) => ({ key: route.key })),
+        routes: state.routes.map((route) => ({
+            key: route.key,
+            ...(route.name ? { name: route.name } : {}),
+            ...(route.path ? { path: route.path } : {}),
+            ...(route.params ? { params: route.params } : {}),
+        })),
     };
 }
 
 let lastPathSelectorProps: PathSelectorProps | null = null;
 let routerBackMock = vi.fn();
 let routerSetParamsMock = vi.fn();
+let routerReplaceMock = vi.fn();
 let navigationDispatchMock = vi.fn();
 let navigationGoBackMock = vi.fn();
 let navigationState: NavigationState = cloneNavigationState(PICKER_NAV_STATE);
+let localSearchParams: {
+    dataId?: string;
+    machineId?: string;
+    selectedPath?: string;
+    spawnServerId?: string;
+} = { machineId: 'm1', selectedPath: '/tmp' };
 
 enableReactActEnvironment();
 
@@ -49,13 +65,13 @@ vi.mock('react-native', () => ({
 
 vi.mock('expo-router', () => ({
     Stack: { Screen: () => null },
-    useRouter: () => ({ back: routerBackMock, setParams: routerSetParamsMock }),
+    useRouter: () => ({ back: routerBackMock, replace: routerReplaceMock, setParams: routerSetParamsMock }),
     useNavigation: () => ({
         getState: () => navigationState,
         dispatch: navigationDispatchMock,
         goBack: navigationGoBackMock,
     }),
-    useLocalSearchParams: () => ({ machineId: 'm1', selectedPath: '/tmp' }),
+    useLocalSearchParams: () => localSearchParams,
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -112,8 +128,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
 describe('PathPickerScreen', () => {
     beforeEach(() => {
         lastPathSelectorProps = null;
-        navigationState = cloneNavigationState(PICKER_NAV_STATE);
+        localSearchParams = { machineId: 'm1', selectedPath: '/tmp' };
+        navigationState = {
+            index: 2,
+            routes: [
+                { key: 'session-route' },
+                { key: 'new-route', name: '(app)/new/index', path: '/new', params: { machineId: 'm1' } },
+                { key: 'path-picker', name: '(app)/new/pick/path', path: '/new/pick/path' },
+            ],
+        };
         routerBackMock.mockClear();
+        routerReplaceMock.mockClear();
         routerSetParamsMock.mockClear();
         navigationDispatchMock.mockClear();
         navigationGoBackMock.mockClear();
@@ -134,6 +159,15 @@ describe('PathPickerScreen', () => {
         expect(typeof lastPathSelectorProps?.onChangeFavoriteDirectories).toBe('function');
     });
 
+    it('passes machine browse config to PathSelector for the current machine', async () => {
+        await renderPathPicker();
+
+        expect(lastPathSelectorProps?.machineBrowse).toEqual({
+            enabled: true,
+            machineId: 'm1',
+        });
+    });
+
     it('sets the selected path on the previous route params when confirming', async () => {
         await renderPathPicker();
 
@@ -144,7 +178,7 @@ describe('PathPickerScreen', () => {
 
         expect(navigationDispatchMock).toHaveBeenCalledWith(expect.objectContaining({
             type: 'SET_PARAMS',
-            source: 'a',
+            source: 'new-route',
             payload: expect.objectContaining({
                 params: expect.objectContaining({
                     path: '/Users/leeroy/Documents/Development/happier/dev/apps/stack',
@@ -156,6 +190,12 @@ describe('PathPickerScreen', () => {
 
     it('falls back to router params update when there is no previous route', async () => {
         navigationState = { index: 0, routes: [{ key: 'only' }] };
+        localSearchParams = {
+            dataId: 'draft-1',
+            machineId: 'm1',
+            selectedPath: '/tmp',
+            spawnServerId: 'server-b',
+        };
         await renderPathPicker();
 
         expect(lastPathSelectorProps).toBeTruthy();
@@ -165,8 +205,15 @@ describe('PathPickerScreen', () => {
 
         expect(navigationDispatchMock).not.toHaveBeenCalled();
         expect(routerBackMock).not.toHaveBeenCalled();
-        expect(routerSetParamsMock).toHaveBeenCalledWith({
-            path: '/home',
+        expect(routerSetParamsMock).not.toHaveBeenCalled();
+        expect(routerReplaceMock).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                dataId: 'draft-1',
+                machineId: 'm1',
+                path: '/home',
+                spawnServerId: 'server-b',
+            },
         });
     });
 });
