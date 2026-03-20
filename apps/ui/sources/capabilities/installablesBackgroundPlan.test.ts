@@ -13,7 +13,9 @@ const baseEntry: InstallableRegistryEntry = {
     title: 'Codex ACP',
     iconName: 'swap-horizontal-outline',
     groupTitleKey: 'newSession.codexAcpBanner.title',
-    supportsManagedOverrideInstall: false,
+    installSpecSettingKey: 'codexAcpInstallSpec',
+    installSpecTitle: 'Install source',
+    installSpecDescription: 'desc',
     defaultPolicy: { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },
     installLabels: {
         installKey: 'newSession.codexAcpBanner.install',
@@ -28,17 +30,16 @@ const baseEntry: InstallableRegistryEntry = {
     },
     getStatus: () => null,
     getDetectResult: () => null,
-    shouldPrefetchLatestVersion: () => false,
-    buildLatestVersionDetectRequest: () => ({ requests: [] }),
+    shouldPrefetchRegistry: () => false,
+    buildRegistryDetectRequest: () => ({ requests: [] }),
 };
 
 function status(data: Partial<InstallableDepDataLike>): InstallableDepDataLike {
     return {
         installed: false,
         installedVersion: null,
-        sourceKind: 'github_release_binary',
+        distTag: 'latest',
         lastInstallLogPath: null,
-        lastBackgroundUpdateCheckAtMs: null,
         ...data,
     };
 }
@@ -50,6 +51,7 @@ describe('planInstallablesBackgroundActions', () => {
                 entry: baseEntry,
                 status: status({ installed: false }),
                 policy: { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },
+                installSpec: '',
             }],
         });
         expect(actions).toEqual([
@@ -63,6 +65,7 @@ describe('planInstallablesBackgroundActions', () => {
                 entry: baseEntry,
                 status: status({ installed: false }),
                 policy: { autoInstallWhenNeeded: false, autoUpdateMode: 'auto' },
+                installSpec: '',
             }],
         });
         expect(actions).toEqual([]);
@@ -75,9 +78,10 @@ describe('planInstallablesBackgroundActions', () => {
                 status: status({
                     installed: true,
                     installedVersion: '1.0.0',
-                    latestVersionCheck: { ok: true, latestVersion: '1.0.1', label: 'v1.0.1' },
+                    registry: { ok: true, latestVersion: '1.0.1' },
                 }),
                 policy: { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },
+                installSpec: '',
             }],
         });
         expect(actions).toEqual([
@@ -92,9 +96,10 @@ describe('planInstallablesBackgroundActions', () => {
                 status: status({
                     installed: true,
                     installedVersion: '1.0.0',
-                    latestVersionCheck: { ok: true, latestVersion: '1.0.1', label: 'v1.0.1' },
+                    registry: { ok: true, latestVersion: '1.0.1' },
                 }),
                 policy: { autoInstallWhenNeeded: true, autoUpdateMode: 'notify' },
+                installSpec: '',
             }],
         });
         expect(actions).toEqual([]);

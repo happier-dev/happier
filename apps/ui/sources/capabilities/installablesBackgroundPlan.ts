@@ -12,6 +12,7 @@ export function planInstallablesBackgroundActions(params: {
         entry: InstallableRegistryEntry;
         status: InstallableDepDataLike | null;
         policy: InstallableDefaultPolicy;
+        installSpec: string | null;
     }>>;
 }): InstallablesBackgroundAction[] {
     const actions: InstallablesBackgroundAction[] = [];
@@ -20,11 +21,14 @@ export function planInstallablesBackgroundActions(params: {
         if (item.entry.kind !== 'dep') continue;
         if (!item.status) continue;
 
+        const installSpec = typeof item.installSpec === 'string' ? item.installSpec.trim() : '';
+        const paramsObj = installSpec.length > 0 ? { installSpec } : undefined;
+
         if (item.status.installed !== true) {
             if (item.policy.autoInstallWhenNeeded !== true) continue;
             actions.push({
                 installableKey: item.entry.key,
-                request: { id: item.entry.capabilityId, method: 'install' },
+                request: { id: item.entry.capabilityId, method: 'install', ...(paramsObj ? { params: paramsObj } : {}) },
             });
             continue;
         }
@@ -35,9 +39,10 @@ export function planInstallablesBackgroundActions(params: {
 
         actions.push({
             installableKey: item.entry.key,
-            request: { id: item.entry.capabilityId, method: 'upgrade' },
+            request: { id: item.entry.capabilityId, method: 'upgrade', ...(paramsObj ? { params: paramsObj } : {}) },
         });
     }
 
     return actions;
 }
+

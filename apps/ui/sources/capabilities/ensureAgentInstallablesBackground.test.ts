@@ -1,32 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
-import type { CapabilitiesDetectRequest, CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import type { MachineCapabilitiesInvokeResult } from '@/sync/ops';
+import type { CapabilitiesInvokeRequest, MachineCapabilitiesInvokeResult } from '@/sync/ops';
 
-import { buildInstallablesBackgroundActionKey, ensureAgentInstallablesBackground } from './ensureAgentInstallablesBackground';
-
-function buildMissingCodexAcpResults() {
-    return {
-        'dep.codex-acp': {
-            ok: true as const,
-            checkedAt: Date.now(),
-            data: {
-                installed: false,
-                installDir: '/tmp',
-                binPath: null,
-                installedVersion: null,
-                sourceKind: 'github_release_binary' as const,
-                lastInstallLogPath: null,
-            },
-        },
-    };
-}
+import { ensureAgentInstallablesBackground } from './ensureAgentInstallablesBackground';
 
 describe('ensureAgentInstallablesBackground', () => {
     it('prefetches missing dep status before planning background installs', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         let snapshotResults: MachineCapabilitiesSnapshot['response']['results'] = {};
 
@@ -36,7 +19,21 @@ describe('ensureAgentInstallablesBackground', () => {
             const reqs = Array.isArray(params.request?.requests) ? params.request.requests : [];
             const askedForCodexAcp = reqs.some((r) => r.id === 'dep.codex-acp');
             if (askedForCodexAcp) {
-                snapshotResults = buildMissingCodexAcpResults();
+                snapshotResults = {
+                    ...snapshotResults,
+                    'dep.codex-acp': {
+                        ok: true as const,
+                        checkedAt: Date.now(),
+                        data: {
+                            installed: false,
+                            installDir: '/tmp',
+                            binPath: null,
+                            installedVersion: null,
+                            distTag: 'latest',
+                            lastInstallLogPath: null,
+                        },
+                    },
+                };
             }
         });
 
@@ -77,7 +74,6 @@ describe('ensureAgentInstallablesBackground', () => {
 
     it('respects autoInstallWhenNeeded=false policy overrides', async () => {
         const settings = settingsParse({
-            codexBackendMode: 'acp',
             installablesPolicyByMachineId: {
                 m1: {
                     'codex-acp': { autoInstallWhenNeeded: false },
@@ -95,7 +91,20 @@ describe('ensureAgentInstallablesBackground', () => {
         const getMachineCapabilitiesSnapshot = vi.fn(() => ({
             response: {
                 protocolVersion: 1 as const,
-                results: buildMissingCodexAcpResults(),
+                results: {
+                    'dep.codex-acp': {
+                        ok: true as const,
+                        checkedAt: Date.now(),
+                        data: {
+                            installed: false,
+                            installDir: '/tmp',
+                            binPath: null,
+                            installedVersion: null,
+                            distTag: 'latest',
+                            lastInstallLogPath: null,
+                        },
+                    },
+                },
             },
         }));
 
@@ -117,8 +126,10 @@ describe('ensureAgentInstallablesBackground', () => {
         expect(machineCapabilitiesInvoke).not.toHaveBeenCalled();
     });
 
-    it('invokes background installs without managed install override params', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+    it('does not pass invalid codexAcpInstallSpec values to dep install invocations', async () => {
+        const settings = settingsParse({
+            codexAcpInstallSpec: 'not a valid spec',
+        } as any);
 
         const prefetchMachineCapabilities = vi.fn(async () => {});
         const machineCapabilitiesInvoke = vi.fn(
@@ -130,12 +141,25 @@ describe('ensureAgentInstallablesBackground', () => {
         const getMachineCapabilitiesSnapshot = vi.fn(() => ({
             response: {
                 protocolVersion: 1 as const,
-                results: buildMissingCodexAcpResults(),
+                results: {
+                    'dep.codex-acp': {
+                        ok: true as const,
+                        checkedAt: Date.now(),
+                        data: {
+                            installed: false,
+                            installDir: '/tmp',
+                            binPath: null,
+                            installedVersion: null,
+                            distTag: 'latest',
+                            lastInstallLogPath: null,
+                        },
+                    },
+                },
             },
         }));
 
         await ensureAgentInstallablesBackground(
-            { agentId: 'codex', machineId: 'm_install', serverId: 's_install', settings, resumeSessionId: '' },
+            { agentId: 'codex', machineId: 'm_installSpec', serverId: 's_installSpec', settings, resumeSessionId: '' },
             { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
         );
 
@@ -145,64 +169,121 @@ describe('ensureAgentInstallablesBackground', () => {
         expect((request as any).params).toBeUndefined();
     });
 
-    it('suppresses duplicate retries during the success cooldown window', async () => {
+    it('passes valid codexAcpInstallSpec values to dep install invocations', async () => {
+        const settings = settingsParse({
+            codexAcpInstallSpec: '@zed-industries/codex-acp@0.0.0-test',
+        } as any);
+
+        const prefetchMachineCapabilities = vi.fn(async () => {});
+        const machineCapabilitiesInvoke = vi.fn(
+            async (_machineId: string, _request: CapabilitiesInvokeRequest): Promise<MachineCapabilitiesInvokeResult> => {
+                return { supported: true, response: { ok: true, result: null } };
+            },
+        );
+
+        const getMachineCapabilitiesSnapshot = vi.fn(() => ({
+            response: {
+                protocolVersion: 1 as const,
+                results: {
+                    'dep.codex-acp': {
+                        ok: true as const,
+                        checkedAt: Date.now(),
+                        data: {
+                            installed: false,
+                            installDir: '/tmp',
+                            binPath: null,
+                            installedVersion: null,
+                            distTag: 'latest',
+                            lastInstallLogPath: null,
+                        },
+                    },
+                },
+            },
+        }));
+
+        await ensureAgentInstallablesBackground(
+            {
+                agentId: 'codex',
+                machineId: 'm_installSpec_valid',
+                serverId: 's_installSpec_valid',
+                settings,
+                resumeSessionId: '',
+            },
+            { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
+        );
+
+        expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
+        const request = machineCapabilitiesInvoke.mock.calls[0]?.[1];
+        expect(request).toMatchObject({
+            id: 'dep.codex-acp',
+            method: 'install',
+            params: { installSpec: '@zed-industries/codex-acp@0.0.0-test' },
+        });
+    });
+
+    it('does not suppress retries after a successful invoke when installSpec changes', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 
         try {
-            const settings = settingsParse({ codexBackendMode: 'acp' } as any);
             const prefetchMachineCapabilities = vi.fn(async () => {});
             const machineCapabilitiesInvoke = vi.fn(
-                async (): Promise<MachineCapabilitiesInvokeResult> => ({ supported: true, response: { ok: true, result: null } }),
+                async (_machineId: string, _request: CapabilitiesInvokeRequest): Promise<MachineCapabilitiesInvokeResult> => {
+                    return { supported: true, response: { ok: true, result: null } };
+                },
             );
 
             const getMachineCapabilitiesSnapshot = vi.fn(() => ({
                 response: {
                     protocolVersion: 1 as const,
-                    results: buildMissingCodexAcpResults(),
+                    results: {
+                        'dep.codex-acp': {
+                            ok: true as const,
+                            checkedAt: Date.now(),
+                            data: {
+                                installed: false,
+                                installDir: '/tmp',
+                                binPath: null,
+                                installedVersion: null,
+                                distTag: 'latest',
+                                lastInstallLogPath: null,
+                            },
+                        },
+                    },
                 },
             }));
 
+            const settings1 = settingsParse({ codexAcpInstallSpec: '@zed-industries/codex-acp@0.0.0-test' } as any);
+            const settings2 = settingsParse({ codexAcpInstallSpec: '@zed-industries/codex-acp@0.0.1-test' } as any);
+
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_spec_change', serverId: 's_spec_change', settings: settings1, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
             );
 
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_spec_change', serverId: 's_spec_change', settings: settings2, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
             );
 
-            expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
+            expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
+            expect(machineCapabilitiesInvoke.mock.calls[0]?.[1]).toMatchObject({
+                id: 'dep.codex-acp',
+                method: 'install',
+                params: { installSpec: '@zed-industries/codex-acp@0.0.0-test' },
+            });
+            expect(machineCapabilitiesInvoke.mock.calls[1]?.[1]).toMatchObject({
+                id: 'dep.codex-acp',
+                method: 'install',
+                params: { installSpec: '@zed-industries/codex-acp@0.0.1-test' },
+            });
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it('includes invoke params in the cooldown key', () => {
-        const previewInstallRequest: CapabilitiesInvokeRequest = {
-            id: 'dep.codex-acp',
-            method: 'install',
-            params: { channel: 'preview' },
-        };
-        const base = buildInstallablesBackgroundActionKey({
-            machineId: 'm_key',
-            serverId: 's_key',
-            installableKey: 'codex-acp',
-            request: { id: 'dep.codex-acp', method: 'install' },
-        });
-        const withParams = buildInstallablesBackgroundActionKey({
-            machineId: 'm_key',
-            serverId: 's_key',
-            installableKey: 'codex-acp',
-            request: previewInstallRequest,
-        });
-
-        expect(withParams).not.toBe(base);
-    });
-
     it('does not permanently suppress retries after a failed invoke', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         const prefetchMachineCapabilities = vi.fn(async () => {});
         const machineCapabilitiesInvoke = vi
@@ -213,7 +294,20 @@ describe('ensureAgentInstallablesBackground', () => {
         const getMachineCapabilitiesSnapshot = vi.fn(() => ({
             response: {
                 protocolVersion: 1 as const,
-                results: buildMissingCodexAcpResults(),
+                results: {
+                    'dep.codex-acp': {
+                        ok: true as const,
+                        checkedAt: Date.now(),
+                        data: {
+                            installed: false,
+                            installDir: '/tmp',
+                            binPath: null,
+                            installedVersion: null,
+                            distTag: 'latest',
+                            lastInstallLogPath: null,
+                        },
+                    },
+                },
             },
         }));
 
@@ -230,7 +324,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('does not permanently suppress retries after a non-ok invoke response', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         const prefetchMachineCapabilities = vi.fn(async () => {});
         const machineCapabilitiesInvoke = vi
@@ -241,7 +335,20 @@ describe('ensureAgentInstallablesBackground', () => {
         const getMachineCapabilitiesSnapshot = vi.fn(() => ({
             response: {
                 protocolVersion: 1 as const,
-                results: buildMissingCodexAcpResults(),
+                results: {
+                    'dep.codex-acp': {
+                        ok: true as const,
+                        checkedAt: Date.now(),
+                        data: {
+                            installed: false,
+                            installDir: '/tmp',
+                            binPath: null,
+                            installedVersion: null,
+                            distTag: 'latest',
+                            lastInstallLogPath: null,
+                        },
+                    },
+                },
             },
         }));
 
@@ -262,7 +369,7 @@ describe('ensureAgentInstallablesBackground', () => {
         vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 
         try {
-            const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+            const settings = settingsParse({});
 
             const prefetchMachineCapabilities = vi.fn(async () => {});
             const machineCapabilitiesInvoke = vi.fn(async () => {
@@ -272,7 +379,20 @@ describe('ensureAgentInstallablesBackground', () => {
             const getMachineCapabilitiesSnapshot = vi.fn(() => ({
                 response: {
                     protocolVersion: 1 as const,
-                    results: buildMissingCodexAcpResults(),
+                    results: {
+                        'dep.codex-acp': {
+                            ok: true as const,
+                            checkedAt: Date.now(),
+                            data: {
+                                installed: false,
+                                installDir: '/tmp',
+                                binPath: null,
+                                installedVersion: null,
+                                distTag: 'latest',
+                                lastInstallLogPath: null,
+                            },
+                        },
+                    },
                 },
             }));
 
@@ -287,56 +407,6 @@ describe('ensureAgentInstallablesBackground', () => {
                 { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
             );
-
-            expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('retries after an in-flight block ages out', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-
-        try {
-            const settings = settingsParse({ codexBackendMode: 'acp' } as any);
-            const prefetchMachineCapabilities = vi.fn(async () => {});
-            let resolveInvoke: (() => void) | null = null;
-            const machineCapabilitiesInvoke = vi
-                .fn()
-                .mockImplementationOnce(
-                    async () => await new Promise<MachineCapabilitiesInvokeResult>((resolve) => {
-                        resolveInvoke = () => resolve({ supported: true, response: { ok: true, result: null } });
-                    }),
-                )
-                .mockResolvedValueOnce({ supported: true, response: { ok: true, result: null } } satisfies MachineCapabilitiesInvokeResult);
-
-            const getMachineCapabilitiesSnapshot = vi.fn(() => ({
-                response: {
-                    protocolVersion: 1 as const,
-                    results: buildMissingCodexAcpResults(),
-                },
-            }));
-
-            const firstCall = ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
-            );
-
-            await Promise.resolve();
-            vi.setSystemTime(new Date('2026-01-01T00:06:00.000Z'));
-
-            await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },
-                { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke },
-            );
-
-            const completeInvoke = resolveInvoke as (() => void) | null;
-            if (!completeInvoke) {
-                throw new Error('expected install invoke to remain pending');
-            }
-            completeInvoke();
-            await firstCall;
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
         } finally {
