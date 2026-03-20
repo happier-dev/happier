@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { OpenCodeTransport } from '@/backends/opencode/acp/transport';
 import { AcpBackend } from '../AcpBackend';
 import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
 
@@ -182,7 +183,470 @@ function writeFakeAcpHangingToolCallAgentScript(params: { dir: string }): string
   return scriptPath;
 }
 
+function writeFakeAcpStreamingMessageChunksAgentScript(params: {
+  dir: string;
+  chunkIntervalMs: number;
+  chunkCount: number;
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-streaming-chunks-agent.mjs');
+  const chunkIntervalMs = Number.isFinite(params.chunkIntervalMs) ? Math.max(1, Math.trunc(params.chunkIntervalMs)) : 1;
+  const chunkCount = Number.isFinite(params.chunkCount) ? Math.max(1, Math.trunc(params.chunkCount)) : 1;
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          ok(id, {});
+          let i = 0;
+          const interval = setInterval(() => {
+            i += 1;
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  content: { type: 'text', text: 'chunk_' + i },
+                },
+              },
+            });
+            if (i >= ${chunkCount}) {
+              clearInterval(interval);
+            }
+          }, ${chunkIntervalMs});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpToolCompletionThenMessageChunksAgentScript(params: {
+  dir: string;
+  firstChunkDelayMs: number;
+  chunkIntervalMs: number;
+  chunks: string[];
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-tool-complete-then-chunks-agent.mjs');
+  const firstChunkDelayMs = Number.isFinite(params.firstChunkDelayMs) ? Math.max(1, Math.trunc(params.firstChunkDelayMs)) : 1;
+  const chunkIntervalMs = Number.isFinite(params.chunkIntervalMs) ? Math.max(1, Math.trunc(params.chunkIntervalMs)) : 1;
+  const chunks = Array.isArray(params.chunks) && params.chunks.length > 0 ? params.chunks : ['hello'];
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          ok(id, {});
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'tool_call_update',
+                toolCallId: 'tool_call_after_prompt',
+                status: 'completed',
+                kind: 'execute',
+                title: 'Shell: echo marker',
+                output: '',
+                content: [
+                  {
+                    type: 'content',
+                    content: {
+                      type: 'text',
+                      text: 'Command: echo marker\\nOutput: marker\\nExit Code: 0',
+                    },
+                  },
+                ],
+                meta: {},
+              },
+            },
+          });
+
+          const chunks = ${JSON.stringify(chunks)};
+          chunks.forEach((chunkText, index) => {
+            setTimeout(() => {
+              send({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: 'test-session',
+                  update: {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: chunkText },
+                  },
+                },
+              });
+            }, ${firstChunkDelayMs} + index * ${chunkIntervalMs});
+          });
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpToolCompletionThenStaggeredMessageChunksAgentScript(params: {
+  dir: string;
+  chunkDelaysMs: number[];
+  chunks: string[];
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-tool-complete-then-staggered-chunks-agent.mjs');
+  const chunkDelaysMs = params.chunkDelaysMs.map((delayMs) => (
+    Number.isFinite(delayMs) ? Math.max(1, Math.trunc(delayMs)) : 1
+  ));
+  const chunks = Array.isArray(params.chunks) && params.chunks.length > 0 ? params.chunks : ['hello'];
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          ok(id, {});
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'tool_call_update',
+                toolCallId: 'tool_call_after_prompt',
+                status: 'completed',
+                kind: 'execute',
+                title: 'Shell: echo marker',
+                output: '',
+                content: [
+                  {
+                    type: 'content',
+                    content: {
+                      type: 'text',
+                      text: 'Command: echo marker\\nOutput: marker\\nExit Code: 0',
+                    },
+                  },
+                ],
+                meta: {},
+              },
+            },
+          });
+
+          const chunkDelaysMs = ${JSON.stringify(chunkDelaysMs)};
+          const chunks = ${JSON.stringify(chunks)};
+          chunks.forEach((chunkText, index) => {
+            setTimeout(() => {
+              send({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: 'test-session',
+                  update: {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: chunkText },
+                  },
+                },
+              });
+            }, chunkDelaysMs[index] ?? 1);
+          });
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpToolPhasesWithLateUpdatesAgentScript(params: {
+  dir: string;
+  secondPhaseDelayMs: number;
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-tool-phases-late-updates-agent.mjs');
+  const secondPhaseDelayMs = Number.isFinite(params.secondPhaseDelayMs)
+    ? Math.max(1, Math.trunc(params.secondPhaseDelayMs))
+    : 1_200;
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    function sendToolUpdate(toolCallId, status, kind) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'test-session',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId,
+            status,
+            kind,
+            title: 'Synthetic tool',
+            rawInput: { query: toolCallId },
+            content: status === 'completed'
+              ? [{ type: 'content', content: { type: 'text', text: toolCallId + ' done' } }]
+              : undefined,
+          },
+        },
+      });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          ok(id, {});
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'agent_thought_chunk',
+                content: { type: 'text', text: 'planning phase one' },
+              },
+            },
+          });
+          sendToolUpdate('tool_call_phase_1', 'pending', 'search');
+          sendToolUpdate('tool_call_phase_1', 'in_progress', 'search');
+          sendToolUpdate('tool_call_phase_1', 'completed', 'search');
+
+          setTimeout(() => {
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'agent_thought_chunk',
+                  content: { type: 'text', text: 'planning phase two' },
+                },
+              },
+            });
+            sendToolUpdate('tool_call_phase_2', 'pending', 'search');
+            sendToolUpdate('tool_call_phase_2', 'in_progress', 'search');
+            sendToolUpdate('tool_call_phase_2', 'completed', 'search');
+            setTimeout(() => {
+              send({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: 'test-session',
+                  update: {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: '{\"summary\":\"Ok\",\"findings\":[]}' },
+                  },
+                },
+              });
+            }, 50);
+          }, ${secondPhaseDelayMs});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
 describe('AcpBackend.waitForResponseComplete', () => {
+  it('does not apply a default timeout when timeoutMs is omitted', async () => {
+    vi.useFakeTimers();
+
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-no-default-timeout-'));
+    const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+    let backendForCleanup: AcpBackend | undefined;
+    let waiting: Promise<void> | null = null;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      // Historically this defaulted to 120s and would unexpectedly kill long-lived work.
+      waiting = backend.waitForResponseComplete();
+
+      // If a default timeout is still applied, this would reject once the timer elapses.
+      await vi.advanceTimersByTimeAsync(121_000);
+
+      const marker = new Promise<'marker'>((resolve) => setTimeout(() => resolve('marker'), 0));
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(
+        Promise.race([
+          waiting.then(() => 'completed' as const),
+          marker,
+        ]),
+      ).resolves.toBe('marker');
+    } finally {
+      vi.useRealTimers();
+      try {
+        await backendForCleanup?.dispose();
+      } catch {
+        // best-effort
+      }
+      if (waiting) {
+        await waiting.catch(() => {});
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it('rejects waitForResponseComplete with AbortError after cancel', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-cancel-'));
     const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
@@ -213,6 +677,80 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backend.cancel(started.sessionId);
 
       await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('rejects waitForResponseComplete with AbortError after dispose', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-dispose-'));
+    const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      const waiting = backend.waitForResponseComplete(5_000);
+      const waitingExpectation = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+      await backend.dispose();
+      backendForCleanup = undefined;
+
+      await waitingExpectation;
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('does not time out while message chunks keep streaming', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-streaming-chunks-'));
+    const scriptPath = writeFakeAcpStreamingMessageChunksAgentScript({
+      dir,
+      chunkIntervalMs: 100,
+      chunkCount: 6,
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          // Keep idle timeout longer than the chunk interval so the backend does not
+          // incorrectly declare the response complete between chunks.
+          getIdleTimeout: () => 200,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      // The turn takes ~600ms of streaming, so an absolute timeout of 250ms would fail.
+      // waitForResponseComplete should treat the timeout as a "stall" budget and continue waiting
+      // while chunks are still arriving.
+      await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
@@ -336,6 +874,251 @@ describe('AcpBackend.waitForResponseComplete', () => {
       expect(statuses).toContain('idle');
 
       await expect(backend.waitForResponseComplete(25)).resolves.toBeUndefined();
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('does not resolve before trailing assistant chunks that arrive after tool completion', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-tool-complete-then-chunks-'));
+    const scriptPath = writeFakeAcpToolCompletionThenMessageChunksAgentScript({
+      dir,
+      firstChunkDelayMs: 650,
+      chunkIntervalMs: 50,
+      chunks: ['PROFILE', '_STACK', '_MARKER_0306'],
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 500,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const chunks: string[] = [];
+      backend.onMessage((msg) => {
+        if (msg.type !== 'model-output') return;
+        if (typeof msg.textDelta !== 'string') return;
+        chunks.push(msg.textDelta);
+      });
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      const waiting = backend.waitForResponseComplete(5_000);
+      const settledBeforeChunks = await Promise.race([
+        waiting.then(() => 'resolved' as const),
+        new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 600)),
+      ]);
+      expect(settledBeforeChunks).toBe('timer');
+
+      await waiting;
+      expect(chunks.join('')).toBe('PROFILE_STACK_MARKER_0306');
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('does not resolve before staggered post-tool chunks that match OpenCode idle timing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-opencode-staggered-post-tool-'));
+    const scriptPath = writeFakeAcpToolCompletionThenStaggeredMessageChunksAgentScript({
+      dir,
+      chunkDelaysMs: [100, 1_250, 2_450],
+      chunks: ['{"summary":"Open', 'Code delayed ', 'tail"}'],
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const transport = new OpenCodeTransport();
+      transport.getInitTimeout = () => 5_000;
+      transport.getToolPatterns = () => [] as ToolPattern[];
+      const backend = new AcpBackend({
+        agentName: 'opencode',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: transport satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const chunks: string[] = [];
+      let resolveFirstChunk!: () => void;
+      const firstChunkSeen = new Promise<void>((resolve) => {
+        resolveFirstChunk = resolve;
+      });
+      let sawFirstChunk = false;
+
+      backend.onMessage((msg) => {
+        if (msg.type !== 'model-output' || typeof msg.textDelta !== 'string') return;
+        chunks.push(msg.textDelta);
+        if (!sawFirstChunk) {
+          sawFirstChunk = true;
+          resolveFirstChunk();
+        }
+      });
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+      const waiting = backend.waitForResponseComplete(8_000);
+
+      await firstChunkSeen;
+      const settledBeforeLateChunk = await Promise.race([
+        waiting.then(() => 'resolved' as const),
+        new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 700)),
+      ]);
+
+      expect(settledBeforeLateChunk).toBe('timer');
+      await waiting;
+      expect(chunks.join('')).toBe('{"summary":"OpenCode delayed tail"}');
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('does not resolve on a transient idle before a later tool phase resumes the turn', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-late-tool-phase-'));
+    const scriptPath = writeFakeAcpToolPhasesWithLateUpdatesAgentScript({
+      dir,
+      secondPhaseDelayMs: 1_200,
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 500,
+          getPostToolCallIdleTimeoutMs: () => 500,
+          getIdleWithoutAssistantMessageTimeoutMs: () => 1_500,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const statuses: string[] = [];
+      const chunks: string[] = [];
+      let idleCount = 0;
+      let resolveFirstIdle!: () => void;
+      const firstIdleSeen = new Promise<void>((resolve) => {
+        resolveFirstIdle = resolve;
+      });
+      let resolveSecondPhase!: () => void;
+      const secondPhaseSeen = new Promise<void>((resolve) => {
+        resolveSecondPhase = resolve;
+      });
+
+      backend.onMessage((msg) => {
+        if (msg.type === 'status') {
+          statuses.push(msg.status);
+          if (msg.status === 'idle') {
+            idleCount += 1;
+            if (idleCount === 1) resolveFirstIdle();
+          }
+          return;
+        }
+        if (msg.type !== 'model-output') return;
+        if (typeof msg.textDelta !== 'string') return;
+        chunks.push(msg.textDelta);
+        if (msg.textDelta.includes('"summary":"Ok"')) {
+          resolveSecondPhase();
+        }
+      });
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      const waiting = backend.waitForResponseComplete(5_000).then(() => 'resolved' as const);
+      await firstIdleSeen;
+
+      const firstOutcome = await Promise.race([
+        waiting,
+        secondPhaseSeen.then(() => 'phase2' as const),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
+      ]);
+
+      expect(firstOutcome).toBe('phase2');
+      expect(statuses).toContain('idle');
+      expect(chunks.join('')).toContain('"summary":"Ok"');
+      await expect(waiting).resolves.toBe('resolved');
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('does not resolve on a transient post-tool idle before a later OpenCode tool phase resumes the turn', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-opencode-late-tool-phase-'));
+    const scriptPath = writeFakeAcpToolPhasesWithLateUpdatesAgentScript({
+      dir,
+      secondPhaseDelayMs: 1_200,
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const transport = new OpenCodeTransport();
+      transport.getInitTimeout = () => 5_000;
+      transport.getToolPatterns = () => [] as ToolPattern[];
+
+      const backend = new AcpBackend({
+        agentName: 'opencode',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: transport satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      let resolveFirstIdle!: () => void;
+      const firstIdleSeen = new Promise<void>((resolve) => {
+        resolveFirstIdle = resolve;
+      });
+      let resolveSecondPhase!: () => void;
+      const secondPhaseSeen = new Promise<void>((resolve) => {
+        resolveSecondPhase = resolve;
+      });
+
+      backend.onMessage((msg) => {
+        if (msg.type === 'status') {
+          if (msg.status === 'idle') resolveFirstIdle();
+          return;
+        }
+        if (msg.type !== 'model-output' || typeof msg.textDelta !== 'string') return;
+        if (msg.textDelta.includes('"summary":"Ok"')) {
+          resolveSecondPhase();
+        }
+      });
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      const waiting = backend.waitForResponseComplete(5_000).then(() => 'resolved' as const);
+      await firstIdleSeen;
+
+      const firstOutcome = await Promise.race([
+        waiting,
+        secondPhaseSeen.then(() => 'phase2' as const),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
+      ]);
+
+      expect(firstOutcome).toBe('phase2');
+      await expect(waiting).resolves.toBe('resolved');
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

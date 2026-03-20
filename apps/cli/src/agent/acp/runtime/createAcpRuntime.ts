@@ -9,7 +9,6 @@ import {
   handleAcpModelOutputDelta,
   handleAcpStatusRunning,
 } from '@/agent/acp/bridge/acpCommonHandlers';
-import { forwardAcpMessageDelta } from '@/agent/acp/bridge/acpSessionForwarding';
 import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
 import { isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
@@ -20,24 +19,9 @@ import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 
-const DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
 const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
-
-function resolveStreamDeltaFlushIntervalMs(input: unknown): number {
-  if (typeof input === 'number' && Number.isFinite(input) && input >= 0) {
-    return Math.trunc(input);
-  }
-
-  const raw = (process.env.HAPPIER_ACP_STREAM_DELTA_FLUSH_MS ?? '').toString().trim();
-  if (!raw) return DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS;
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS;
-  return Math.trunc(parsed);
-}
 
 function resolveSessionControlTimeoutMs(): number {
   const raw = (process.env.HAPPIER_ACP_SESSION_CONTROL_TIMEOUT_MS ?? '').toString().trim();
@@ -83,7 +67,7 @@ export type AcpRuntime = Readonly<{
    */
   steerPrompt: (prompt: string) => Promise<void>;
   sendPrompt: (prompt: string) => Promise<void>;
-  flushTurn: () => void;
+  flushTurn: () => Promise<void>;
 }>;
 
 export type AcpRuntimeBackend = AgentBackend & {
@@ -120,8 +104,9 @@ export async function abortAcpRuntimeTurnIfNeeded(
 }
 
 export function createAcpRuntime(params: {
-  provider: CatalogAgentId;
+  provider: string;
   directory: string;
+  happierSessionId?: string;
   session: AcpRuntimeSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
@@ -215,18 +200,26 @@ export function createAcpRuntime(params: {
   modelOutputStreaming?: {
     deltaFlushIntervalMs?: number | null;
   };
+  /**
+   * Legacy compatibility toggle for native ACP runtimes.
+   *
+   * Shared change-title guidance now belongs to the centralized coding prompt base.
+   */
+  changeTitleInstruction?: {
+    enabled?: boolean;
+  };
+  memoryRecallGuidance?: {
+    enabled?: boolean;
+    machineId?: string | null;
+  };
 }): AcpRuntime {
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
   let sessionId: string | null = null;
-  let didSendChangeTitleInstructionForSession = false;
-
   let accumulatedResponse = '';
   let isResponseInProgress = false;
   let taskStartedSent = false;
   let turnAborted = false;
-  let turnStreamKey: string | null = null;
-  let didStreamModelOutputToSession = false;
   let loadingSession = false;
   let turnInFlight = false;
   const inFlightSteerEnabled = params.inFlightSteer?.enabled === true;
@@ -332,10 +325,11 @@ export function createAcpRuntime(params: {
   const toolCallCacheTtlMs = Math.max(1, params.toolCallCache?.ttlMs ?? 10 * 60_000);
   const toolNameByCallId = new Map<string, { toolName: string; createdAtMs: number }>();
   const toolCallIdQueue: string[] = [];
-
-  const streamDeltaFlushIntervalMs = resolveStreamDeltaFlushIntervalMs(
-    params.modelOutputStreaming?.deltaFlushIntervalMs,
-  );
+  const streamedTranscriptWriter = createStreamedTranscriptWriter({
+    provider: params.provider,
+    session: params.session,
+    draftFlushIntervalMs: params.modelOutputStreaming?.deltaFlushIntervalMs ?? null,
+  });
 
   const clearToolCallCache = () => {
     toolNameByCallId.clear();
@@ -395,71 +389,11 @@ export function createAcpRuntime(params: {
     evictToolCallCache(nowMs);
   };
 
-  // ---------------------------------------------------------------------------
-  // Streaming debounce buffer: accumulate tiny text deltas (e.g. one word per
-  // ACP chunk from Copilot) and flush as a single server message periodically.
-  // This reduces the number of encrypted messages sent through the server and
-  // avoids race conditions in the UI's async socket handler where out-of-order
-  // decryption can trigger unnecessary full message refetches.
-  // ---------------------------------------------------------------------------
-  let streamDeltaBuffer = '';
-  let streamDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const flushStreamDeltaBuffer = () => {
-    if (streamDeltaFlushTimer) {
-      clearTimeout(streamDeltaFlushTimer);
-      streamDeltaFlushTimer = null;
-    }
-    const buffered = streamDeltaBuffer;
-    streamDeltaBuffer = '';
-    if (!buffered) return;
-    if (!turnStreamKey) {
-      turnStreamKey = `acp:turn:${randomUUID()}`;
-    }
-    forwardAcpMessageDelta({
-      sendAcp: params.session.sendAgentMessage.bind(params.session),
-      provider: params.provider,
-      delta: buffered,
-      streamMetaKey: 'happierStreamKey',
-      streamKey: turnStreamKey,
-    });
-    didStreamModelOutputToSession = true;
-  };
-
-  const enqueueStreamDelta = (delta: string) => {
-    if (!delta) return;
-
-    if (streamDeltaFlushIntervalMs === 0) {
-      if (!turnStreamKey) {
-        turnStreamKey = `acp:turn:${randomUUID()}`;
-      }
-      forwardAcpMessageDelta({
-        sendAcp: params.session.sendAgentMessage.bind(params.session),
-        provider: params.provider,
-        delta,
-        streamMetaKey: 'happierStreamKey',
-        streamKey: turnStreamKey,
-      });
-      didStreamModelOutputToSession = true;
-      return;
-    }
-
-    streamDeltaBuffer += delta;
-    if (!streamDeltaFlushTimer) {
-      streamDeltaFlushTimer = setTimeout(flushStreamDeltaBuffer, streamDeltaFlushIntervalMs);
-      streamDeltaFlushTimer.unref?.();
-    }
-  };
-
   const resetTurnState = () => {
     accumulatedResponse = '';
     isResponseInProgress = false;
     taskStartedSent = false;
     turnAborted = false;
-    // Flush any remaining buffered text before resetting the stream key.
-    flushStreamDeltaBuffer();
-    turnStreamKey = null;
-    didStreamModelOutputToSession = false;
   };
 
   const publishSessionId = () => {
@@ -521,7 +455,7 @@ export function createAcpRuntime(params: {
           });
 
           if (deltaRaw) {
-            enqueueStreamDelta(deltaRaw);
+            streamedTranscriptWriter.appendAssistantDelta(deltaRaw);
           }
           break;
         }
@@ -558,13 +492,15 @@ export function createAcpRuntime(params: {
                 params.session.sendAgentMessage(params.provider, { type: 'message', message });
               }
             }
+            void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'status-error' }).finally(() => {
+              params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
+            });
             turnAborted = true;
             clearToolCallCache();
             params.onThinkingChange(false);
             params.session.keepAlive(false, 'remote');
-            params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
           }
-          if (msg.status === 'idle') {
+          if (msg.status === 'idle' && !turnInFlight) {
             params.onThinkingChange(false);
             params.session.keepAlive(false, 'remote');
           }
@@ -577,6 +513,7 @@ export function createAcpRuntime(params: {
             break;
           }
 
+          void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
           params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
           recordToolCall(msg.callId, msg.toolName);
           forwarder.forward(msg);
@@ -639,7 +576,7 @@ export function createAcpRuntime(params: {
 
             if (remoteSessionId) {
               const createReplayBackend = params.createReplayBackend ?? (async () => {
-                const created = await createCatalogAcpBackend(params.provider, {
+                    const created = await createCatalogAcpBackend(params.provider as CatalogAgentId, {
                   cwd: params.directory,
                   mcpServers: params.mcpServers,
                   permissionHandler: params.permissionHandler,
@@ -733,7 +670,9 @@ export function createAcpRuntime(params: {
           } catch (e) {
             logger.debug(`[${params.provider}] Failed to run permission-request hook (non-fatal)`, e);
           }
-          forwarder.forward(msg);
+          void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' }).finally(() => {
+            forwarder.forward(msg);
+          });
           break;
         }
 
@@ -762,16 +701,20 @@ export function createAcpRuntime(params: {
             if (currentModeId && availableModes.length > 0) {
               updateMetadataBestEffort(
                 params.session,
-                (metadata) => ({
-                  ...metadata,
-                  acpSessionModesV1: {
-                    v: 1,
+                (metadata) => {
+                  const sessionModes = {
+                    v: 1 as const,
                     provider: params.provider,
                     updatedAt: Date.now(),
                     currentModeId,
                     availableModes,
-                  },
-                }),
+                  };
+                  return {
+                    ...metadata,
+                    sessionModesV1: sessionModes,
+                    acpSessionModesV1: sessionModes,
+                  };
+                },
                 `[${params.provider}]`,
                 'session_modes_state',
               );
@@ -902,17 +845,19 @@ export function createAcpRuntime(params: {
               updateMetadataBestEffort(
                 params.session,
                 (metadata) => {
-                  const prev = metadata.acpSessionModesV1;
+                  const prev = metadata.sessionModesV1 ?? metadata.acpSessionModesV1;
                   const availableModes = Array.isArray(prev?.availableModes) ? prev.availableModes : [];
+                  const sessionModes = {
+                    v: 1 as const,
+                    provider: params.provider,
+                    updatedAt: Date.now(),
+                    currentModeId,
+                    availableModes,
+                  };
                   return {
                     ...metadata,
-                    acpSessionModesV1: {
-                      v: 1,
-                      provider: params.provider,
-                      updatedAt: Date.now(),
-                      currentModeId,
-                      availableModes,
-                    },
+                    sessionModesV1: sessionModes,
+                    acpSessionModesV1: sessionModes,
                   };
                 },
                 `[${params.provider}]`,
@@ -951,7 +896,7 @@ export function createAcpRuntime(params: {
             const textRaw = payloadRecord?.text;
             const text = typeof textRaw === 'string' ? textRaw : '';
             if (text) {
-              params.session.sendAgentMessage(params.provider, { type: 'thinking', text });
+              streamedTranscriptWriter.appendThinkingDelta(text);
             }
           }
           break;
@@ -998,7 +943,7 @@ export function createAcpRuntime(params: {
 
     async cancel(): Promise<void> {
       if (!sessionId) return;
-      flushStreamDeltaBuffer();
+      await streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'cancelled' });
       const b = await ensureBackend();
       try {
         await b.cancel(sessionId);
@@ -1014,7 +959,6 @@ export function createAcpRuntime(params: {
 
     async reset(): Promise<void> {
       sessionId = null;
-      didSendChangeTitleInstructionForSession = false;
       turnInFlight = false;
       resetTurnState();
       loadingSession = false;
@@ -1036,7 +980,6 @@ export function createAcpRuntime(params: {
 
     async startOrLoad(opts: { resumeId?: string | null; importHistory?: boolean } = {}): Promise<string> {
       const b = await ensureBackend();
-      didSendChangeTitleInstructionForSession = false;
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
       const importHistory = opts.importHistory !== false;
@@ -1209,30 +1152,20 @@ export function createAcpRuntime(params: {
         throw new Error(`${params.provider} ACP session was not started`);
       }
 
-      const effectivePrompt = (() => {
-        const raw = typeof prompt === 'string' ? prompt : '';
-        if (!raw.trim()) return raw;
-
-        if (didSendChangeTitleInstructionForSession) return raw;
-
-        const lower = raw.toLowerCase();
-        const alreadyMentionsChangeTitle = CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
-        didSendChangeTitleInstructionForSession = true;
-        if (alreadyMentionsChangeTitle) return raw;
-        return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
-      })();
-
       const b = await ensureBackend();
-      await b.sendPrompt(sessionId, effectivePrompt);
+      await b.sendPrompt(sessionId, prompt);
       if (b.waitForResponseComplete) {
         await b.waitForResponseComplete(120_000);
       }
       publishSessionId();
     },
 
-    flushTurn(): void {
-      // Flush any remaining buffered streaming text before checking didStreamModelOutputToSession.
-      flushStreamDeltaBuffer();
+    async flushTurn(): Promise<void> {
+      await streamedTranscriptWriter.flushAll(
+        turnAborted
+          ? { reason: 'abort', interruptedReason: 'turn-aborted' }
+          : { reason: 'turn-end' },
+      );
       turnInFlight = false;
       stopPendingPump();
       params.onThinkingChange(false);
@@ -1263,10 +1196,6 @@ export function createAcpRuntime(params: {
         } catch (e) {
           logger.debug(`[${params.provider}] onBeforeFlushTurn hook failed (non-fatal)`, e);
         }
-      }
-
-      if (!didStreamModelOutputToSession && accumulatedResponse.trim()) {
-        params.session.sendAgentMessage(params.provider, { type: 'message', message: accumulatedResponse });
       }
 
       if (!turnAborted) {

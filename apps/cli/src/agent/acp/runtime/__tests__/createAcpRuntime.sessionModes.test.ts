@@ -47,6 +47,16 @@ describe('createAcpRuntime (session modes)', () => {
 
     expect(metadataUpdates.length).toBeGreaterThan(0);
     const metadata: Metadata = getMetadata();
+    expect(metadata.sessionModesV1).toMatchObject({
+      v: 1,
+      provider: 'codex',
+      currentModeId: 'code',
+      availableModes: [
+        { id: 'code', name: 'Code' },
+        { id: 'plan', name: 'Plan', description: 'Think first' },
+      ],
+    });
+    expect(typeof metadata.sessionModesV1?.updatedAt).toBe('number');
     expect(metadata.acpSessionModesV1).toMatchObject({
       v: 1,
       provider: 'codex',
@@ -57,6 +67,61 @@ describe('createAcpRuntime (session modes)', () => {
       ],
     });
     expect(typeof metadata.acpSessionModesV1?.updatedAt).toBe('number');
+  });
+
+  it('preserves available modes on current mode updates from canonical metadata', async () => {
+    const backend = createFakeAcpRuntimeBackend();
+    const { session, getMetadata } = createSessionClientWithMetadata({
+      initialMetadata: createDefaultMetadata({
+        sessionModesV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 1,
+          currentModeId: 'code',
+          availableModes: [
+            { id: 'code', name: 'Code' },
+            { id: 'plan', name: 'Plan', description: 'Think first' },
+          ],
+        },
+      }),
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+
+    backend.emit({
+      type: 'event',
+      name: 'current_mode_update',
+      payload: {
+        currentModeId: 'plan',
+      },
+    });
+
+    const metadata: Metadata = getMetadata();
+    expect(metadata.sessionModesV1).toMatchObject({
+      currentModeId: 'plan',
+      availableModes: [
+        { id: 'code', name: 'Code' },
+        { id: 'plan', name: 'Plan', description: 'Think first' },
+      ],
+    });
+    expect(metadata.acpSessionModesV1).toMatchObject({
+      currentModeId: 'plan',
+      availableModes: [
+        { id: 'code', name: 'Code' },
+        { id: 'plan', name: 'Plan', description: 'Think first' },
+      ],
+    });
   });
 
   it('delegates setSessionMode to the backend when supported', async () => {

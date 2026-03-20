@@ -118,10 +118,11 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
     const sent: Array<{ type: string; [k: string]: unknown }> = [];
     const session = {
       keepAlive: () => {},
-      sendAgentMessage: (_provider: string, msg: any) => {
+      sendAgentMessage: () => {},
+      sendAgentMessageCommitted: async (_provider: string, msg: any) => {
         sent.push(msg);
       },
-      sendAgentMessageCommitted: async () => {},
+      sendTranscriptDraftDelta: () => {},
       sendUserTextMessageCommitted: async () => {},
       fetchRecentTranscriptTextItemsForAcpImport: async () => [],
       updateMetadata: () => {},
@@ -158,7 +159,7 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
 
       await (runtime as any).steerPrompt('steer-now');
       await primaryPromise;
-      runtime.flushTurn();
+      await runtime.flushTurn();
 
       const message = await waitForMessage();
       expect(message).not.toBeNull();

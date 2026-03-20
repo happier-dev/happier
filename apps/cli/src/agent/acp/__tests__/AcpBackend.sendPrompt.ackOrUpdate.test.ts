@@ -1,0 +1,264 @@
+import { describe, expect, it } from 'vitest';
+
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { AcpBackend } from '../AcpBackend';
+import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function writeFakeAcpAgentScript(params: {
+  dir: string;
+  promptAckDelayMs: number;
+  promptAckMode?: 'ok' | 'gemini_late_empty_response_error';
+}): string {
+  const scriptPath = join(params.dir, 'fake-acp-agent-delayed-prompt-ack.mjs');
+  const ackDelayMs = Number.isFinite(params.promptAckDelayMs) ? params.promptAckDelayMs : 0;
+  const ackMode = params.promptAckMode ?? 'ok';
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    function err(id, code, message, data) {
+      send({ jsonrpc: '2.0', id, error: { code, message, data } });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          // Emit a session/update quickly, but delay the RPC ACK significantly.
+          setTimeout(() => {
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  content: { type: 'text', text: 'hello' },
+                },
+              },
+            });
+          }, 10);
+
+          setTimeout(() => {
+            if (${JSON.stringify(ackMode)} === 'gemini_late_empty_response_error') {
+              err(id, -32603, 'Internal error', { details: 'Model stream ended with empty response text.' });
+              return;
+            }
+            ok(id, {});
+          }, ${ackDelayMs});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+function writeFakeAcpAgentNeverAckPromptScript(params: { dir: string }): string {
+  const scriptPath = join(params.dir, 'fake-acp-agent-never-ack-prompt.mjs');
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
+describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
+  it('resolves once a session/update arrives even when the prompt ACK is delayed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-sendprompt-first-update-'));
+    const scriptPath = writeFakeAcpAgentScript({ dir, promptAckDelayMs: 5_000 });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      const outcome = await Promise.race([
+        backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
+        delay(500).then(() => 'timeout' as const),
+      ]);
+
+      expect(outcome).toBe('resolved');
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('ignores late Gemini empty-stream errors when sendPrompt returns early on first session/update', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-sendprompt-gemini-late-error-'));
+    const scriptPath = writeFakeAcpAgentScript({
+      dir,
+      promptAckDelayMs: 50,
+      promptAckMode: 'gemini_late_empty_response_error',
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'gemini',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'gemini',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const emitted: any[] = [];
+      backend.onMessage((msg) => emitted.push(msg));
+
+      const started = await backend.startSession();
+      const sendOutcome = await Promise.race([
+        backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
+        delay(500).then(() => 'timeout' as const),
+      ]);
+      expect(sendOutcome).toBe('resolved');
+
+      await backend.waitForResponseComplete(2_000);
+      await delay(200);
+
+      const errorStatuses = emitted.filter((m) => m?.type === 'status' && m?.status === 'error');
+      expect(errorStatuses).toHaveLength(0);
+      expect((backend as any).responseCompletionError).toBeNull();
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('rejects when neither a prompt ACK nor a first session/update arrives', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-sendprompt-no-ack-no-update-'));
+    const scriptPath = writeFakeAcpAgentNeverAckPromptScript({ dir });
+    let backendForCleanup: AcpBackend | undefined;
+    const previousTimeout = process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS;
+    process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS = '50';
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await expect(backend.sendPrompt(started.sessionId, 'hi')).rejects.toThrow(/prompt ack|first session\/update|liveness/i);
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS;
+      } else {
+        process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS = previousTimeout;
+      }
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+});

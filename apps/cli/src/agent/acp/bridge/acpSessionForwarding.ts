@@ -11,22 +11,6 @@ export function namespaceSidechainCallId(params: { sidechainId: string; toolCall
   return `sc:${params.sidechainId}:${params.toolCallId}`;
 }
 
-export function forwardAcpMessageDelta(params: {
-  sendAcp: AcpSendFn;
-  provider: ACPProvider;
-  delta: string;
-  streamMetaKey: 'happierStreamKey' | 'happierSidechainStreamKey';
-  streamKey: string;
-  sidechainId?: string;
-}): void {
-  if (!params.delta) return;
-  params.sendAcp(
-    params.provider,
-    { type: 'message', message: params.delta, ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}) },
-    { meta: { [params.streamMetaKey]: params.streamKey } },
-  );
-}
-
 export function forwardAcpToolCall(params: {
   sendAcp: AcpSendFn;
   provider: ACPProvider;

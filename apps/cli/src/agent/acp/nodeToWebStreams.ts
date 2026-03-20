@@ -73,14 +73,13 @@ export function nodeToWebStreams(
     };
     stdin.on('error', onStdinError);
 
-    const writable = new WritableStream<Uint8Array>({
-        write(chunk) {
+    const writeChunk = (chunk: Uint8Array) => {
             try {
                 capture?.stdinStream.write(Buffer.from(chunk));
             } catch {
                 // ignore capture failures
             }
-            return new Promise((resolve, reject) => {
+            return new Promise<void>((resolve, reject) => {
                 let drained = false;
                 let wrote = false;
                 let settled = false;
@@ -153,20 +152,52 @@ export function nodeToWebStreams(
                     stdin.off('drain', onDrain);
                 }
             });
-        },
-        close() {
-            return new Promise((resolve) => {
+        };
+
+    const closeWritable = () => {
+            return new Promise<void>((resolve) => {
                 safeCloseCapture(capture?.stdinStream);
                 stdin.off('error', onStdinError);
                 stdin.end(resolve);
             });
-        },
-        abort(reason) {
+        };
+
+    const abortWritable = (reason: unknown) => {
             safeCloseCapture(capture?.stdinStream);
             stdin.off('error', onStdinError);
             stdin.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+        };
+
+    const writer = {
+        write: writeChunk,
+        close: closeWritable,
+        abort: abortWritable,
+        releaseLock() {
+            // Intentionally a no-op. Some packaged runtimes do not reliably support
+            // reacquiring a new Web writer for every ACP frame, so we keep one stable
+            // facade bound to the same underlying stdin bridge.
         },
-    });
+        get closed() {
+            return Promise.resolve(undefined);
+        },
+        get desiredSize() {
+            return null;
+        },
+        get ready() {
+            return Promise.resolve(undefined);
+        },
+    } as WritableStreamDefaultWriter<Uint8Array>;
+
+    const writable = {
+        getWriter() {
+            return writer;
+        },
+        get locked() {
+            return false;
+        },
+        abort: abortWritable,
+        close: closeWritable,
+    } as unknown as WritableStream<Uint8Array>;
 
     let cancelStdout: (() => void) | null = null;
 
