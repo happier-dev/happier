@@ -5,6 +5,7 @@ import renderer, { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useSelectableMenuSpy = vi.fn();
+let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
 
 vi.mock('react-native', () => {
     const React = require('react');
@@ -94,6 +95,14 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: (key: string) => {
+        if (key === 'uiItemDensity') return uiItemDensitySetting;
+        if (key === 'uiFontScale') return 1;
+        return null;
+    },
+}));
+
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => {
         const React = require('react');
@@ -116,7 +125,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 describe('DropdownMenu', () => {
     beforeEach(() => {
+        vi.resetModules();
         useSelectableMenuSpy.mockReset();
+        uiItemDensitySetting = 'comfortable';
         vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
             cb();
             return 0 as any;
@@ -336,6 +347,7 @@ describe('DropdownMenu', () => {
 
     it('can render an Item-style trigger that shows the selected label and subtitle by default', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
+        uiItemDensitySetting = 'cozy';
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
@@ -358,8 +370,85 @@ describe('DropdownMenu', () => {
 
         const item = tree?.root.findByType('Item' as any);
         expect(item?.props?.title).toBe('Pick one');
-        expect(item?.props?.detail).toBe('Beta');
+        expect(item?.props?.density).toBe('cozy');
+        expect(item?.props?.detail).toBeUndefined();
         expect(item?.props?.subtitle).toBe('Second');
+        expect(item?.props?.rightElement).toBeTruthy();
+
+        let rightElementTree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            rightElementTree = renderer.create(item?.props?.rightElement);
+        });
+
+        const rightTextNodes = rightElementTree?.root.findAllByType('Text' as any) ?? [];
+        const rightTexts = rightTextNodes.map((node: any) => node.props?.children).flat();
+        expect(rightTexts).toContain('Beta');
+        const betaTextNode = rightTextNodes.find((node: any) => node.props?.children === 'Beta');
+        expect(betaTextNode?.props?.style).toMatchObject({ fontSize: 14, lineHeight: 20 });
+        const chevronIcon = rightElementTree?.root.findAllByType('Ionicons' as any).find((node: any) => node.props?.name === 'chevron-down');
+        expect(chevronIcon?.props?.size).toBe(17);
+    });
+
+    it('matches the right-side selected detail text to the comfortable item title size', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        uiItemDensitySetting = 'comfortable';
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu as any, {
+                    open: false,
+                    onOpenChange: vi.fn(),
+                    items: [
+                        { id: 'a', title: 'Alpha', subtitle: 'First' },
+                        { id: 'b', title: 'Beta', subtitle: 'Second' },
+                    ],
+                    selectedId: 'b',
+                    onSelect: () => {},
+                    itemTrigger: {
+                        title: 'Pick one',
+                    },
+                }),
+            );
+        });
+
+        const item = tree?.root.findByType('Item' as any);
+
+        let rightElementTree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            rightElementTree = renderer.create(item?.props?.rightElement);
+        });
+
+        const betaTextNode = rightElementTree?.root.findAllByType('Text' as any).find((node: any) => node.props?.children === 'Beta');
+        expect(betaTextNode?.props?.style).toMatchObject({ fontSize: 16, lineHeight: 24 });
+    });
+
+    it('passes compact item props through to item-style dropdown rows', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu as any, {
+                    open: true,
+                    onOpenChange: vi.fn(),
+                    items: [
+                        { id: 'a', title: 'Alpha', subtitle: 'First' },
+                        { id: 'b', title: 'Beta', subtitle: 'Second' },
+                    ],
+                    selectedId: 'b',
+                    onSelect: () => {},
+                    rowKind: 'item',
+                    itemRowProps: { density: 'compact' },
+                    itemTrigger: {
+                        title: 'Pick one',
+                    },
+                }),
+            );
+        });
+
+        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        expect(selectableResults?.props?.itemProps).toMatchObject({ density: 'compact' });
     });
 
     it('allows disabling selected detail/subtitle in the Item-style trigger', async () => {
