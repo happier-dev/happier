@@ -53,7 +53,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     await rm(localHomeDir, { recursive: true, force: true });
   });
 
-  it('pairs a remote machine by creating a claim-gated request, approving it with an authenticated local CLI, then waiting and writing dataKey credentials on the remote', async () => {
+  it('pairs a remote machine by creating a claim-gated request, approving it with an authenticated local CLI, then waiting and writing matching credentials on the remote', async () => {
     const requests = new Map<string, RequestRow>();
     const app = fastify({ logger: false });
 
@@ -189,7 +189,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         const parsed = JSON.parse(waitOut.logs[0] ?? '');
         expect(parsed.success).toBe(true);
         expect(parsed.token).toBe('issued-token');
-        expect(parsed.encryptionType).toBe('dataKey');
+        expect(parsed.encryptionType).toBe('legacy');
       } finally {
         waitOut.restore();
       }
@@ -197,7 +197,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       const { readCredentials } = await import('@/persistence');
       const creds = await readCredentials();
       expect(creds?.token).toBe('issued-token');
-      expect(creds?.encryption.type).toBe('dataKey');
+      expect(creds?.encryption.type).toBe('legacy');
     } finally {
       restoreAxios();
       await app.close().catch(() => {});

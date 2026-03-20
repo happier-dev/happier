@@ -1,12 +1,13 @@
 import chalk from 'chalk';
 import { spawn } from 'node:child_process';
 
-import { inferAgentIdFromSessionMetadata, getAgentLocalControlCapability, type AgentId } from '@happier-dev/agents';
+import { inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
+import { getProviderAttachOps } from '@/backends/catalog';
 import { configuration } from '@/configuration';
-import { readCredentials, type Credentials } from '@/persistence';
+import { readCredentials, readSettings, type Credentials, type Settings } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { fetchSessionById, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
 import { createProviderAttachStatePublisher } from '@/agent/localControl/createProviderAttachStatePublisher';
 import {
@@ -15,9 +16,12 @@ import {
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
 import { isTmuxAvailable, normalizeExitCode } from '@/integrations/tmux';
-import { runOpenCodeProviderAttach } from '@/backends/opencode/attach/runOpenCodeProviderAttach';
 import { focusWindowsTerminalWindow } from '@/terminal/attachment/windowsTerminalAttach';
 import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleAttach';
+import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
+import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
+import { evaluateCliSessionAttachEligibility } from '@/sessionControl/evaluateCliSessionAttachEligibility';
+import { buildAttachSelectionModel } from './attachInteractiveSelection';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -40,7 +44,13 @@ function spawnTmux(params: {
 
 type AttachCommandDeps = Readonly<{
   readCredentialsFn?: () => Promise<Credentials | null>;
+  readSettingsFn?: () => Promise<Settings>;
   fetchSessionByIdFn?: (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
+  fetchSessionsPageFn?: (params: { token: string; cursor?: string; limit?: number; activeOnly?: boolean; archivedOnly?: boolean }) => Promise<{
+    sessions: RawSessionListRow[];
+    nextCursor: string | null;
+    hasNext: boolean;
+  }>;
   resolveSessionIdOrPrefixFn?: (params: { credentials: Credentials; idOrPrefix: string }) => Promise<
     | { ok: true; sessionId: string }
     | { ok: false; code: string; candidates?: string[] }
@@ -66,6 +76,15 @@ type AttachCommandDeps = Readonly<{
     metadata: Record<string, unknown>;
   }) => Promise<number | false>;
   createProviderAttachStatePublisherFn?: typeof createProviderAttachStatePublisher;
+  canUseInkSelectorFn?: () => boolean;
+  selectAttachableSessionIdFn?: (params: {
+    rows: SessionActionSelectorRow[];
+    probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
+  }) => Promise<
+    | { type: 'selected'; sessionId: string }
+    | { type: 'cancelled' }
+    | { type: 'none' }
+  >;
 }>;
 
 type ResolvedAttachContext = Readonly<{
@@ -195,36 +214,111 @@ async function resolveAttachContext(
   };
 }
 
-function resolveTmuxTerminalFromAttachContext(
-  context: ResolvedAttachContext | null,
-  localInfo: TerminalAttachmentInfo | null,
-): NonNullable<TerminalAttachmentInfo['terminal']> | null {
-  const remoteTerminal = context?.metadata?.terminal;
-  if (remoteTerminal && typeof remoteTerminal === 'object' && !Array.isArray(remoteTerminal)) {
-    const remote = remoteTerminal as NonNullable<TerminalAttachmentInfo['terminal']>;
-    if (localInfo?.terminal?.mode === remote.mode && (remote.mode === 'windows_terminal' || remote.mode === 'windows_console')) {
-      return {
-        ...remote,
-        windows: {
-          ...(remote.windows ?? {}),
-          ...(localInfo.terminal.windows ?? {}),
-        },
-      } as NonNullable<TerminalAttachmentInfo['terminal']>;
-    }
-    return remote;
-  }
-  return localInfo?.terminal ?? null;
-}
-
 function isAttachSuccess(exitCode: number | false): boolean {
   return exitCode === 0;
+}
+
+async function selectAttachableSessionId(params: Readonly<{
+  rows: SessionActionSelectorRow[];
+  probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
+}>): Promise<
+  | { type: 'selected'; sessionId: string }
+  | { type: 'cancelled' }
+  | { type: 'none' }
+> {
+  if (params.rows.length === 0) return { type: 'none' };
+  return await runSessionActionSelector({
+    title: 'Attach to a running session',
+    actionVerb: 'attach',
+    footerHint: 'Use `happier resume` for stopped sessions.',
+    rows: params.rows,
+    onProbe: params.probeSessionIdFn,
+  });
 }
 
 export async function handleAttachCommand(
   argv: string[],
   deps: AttachCommandDeps = {},
 ): Promise<void> {
-  const sessionIdOrPrefix = argv[0]?.trim();
+  const hasHelpFlag = argv.some((arg) => {
+    const trimmed = typeof arg === 'string' ? arg.trim() : '';
+    return trimmed === '--help' || trimmed === '-h';
+  });
+  if (hasHelpFlag) {
+    console.log('happier attach');
+    console.log('happier attach <session-id-or-prefix>');
+    console.log('');
+    console.log('Attaches a terminal to a running session on this computer.');
+    return;
+  }
+
+  let sessionIdOrPrefix = argv[0]?.trim() ?? '';
+  const readTerminalAttachmentInfoFn = deps.readTerminalAttachmentInfoFn ?? readTerminalAttachmentInfo;
+  const readSettingsFn = deps.readSettingsFn ?? readSettings;
+  const fetchSessionsPageFn = deps.fetchSessionsPageFn ?? fetchSessionsPage;
+  const runTmuxAttachFn = deps.runTmuxAttachFn ?? (async (params) => await defaultRunTmuxAttach(params, {
+    isTmuxAvailableFn: deps.isTmuxAvailableFn,
+  }));
+  const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
+  const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
+  const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ agentId, sessionId, metadata }) => {
+    const providerAttachOps = await getProviderAttachOps(agentId);
+    if (!providerAttachOps) return 1;
+    return await providerAttachOps.runAttach({ sessionId, metadata });
+  });
+  const createProviderAttachStatePublisherFn =
+    deps.createProviderAttachStatePublisherFn ?? createProviderAttachStatePublisher;
+  const canUseInkSelectorFn = deps.canUseInkSelectorFn ?? canUseInkSelector;
+  const selectAttachableSessionIdFn = deps.selectAttachableSessionIdFn ?? selectAttachableSessionId;
+
+  const isInteractive = sessionIdOrPrefix.length === 0;
+  let credentialsForInteractive: Credentials | null = null;
+  let currentMachineId: string | null = null;
+
+  if (isInteractive) {
+    if (!canUseInkSelectorFn()) {
+      console.error(chalk.red('Error:'), 'Interactive attach is not available (raw TTY mode not supported).');
+      console.log('');
+      console.log('Hint: run `happier session list --active` and then `happier attach <session-id>`.');
+      process.exit(1);
+    }
+
+    credentialsForInteractive = await (deps.readCredentialsFn ?? readCredentials)();
+    if (!credentialsForInteractive) {
+      console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
+      process.exit(1);
+    }
+
+    const settings = await readSettingsFn();
+    currentMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
+      ? settings.machineId.trim()
+      : null;
+    if (!currentMachineId) {
+      console.error(chalk.red('Error:'), 'Current machine id is unavailable. Start the daemon or reconnect this machine first.');
+      process.exit(1);
+    }
+    const selectionModel = await buildAttachSelectionModel({
+      credentials: credentialsForInteractive,
+      currentMachineId,
+      fetchSessionsPageFn,
+      readTerminalAttachmentInfoFn,
+    });
+    const selected = await selectAttachableSessionIdFn({
+      rows: selectionModel.rows,
+      probeSessionIdFn: selectionModel.probeSessionIdFn,
+    });
+    if (selected.type === 'cancelled') {
+      console.log(chalk.blue('Attach cancelled'));
+      return;
+    }
+    if (selected.type === 'none') {
+      console.log('No active local sessions found.');
+      console.log('Hint: use `happier resume` for stopped sessions.');
+      return;
+    }
+    sessionIdOrPrefix = selected.sessionId;
+  }
+
   if (!sessionIdOrPrefix) {
     console.error(chalk.red('Error:'), 'Missing session ID.');
     console.log('');
@@ -232,29 +326,35 @@ export async function handleAttachCommand(
     process.exit(1);
   }
 
-  const readTerminalAttachmentInfoFn = deps.readTerminalAttachmentInfoFn ?? readTerminalAttachmentInfo;
-  const runTmuxAttachFn = deps.runTmuxAttachFn ?? (async (params) => await defaultRunTmuxAttach(params, {
-    isTmuxAvailableFn: deps.isTmuxAvailableFn,
-  }));
-  const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
-  const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
-  const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ agentId, sessionId, metadata }) => {
-    if (agentId === 'opencode') {
-      return await runOpenCodeProviderAttach({ sessionId, metadata });
-    }
-    return 1;
-  });
-  const createProviderAttachStatePublisherFn =
-    deps.createProviderAttachStatePublisherFn ?? createProviderAttachStatePublisher;
-
   const context = await resolveAttachContext(sessionIdOrPrefix, deps);
   const resolvedSessionId = context?.sessionId ?? sessionIdOrPrefix;
+  const localInfo = await readTerminalAttachmentInfoFn({
+    happyHomeDir: configuration.happyHomeDir,
+    sessionId: resolvedSessionId,
+  });
 
-  if (context?.agentId) {
-    const localControl = getAgentLocalControlCapability(context.agentId);
-    if (localControl?.attachStrategy === 'provider_attach' && context.metadata) {
+  if (context) {
+    const settings = await readSettingsFn();
+    const effectiveMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
+      ? settings.machineId.trim()
+      : null;
+    const eligibility = await evaluateCliSessionAttachEligibility({
+      credentials: context.credentials,
+      rawSession: context.rawSession,
+      currentMachineId: effectiveMachineId,
+      localAttachmentInfo: localInfo,
+      insideTmux: Boolean(process.env.TMUX),
+      currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
+    });
+
+    if (!eligibility.eligible) {
+      console.error(chalk.red('Error:'), eligibility.reason);
+      process.exit(1);
+    }
+
+    if (eligibility.attachStrategy === 'provider_attach') {
       const statePublisher = createProviderAttachStatePublisherFn({
-        agentId: context.agentId,
+        agentId: eligibility.agentId,
         sessionId: resolvedSessionId,
         credentials: context.credentials,
         rawSession: context.rawSession,
@@ -265,9 +365,9 @@ export async function handleAttachCommand(
       let exitCode: number | false;
       try {
         exitCode = await runProviderAttachFn({
-          agentId: context.agentId,
+          agentId: eligibility.agentId,
           sessionId: resolvedSessionId,
-          metadata: context.metadata,
+          metadata: eligibility.metadata,
         });
       } finally {
         if (statePublisher) {
@@ -277,48 +377,48 @@ export async function handleAttachCommand(
       if (!isAttachSuccess(exitCode)) process.exit(typeof exitCode === 'number' ? exitCode : 1);
       return;
     }
+
+    let exitCode = 0;
+    switch (eligibility.plan.type) {
+      case 'tmux':
+        exitCode = await runTmuxAttachFn({
+          sessionId: resolvedSessionId,
+          terminal: eligibility.terminal,
+        });
+        break;
+      case 'windows_terminal_host':
+        exitCode = await runWindowsTerminalAttachFn({
+          sessionId: resolvedSessionId,
+          terminal: eligibility.terminal,
+        });
+        break;
+      case 'windows_console_host':
+        exitCode = await runWindowsConsoleAttachFn({
+          sessionId: resolvedSessionId,
+          terminal: eligibility.terminal,
+        });
+        break;
+    }
+    if (exitCode !== 0) process.exit(exitCode);
+    return;
   }
 
-  const localInfo = await readTerminalAttachmentInfoFn({
-    happyHomeDir: configuration.happyHomeDir,
-    sessionId: resolvedSessionId,
-  });
-
-  const terminal = resolveTmuxTerminalFromAttachContext(context, localInfo);
+  const terminal = localInfo?.terminal ?? null;
   if (!terminal) {
     printMissingAttachInfo(resolvedSessionId);
     process.exit(1);
   }
 
-  const plan = createTerminalAttachPlan({
-    terminal,
-    insideTmux: Boolean(process.env.TMUX),
-    currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
-  });
-
   let exitCode = 0;
-  switch (plan.type) {
-    case 'tmux':
-      exitCode = await runTmuxAttachFn({
-        sessionId: resolvedSessionId,
-        terminal,
-      });
-      break;
-    case 'windows_terminal_host':
-      exitCode = await runWindowsTerminalAttachFn({
-        sessionId: resolvedSessionId,
-        terminal,
-      });
-      break;
-    case 'windows_console_host':
-      exitCode = await runWindowsConsoleAttachFn({
-        sessionId: resolvedSessionId,
-        terminal,
-      });
-      break;
-    case 'not-attachable':
-      console.error(chalk.red('Error:'), plan.reason);
-      process.exit(1);
+  if (terminal.mode === 'tmux') {
+    exitCode = await runTmuxAttachFn({ sessionId: resolvedSessionId, terminal });
+  } else if (terminal.mode === 'windows_terminal') {
+    exitCode = await runWindowsTerminalAttachFn({ sessionId: resolvedSessionId, terminal });
+  } else if (terminal.mode === 'windows_console') {
+    exitCode = await runWindowsConsoleAttachFn({ sessionId: resolvedSessionId, terminal });
+  } else {
+    console.error(chalk.red('Error:'), 'Session was not started in tmux.');
+    process.exit(1);
   }
   if (exitCode !== 0) process.exit(exitCode);
 }

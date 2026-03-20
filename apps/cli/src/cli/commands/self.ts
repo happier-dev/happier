@@ -6,6 +6,11 @@ import packageJson from '../../../package.json';
 import { configuration } from '@/configuration';
 import type { CommandContext } from '@/cli/commandRegistry';
 import {
+  FIRST_PARTY_COMPONENT_IDS,
+  installVersionedPayload,
+} from '@happier-dev/cli-common/firstPartyRuntime';
+import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
+import {
   compareVersions,
   readNpmDistTagVersion,
   readUpdateCache,
@@ -13,7 +18,10 @@ import {
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
-import { resolveCliBinaryAssetBundleFromReleaseAssets, updateCliBinaryFromGitHubTag } from '@/cli/runtime/update/binarySelfUpdate';
+import {
+  resolveCliBinaryAssetBundleFromReleaseAssets,
+  updateInstalledCliPayloadFromReleaseAssets,
+} from '@/cli/runtime/update/binarySelfUpdate';
 
 type SelfChannel = 'stable' | 'preview';
 
@@ -265,21 +273,68 @@ async function cmdUpdate(argv: string[]): Promise<void> {
   const githubToken = resolveBinaryUpdateToken(process.env);
   const tag = resolveBinaryUpdateTag(effective.channel);
   const minisignPubkeyFile = String(process.env.HAPPIER_MINISIGN_PUBKEY ?? '').trim() || undefined;
-
-  const result = await updateCliBinaryFromGitHubTag({
+  const release = await fetchGitHubReleaseByTag({
     githubRepo,
     tag,
     githubToken,
+    userAgent: 'happier-cli',
+  });
+  const assets = typeof release === 'object' && release != null && 'assets' in release ? (release as any).assets : null;
+  resolveCliBinaryAssetBundleFromReleaseAssets({
+    assets,
     os,
     arch,
-    execPath: process.execPath,
+    preferVersion: effective.preferVersion,
+  });
+
+  const result = await updateInstalledCliPayloadFromReleaseAssets({
+    assets,
+    os,
+    arch,
+    happyHomeDir: configuration.happyHomeDir,
     preferVersion: effective.preferVersion,
     minisignPubkeyFile,
   });
 
   // Refresh cache best-effort.
   await cmdCheck(['check', '--quiet', ...(effective.channel === 'preview' ? ['--preview'] : [])]);
-  console.log(chalk.green(`✓ Updated binary to ${result.updatedTo}`));
+  console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
+}
+
+function resolveInternalInstallPayloadArgValue(argv: string[], flagName: string): string {
+  const positionalIndex = argv.indexOf(flagName);
+  if (positionalIndex >= 0) {
+    return String(argv[positionalIndex + 1] ?? '').trim();
+  }
+  const equalsArg = argv.find((arg) => arg.startsWith(`${flagName}=`));
+  return String(equalsArg?.slice(flagName.length + 1) ?? '').trim();
+}
+
+function parseFirstPartyComponentId(value: string): FirstPartyComponentId {
+  if ((FIRST_PARTY_COMPONENT_IDS as readonly string[]).includes(value)) {
+    return value as FirstPartyComponentId;
+  }
+  throw new Error(`Unknown first-party component: ${value}`);
+}
+
+async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
+  const componentId = parseFirstPartyComponentId(resolveInternalInstallPayloadArgValue(argv, '--component'));
+  const payloadRoot = resolveInternalInstallPayloadArgValue(argv, '--payload-root');
+  const versionId = resolveInternalInstallPayloadArgValue(argv, '--version');
+
+  if (!payloadRoot) {
+    throw new Error('--payload-root is required');
+  }
+  if (!versionId) {
+    throw new Error('--version is required');
+  }
+
+  await installVersionedPayload({
+    componentId,
+    payloadRoot,
+    processEnv: process.env,
+    versionId,
+  });
 }
 
 export async function handleSelfCliCommand(context: CommandContext): Promise<void> {
@@ -296,6 +351,10 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
     }
     if (sub === 'update') {
       await cmdUpdate(argv.slice(1));
+      return;
+    }
+    if (sub === '__install-payload') {
+      await cmdInternalInstallPayload(argv.slice(1));
       return;
     }
     console.error(chalk.red('Error:'), `Unknown self subcommand: ${sub}`);
