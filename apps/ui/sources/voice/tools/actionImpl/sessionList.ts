@@ -1,6 +1,6 @@
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { storage } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
-import type { Message } from '@/sync/domains/messages/messageTypes';
 import { isHiddenSystemSession } from '@happier-dev/protocol';
 
 import {
@@ -8,10 +8,12 @@ import {
   type CursorKey,
   formatCursorKey,
   parseCursorKey,
+  normalizeNonEmptyString,
   resolveVoiceUpdatesPrefs,
   shouldIncludeAfterCursor,
   toRoleAndText,
 } from './shared';
+import { collectVoiceSessionRows } from './voiceSessionRows';
 
 export async function listSessionsForVoiceTool(params: Readonly<{
   limit?: number;
@@ -19,44 +21,35 @@ export async function listSessionsForVoiceTool(params: Readonly<{
   includeLastMessagePreview?: boolean;
 }>): Promise<Readonly<{ ok: true; sessions: readonly any[]; nextCursor: string | null }>> {
   const state: any = storage.getState();
-  const sessionsObj = state?.sessions ?? {};
-  const sessionsFromCaches = state?.sessionListViewDataByServerId ?? {};
-  const limit = params.limit ?? 20;
+  const limit =
+    typeof params.limit === 'number' && Number.isFinite(params.limit)
+      ? Math.max(1, Math.min(100, Math.floor(params.limit)))
+      : 100;
   const includeLastMessagePreview = params.includeLastMessagePreview !== false;
   const cursorKey = parseCursorKey(params.cursor ?? null);
 
-  const seen = new Set<string>();
-  const rows: any[] = [];
-
-  const pushSessionRow = (s: any, serverId: string | null) => {
-    if (!s || typeof s.id !== 'string') return;
-    if (isHiddenSystemSession({ metadata: s?.metadata })) return;
-    if (seen.has(s.id)) return;
-    seen.add(s.id);
-    const updatedAt = typeof s.updatedAt === 'number' ? s.updatedAt : 0;
-    rows.push({
-      id: s.id,
-      key: { updatedAt, id: s.id } satisfies CursorKey,
-      active: Boolean(s.active),
-      presence: typeof s.presence === 'string' ? s.presence : null,
-      updatedAt,
-      title: getSessionName(s),
-      serverId,
-    });
-  };
-
-  for (const s of Object.values(sessionsObj)) {
-    pushSessionRow(s as any, null);
-  }
-
-  for (const [serverIdRaw, items] of Object.entries(sessionsFromCaches)) {
-    if (!Array.isArray(items)) continue;
-    const serverId = String(serverIdRaw ?? '').trim();
-    for (const item of items as any[]) {
-      if (!item || item.type !== 'session') continue;
-      pushSessionRow(item.session, serverId || null);
-    }
-  }
+  const visibleSessionRows = collectVoiceSessionRows(state);
+  const sessionsObj = state?.sessions ?? {};
+  const rows = visibleSessionRows
+    .map((row) => {
+      const raw = sessionsObj?.[row.id];
+      if (raw && isHiddenSystemSession({ metadata: raw?.metadata })) {
+        return null;
+      }
+      const updatedAt = typeof raw?.updatedAt === 'number' ? raw.updatedAt : row.updatedAt;
+      return {
+        id: row.id,
+        key: { updatedAt, id: row.id } satisfies CursorKey,
+        active: row.active,
+        presence: row.presence,
+        updatedAt,
+        title: row.title ?? (raw ? getSessionName(raw) : row.id),
+        locationLabel: normalizeNonEmptyString(row.locationLabel),
+        serverId: row.serverId ?? null,
+        serverName: normalizeNonEmptyString(row.serverName),
+      };
+    })
+    .filter(Boolean) as any[];
 
   const prefs = resolveVoiceUpdatesPrefs((state?.settings ?? {}) as any);
 
@@ -72,12 +65,18 @@ export async function listSessionsForVoiceTool(params: Readonly<{
         presence: s.presence,
         updatedAt: s.updatedAt,
       };
+      if (typeof s.locationLabel === 'string' && s.locationLabel.trim().length > 0) {
+        out.locationLabel = s.locationLabel;
+      }
       if (typeof s.serverId === 'string' && s.serverId.trim().length > 0) {
         out.serverId = s.serverId;
       }
+      if (typeof s.serverName === 'string' && s.serverName.trim().length > 0) {
+        out.serverName = s.serverName;
+      }
       if (!includeLastMessagePreview) return out;
 
-      const messages = (state?.sessionMessages?.[s.id]?.messages ?? []) as Message[];
+      const messages = readStoredSessionMessages(state, s.id);
       const last = messages.length > 0 ? messages[messages.length - 1] : null;
       if (!last) return out;
       if (!prefs.shareRecentMessages && (last.kind === 'agent-text' || last.kind === 'user-text')) {

@@ -3,12 +3,13 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 
-import { normalizeNonEmptyString } from './shared';
-import { createWorkspaceId } from '@/utils/worktree/workspaceHandles';
+import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { postprocessSpawnedSession } from './spawnSessionPostProcess';
 import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
 import { isAgentId } from '@/agents/registry/registryCore';
+import { resolveVoiceSessionRef } from './sessionReference';
 
 function resolveSpawnTarget(state: any): { machineId: string; directory: string } | null {
   const sessionsObj = state?.sessions ?? {};
@@ -40,7 +41,6 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
 
 export async function spawnSessionForVoiceTool(params: Readonly<{
   tag?: string;
-  workspaceId?: string;
   agentId?: string;
   modelId?: string;
   path?: string;
@@ -49,47 +49,21 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
 }>): Promise<unknown> {
   const state: any = storage.getState();
 
-  const requestedWorkspaceId = normalizeNonEmptyString(params.workspaceId);
   const requestedHost = normalizeNonEmptyString(params.host);
   const machinesObj: any = state?.machines ?? {};
   const match = requestedHost
     ? ((Object.values(machinesObj as any).find((m: any) => normalizeNonEmptyString(m?.metadata?.host) === requestedHost) as any) ?? null)
     : null;
   const machineIdFromHost = requestedHost ? (match?.id ?? null) : null;
+  if (requestedHost && !normalizeNonEmptyString(machineIdFromHost)) {
+    return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
+  }
 
   const fallbackTarget = resolveSpawnTarget(state);
-  const resolveWorkspaceTarget = async (): Promise<{ machineId: string; directory: string } | null> => {
-    if (!requestedWorkspaceId) return null;
-    const candidates: Array<{ machineId: string; directory: string }> = [];
-    const recent = Array.isArray(state?.settings?.recentMachinePaths) ? (state.settings.recentMachinePaths as any[]) : [];
-    for (const entry of recent) {
-      const machineId = normalizeNonEmptyString(entry?.machineId);
-      const directory = normalizeNonEmptyString(entry?.path);
-      if (machineId && directory) candidates.push({ machineId, directory });
-    }
-    const sessionsObj = state?.sessions ?? {};
-    for (const s of Object.values(sessionsObj) as any[]) {
-      const machineId = normalizeNonEmptyString(s?.metadata?.machineId);
-      const directory = normalizeNonEmptyString(s?.metadata?.path);
-      if (machineId && directory) candidates.push({ machineId, directory });
-    }
-
-    for (const cand of candidates) {
-      const workspaceId = await createWorkspaceId({ machineId: cand.machineId, path: cand.directory });
-      if (workspaceId && workspaceId === requestedWorkspaceId) return cand;
-    }
-    return null;
-  };
-
-  const workspaceTarget = await resolveWorkspaceTarget();
-
-  const machineId = workspaceTarget?.machineId ?? normalizeNonEmptyString(machineIdFromHost) ?? fallbackTarget?.machineId ?? null;
-  const directory = workspaceTarget?.directory ?? normalizeNonEmptyString(params.path) ?? fallbackTarget?.directory ?? null;
+  const machineId = normalizeNonEmptyString(machineIdFromHost) ?? fallbackTarget?.machineId ?? null;
+  const directory = normalizeNonEmptyString(params.path) ?? fallbackTarget?.directory ?? null;
   if (!machineId || !directory) {
     return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
-  }
-  if (requestedWorkspaceId && !workspaceTarget) {
-    return { type: 'error', errorCode: 'workspace_not_found', errorMessage: 'workspace_not_found' };
   }
 
   const serverId = getActiveServerSnapshot().serverId;
@@ -102,10 +76,15 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
   const machineMetadata = (state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? null)?.metadata ?? null;
+  const machineRecord = state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? { id: machineId, metadata: machineMetadata };
   const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
     machineMetadata,
     settings: state?.settings ?? {},
   }).mode;
+  const targetLabel = buildSafeWorkspaceLabel({
+    machineLabel: resolveVoiceMachineLabel(machineRecord),
+    path: directory,
+  });
 
   const spawned = await machineSpawnNewSession({
     machineId,
@@ -125,5 +104,15 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const initialMessage = normalizeNonEmptyString(params.initialMessage);
   await postprocessSpawnedSession({ sessionId: spawnedSessionId, tag, initialMessage });
 
-  return spawned;
+  if (!spawned || typeof spawned !== 'object' || Array.isArray(spawned)) {
+    return spawned;
+  }
+
+  const session = spawnedSessionId ? resolveVoiceSessionRef(spawnedSessionId, storage.getState()) : null;
+
+  return {
+    ...(spawned as Record<string, unknown>),
+    ...(session ? { session } : {}),
+    target: { label: targetLabel },
+  };
 }
