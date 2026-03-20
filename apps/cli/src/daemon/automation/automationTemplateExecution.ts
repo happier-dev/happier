@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { openAccountScopedBlobCiphertext, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import { BackendTargetRefSchema, openAccountScopedBlobCiphertext, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import type { CodexBackendMode } from '@happier-dev/agents';
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import {
@@ -14,9 +15,21 @@ const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
 const MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS = 200_000;
 const MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS = 200_000;
 
+const CheckoutCreationDraftSchema = z.object({
+  kind: z.literal('git_worktree'),
+  displayName: z.string().trim().min(1),
+  baseRef: z.string().trim().min(1).nullable().optional(),
+}).strict().transform((value) => ({
+  kind: value.kind,
+  displayName: value.displayName.trim(),
+  baseRef: typeof value.baseRef === 'string' ? value.baseRef.trim() : null,
+}));
+
 const TemplateSchema = z.object({
   directory: z.string().trim().min(1),
+  checkoutCreationDraft: CheckoutCreationDraftSchema.optional(),
   agent: z.string().trim().min(1).optional(),
+  backendTarget: BackendTargetRefSchema.optional(),
   profileId: z.string().optional(),
   environmentVariables: z.record(z.string(), z.string()).optional(),
   resume: z.string().optional(),
@@ -31,7 +44,10 @@ const TemplateSchema = z.object({
   windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
   windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
   experimentalCodexAcp: z.boolean().optional(),
+  codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+  agentModeId: z.string().optional(),
   existingSessionId: z.string().trim().min(1).optional(),
+  sessionEncryptionMode: z.enum(['e2ee', 'plain']).optional(),
   sessionEncryptionKeyBase64: z.string().optional(),
   sessionEncryptionVariant: z.literal('dataKey').optional(),
   prompt: z.string().optional(),
@@ -76,6 +92,11 @@ export type AutomationClaimedRunPayload = Readonly<{
 export type ParsedAutomationExecution = Readonly<{
   targetType: 'new_session' | 'existing_session';
   directory: string;
+  checkoutCreationDraft?: {
+    kind: 'git_worktree';
+    displayName: string;
+    baseRef: string | null;
+  };
   backendTarget?: SpawnSessionOptions['backendTarget'];
   profileId?: string;
   environmentVariables?: Record<string, string>;
@@ -91,7 +112,10 @@ export type ParsedAutomationExecution = Readonly<{
   windowsRemoteSessionLaunchMode?: SpawnSessionOptions['windowsRemoteSessionLaunchMode'];
   windowsRemoteSessionConsole?: SpawnSessionOptions['windowsRemoteSessionConsole'];
   experimentalCodexAcp?: boolean;
+  codexBackendMode?: CodexBackendMode;
+  agentModeId?: string;
   existingSessionId?: string;
+  sessionEncryptionMode?: 'e2ee' | 'plain';
   sessionEncryptionKeyBase64?: string;
   sessionEncryptionVariant?: 'dataKey';
   prompt?: string;
@@ -212,9 +236,12 @@ export function parseAutomationTemplateExecution(
     value: {
       targetType: payload.automation.targetType,
       directory: template.directory,
-      ...(template.agent
-        ? { backendTarget: { kind: 'builtInAgent', agentId: template.agent } as const satisfies NonNullable<SpawnSessionOptions['backendTarget']> }
-        : {}),
+      ...(template.checkoutCreationDraft ? { checkoutCreationDraft: template.checkoutCreationDraft } : {}),
+      ...(template.backendTarget
+        ? { backendTarget: template.backendTarget satisfies NonNullable<SpawnSessionOptions['backendTarget']> }
+        : template.agent
+          ? { backendTarget: { kind: 'builtInAgent', agentId: template.agent } as const satisfies NonNullable<SpawnSessionOptions['backendTarget']> }
+          : {}),
       ...(template.profileId ? { profileId: template.profileId } : {}),
       ...(template.environmentVariables ? { environmentVariables: template.environmentVariables } : {}),
       ...(template.resume ? { resume: template.resume } : {}),
@@ -233,7 +260,10 @@ export function parseAutomationTemplateExecution(
         ? { windowsRemoteSessionConsole: template.windowsRemoteSessionConsole }
         : {}),
       ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
+      ...(template.codexBackendMode !== undefined ? { codexBackendMode: template.codexBackendMode } : {}),
+      ...(template.agentModeId ? { agentModeId: template.agentModeId } : {}),
       ...(template.existingSessionId ? { existingSessionId: template.existingSessionId } : {}),
+      ...(template.sessionEncryptionMode ? { sessionEncryptionMode: template.sessionEncryptionMode } : {}),
       ...(template.sessionEncryptionKeyBase64 ? { sessionEncryptionKeyBase64: template.sessionEncryptionKeyBase64 } : {}),
       ...(template.sessionEncryptionVariant ? { sessionEncryptionVariant: template.sessionEncryptionVariant } : {}),
       ...(typeof template.prompt === 'string' && template.prompt.trim().length > 0 ? { prompt: template.prompt } : {}),

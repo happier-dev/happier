@@ -74,5 +74,45 @@ describe('createSpawnConcurrencyGate', () => {
     expect(maxObserved).toBe(2);
     expect(inFlight).toBe(0);
   });
-});
 
+  it('does not gate work when maxConcurrent is zero (unlimited)', async () => {
+    const gate = createSpawnConcurrencyGate(0);
+
+    const d1 = createDeferred<void>();
+    const d2 = createDeferred<void>();
+    const d3 = createDeferred<void>();
+    const started1 = createDeferred<void>();
+    const started2 = createDeferred<void>();
+    const started3 = createDeferred<void>();
+
+    let inFlight = 0;
+    let maxObserved = 0;
+
+    const run = (d: Deferred<void>, started: Deferred<void>) =>
+      gate.run(async () => {
+        inFlight += 1;
+        maxObserved = Math.max(maxObserved, inFlight);
+        started.resolve();
+        await d.promise;
+        inFlight -= 1;
+      });
+
+    const p1 = run(d1, started1);
+    const p2 = run(d2, started2);
+    const p3 = run(d3, started3);
+
+    await Promise.all([started1.promise, started2.promise]);
+
+    // Without a gate, the third job should have entered its work function immediately too.
+    await Promise.resolve();
+    expect(inFlight).toBe(3);
+    expect(maxObserved).toBe(3);
+
+    d1.resolve();
+    d2.resolve();
+    d3.resolve();
+
+    await expect(Promise.all([p1, p2, p3])).resolves.toEqual([undefined, undefined, undefined]);
+    expect(inFlight).toBe(0);
+  });
+});

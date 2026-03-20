@@ -140,6 +140,77 @@ describe('syncMemoryHintsForSessionsOnce', () => {
     }
   });
 
+  it('indexes the first shard for a newly-created session when new_only explicitly allows initial backfill', async () => {
+    const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
+
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-new-only-allowed-'));
+    try {
+      const dbPath = join(dir, 'memory.sqlite');
+      const tier1 = openSummaryShardIndexDb({ dbPath });
+      tier1.init();
+
+      const rows = Array.from({ length: 40 }).map((_, i) => ({
+        seq: i + 1,
+        createdAtMs: 1000 + i,
+        role: 'user' as const,
+        content: { type: 'text', text: `message ${i} about openclaw memory search` },
+      }));
+
+      let committed = 0;
+      await syncMemoryHintsForSessionsOnce({
+        sessionIds: ['sess-1'],
+        allowInitialBackfillWhenUninitializedSessionIds: ['sess-1'],
+        tier1,
+        settings: {
+          enabled: true,
+          indexMode: 'hints',
+          backfillPolicy: 'new_only',
+          hints: {
+            updateMode: 'continuous',
+            idleDelayMs: 0,
+            windowSizeMessages: 40,
+            maxShardChars: 12_000,
+            maxSummaryChars: 500,
+            maxKeywords: 5,
+            maxEntities: 5,
+            maxDecisions: 5,
+            maxRunsPerHour: 999,
+            maxShardsPerSession: 250,
+            failureBackoffBaseMs: 0,
+            failureBackoffMaxMs: 0,
+          },
+        },
+        now: () => 5000,
+        fetchRecentDecryptedRows: async () => rows as any,
+        runSummarizer: async () =>
+          JSON.stringify({
+            shard: {
+              v: 1,
+              seqFrom: 1,
+              seqTo: 40,
+              createdAtFromMs: 1000,
+              createdAtToMs: 1039,
+              summary: 'We discussed OpenClaw memory search integration.',
+              keywords: ['openclaw', 'memory'],
+              entities: [],
+              decisions: [],
+            },
+            synopsis: null,
+          }),
+        commitArtifacts: async () => {
+          committed += 1;
+        },
+      });
+
+      expect(committed).toBe(1);
+      expect(tier1.search({ query: 'openclaw', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+
+      tier1.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('respects maxRunsPerHour by throttling repeated hint runs for the same session', async () => {
     const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
 

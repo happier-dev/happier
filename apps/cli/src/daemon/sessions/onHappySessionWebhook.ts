@@ -2,6 +2,7 @@ import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
+import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -227,6 +228,12 @@ export function createOnHappySessionWebhook(params: Readonly<{
           }
         }
       }
+    }
+
+    if (trackedForPid) {
+      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
+      const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
+      if (vendorResumeId) trackedForPid.vendorResumeId = vendorResumeId;
     }
 
     // Best-effort: write/update marker so future daemon restarts can reattach.

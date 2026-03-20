@@ -76,10 +76,20 @@ export function waitForSessionWebhook(
     params.pidToAwaiter.set(params.pid, (completedSession) => {
       clearTimeout(timeout);
       clearTrackedState();
+      const sessionId =
+        typeof completedSession.happySessionId === 'string' ? completedSession.happySessionId.trim() : '';
+      if (!sessionId) {
+        resolve({
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+          errorMessage: `Session webhook did not include a sessionId (pid=${params.pid})`,
+        });
+        return;
+      }
       params.onSuccess?.(completedSession);
       resolve({
         type: 'success',
-        sessionId: completedSession.happySessionId!,
+        sessionId,
       });
     });
   });

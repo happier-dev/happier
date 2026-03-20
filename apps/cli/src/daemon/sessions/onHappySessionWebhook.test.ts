@@ -93,6 +93,31 @@ describe('createOnHappySessionWebhook', () => {
     expect(pidToAwaiter.has(789)).toBe(false);
   });
 
+  it('stores vendorResumeId from session metadata when available', () => {
+    const tracked: TrackedSession = {
+      pid: 444,
+      startedBy: 'daemon',
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[444, tracked]]);
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+    });
+
+    onWebhook('session-daemon-444', {
+      ...createMetadata(444, 'daemon'),
+      flavor: 'codex',
+      codexSessionId: 'vendor-session-444',
+    });
+
+    expect(pidToTrackedSession.get(444)?.vendorResumeId).toBe('vendor-session-444');
+  });
+
   it('does not resolve daemon awaiter on PID placeholder and resolves on canonical id', () => {
     const tracked: TrackedSession = {
       pid: 9001,
@@ -158,7 +183,8 @@ describe('createOnHappySessionWebhook', () => {
       startedBy: 'daemon',
       spawnOptions: {
         directory: '/tmp/workspace',
-        agent: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        transcriptStorage: 'direct',
         token: 'secret-token-should-not-be-persisted',
         initialPrompt: 'secret prompt should not be persisted',
         resume: 'vendor-resume-id',
@@ -199,16 +225,17 @@ describe('createOnHappySessionWebhook', () => {
     expect(markerArgs.respawn).toEqual({
       version: 1,
       directory: '/tmp/workspace',
-      agent: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      resume: 'vendor-resume-id',
       terminal: {
         mode: 'tmux',
         tmux: { sessionName: 'happy', isolated: true, tmpDir: '/tmp/tmux' },
       },
+      transcriptStorage: 'direct',
     });
     expect(markerArgs.respawn?.token).toBeUndefined();
     expect(markerArgs.respawn?.environmentVariables).toBeUndefined();
     expect(markerArgs.respawn?.initialPrompt).toBeUndefined();
-    expect(markerArgs.respawn?.resume).toBeUndefined();
   });
 
   it('matches an unknown webhook PID to a daemon-tracked wrapper PID via PPID and resolves awaiter', () => {

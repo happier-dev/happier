@@ -25,14 +25,22 @@ import { updateMemorySynopsisPointerBestEffort } from './artifacts/updateMemoryS
 import { chunkTranscriptRows } from './deepIndex/chunkTranscriptRows';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { resolveEmbeddingsProvider } from './deepIndex/embeddings/resolveEmbeddingsProvider';
+import {
+  buildUnavailableMemoryEmbeddingsDiagnostics,
+  resolveOperationalMemoryEmbeddingsSettings,
+  type OperationalMemoryEmbeddingsDiagnostics,
+} from './resolveOperationalMemoryEmbeddingsSettings';
 import { selectSessionsForBackfill } from './inventory/selectSessionsForBackfill';
 import { enforceMemoryDiskBudgets } from './enforceMemoryDiskBudgets';
+import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
+import type { EmbeddingsProviderResolution } from './deepIndex/embeddings/embeddingsProviderTypes';
 
 export type MemoryWorkerHandle = Readonly<{
   stop: () => void;
   reloadSettings: () => Promise<void>;
   ensureUpToDate: (sessionId?: string) => Promise<void>;
   getSettings: () => MemorySettingsV1;
+  getEmbeddingsDiagnostics: () => OperationalMemoryEmbeddingsDiagnostics;
   getTier1DbPath: () => string | null;
   getDeepDbPath: () => string | null;
 }>;
@@ -73,14 +81,22 @@ function bestEffortChmod700(dir: string): void {
   }
 }
 
-export function startMemoryWorker(params: Readonly<{
+function readSessionCreatedAtMs(raw: unknown): number {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 0;
+  const createdAt = (raw as Record<string, unknown>).createdAt;
+  const n = typeof createdAt === 'number' ? createdAt : Number(createdAt);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.trunc(n);
+}
+
+export async function startMemoryWorker(params: Readonly<{
   credentials: Credentials;
   machineId: string;
   env?: NodeJS.ProcessEnv;
   deps?: Readonly<{
     fetchDecryptedTranscriptPageAfterSeq: (args: Readonly<{ sessionId: string; afterSeq: number; limit: number }>) => Promise<DecryptedTranscriptRow[]>;
   }>;
-}>): MemoryWorkerHandle {
+}>): Promise<MemoryWorkerHandle> {
   let stopped = false;
   const paths = resolveMemoryIndexPaths();
   let settings: MemorySettingsV1 = DEFAULT_MEMORY_SETTINGS;
@@ -92,11 +108,46 @@ export function startMemoryWorker(params: Readonly<{
   let workLoopIntervalMs: number | null = null;
   let candidateSessionIds: string[] = [];
   let candidateCursor = 0;
+  const candidateAllowInitialBackfillSessionIds = new Set<string>();
   let inventoryCursor: string | null = null;
   let inventoryHasNext = true;
   let inventoryBackfillPolicy: MemorySettingsV1['backfillPolicy'] = 'new_only';
   const inventorySeenSessionIds = new Set<string>();
   const sessionCtxCache = new Map<string, SessionEncryptionContext>();
+  const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
+  let embeddingsDiagnostics: OperationalMemoryEmbeddingsDiagnostics =
+    buildUnavailableMemoryEmbeddingsDiagnostics(DEFAULT_MEMORY_SETTINGS.embeddings);
+
+  const refreshEmbeddingsDiagnostics = async (): Promise<EmbeddingsProviderResolution | null> => {
+    const embeddings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
+    if (!embeddings?.enabled || !embeddings.providerConfig || !embeddings.providerKind || !embeddings.modelId) {
+      embeddingsDiagnostics = buildUnavailableMemoryEmbeddingsDiagnostics(settings.embeddings);
+      return null;
+    }
+
+    const cacheDir = join(paths.modelsDir, 'transformers');
+    try {
+      mkdirSync(cacheDir, { recursive: true });
+      bestEffortChmod700(cacheDir);
+    } catch {
+      // best-effort
+    }
+
+    const resolution = await resolveEmbeddingsProvider({
+      settings: embeddings,
+      cacheDir,
+      settingsSecretsReadKeys,
+    });
+    embeddingsDiagnostics = {
+      mode: resolution.mode,
+      presetId: resolution.presetId,
+      providerKind: resolution.providerKind,
+      modelId: resolution.modelId,
+      runtimeState: resolution.runtimeState,
+      usingFallback: resolution.usingFallback,
+    };
+    return resolution;
+  };
 
   const deps =
     params.deps ??
@@ -139,6 +190,7 @@ export function startMemoryWorker(params: Readonly<{
     workLoopIntervalMs = null;
     candidateSessionIds = [];
     candidateCursor = 0;
+    candidateAllowInitialBackfillSessionIds.clear();
     inventoryCursor = null;
     inventoryHasNext = true;
     inventoryBackfillPolicy = 'new_only';
@@ -163,7 +215,10 @@ export function startMemoryWorker(params: Readonly<{
     deep = null;
   };
 
-  const syncHintsForSessions = async (sessionIds: readonly string[]): Promise<void> => {
+  const syncHintsForSessions = async (
+    sessionIds: readonly string[],
+    options?: Readonly<{ allowInitialBackfillWhenUninitializedSessionIds?: readonly string[] }>,
+  ): Promise<void> => {
     if (stopped) return;
     if (!settings.enabled) return;
     if (!tier1) return;
@@ -171,6 +226,9 @@ export function startMemoryWorker(params: Readonly<{
 
     await syncMemoryHintsForSessionsOnce({
       sessionIds,
+      ...(options?.allowInitialBackfillWhenUninitializedSessionIds
+        ? { allowInitialBackfillWhenUninitializedSessionIds: options.allowInitialBackfillWhenUninitializedSessionIds }
+        : {}),
       tier1,
       settings: {
         enabled: settings.enabled,
@@ -254,17 +312,8 @@ export function startMemoryWorker(params: Readonly<{
     if (!deep) return;
     if (sessionIds.length === 0) return;
 
-    const embeddingsProvider = await (async () => {
-      if (!settings.embeddings.enabled) return null;
-      const cacheDir = join(paths.modelsDir, 'transformers');
-      try {
-        mkdirSync(cacheDir, { recursive: true });
-        bestEffortChmod700(cacheDir);
-      } catch {
-        // best-effort
-      }
-      return await resolveEmbeddingsProvider({ settings: settings.embeddings, cacheDir });
-    })();
+    const embeddings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
+    const embeddingsResolution = await refreshEmbeddingsDiagnostics();
 
     await syncDeepIndexForSessionsOnce({
       sessionIds,
@@ -281,13 +330,11 @@ export function startMemoryWorker(params: Readonly<{
           failureBackoffBaseMs: settings.deep.failureBackoffBaseMs,
           failureBackoffMaxMs: settings.deep.failureBackoffMaxMs,
         },
-        ...(settings.embeddings.enabled
-          ? { embeddings: { enabled: true, provider: settings.embeddings.provider, modelId: settings.embeddings.modelId } }
-          : {}),
+        ...(embeddings ? { embeddings } : {}),
       },
       now: () => Date.now(),
       fetchDecryptedTranscriptPageAfterSeq: deps.fetchDecryptedTranscriptPageAfterSeq,
-      ...(embeddingsProvider ? { embedDocuments: embeddingsProvider.embedDocuments } : {}),
+      ...(embeddingsResolution?.provider ? { embedDocuments: embeddingsResolution.provider.embedDocuments } : {}),
     });
   };
 
@@ -296,6 +343,7 @@ export function startMemoryWorker(params: Readonly<{
     if (stopped) return;
 
     if (!settings.enabled) {
+      embeddingsDiagnostics = buildUnavailableMemoryEmbeddingsDiagnostics(settings.embeddings);
       stopLoop();
       if (tier1) {
         try {
@@ -319,6 +367,8 @@ export function startMemoryWorker(params: Readonly<{
       return;
     }
 
+    embeddingsDiagnostics = buildUnavailableMemoryEmbeddingsDiagnostics(settings.embeddings);
+
     mkdirSync(paths.memoryDir, { recursive: true });
     bestEffortChmod700(paths.memoryDir);
     mkdirSync(paths.modelsDir, { recursive: true });
@@ -331,6 +381,7 @@ export function startMemoryWorker(params: Readonly<{
       inventorySeenSessionIds.clear();
       candidateSessionIds = [];
       candidateCursor = 0;
+      candidateAllowInitialBackfillSessionIds.clear();
     }
 
     if (!tier1) {
@@ -352,6 +403,8 @@ export function startMemoryWorker(params: Readonly<{
       deep = null;
     }
 
+    await refreshEmbeddingsDiagnostics();
+
     // Background indexing runs only in daemon mode.
     if (configuration.isDaemonProcess) {
       const inventoryIntervalMs = Math.max(5_000, Math.trunc(settings.worker.inventoryRefreshIntervalMs));
@@ -366,12 +419,21 @@ export function startMemoryWorker(params: Readonly<{
             if (settings.backfillPolicy === 'new_only') {
               const page = await fetchSessionsPage({
                 token: params.credentials.token,
-                activeOnly: true,
+                activeOnly: false,
                 limit: settings.worker.sessionListPageLimit,
               });
+              const enabledAtMs = Math.max(0, Math.trunc(settings.enabledAtMs ?? 0));
+              candidateAllowInitialBackfillSessionIds.clear();
               candidateSessionIds = page.sessions
-                .map((s) => (typeof s.id === 'string' ? String(s.id) : ''))
-                .filter((id) => id.trim().length > 0);
+                .map((session) => {
+                  const id = typeof session.id === 'string' ? String(session.id).trim() : '';
+                  if (!id) return null;
+                  if (enabledAtMs > 0 && readSessionCreatedAtMs(session) >= enabledAtMs) {
+                    candidateAllowInitialBackfillSessionIds.add(id);
+                  }
+                  return id;
+                })
+                .filter((id): id is string => Boolean(id));
               candidateCursor = 0;
               inventoryCursor = null;
               inventoryHasNext = true;
@@ -380,6 +442,7 @@ export function startMemoryWorker(params: Readonly<{
               return;
             }
 
+            candidateAllowInitialBackfillSessionIds.clear();
             const cursor = inventoryHasNext ? inventoryCursor ?? undefined : undefined;
             const page = await fetchSessionsPage({
               token: params.credentials.token,
@@ -435,6 +498,7 @@ export function startMemoryWorker(params: Readonly<{
 
             const maxSessions = Math.max(1, Math.trunc(settings.worker.maxSessionsPerTick));
             const sessionIds: string[] = [];
+            const allowInitialBackfillWhenUninitializedSessionIds: string[] = [];
             for (let i = 0; i < maxSessions; i += 1) {
               if (candidateSessionIds.length === 0) break;
               const idx = candidateCursor % candidateSessionIds.length;
@@ -442,10 +506,13 @@ export function startMemoryWorker(params: Readonly<{
               candidateCursor = (candidateCursor + 1) % candidateSessionIds.length;
               if (!id) continue;
               sessionIds.push(id);
+              if (candidateAllowInitialBackfillSessionIds.has(id)) {
+                allowInitialBackfillWhenUninitializedSessionIds.push(id);
+              }
             }
 
             if (sessionIds.length === 0) return;
-            await syncHintsForSessions(sessionIds);
+            await syncHintsForSessions(sessionIds, { allowInitialBackfillWhenUninitializedSessionIds });
             await syncDeepForSessions(sessionIds);
 
             if (tier1) {
@@ -525,15 +592,25 @@ export function startMemoryWorker(params: Readonly<{
     }
 
     if (configuration.isDaemonProcess) {
-      await syncHintsForSessions([_sessionId]);
+      const allowInitialBackfillWhenUninitializedSessionIds: string[] = [];
+      if (settings.backfillPolicy === 'new_only' && settings.enabledAtMs > 0) {
+        const raw = await fetchSessionById({ token: params.credentials.token, sessionId: _sessionId });
+        if (raw && readSessionCreatedAtMs(raw) >= settings.enabledAtMs) {
+          allowInitialBackfillWhenUninitializedSessionIds.push(_sessionId);
+        }
+      }
+      await syncHintsForSessions([_sessionId], { allowInitialBackfillWhenUninitializedSessionIds });
     }
   };
+
+  await reloadSettings();
 
   return {
     stop,
     reloadSettings,
     ensureUpToDate,
     getSettings: () => settings,
+    getEmbeddingsDiagnostics: () => embeddingsDiagnostics,
     getTier1DbPath: () => (tier1 ? paths.tier1DbPath : null),
     getDeepDbPath: () => (deep ? paths.deepDbPath : null),
   };

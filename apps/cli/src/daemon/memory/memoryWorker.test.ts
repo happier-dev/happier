@@ -34,7 +34,7 @@ describe('memoryWorker', () => {
     const { startMemoryWorker } = await import('./memoryWorker');
 
     const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
-    const worker = startMemoryWorker({
+    const worker = await startMemoryWorker({
       credentials,
       machineId: 'machine_1',
     });
@@ -42,6 +42,24 @@ describe('memoryWorker', () => {
     await worker.reloadSettings();
     const s = await stat(join(configuration.activeServerDir, 'memory', 'memory.sqlite'));
     expect(s.isFile()).toBe(true);
+
+    worker.stop();
+  });
+
+  it('loads persisted settings when the worker starts so status matches the saved machine configuration', async () => {
+    const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+    await writeMemorySettingsToDisk({ v: 1, enabled: true, indexMode: 'hints' });
+
+    const { startMemoryWorker } = await import('./memoryWorker');
+
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const worker = await startMemoryWorker({
+      credentials,
+      machineId: 'machine_1',
+    });
+
+    expect(worker.getSettings().enabled).toBe(true);
+    expect(worker.getTier1DbPath()).toBeTruthy();
 
     worker.stop();
   });
@@ -54,7 +72,7 @@ describe('memoryWorker', () => {
     const { startMemoryWorker } = await import('./memoryWorker');
 
     const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
-    const worker = startMemoryWorker({
+    const worker = await startMemoryWorker({
       credentials,
       machineId: 'machine_1',
     });
@@ -62,6 +80,47 @@ describe('memoryWorker', () => {
     await worker.reloadSettings();
     const s = await stat(join(configuration.activeServerDir, 'memory', 'deep.sqlite'));
     expect(s.isFile()).toBe(true);
+
+    worker.stop();
+  });
+
+  it('resolves embeddings diagnostics on settings reload even before any session indexing runs', async () => {
+    const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+    await writeMemorySettingsToDisk({
+      v: 1,
+      enabled: true,
+      indexMode: 'deep',
+      embeddings: {
+        mode: 'custom',
+        custom: {
+          kind: 'openai_compatible',
+          baseUrl: 'https://embeddings.example.test/v1',
+          apiKey: { _isSecretValue: true, value: 'sk-test' },
+          model: 'text-embedding-3-small',
+        },
+      },
+    });
+
+    const { startMemoryWorker } = await import('./memoryWorker');
+
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const worker = await startMemoryWorker({
+      credentials,
+      machineId: 'machine_1',
+      deps: {
+        fetchDecryptedTranscriptPageAfterSeq: async () => [],
+      },
+    });
+
+    await worker.reloadSettings();
+
+    expect(worker.getEmbeddingsDiagnostics()).toMatchObject({
+      mode: 'custom',
+      providerKind: 'openai_compatible',
+      modelId: 'text-embedding-3-small',
+      runtimeState: 'ready',
+      usingFallback: false,
+    });
 
     worker.stop();
   });
@@ -74,7 +133,7 @@ describe('memoryWorker', () => {
     const { startMemoryWorker } = await import('./memoryWorker');
 
     const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
-    const worker = startMemoryWorker({
+    const worker = await startMemoryWorker({
       credentials,
       machineId: 'machine_1',
     });
@@ -99,7 +158,7 @@ describe('memoryWorker', () => {
     const { searchTier1Memory } = await import('./searchMemory');
 
     const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
-    const worker = startMemoryWorker({
+    const worker = await startMemoryWorker({
       credentials,
       machineId: 'machine_1',
       deps: {
@@ -157,7 +216,7 @@ describe('memoryWorker', () => {
     const { searchTier2Memory } = await import('./searchMemory');
 
     const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
-    const worker = startMemoryWorker({
+    const worker = await startMemoryWorker({
       credentials,
       machineId: 'machine_1',
       deps: {
@@ -196,5 +255,104 @@ describe('memoryWorker', () => {
     expect(result.hits[0]!.sessionId).toBe('sess-1');
 
     worker.stop();
+  });
+
+  it('continues background deep indexing for recently updated inactive sessions when backfill policy is new_only', async () => {
+    vi.useFakeTimers();
+    const argvBackup = process.argv.slice();
+    try {
+      const fetchSessionsPage = vi.fn(async ({ activeOnly }: { activeOnly?: boolean }) => ({
+        sessions: activeOnly
+          ? []
+          : [
+            {
+              id: 'sess-1',
+              createdAt: 1_000,
+              updatedAt: 9_000,
+              activeAt: 0,
+            },
+          ],
+        nextCursor: null,
+        hasNext: false,
+      }));
+      const fetchSessionById = vi.fn(async () => ({}));
+      const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+
+      vi.doMock('@/sessionControl/sessionsHttp', () => ({
+        fetchSessionsPage,
+        fetchSessionById,
+      }));
+      vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+        fetchEncryptedTranscriptPageLatest,
+      }));
+
+      const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+      await writeMemorySettingsToDisk({
+        v: 1,
+        enabled: true,
+        indexMode: 'deep',
+        backfillPolicy: 'new_only',
+        worker: {
+          tickIntervalMs: 500,
+          inventoryRefreshIntervalMs: 5_000,
+          maxSessionsPerTick: 1,
+          sessionListPageLimit: 10,
+        },
+      });
+
+      const rows = [
+        { seq: 1, createdAtMs: 1_000, role: 'user' as const, content: { type: 'text', text: 'initial deep memory row' } },
+      ];
+
+      process.argv = ['node', 'happier', 'daemon', 'start-sync'];
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            isDaemonProcess: true,
+          },
+        };
+      });
+      const { startMemoryWorker } = await import('./memoryWorker');
+      const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+      const worker = await startMemoryWorker({
+        credentials,
+        machineId: 'machine_1',
+        deps: {
+          fetchDecryptedTranscriptPageAfterSeq: async ({ afterSeq }) =>
+            rows.filter((row) => row.seq > afterSeq),
+        },
+      });
+
+      await worker.reloadSettings();
+
+      const { openSummaryShardIndexDb } = await import('./summaryShardIndexDb');
+      const tier1Before = openSummaryShardIndexDb({ dbPath: worker.getTier1DbPath()! });
+      tier1Before.markDeepIndexSuccess({ sessionId: 'sess-1', seqTo: 1, nowMs: 5_000 });
+      expect(tier1Before.getSessionCursors({ sessionId: 'sess-1', nowMs: 5_000 }).lastDeepIndexedSeq).toBe(1);
+      tier1Before.close();
+
+      rows.push({
+        seq: 2,
+        createdAtMs: 2_000,
+        role: 'user' as const,
+        content: { type: 'text', text: 'inactive session follow-up should be indexed' },
+      });
+
+      await vi.advanceTimersByTimeAsync(6_500);
+      expect(fetchSessionsPage).toHaveBeenCalled();
+
+      const tier1After = openSummaryShardIndexDb({ dbPath: worker.getTier1DbPath()! });
+      expect(tier1After.getSessionCursors({ sessionId: 'sess-1', nowMs: 15_000 }).lastDeepIndexedSeq).toBe(2);
+      tier1After.close();
+
+      expect(fetchSessionsPage).toHaveBeenCalledWith(expect.objectContaining({ activeOnly: false }));
+      worker.stop();
+    } finally {
+      process.argv = argvBackup;
+      vi.useRealTimers();
+    }
   });
 });

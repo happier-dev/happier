@@ -3,8 +3,16 @@ export type SpawnConcurrencyGate = Readonly<{
 }>;
 
 export function createSpawnConcurrencyGate(maxConcurrent: number): SpawnConcurrencyGate {
-  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) {
+  // `0` means "unlimited": spawning sessions is a first-class flow and should not be capped unless
+  // an operator explicitly configures a limit via env.
+  if (!Number.isInteger(maxConcurrent) || maxConcurrent < 0) {
     throw new Error(`Invalid maxConcurrent: ${maxConcurrent}`);
+  }
+
+  if (maxConcurrent === 0) {
+    return {
+      run: async <T>(work: () => Promise<T>): Promise<T> => await work(),
+    };
   }
 
   let inFlight = 0;
@@ -46,4 +54,3 @@ export function createSpawnConcurrencyGate(maxConcurrent: number): SpawnConcurre
     },
   };
 }
-

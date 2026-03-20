@@ -28,6 +28,7 @@ export type SyncMemoryHintsSettings = Readonly<{
 
 export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
   sessionIds: readonly string[];
+  allowInitialBackfillWhenUninitializedSessionIds?: readonly string[];
   tier1: SummaryShardIndexDbHandle;
   settings: SyncMemoryHintsSettings;
   now: () => number;
@@ -42,6 +43,11 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
   if (!params.settings.enabled) return;
 
   const nowMs = params.now();
+  const allowInitialBackfillWhenUninitialized = new Set(
+    (params.allowInitialBackfillWhenUninitializedSessionIds ?? [])
+      .map((sessionId) => String(sessionId ?? '').trim())
+      .filter((sessionId) => sessionId.length > 0),
+  );
 
   for (const rawSessionId of params.sessionIds) {
     const sessionId = String(rawSessionId ?? '').trim();
@@ -53,7 +59,7 @@ export async function syncMemoryHintsForSessionsOnce(params: Readonly<{
     ingestSummaryShardsFromDecryptedTranscriptRows({ sessionId, rows, tier1: params.tier1 });
 
     const latestSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : 0;
-    if (params.settings.backfillPolicy === 'new_only') {
+    if (params.settings.backfillPolicy === 'new_only' && !allowInitialBackfillWhenUninitialized.has(sessionId)) {
       const seeded = params.tier1.trySeedSessionCursorsIfMissing({
         sessionId,
         nowMs: nowMs,

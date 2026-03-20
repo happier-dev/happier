@@ -11,7 +11,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const manager = createSessionRunnerRespawnManager({
       enabled: true,
-      maxRestarts: 1,
+      maxRestarts: 2,
       baseDelayMs: 50,
       maxDelayMs: 50,
       jitterMs: 0,
@@ -26,7 +26,7 @@ describe('createSessionRunnerRespawnManager', () => {
       startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
-      spawnOptions: { directory: '/tmp', agent: 'claude', resume: 'vendor-sess-1' } as any,
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, resume: 'vendor-sess-1' } as any,
     };
 
     manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
@@ -64,7 +64,7 @@ describe('createSessionRunnerRespawnManager', () => {
       pid: 111,
       happySessionId: 'sess-2',
       vendorResumeId: 'vendor-sess-2',
-      spawnOptions: { directory: '/tmp', agent: 'codex' } as any,
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
     };
 
     manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
@@ -78,6 +78,71 @@ describe('createSessionRunnerRespawnManager', () => {
         approvedNewDirectoryCreation: true,
       }),
     );
+  });
+
+  it('drops whitespace-only resume values before respawn', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 1,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-3',
+      spawnOptions: {
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        resume: '   ',
+      } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({ resume: expect.anything() }));
+  });
+
+  it('does not respawn sessions that were not started by the daemon', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 1,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'user-session',
+      pid: 111,
+      happySessionId: 'sess-user',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).not.toHaveBeenCalled();
   });
 
   it('suppresses respawn when stop was requested', async () => {
@@ -103,12 +168,51 @@ describe('createSessionRunnerRespawnManager', () => {
       startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
-      spawnOptions: { directory: '/tmp', agent: 'claude' } as any,
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
 
     manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
     await vi.advanceTimersByTimeAsync(50);
     expect(spawnSession).toHaveBeenCalledTimes(0);
+  });
+
+  it('resets restart state when a replacement session is already running before the timer fires', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+    const isSessionAlreadyRunning = vi
+      .fn<() => boolean>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 1,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-1',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(0);
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(isSessionAlreadyRunning).toHaveBeenCalledTimes(2);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
   });
 
   it('retries respawn when spawnSession returns a non-success result', async () => {
@@ -135,7 +239,7 @@ describe('createSessionRunnerRespawnManager', () => {
       startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
-      spawnOptions: { directory: '/tmp', agent: 'claude' } as any,
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
 
     manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
@@ -145,5 +249,83 @@ describe('createSessionRunnerRespawnManager', () => {
 
     await vi.advanceTimersByTimeAsync(50);
     expect(spawnSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries respawn when the running-session preflight throws', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+    const isSessionAlreadyRunning = vi
+      .fn<() => boolean>()
+      .mockRejectedValueOnce(new Error('preflight offline'))
+      .mockResolvedValueOnce(false);
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 2,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-preflight-retry',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(isSessionAlreadyRunning).toHaveBeenCalledTimes(1);
+    expect(spawnSession).toHaveBeenCalledTimes(0);
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(isSessionAlreadyRunning).toHaveBeenCalledTimes(2);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses respawn when a running-session preflight failure exhausts retries', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+    const isSessionAlreadyRunning = vi
+      .fn<() => boolean>()
+      .mockRejectedValueOnce(new Error('preflight offline 1'));
+    const logWarn = vi.fn();
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 1,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn,
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-preflight-exhausted',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(isSessionAlreadyRunning).toHaveBeenCalledTimes(1);
+    expect(spawnSession).toHaveBeenCalledTimes(0);
+    expect(logWarn).toHaveBeenCalledWith(
+      '[DAEMON RUN] Session sess-preflight-exhausted crashed; respawn suppressed (max_restarts_exceeded:1)',
+    );
   });
 });
