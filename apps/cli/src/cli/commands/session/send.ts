@@ -12,6 +12,9 @@ import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 import { hasFlag, readIntFlagValue, readFlagValue } from '@/sessionControl/argvFlags';
 import { waitForIdleViaSocket } from '@/sessionControl/sessionSocketAgentState';
 import { sendSessionMessageViaSocketCommitted } from '@/sessionControl/sessionSocketSendMessage';
+import { callSessionRpc } from '@/sessionControl/sessionRpc';
+import { waitForTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
   const parsed = parsePermissionIntentAlias(raw);
@@ -21,6 +24,19 @@ function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
     throw err;
   }
   return parsed;
+}
+
+function isFallbackSafeRuntimeRpcError(error: unknown): boolean {
+  const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+  if (
+    errorMessage === 'Method not found'
+    || errorMessage === 'RPC method not available'
+    || errorMessage === 'Socket connect timeout'
+  ) {
+    return true;
+  }
+
+  return errorMessage.toLowerCase().includes('connect_error');
 }
 
 export async function cmdSessionSend(
@@ -120,32 +136,87 @@ export async function cmdSessionSend(
       ? ({ t: 'plain', v: record } as const)
       : ({ t: 'encrypted', c: encryptSessionPayload({ ctx, payload: record }) } as const);
 
-  await sendSessionMessageViaSocketCommitted({
-    token: credentials.token,
-    sessionId,
-    content,
-    localId,
-    sentFrom: 'cli',
-    permissionMode: permissionIntent,
-  });
+  const shouldUseRuntimeRpc = rawSession.active === true;
+  if (shouldUseRuntimeRpc) {
+    try {
+      await callSessionRpc({
+        token: credentials.token,
+        sessionId,
+        mode: storedMode,
+        ctx,
+        method: `${sessionId}:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`,
+        request: {
+          text: message,
+          localId,
+          meta: record.meta,
+        },
+      });
+    } catch (error) {
+      if (!isFallbackSafeRuntimeRpcError(error)) throw error;
+
+      await sendSessionMessageViaSocketCommitted({
+        token: credentials.token,
+        sessionId,
+        content,
+        localId,
+        sentFrom: 'cli',
+        permissionMode: permissionIntent,
+      });
+    }
+  } else {
+    await sendSessionMessageViaSocketCommitted({
+      token: credentials.token,
+      sessionId,
+      content,
+      localId,
+      sentFrom: 'cli',
+      permissionMode: permissionIntent,
+    });
+  }
 
   let waited = false;
   if (wait) {
-    const agentStateCiphertext =
-      typeof (rawSession as any).agentState === 'string' ? String((rawSession as any).agentState).trim() : null;
+    const waitStartedAt = Date.now();
+    const deadlineMs = waitStartedAt + (timeoutSeconds * 1000);
+    let waitSessionSnapshot = rawSession;
+
     try {
+      if (shouldUseRuntimeRpc) {
+        const materialized = await waitForTranscriptEncryptedMessageByLocalId({
+          token: credentials.token,
+          sessionId,
+          localId,
+          maxWaitMs: Math.max(1, deadlineMs - Date.now()),
+        });
+        if (!materialized) {
+          throw new Error('timeout');
+        }
+
+        const refreshedSession = await fetchSessionById({ token: credentials.token, sessionId });
+        if (!refreshedSession) {
+          throw new Error('Session not found after send');
+        }
+        waitSessionSnapshot = refreshedSession;
+      }
+
+      const agentStateCiphertext =
+        typeof (waitSessionSnapshot as any).agentState === 'string' ? String((waitSessionSnapshot as any).agentState).trim() : null;
       await waitForIdleViaSocket({
         token: credentials.token,
         sessionId,
         ctx,
         sessionEncryptionMode: storedMode,
-        timeoutMs: timeoutSeconds * 1000,
+        timeoutMs: Math.max(1, deadlineMs - Date.now()),
         initialAgentStateCiphertextBase64: agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
       });
       waited = true;
     } catch (error) {
       if (json) {
-        printJsonEnvelope({ ok: false, kind: 'session_send', error: { code: 'timeout' } });
+        const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+        const errorPayload = errorMessage === 'timeout'
+          ? { code: 'timeout' }
+          : { code: 'wait_failed', message: errorMessage || 'Wait for idle failed' };
+        printJsonEnvelope({ ok: false, kind: 'session_send', error: errorPayload });
         return;
       }
       throw error;

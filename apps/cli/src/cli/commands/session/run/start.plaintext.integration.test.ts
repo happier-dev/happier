@@ -94,7 +94,7 @@ describe('happier session run start (plaintext integration)', () => {
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
         expect(data.params).toMatchObject({
           intent: 'review',
-          backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         });
         cb?.({ ok: true, result: { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' } });
       });
@@ -152,9 +152,9 @@ describe('happier session run start (plaintext integration)', () => {
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_plain_123');
       expect(parsed.data?.runId).toBe('run_1');
       expect(parsed.data?.callId).toBe('call_1');
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
     } finally {
       logSpy.mockRestore();
     }
   });
 });
-

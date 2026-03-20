@@ -3,10 +3,12 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import {
   ExecutionRunStartRequestSchema,
+  parseBackendTargetKey,
   type ExecutionRunIntent,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
@@ -36,15 +38,21 @@ export async function cmdSessionRunStart(
   const json = wantsJson(argv);
   const idOrPrefix = String(argv[2] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backendId> [--json]');
+    throw new Error('Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backend-target> [--json]');
   }
 
   const intent = (readFlagValue(argv, '--intent') ?? '').trim() as ExecutionRunIntent;
-  const backendId = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendTargetRaw = (readFlagValue(argv, '--backend') ?? '').trim();
   const instructions = readFlagValue(argv, '--instructions') ?? undefined;
 
-  if (!intent || !backendId) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backendId> [--json]');
+  if (!intent || !backendTargetRaw) {
+    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+  }
+
+  const [backendTargetKey] = normalizeBackendTargetKeysFromCsv(backendTargetRaw);
+  const backendTarget = backendTargetKey ? parseBackendTargetKey(backendTargetKey) : null;
+  if (!backendTarget) {
+    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -91,7 +99,7 @@ export async function cmdSessionRunStart(
 
   const request = ExecutionRunStartRequestSchema.parse({
     intent,
-    backendId,
+    backendTarget,
     ...(instructions ? { instructions } : {}),
     permissionMode,
     retentionPolicy,
@@ -113,7 +121,7 @@ export async function cmdSessionRunStart(
     printJsonEnvelope({
       ok: true,
       kind: 'session_run_start',
-      data: { sessionId, ...(result as any), intent, backendId },
+      data: { sessionId, ...(result as any), intent, backendTarget },
     });
     return;
   }

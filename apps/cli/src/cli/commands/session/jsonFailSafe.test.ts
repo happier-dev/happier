@@ -50,5 +50,44 @@ describe('happier session --json fail-safe', () => {
       process.exitCode = prevExitCode;
     }
   });
-});
 
+  it('keeps the legacy planner envelope kind for unauthenticated plan starts', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    try {
+      await handleSessionCommand(['plan', 'start', 'sess_1', '--backends', 'codex', '--instructions', 'Plan.', '--json'], {
+        readCredentialsFn: async () => null,
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_plan_start');
+      expect(parsed.error?.code).toBe('not_authenticated');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('keeps the legacy delegate envelope kind for unauthenticated delegate starts', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    try {
+      await handleSessionCommand(['delegate', 'start', 'sess_1', '--backends', 'codex', '--instructions', 'Delegate.', '--json'], {
+        readCredentialsFn: async () => null,
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_delegate_start');
+      expect(parsed.error?.code).toBe('not_authenticated');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

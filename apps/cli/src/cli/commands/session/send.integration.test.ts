@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -24,6 +26,14 @@ describe('happier session send (integration)', () => {
   let dek: Uint8Array | null = null;
   let decodeBase64Fn: ((value: string, kind?: any) => Uint8Array) | null = null;
   let decryptWithDataKeyFn: ((ciphertext: Uint8Array, dataKey: Uint8Array) => any) | null = null;
+  let sessionActive = false;
+  let sessionActiveAt = 0;
+  let sessionMetadataCiphertext = '';
+  let sessionAgentStateCiphertext: string | null = null;
+  let sessionDataEncryptionKeyBase64 = '';
+  let visibleMessageByLocalId: { id: string; localId: string; seq: number; createdAt: number; updatedAt: number; content: any } | null = null;
+  let transcriptLookupRequests = 0;
+  let lastActiveSessionRpcLocalId: string | null = null;
 
   beforeEach(async () => {
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-send-'));
@@ -68,6 +78,14 @@ describe('happier session send (integration)', () => {
       encryptWithDataKey({ controlledByUser: false, requests: {} }, dek!),
       'base64',
     );
+    sessionActive = false;
+    sessionActiveAt = 0;
+    sessionMetadataCiphertext = metadataCiphertext;
+    sessionAgentStateCiphertext = busyAgentStateCiphertext;
+    sessionDataEncryptionKeyBase64 = dataEncryptionKeyBase64;
+    visibleMessageByLocalId = null;
+    transcriptLookupRequests = 0;
+    lastActiveSessionRpcLocalId = null;
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
@@ -82,20 +100,38 @@ describe('happier session send (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
-              metadata: metadataCiphertext,
+              active: sessionActive,
+              activeAt: sessionActiveAt,
+              metadata: sessionMetadataCiphertext,
               metadataVersion: 0,
-              agentState: busyAgentStateCiphertext,
+              agentState: sessionAgentStateCiphertext,
               agentStateVersion: 0,
               pendingCount: 0,
               pendingVersion: 0,
-              dataEncryptionKey: dataEncryptionKeyBase64,
+              dataEncryptionKey: sessionDataEncryptionKeyBase64,
               encryptionMode: 'e2ee',
               share: null,
             },
           }),
         );
+        return;
+      }
+
+      const lookupPrefix = `/v2/sessions/${sessionId}/messages/by-local-id/`;
+      if (req.method === 'GET' && url.pathname.startsWith(lookupPrefix)) {
+        transcriptLookupRequests += 1;
+        const localId = decodeURIComponent(url.pathname.slice(lookupPrefix.length));
+        if (!visibleMessageByLocalId || visibleMessageByLocalId.localId !== localId) {
+          res.statusCode = 404;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'Message not found', path: url.pathname }));
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          message: visibleMessageByLocalId,
+        }));
         return;
       }
 
@@ -270,6 +306,473 @@ describe('happier session send (integration)', () => {
       process.exitCode = prevExitCode;
     }
   });
+
+  it('surfaces non-timeout wait failures without rewriting them to timeout', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    mockIo.mockReset();
+    mockIo
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect') ?? [];
+            for (const fn of list) fn();
+          }),
+          emit: vi.fn((event: string, payload: any, ack?: (answer: any) => void) => {
+            if (event !== 'message') {
+              throw new Error(`Unexpected socket event: ${event}`);
+            }
+            ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
+          }),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      })
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect_error') ?? [];
+            for (const fn of list) fn(new Error('wait socket failed'));
+          }),
+          emit: vi.fn(),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      });
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await handleSessionCommand(['send', 'sess_integration_send_123', 'Hello from controller', '--wait', '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_send');
+      expect(parsed.error?.code).toBe('wait_failed');
+      expect(parsed.error?.message).toBe('wait socket failed');
+    } finally {
+      logSpy.mockRestore();
+      process.exitCode = prevExitCode;
+    }
+  });
+
+  it('uses session RPC for active sessions so running agents receive the prompt through their runtime queue', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const { encodeBase64: encodeBase64Session, encryptWithDataKey, decodeBase64, decryptWithDataKey } = await import('@/api/encryption');
+
+    const sessionId = 'sess_integration_send_123';
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    const activeMetadataCiphertext = encodeBase64Session(
+      encryptWithDataKey(
+        {
+          path: '/tmp',
+          tag: 'MyTag',
+          host: 'host1',
+          permissionMode: 'safe-yolo',
+          permissionModeUpdatedAt: 10,
+          modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'claude-sonnet-4-0' },
+        },
+        dek!,
+      ),
+      'base64',
+    );
+    sessionActive = true;
+    sessionActiveAt = 2;
+    sessionMetadataCiphertext = activeMetadataCiphertext;
+    sessionAgentStateCiphertext = null;
+    sessionDataEncryptionKeyBase64 = encodeBase64Session(
+      sealEncryptedDataKeyEnvelopeV1({
+        dataKey: dek!,
+        recipientPublicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+        randomBytes: (length) => new Uint8Array(length).fill(5),
+      }),
+      'base64',
+    );
+
+    mockIo.mockReset();
+    mockIo.mockImplementation(() => {
+      const handlers = new Map<string, Array<(...args: any[]) => void>>();
+      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
+        const list = handlers.get(event) ?? [];
+        list.push(cb);
+        handlers.set(event, list);
+      });
+      const connect = vi.fn(() => {
+        const list = handlers.get('connect') ?? [];
+        for (const fn of list) fn();
+      });
+      const emit = vi.fn((event: string, data: any, cb?: (...args: any[]) => void) => {
+        if (event === SOCKET_RPC_EVENTS.CALL) {
+          expect(String(data.method ?? '')).toBe(`${sessionId}:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`);
+          const decrypted = decryptWithDataKey(
+            decodeBase64(String(data.params ?? ''), 'base64'),
+            dek!,
+          ) as any;
+          expect(decrypted).toMatchObject({
+            text: 'Hello active session',
+            meta: expect.objectContaining({
+              sentFrom: 'cli',
+              source: 'cli',
+              permissionMode: 'safe-yolo',
+              model: 'claude-sonnet-4-0',
+            }),
+          });
+          cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
+          return;
+        }
+        throw new Error(`Unexpected socket event: ${event}`);
+      });
+      return {
+        on,
+        off: vi.fn(),
+        connect,
+        emit,
+        disconnect: vi.fn(),
+        close: vi.fn(),
+      };
+    });
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    try {
+      await handleSessionCommand(['send', sessionId, 'Hello active session', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_send');
+      expect(parsed.data?.sessionId).toBe(sessionId);
+      expect(receivedMessages).toHaveLength(0);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('waits for the active-session prompt to materialize before returning from --wait', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const { encodeBase64: encodeBase64Session, encryptWithDataKey, decodeBase64, decryptWithDataKey } = await import('@/api/encryption');
+
+    const sessionId = 'sess_integration_send_123';
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    const idleAgentStateCiphertext = encodeBase64Session(
+      encryptWithDataKey({ controlledByUser: false, requests: {} }, dek!),
+      'base64',
+    );
+
+    sessionActive = true;
+    sessionActiveAt = 2;
+    sessionAgentStateCiphertext = idleAgentStateCiphertext;
+
+    mockIo.mockReset();
+    mockIo
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect') ?? [];
+            for (const fn of list) fn();
+          }),
+          emit: vi.fn((event: string, data: any, cb?: (...args: any[]) => void) => {
+            if (event === SOCKET_RPC_EVENTS.CALL) {
+              expect(String(data.method ?? '')).toBe(`${sessionId}:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`);
+              const decrypted = decryptWithDataKey(
+                decodeBase64(String(data.params ?? ''), 'base64'),
+                dek!,
+              ) as any;
+              lastActiveSessionRpcLocalId = typeof decrypted?.localId === 'string' ? decrypted.localId : null;
+              cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
+              return;
+            }
+            throw new Error(`Unexpected socket event: ${event}`);
+          }),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      })
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect') ?? [];
+            for (const fn of list) fn();
+          }),
+          emit: vi.fn(),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      });
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    let releaseLookupTimer: NodeJS.Timeout | null = null;
+    try {
+      releaseLookupTimer = setTimeout(() => {
+        if (!lastActiveSessionRpcLocalId) {
+          return;
+        }
+        visibleMessageByLocalId = {
+          id: 'msg-active-wait-1',
+          seq: 7,
+          localId: lastActiveSessionRpcLocalId,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          content: { t: 'encrypted', c: 'ciphertext' },
+        };
+      }, 40);
+
+      const sendPromise = handleSessionCommand(
+        ['send', sessionId, 'Wait for this prompt', '--wait', '--timeout', '1', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+      let settled = false;
+      void sendPromise.finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(settled).toBe(false);
+
+      const parsedBeforeCompletion = stdout.join('\n').trim();
+      expect(parsedBeforeCompletion).toBe('');
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      await sendPromise;
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_send');
+      expect(parsed.data?.waited).toBe(true);
+      expect(transcriptLookupRequests).toBeGreaterThan(0);
+    } finally {
+      if (releaseLookupTimer) clearTimeout(releaseLookupTimer);
+      logSpy.mockRestore();
+    }
+  });
+
+  it('falls back to committed socket send when active-session RPC cannot connect', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const sessionId = 'sess_integration_send_123';
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    sessionActive = true;
+    sessionActiveAt = 2;
+
+    mockIo.mockReset();
+    mockIo
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect_error') ?? [];
+            for (const fn of list) fn(new Error('connect_error'));
+          }),
+          emit: vi.fn(),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      })
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect') ?? [];
+            for (const fn of list) fn();
+          }),
+          emit: vi.fn((event: string, payload: any, ack?: (answer: any) => void) => {
+            if (event !== 'message') {
+              throw new Error(`Unexpected socket event: ${event}`);
+            }
+            const content = payload?.message;
+            if (content?.t === 'encrypted') {
+              const decrypted = decryptWithDataKeyFn!(
+                decodeBase64Fn!(String(content?.c ?? ''), 'base64'),
+                dek!,
+              );
+              receivedMessages.push(decrypted);
+            }
+            ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
+          }),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      });
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    try {
+      await handleSessionCommand(['send', sessionId, 'Fallback after connect error', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_send');
+      expect(receivedMessages.at(-1)).toMatchObject({
+        role: 'user',
+        content: { type: 'text', text: 'Fallback after connect error' },
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('does not retry via committed socket send after an active-session RPC timeout', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const sessionId = 'sess_integration_send_123';
+    const machineKeySeed = new Uint8Array(32).fill(8);
+    sessionActive = true;
+    sessionActiveAt = 2;
+
+    mockIo.mockReset();
+    mockIo
+      .mockImplementationOnce(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect') ?? [];
+            for (const fn of list) fn();
+          }),
+          emit: vi.fn((event: string) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) {
+              throw new Error(`Unexpected socket event: ${event}`);
+            }
+          }),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      })
+      .mockImplementation(() => {
+        const handlers = new Map<string, Array<(...args: any[]) => void>>();
+        return {
+          on: vi.fn((event: string, cb: (...args: any[]) => void) => {
+            const list = handlers.get(event) ?? [];
+            list.push(cb);
+            handlers.set(event, list);
+          }),
+          off: vi.fn(),
+          connect: vi.fn(() => {
+            const list = handlers.get('connect') ?? [];
+            for (const fn of list) fn();
+          }),
+          emit: vi.fn((event: string, payload: any, ack?: (answer: any) => void) => {
+            if (event !== 'message') {
+              throw new Error(`Unexpected socket event: ${event}`);
+            }
+            ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
+          }),
+          disconnect: vi.fn(),
+          close: vi.fn(),
+        };
+      });
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    try {
+      await handleSessionCommand(['send', sessionId, 'Do not duplicate on timeout', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('session_send');
+      expect(parsed.error?.code).toBe('timeout');
+      expect(parsed.error?.message).toContain('RPC call timeout');
+      expect(mockIo).toHaveBeenCalledTimes(1);
+      expect(receivedMessages).toHaveLength(0);
+    } finally {
+      logSpy.mockRestore();
+    }
+  }, 45_000);
 
   it('supports --permission-mode and --model overrides for a single send', async () => {
     const { handleSessionCommand } = await import('./index');

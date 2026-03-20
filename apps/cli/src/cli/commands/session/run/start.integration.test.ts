@@ -140,7 +140,7 @@ describe('happier session run start (integration)', () => {
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted).toMatchObject({
           intent: 'review',
-          backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         });
 
         const resultPayload = { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
@@ -205,6 +205,7 @@ describe('happier session run start (integration)', () => {
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
       expect(parsed.data?.runId).toBe('run_1');
       expect(parsed.data?.callId).toBe('call_1');
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
     } finally {
       logSpy.mockRestore();
     }
@@ -236,6 +237,73 @@ describe('happier session run start (integration)', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('preserves configured ACP backend backend targets', async () => {
+    const { handleSessionCommand } = await import('../index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    mockIo.mockImplementation(() => {
+      const handlers = new Map<string, Array<(...args: any[]) => void>>();
+      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
+        const list = handlers.get(event) ?? [];
+        list.push(cb);
+        handlers.set(event, list);
+      });
+
+      const emit = vi.fn(async (event: string, data: any, cb?: (...args: any[]) => void) => {
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
+        const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
+        const decrypted = decrypt(new Uint8Array(32).fill(3), 'dataKey', decodedParams) as any;
+        expect(decrypted).toMatchObject({
+          intent: 'delegate',
+          backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        });
+
+        const resultPayload = { runId: 'run_custom_1', callId: 'call_custom_1', sidechainId: 'call_custom_1' };
+        cb?.({
+          ok: true,
+          result: encodeBase64Rpc(encrypt(new Uint8Array(32).fill(3), 'dataKey', resultPayload), 'base64'),
+        });
+      });
+
+      const connect = vi.fn(() => {
+        const list = handlers.get('connect') ?? [];
+        for (const fn of list) fn();
+      });
+
+      return { on, emit, connect, disconnect: vi.fn(), close: vi.fn() };
+    });
+
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'delegate', '--backend', 'acpBackend:review-bot', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_run_start');
+      expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
+      expect(parsed.data?.runId).toBe('run_custom_1');
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
     } finally {
       logSpy.mockRestore();
     }
