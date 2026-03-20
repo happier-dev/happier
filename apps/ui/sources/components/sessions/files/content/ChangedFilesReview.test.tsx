@@ -334,6 +334,76 @@ describe('ChangedFilesReview', () => {
         expect(diffFilesListViewSpy).toHaveBeenCalled();
     });
 
+    it('keeps turn review scoped to latest-turn files', async () => {
+        diffFilesListViewSpy.mockClear();
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        await act(async () => {
+            renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="turn"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA, fileB]}
+                    turnAttributedFiles={[{ file: fileA, confidence: 'high' }]}
+                    turnRepositoryOnlyFiles={[fileB]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+        expect(lastProps.files).toEqual([
+            expect.objectContaining({
+                key: 'src/a.ts',
+                filePath: 'src/a.ts',
+            }),
+        ]);
+    });
+
+    it('keeps session review scoped to session-attributed files', async () => {
+        diffFilesListViewSpy.mockClear();
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        await act(async () => {
+            renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="session"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA, fileB]}
+                    turnAttributedFiles={[]}
+                    turnRepositoryOnlyFiles={[]}
+                    sessionAttributedFiles={[{ file: fileA, confidence: 'high' }]}
+                    repositoryOnlyFiles={[fileB]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+        expect(lastProps.files).toEqual([
+            expect.objectContaining({
+                key: 'src/a.ts',
+                filePath: 'src/a.ts',
+            }),
+        ]);
+    });
+
     it('loads diffs for all files when within thresholds', async () => {
         wrapLinesInDiffsSetting = true;
         showLineNumbersSetting = true;

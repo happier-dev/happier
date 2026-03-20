@@ -36,6 +36,22 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 
+vi.mock('@/text', () => ({
+    t: (key: string, params?: Record<string, unknown>) => {
+        if (key === 'files.repositoryChangedFiles') return `Repository changed files (${String(params?.count ?? '')})`;
+        if (key === 'files.latestTurnChanges') return `Latest turn changes (${String(params?.count ?? '')})`;
+        if (key === 'files.latestTurnDescription') return 'Provider-backed changes from the most recent completed turn.';
+        if (key === 'files.sessionAttributedChanges') return `Session-attributed changes (${String(params?.count ?? '')})`;
+        if (key === 'files.otherRepositoryChanges') return `Other repository changes (${String(params?.count ?? '')})`;
+        if (key === 'files.noLatestTurnChanges') return 'No latest-turn changes currently detected.';
+        if (key === 'files.noSessionAttributedChanges') return 'No session-attributed changes currently detected.';
+        if (key === 'files.attributionReliabilityLimited') {
+            return 'Reliability limited: multiple sessions are active for this repository';
+        }
+        return key;
+    },
+}));
+
 describe('ChangedFilesList', () => {
     const file = {
         fileName: 'a.ts',
@@ -178,5 +194,95 @@ describe('ChangedFilesList', () => {
             String(node.props.children).includes('Reliability limited: multiple sessions are active for this repository')
         );
         expect(messageExists).toBe(true);
+    });
+
+    it('renders latest-turn copy and rows when turn view is selected', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+        const repositoryOnlyFile = {
+            ...file,
+            fileName: 'b.ts',
+            fullPath: 'src/b.ts',
+        } as const;
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="turn"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[file as any, repositoryOnlyFile as any]}
+                    turnAttributedFiles={[{ file: file as any, confidence: 'high' }]}
+                    turnRepositoryOnlyFiles={[repositoryOnlyFile as any]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        const textContent = tree!
+            .root
+            .findAllByType('Text' as any)
+            .map((node) => {
+                const value = node.props.children;
+                if (Array.isArray(value)) {
+                    return value.join('');
+                }
+                return String(value);
+        });
+        expect(textContent).toContain('Latest turn changes (1)');
+        expect(textContent).toContain('Provider-backed changes from the most recent completed turn.');
+        expect(textContent).not.toContain('Other repository changes (1)');
+        expect(textContent).not.toContain('Reliability limited: multiple sessions are active for this repository');
+
+        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(rows).toHaveLength(1);
+    });
+
+    it('keeps session view scoped to session-attributed files', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+        const sessionFile = {
+            ...file,
+            fullPath: 'src/session.ts',
+            fileName: 'session.ts',
+        } as const;
+        const repositoryOnlyFile = {
+            ...file,
+            fullPath: 'src/repo-only.ts',
+            fileName: 'repo-only.ts',
+        } as const;
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="session"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[sessionFile as any, repositoryOnlyFile as any]}
+                    sessionAttributedFiles={[{ file: sessionFile as any, confidence: 'high' }]}
+                    repositoryOnlyFiles={[repositoryOnlyFile as any]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        const textContent = tree!
+            .root
+            .findAllByType('Text' as any)
+            .map((node) => {
+                const value = node.props.children;
+                if (Array.isArray(value)) {
+                    return value.join('');
+                }
+                return String(value);
+            });
+        expect(textContent).toContain('Session-attributed changes (1)');
+        expect(textContent).not.toContain('Other repository changes (1)');
+
+        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.props.file?.fullPath).toBe('src/session.ts');
     });
 });

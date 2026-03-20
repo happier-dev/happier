@@ -9,6 +9,7 @@ const clearLayoutCacheOnUpdateSpy = vi.fn();
 vi.mock('react-native', () => ({
     View: 'View',
     Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+    FlatList: (props: any) => React.createElement('FlatList', props),
     Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
     useWindowDimensions: () => ({ width: 1200, height: 800 }),
 }));
@@ -153,5 +154,39 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
         });
 
         expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(0);
+    });
+
+    it('exposes an imperative handle to clear FlashList layout cache (for programmatic expansion)', async () => {
+        clearLayoutCacheOnUpdateSpy.mockClear();
+
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+
+        const ref = React.createRef<any>();
+
+        await act(async () => {
+            renderer.create(
+                <DiffFilesListView
+                    ref={ref}
+                    files={[
+                        { key: 'k1', filePath: 'src/a.ts', unifiedDiff: 'diff\n', oldText: null, newText: null },
+                    ] as any}
+                    expandedKeys={new Set()}
+                    onToggleExpanded={vi.fn()}
+                    canRenderInlineDiffs={true}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    virtualizeFileList
+                />,
+            );
+        });
+
+        expect(ref.current).toBeTruthy();
+
+        act(() => {
+            ref.current.clearLayoutCacheOnUpdate();
+        });
+
+        expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(1);
     });
 });

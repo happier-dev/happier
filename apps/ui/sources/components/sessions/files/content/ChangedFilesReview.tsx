@@ -52,6 +52,8 @@ type ChangedFilesReviewProps = {
     changedFilesViewMode: ChangedFilesViewMode;
     attributionReliability: SessionAttributionReliability;
     allRepositoryChangedFiles: ScmFileStatus[];
+    turnAttributedFiles?: SessionAttributedFile[];
+    turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
@@ -89,8 +91,8 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         changedFilesViewMode,
         attributionReliability,
         allRepositoryChangedFiles,
+        turnAttributedFiles = [],
         sessionAttributedFiles,
-        repositoryOnlyFiles,
         suppressedInferredCount,
         maxFiles,
         maxChangedLines,
@@ -159,10 +161,12 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
 
     const baseSections = React.useMemo(() => {
         const repositoryChangedFiles = filterDirectoryLikeScmFileStatuses(allRepositoryChangedFiles);
+        const latestTurnFiles = turnAttributedFiles
+            .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
+            .map((entry) => entry.file);
         const sessionChangedFiles = sessionAttributedFiles
             .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
             .map((entry) => entry.file);
-        const otherRepositoryChangedFiles = filterDirectoryLikeScmFileStatuses(repositoryOnlyFiles);
 
         if (changedFilesViewMode === 'repository') {
             return [
@@ -174,23 +178,24 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             ] as const;
         }
 
+        if (changedFilesViewMode === 'turn') {
+            return [
+                {
+                    key: 'turn',
+                    kind: 'turn',
+                    files: latestTurnFiles,
+                },
+            ] as const;
+        }
+
         return [
             {
                 key: 'session',
                 kind: 'session',
                 files: sessionChangedFiles,
             },
-            ...(otherRepositoryChangedFiles.length > 0
-                ? ([
-                    {
-                        key: 'other',
-                        kind: 'other',
-                        files: otherRepositoryChangedFiles,
-                    },
-                ] as const)
-                : ([] as const)),
         ] as const;
-    }, [allRepositoryChangedFiles, changedFilesViewMode, repositoryOnlyFiles, sessionAttributedFiles]);
+    }, [allRepositoryChangedFiles, changedFilesViewMode, sessionAttributedFiles, turnAttributedFiles]);
 
     const sections = React.useMemo(() => {
         const out: { key: string; title: string; files: ScmFileStatus[] }[] = [];
@@ -215,19 +220,21 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 });
                 continue;
             }
+            if (section.kind === 'turn') {
+                out.push({
+                    key: section.key,
+                    title: t('files.latestTurnChanges', { count: files.length }),
+                    files,
+                });
+                continue;
+            }
             if (section.kind === 'session') {
                 out.push({
                     key: section.key,
                     title: t('files.sessionAttributedChanges', { count: files.length }),
                     files,
                 });
-                continue;
             }
-            out.push({
-                key: section.key,
-                title: t('files.otherRepositoryChanges', { count: files.length }),
-                files,
-            });
         }
         return out;
     }, [baseSections, diffArea, entryDeltaByPath]);
