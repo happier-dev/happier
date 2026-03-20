@@ -1,31 +1,16 @@
 import type { Metadata } from '@/api/types';
+import { createProviderSessionIdMetadataUpdater } from '@/backends/shared/createProviderSessionIdMetadataUpdater';
+
+const updater = createProviderSessionIdMetadataUpdater('copilotSessionId');
 
 export function maybeUpdateCopilotSessionIdMetadata(params: {
   getCopilotSessionId: () => string | null;
   updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
   lastPublished: { value: string | null };
 }): void {
-  const raw = params.getCopilotSessionId();
-  const next = typeof raw === 'string' ? raw.trim() : '';
-  if (!next) return;
-
-  if (params.lastPublished.value === next) return;
-
-  const prev = params.lastPublished.value;
-  params.lastPublished.value = next;
-  try {
-    const res = params.updateHappySessionMetadata((metadata) => ({
-      ...metadata,
-      copilotSessionId: next,
-    }));
-    void Promise.resolve(res).catch(() => {
-      if (params.lastPublished.value === next) {
-        params.lastPublished.value = prev;
-      }
-    });
-  } catch {
-    if (params.lastPublished.value === next) {
-      params.lastPublished.value = prev;
-    }
-  }
+  updater({
+    getSessionId: params.getCopilotSessionId,
+    updateHappySessionMetadata: params.updateHappySessionMetadata,
+    lastPublished: params.lastPublished,
+  });
 }
