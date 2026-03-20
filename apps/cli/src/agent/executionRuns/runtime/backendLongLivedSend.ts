@@ -1,7 +1,9 @@
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
@@ -52,13 +54,15 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { runId?: string; backendId: string; permissionMode: string }) => AgentBackend;
+  createBackend: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => AgentBackend;
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
+  streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
+  onPublicStateUpdated?: (runId: string) => void;
   }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -87,6 +91,12 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         controllers: args.controllers,
         budgetRegistry: args.budgetRegistry,
         createBackend: args.createBackend,
+        sendAcp: args.sendAcp,
+        parentProvider: args.parentProvider,
+        streamedTranscriptSession: args.streamedTranscriptSession,
+        writeActivityMarker: args.writeActivityMarker,
+        getNowMs: args.getNowMs,
+        ...(args.onPublicStateUpdated ? { onPublicStateUpdated: args.onPublicStateUpdated } : {}),
         requireReplayCapture: run.runClass === 'long_lived',
         onModelOutput: () => {
           void args.writeActivityMarker(args.runId, args.getNowMs());
@@ -146,6 +156,11 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   ctrl2.sidechainStreamKey = '';
 
   ctrl2.turnCount += 1;
+  // Persist the cumulative turn count so resuming cannot reset enforcement (for example maxTurns).
+  const runAfterTurn = args.runs.get(args.runId);
+  if (runAfterTurn) {
+    args.runs.set(args.runId, { ...runAfterTurn, turnCount: ctrl2.turnCount });
+  }
   const sendPromise = Promise.resolve().then(() => sendPromptWithAbortRetry({
     send: () => ctrl2.backend.sendPrompt(ctrl2.childSessionId!, args.params.message),
     maxAttempts: shouldRetryAbortSend ? abortRetry.maxAttempts : 1,
@@ -159,9 +174,11 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       }
 
       if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
+      await ctrl2.streamWriter?.flushAll({ reason: 'turn-end' });
 
       const rawText = ctrl2.buffer.trim();
-      const streamed = run.ioMode === 'streaming' && ctrl2.sidechainStreamBuffer.trim().length > 0;
+      const streamed =
+        run.ioMode === 'streaming' && Boolean(ctrl2.streamWriter) && ctrl2.sidechainStreamBuffer.trim().length > 0;
       if (!streamed && rawText.length > 0) {
         args.sendAcp(args.parentProvider, { type: 'message', message: rawText, sidechainId: run.sidechainId });
       }
@@ -174,6 +191,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         // The active turn was intentionally interrupted for steering; do not terminalize the run.
         ctrl2.turnCancelReason = null;
         ctrl2.turnCancelEpoch = null;
+        await ctrl2.streamWriter?.flushAll({ reason: 'abort', interruptedReason: 'steer' });
         if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
         return;
       }
@@ -181,6 +199,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       if (isAbortLikeError(e)) {
         // Long-lived runs are interactive: if a turn is cancelled/aborted, keep the run alive so
         // callers can retry or continue steering without losing the entire execution run.
+        await ctrl2.streamWriter?.flushAll({ reason: 'abort', interruptedReason: 'abort' });
         if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
         // Best-effort: clear steer markers if they were associated with this epoch.
         if (ctrl2.turnCancelReason === 'steer' && ctrl2.turnCancelEpoch === thisEpoch) {
@@ -191,6 +210,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       }
 
       const message = e instanceof Error ? e.message : 'Execution failed';
+      await ctrl2.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
       const finishedAtMs = args.getNowMs();
       args.finishRun(
         args.runId,

@@ -51,8 +51,84 @@ function createDelayedJsonBackend(responseText: string, delayMs: number): AgentB
   };
 }
 
+function createReviewResumeBackend(): Readonly<{
+  backend: AgentBackend;
+  prompts: string[];
+  loadSessionCalls: string[];
+  vendorSessionId: string;
+}> {
+  let handler: AgentMessageHandler | null = null;
+  const prompts: string[] = [];
+  const loadSessionCalls: string[] = [];
+  const vendorSessionId = 'vendor_review_1';
+
+  const backend: AgentBackend = {
+    async startSession(): Promise<{ sessionId: SessionId }> {
+      return { sessionId: 'child_session_1' as SessionId };
+    },
+    async loadSession(sessionId: string): Promise<{ sessionId: SessionId }> {
+      loadSessionCalls.push(sessionId);
+      return { sessionId: 'child_session_resumed' as SessionId };
+    },
+    async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+      prompts.push(prompt);
+      if (prompts.length === 1) {
+        handler?.({ type: 'event', name: 'vendor_session_id', payload: { sessionId: vendorSessionId } } as AgentMessage);
+        handler?.({
+          type: 'model-output',
+          fullText: JSON.stringify({
+            summary: 'Initial summary.',
+            overviewMarkdown: '## Overview\n\nInitial overview.',
+            findings: [
+              {
+                id: 'f1',
+                title: 'Example',
+                severity: 'low',
+                category: 'style',
+                summary: 'One paragraph.',
+              },
+            ],
+            questions: [],
+            assumptions: [],
+          }),
+        } as AgentMessage);
+        return;
+      }
+
+      handler?.({
+        type: 'model-output',
+        fullText: JSON.stringify({
+          answerMarkdown: 'Clarified answer.',
+          updatedFindings: [
+            {
+              id: 'f1',
+              title: 'Example',
+              severity: 'medium',
+              category: 'correctness',
+              summary: 'Updated summary.',
+              whyItMatters: 'Now clearly broken.',
+              evidence: 'Confirmed locally.',
+              confidence: 0.9,
+            },
+          ],
+          questions: [],
+          assumptions: [],
+        }),
+      } as AgentMessage);
+    },
+    async cancel(_sessionId: SessionId): Promise<void> {},
+    onMessage(next: AgentMessageHandler): void {
+      handler = next;
+    },
+    async dispose(): Promise<void> {},
+    async waitForResponseComplete(): Promise<void> {},
+  };
+
+  return { backend, prompts, loadSessionCalls, vendorSessionId };
+}
+
 describe('ExecutionRunManager (review intent)', () => {
-  it('emits SubAgentRun tool-call, sidechain message, and tool-result with review_findings.v1 meta', async () => {
+  it('emits SubAgentRun tool-call, sidechain message, and tool-result with review_findings.v2 meta', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     let lastPrompt = '';
     const manager = new ExecutionRunManager({
@@ -111,7 +187,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -151,7 +227,35 @@ describe('ExecutionRunManager (review intent)', () => {
     const toolResult = [...sent].reverse().find((m) => (m.body as any)?.type === 'tool-result');
     expect(toolResult).toBeTruthy();
     const meta = toolResult?.meta as any;
-    expect(meta?.happier?.kind).toBe('review_findings.v1');
+    expect(meta?.happier?.kind).toBe('review_findings.v2');
+  });
+
+  it('prefers a per-run bounded timeout over the manager default for bounded review runs', async () => {
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => createDelayedJsonBackend(JSON.stringify({ findings: [], summary: 'late' }), 30),
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+      boundedTimeoutMs: 10,
+    });
+
+    const startParams = {
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      boundedTimeoutMs: 100,
+    } as const;
+
+    const started = await manager.start(startParams);
+    await manager.waitForTerminal(started.runId);
+
+    expect(manager.get(started.runId)?.status).toBe('succeeded');
   });
 
   it('returns start() before backend session provisioning completes (UI can dismiss draft immediately)', async () => {
@@ -200,7 +304,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const startPromise = manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -270,7 +374,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -343,7 +447,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -354,11 +458,13 @@ describe('ExecutionRunManager (review intent)', () => {
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
     expect(prompts.length).toBe(2);
-    // Second prompt must demand strict JSON (repair pass).
-    expect(prompts[1]).toContain('Return ONLY valid JSON');
+    // Repair prompts must still require a bare JSON object as the final response.
+    expect(prompts[1]).toContain('valid JSON');
+    expect(prompts[1]).toContain('JSON.parse');
+    expect(prompts[1]).toContain('Do not wrap it in markdown code fences');
   });
 
-  it('can apply review triage and re-emit review_findings.v1 meta updates', async () => {
+  it('can apply review triage and re-emit review_findings.v2 meta updates', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const manager = new ExecutionRunManager({
       parentProvider: 'claude',
@@ -387,7 +493,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -407,8 +513,357 @@ describe('ExecutionRunManager (review intent)', () => {
     const toolResult = [...sent].reverse().find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
     expect(toolResult).toBeTruthy();
     const meta = toolResult?.meta as any;
-    expect(meta?.happier?.kind).toBe('review_findings.v1');
+    expect(meta?.happier?.kind).toBe('review_findings.v2');
     expect(meta?.happier?.payload?.triage?.findings?.[0]?.status).toBe('accept');
+  });
+
+  it('commits review triage tool-result meta updates durably when a transcript commit session is available', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const commits: Array<{ provider: string; body: unknown; localId: string; meta?: Record<string, unknown> }> = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+        createStaticJsonBackend(
+          JSON.stringify({
+            findings: [
+              {
+                id: 'f1',
+                title: 'Example',
+                severity: 'low',
+                category: 'style',
+                summary: 'One paragraph.',
+              },
+            ],
+            summary: 'Summary.',
+          }),
+        ),
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      streamedTranscriptSession: {
+        sendAgentMessageCommitted: async (provider, body, opts) => {
+          commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+        },
+        sendTranscriptDraftDelta: () => {},
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    await manager.waitForTerminal(started.runId);
+    const sentBeforeAction = sent.length;
+    const commitsBeforeAction = commits.length;
+
+    const result = await manager.applyAction(started.runId, {
+      actionId: 'review.triage',
+      input: {
+        findings: [{ id: 'f1', status: 'reject', comment: 'Ignore for now.' }],
+      },
+    });
+    expect(result.ok).toBe(true);
+
+    const committedToolResult = commits
+      .slice(commitsBeforeAction)
+      .reverse()
+      .find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
+    expect(committedToolResult).toBeTruthy();
+    const committedMeta = committedToolResult?.meta as any;
+    expect(committedMeta?.happier?.kind).toBe('review_findings.v2');
+    expect(committedMeta?.happier?.payload?.triage?.findings?.[0]?.status).toBe('reject');
+
+    const bestEffortMetaToolResult = sent
+      .slice(sentBeforeAction)
+      .reverse()
+      .find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
+    expect(bestEffortMetaToolResult).toBeUndefined();
+  });
+
+  it('falls back to best-effort review triage meta updates when the durable transcript commit fails', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const commits: Array<{ provider: string; body: unknown; localId: string; meta?: Record<string, unknown> }> = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+        createStaticJsonBackend(
+          JSON.stringify({
+            findings: [
+              {
+                id: 'f1',
+                title: 'Example',
+                severity: 'low',
+                category: 'style',
+                summary: 'One paragraph.',
+              },
+            ],
+            summary: 'Summary.',
+          }),
+        ),
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      streamedTranscriptSession: {
+        sendAgentMessageCommitted: async (provider, body, opts) => {
+          commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+          throw new Error('commit failed');
+        },
+        sendTranscriptDraftDelta: () => {},
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    await manager.waitForTerminal(started.runId);
+    const sentBeforeAction = sent.length;
+    const commitsBeforeAction = commits.length;
+
+    const result = await manager.applyAction(started.runId, {
+      actionId: 'review.triage',
+      input: {
+        findings: [{ id: 'f1', status: 'needs_refinement', comment: 'Need more evidence.' }],
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(commits.slice(commitsBeforeAction)).toHaveLength(1);
+
+    const fallbackToolResult = sent
+      .slice(sentBeforeAction)
+      .reverse()
+      .find((m) => (m.body as any)?.type === 'tool-result' && m.meta);
+    expect(fallbackToolResult).toBeTruthy();
+    const fallbackMeta = fallbackToolResult?.meta as any;
+    expect(fallbackMeta?.happier?.kind).toBe('review_findings.v2');
+    expect(fallbackMeta?.happier?.payload?.triage?.findings?.[0]?.status).toBe('needs_refinement');
+  });
+
+  it('starts a resumable review follow-up child run that reuses the original vendor session', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const { backend, prompts, loadSessionCalls, vendorSessionId } = createReviewResumeBackend();
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+    });
+    await manager.waitForTerminal(started.runId);
+
+    expect((manager.get(started.runId)?.resumeHandle as any)?.vendorSessionId).toBe(vendorSessionId);
+
+    const followUp = await manager.applyAction(started.runId, {
+      actionId: 'review.follow_up',
+      input: {
+        findingIds: ['f1'],
+        messageMarkdown: 'Please clarify why this matters.',
+      },
+    });
+
+    expect(followUp.ok).toBe(true);
+    const followUpRunId = String((followUp as any).result?.runId ?? '');
+    expect(followUpRunId).not.toBe('');
+    await manager.waitForTerminal(followUpRunId);
+
+    expect(loadSessionCalls).toEqual([vendorSessionId]);
+    expect(prompts.at(-1)).toContain('Please clarify why this matters.');
+    expect(manager.getStructuredMeta(followUpRunId)?.kind).toBe('review_follow_up.v1');
+    expect((manager.getStructuredMeta(followUpRunId) as any)?.payload?.requestMarkdown).toBe('Please clarify why this matters.');
+  });
+
+  it('falls back to a linked child review run without resume support and reconstructs follow-up context', async () => {
+    const prompts: string[] = [];
+    let handler: AgentMessageHandler | null = null;
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () =>
+        ({
+          async startSession() {
+            return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
+          },
+          async sendPrompt(_sessionId: SessionId, prompt: string) {
+            prompts.push(prompt);
+            if (prompts.length === 1) {
+              handler?.({
+                type: 'model-output',
+                fullText: JSON.stringify({
+                  summary: 'Initial summary.',
+                  overviewMarkdown: '## Overview\n\nInitial overview.',
+                  findings: [
+                    {
+                      id: 'f1',
+                      title: 'Example',
+                      severity: 'low',
+                      category: 'style',
+                      summary: 'One paragraph.',
+                    },
+                  ],
+                  questions: [],
+                  assumptions: [],
+                }),
+              } as AgentMessage);
+              return;
+            }
+
+            handler?.({
+              type: 'model-output',
+              fullText: JSON.stringify({
+                answerMarkdown: 'Fallback answer.',
+                questions: [],
+                assumptions: [],
+              }),
+            } as AgentMessage);
+          },
+          async cancel(_sessionId: SessionId) {},
+          onMessage(next: AgentMessageHandler) {
+            handler = next;
+          },
+          async dispose() {},
+          async waitForResponseComplete() {},
+        } as any),
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+    });
+    await manager.waitForTerminal(started.runId);
+
+    const followUp = await manager.applyAction(started.runId, {
+      actionId: 'review.follow_up',
+      input: {
+        findingIds: ['f1'],
+        messageMarkdown: 'Please clarify the impact.',
+      },
+    });
+    expect(followUp.ok).toBe(true);
+
+    const followUpRunId = String((followUp as any).result?.runId ?? '');
+    await manager.waitForTerminal(followUpRunId);
+
+    expect(prompts.at(-1)).toContain('Current review summary:');
+    expect(prompts.at(-1)).toContain('Please clarify the impact.');
+    expect(prompts.at(-1)).toContain('"id": "f1"');
+    expect(manager.getStructuredMeta(followUpRunId)?.kind).toBe('review_follow_up.v1');
+  });
+
+  it('does not synthesize a resumable handle for backends without resume support and rejects review follow-up', async () => {
+    const prompts: string[] = [];
+    let handler: AgentMessageHandler | null = null;
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () =>
+        ({
+          async startSession() {
+            return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
+          },
+          async sendPrompt(_sessionId: SessionId, prompt: string) {
+            prompts.push(prompt);
+            if (prompts.length === 1) {
+              handler?.({
+                type: 'model-output',
+                fullText: JSON.stringify({
+                  summary: 'Initial summary.',
+                  overviewMarkdown: '## Overview\n\nInitial overview.',
+                  findings: [
+                    {
+                      id: 'f1',
+                      title: 'Example',
+                      severity: 'low',
+                      category: 'style',
+                      summary: 'One paragraph.',
+                    },
+                  ],
+                  questions: [],
+                  assumptions: [],
+                }),
+              } as AgentMessage);
+              return;
+            }
+
+            handler?.({
+              type: 'model-output',
+              fullText: JSON.stringify({
+                answerMarkdown: 'Fallback answer.',
+                questions: [],
+                assumptions: [],
+              }),
+            } as AgentMessage);
+          },
+          async cancel(_sessionId: SessionId) {},
+          onMessage(next: AgentMessageHandler) {
+            handler = next;
+          },
+          async dispose() {},
+          async waitForResponseComplete() {},
+        } as any),
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+    });
+    await manager.waitForTerminal(started.runId);
+
+    expect(manager.get(started.runId)?.resumeHandle ?? null).toBeNull();
+
+    const followUp = await manager.applyAction(started.runId, {
+      actionId: 'review.follow_up',
+      input: {
+        findingIds: ['f1'],
+        messageMarkdown: 'Please clarify the impact.',
+      },
+    });
+    expect(followUp.ok).toBe(false);
+    expect((followUp as any).errorCode).toBe('execution_run_action_not_supported');
   });
 
   it('can stop a running execution run and emit a terminal tool-result', async () => {
@@ -427,7 +882,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -444,7 +899,7 @@ describe('ExecutionRunManager (review intent)', () => {
     expect((toolResult?.body as any)?.output?.status).toBe('cancelled');
   });
 
-  it('uses vendor_session_id events to populate resumable resumeHandle', async () => {
+  it('does not synthesize a resumable resumeHandle from vendor_session_id events when the backend cannot resume', async () => {
     const vendorSessionId: SessionId = '1433467f-ff14-4292-b5b2-2aac77a808f0' as SessionId;
 
     let handler: AgentMessageHandler | null = null;
@@ -475,7 +930,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
@@ -487,8 +942,7 @@ describe('ExecutionRunManager (review intent)', () => {
 
     const finished = manager.get(started.runId);
     expect(finished?.status).toBe('succeeded');
-    expect(finished?.resumeHandle?.kind).toBe('vendor_session.v1');
-    expect((finished?.resumeHandle as any)?.vendorSessionId).toBe(vendorSessionId);
+    expect(finished?.resumeHandle ?? null).toBeNull();
   });
 });
 
@@ -508,7 +962,7 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'memory_hints',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Return JSON only.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -526,6 +980,19 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
 describe('ExecutionRunManager (streaming sidechain)', () => {
   it('emits streaming sidechain chunks for model-output when ioMode=streaming', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const drafts: Array<{
+      provider: string;
+      localId: string;
+      segmentKind: string;
+      sidechainId: string | null;
+      deltaText: string;
+    }> = [];
+    const commits: Array<{
+      provider: string;
+      body: unknown;
+      localId: string;
+      meta?: Record<string, unknown>;
+    }> = [];
 
     let handler: AgentMessageHandler | null = null;
     const backend: AgentBackend = {
@@ -561,13 +1028,27 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
+      streamedTranscriptSession: {
+        sendAgentMessageCommitted: async (provider, body, opts) => {
+          commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+        },
+        sendTranscriptDraftDelta: (provider, params) => {
+          drafts.push({
+            provider,
+            localId: params.localId,
+            segmentKind: params.segmentKind,
+            sidechainId: params.sidechainId,
+            deltaText: params.deltaText,
+          });
+        },
+      },
       getNowMs: () => 1_700_000_000_000,
     });
 
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'plan',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Make a plan.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -578,23 +1059,39 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
 
-    const sidechainChunks = sent.filter(
-      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string',
+    const sidechainDrafts = drafts.filter((row) => row.sidechainId === started.sidechainId && row.segmentKind === 'assistant');
+    expect(sidechainDrafts.length).toBeGreaterThanOrEqual(1);
+    const concatenatedDrafts = sidechainDrafts.map((row) => row.deltaText).join('');
+    expect(concatenatedDrafts).toContain('Plan in progress');
+
+    const sidechainCommits = commits.filter(
+      (row) => (row.body as any)?.type === 'message' && (row.body as any)?.sidechainId === started.sidechainId,
     );
-    expect(sidechainChunks.length).toBeGreaterThanOrEqual(1);
-    const concatenated = sidechainChunks.map((m) => String((m.body as any)?.message ?? '')).join('');
-    expect(concatenated).toContain('Plan in progress');
+    expect(sidechainCommits.length).toBeGreaterThanOrEqual(1);
+    const finalCommit = sidechainCommits[sidechainCommits.length - 1]!;
+    expect((finalCommit.meta as any)?.happierStreamSegmentV1?.segmentState).toBe('complete');
 
     // When streaming output is emitted, the bounded completion should not inject a duplicate
-    // "final" sidechain message without the stream key.
-    const nonStreamingSidechainMessages = sent.filter(
-      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string',
-    );
+    // "final" sidechain message in addition to the streaming segment.
+    const nonStreamingSidechainMessages = sent.filter((m) => (m.body as any)?.type === 'message' && (m.body as any)?.sidechainId === started.sidechainId);
     expect(nonStreamingSidechainMessages).toHaveLength(0);
   });
 
   it('streams review progress without leaking the trailing strict JSON payload', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const drafts: Array<{
+      provider: string;
+      localId: string;
+      segmentKind: string;
+      sidechainId: string | null;
+      deltaText: string;
+    }> = [];
+    const commits: Array<{
+      provider: string;
+      body: unknown;
+      localId: string;
+      meta?: Record<string, unknown>;
+    }> = [];
 
     let handler: AgentMessageHandler | null = null;
     const backend: AgentBackend = {
@@ -631,13 +1128,27 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
+      streamedTranscriptSession: {
+        sendAgentMessageCommitted: async (provider, body, opts) => {
+          commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+        },
+        sendTranscriptDraftDelta: (provider, params) => {
+          drafts.push({
+            provider,
+            localId: params.localId,
+            segmentKind: params.segmentKind,
+            sidechainId: params.sidechainId,
+            deltaText: params.deltaText,
+          });
+        },
+      },
       getNowMs: () => 1_700_000_000_000,
     });
 
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -648,18 +1159,16 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
 
-    const sidechainChunks = sent.filter(
-      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string',
-    );
-    expect(sidechainChunks.length).toBeGreaterThanOrEqual(1);
+    const sidechainDrafts = drafts.filter((row) => row.sidechainId === started.sidechainId && row.segmentKind === 'assistant');
+    expect(sidechainDrafts.length).toBeGreaterThanOrEqual(1);
 
-    const concatenated = sidechainChunks.map((m) => String((m.body as any)?.message ?? '')).join('');
-    expect(concatenated).toContain('Working');
-    expect(concatenated).not.toContain('"findings"');
+    const concatenatedDrafts = sidechainDrafts.map((row) => row.deltaText).join('');
+    expect(concatenatedDrafts).toContain('Working');
+    expect(concatenatedDrafts).not.toContain('"findings"');
 
     // A final summary message is still allowed so users get a clear terminal note.
     const finalNonStreaming = sent.find(
-      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string',
+      (m) => (m.body as any)?.type === 'message' && (m.body as any)?.sidechainId === started.sidechainId,
     );
     expect(String((finalNonStreaming?.body as any)?.message ?? '')).toContain('Ok');
   });
@@ -723,7 +1232,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'hello',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -738,7 +1247,8 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const raced = await Promise.race([
       sendPromise,
       new Promise<{ ok: false; errorCode: string; error: string }>((resolve) => {
-        setTimeout(() => resolve({ ok: false, errorCode: 'timeout', error: 'timeout' }), 50);
+        // Under load, the event loop can be briefly delayed; keep the threshold small but non-flaky.
+        setTimeout(() => resolve({ ok: false, errorCode: 'timeout', error: 'timeout' }), 500);
       }),
     ]);
 
@@ -760,7 +1270,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'hello',
       display: { title: 'Global Voice', participantLabel: 'Voice', groupId: 'group_1' },
       permissionMode: 'read_only',
@@ -791,8 +1301,195 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       .toBe(1);
   });
 
+  it('surfaces transcript persistence in public state for voice_agent runs', async () => {
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => createPromptEchoBackend(),
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      chatModelId: 'chat',
+      commitModelId: 'commit',
+      transcript: { persistenceMode: 'persistent', epoch: 3 },
+    });
+
+    expect((manager.getPublic(started.runId) as any)?.transcript).toMatchObject({
+      persistenceMode: 'persistent',
+      epoch: 3,
+    });
+  });
+
+  it('builds voice-agent prompts from resolved account settings instead of local CLI settings', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const seenCalls: Array<{ settings?: unknown; profileId?: string | null; sessionId?: string | null; workingDirectory?: string | null }> = [];
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => createPromptEchoBackend(),
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      resolveAccountSettings: async () => ({ promptStacksSource: 'account-settings' }),
+      resolveVoicePromptStackBlocks: async ({ settings, profileId, sessionId, workingDirectory }) => {
+        seenCalls.push({ settings, profileId, sessionId, workingDirectory });
+        return ['Voice stack block'];
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'initial context',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      profileId: 'work',
+    });
+
+    const streamStart = await manager.startTurnStream(started.runId, { message: 'hello' });
+    expect(streamStart.ok).toBe(true);
+    const read = await manager.readTurnStream(started.runId, {
+      streamId: (streamStart as { streamId: string }).streamId,
+      cursor: 0,
+      maxEvents: 128,
+    });
+    expect(read.ok).toBe(true);
+    expect(JSON.stringify((read as { events: unknown[] }).events)).toContain('Voice stack block');
+    expect(seenCalls).toEqual([{
+      settings: { promptStacksSource: 'account-settings' },
+      profileId: 'work',
+      sessionId: 'parent_session_1',
+      workingDirectory: process.cwd(),
+    }]);
+
+    const stopped = await manager.stop(started.runId);
+    expect(stopped.ok).toBe(true);
+    await manager.waitForTerminal(started.runId);
+  });
+
+  it('surfaces turnInFlight in public state for running bounded runs', async () => {
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => createDelayedJsonBackend('{"ok":true}', 50_000),
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'hello',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    expect((manager.getPublic(started.runId) as any)?.turnInFlight).toBe(true);
+
+    const stopped = await manager.stop(started.runId);
+    expect(stopped.ok).toBe(true);
+    await manager.waitForTerminal(started.runId);
+  });
+
+  it('passes the voice_agent start intent through to the backend factory', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: (opts) => {
+        seen.push(opts as Record<string, unknown>);
+        return createPromptEchoBackend();
+      },
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      chatModelId: 'chat',
+      commitModelId: 'commit',
+      transcript: { persistenceMode: 'ephemeral', epoch: 1 },
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      backendId: 'codex',
+      modelId: 'chat',
+      permissionMode: 'read_only',
+      start: { intent: 'voice_agent' },
+    });
+  });
+
+  it('does not force literal default model ids for voice_agent runs when start params omit them', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: (opts) => {
+        seen.push(opts as Record<string, unknown>);
+        return createPromptEchoBackend();
+      },
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      backendId: 'codex',
+      modelId: '',
+      permissionMode: 'read_only',
+      start: { intent: 'voice_agent' },
+    });
+  });
+
   it('streams sidechain output for long-lived runs when ioMode=streaming and avoids emitting a duplicate non-streaming message', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const drafts: Array<{
+      provider: string;
+      localId: string;
+      segmentKind: string;
+      sidechainId: string | null;
+      deltaText: string;
+    }> = [];
+    const commits: Array<{
+      provider: string;
+      body: unknown;
+      localId: string;
+      meta?: Record<string, unknown>;
+    }> = [];
 
     let handler: AgentMessageHandler | null = null;
     const backend: AgentBackend = {
@@ -818,13 +1515,27 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
+      streamedTranscriptSession: {
+        sendAgentMessageCommitted: async (provider, body, opts) => {
+          commits.push({ provider, body, localId: opts.localId, meta: opts.meta });
+        },
+        sendTranscriptDraftDelta: (provider, params) => {
+          drafts.push({
+            provider,
+            localId: params.localId,
+            segmentKind: params.segmentKind,
+            sidechainId: params.sidechainId,
+            deltaText: params.deltaText,
+          });
+        },
+      },
       getNowMs: () => 1_700_000_000_000,
     });
 
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',
@@ -836,12 +1547,91 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
     await expect
       .poll(
-        () => sent.filter((m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string').length,
+        () => drafts.filter((row) => row.sidechainId === started.sidechainId && row.segmentKind === 'assistant').length,
         { timeout: 1_000 },
       )
       .toBeGreaterThanOrEqual(1);
 
-    const nonStreaming = sent.filter((m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string');
+    const nonStreaming = sent.filter((m) => (m.body as any)?.type === 'message' && (m.body as any)?.sidechainId === started.sidechainId);
     expect(nonStreaming).toHaveLength(0);
+
+    const sidechainCommits = commits.filter(
+      (row) => (row.body as any)?.type === 'message' && (row.body as any)?.sidechainId === started.sidechainId,
+    );
+    expect(sidechainCommits.length).toBeGreaterThanOrEqual(1);
   });
+});
+
+describe('ExecutionRunManager (bounded external send)', () => {
+  it('rebuilds bounded interrupt prompts using the intent profile (preserves strict JSON guidance)', async () => {
+    const prompts: string[] = [];
+    let handler: AgentMessageHandler | null = null;
+    let waitResolve: (() => void) | null = null;
+    let currentWait: Promise<void> = new Promise(() => {});
+
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+        prompts.push(prompt);
+        currentWait = new Promise<void>((resolve) => {
+          waitResolve = resolve;
+        });
+
+        // First prompt intentionally never completes; we will interrupt it.
+        if (prompts.length === 1) return;
+
+        // Second prompt completes immediately with strict JSON.
+        handler?.({
+          type: 'model-output',
+          fullText: JSON.stringify({ summary: 'ok', deliverables: [{ id: 'd1', title: 'done' }] }),
+        } as any);
+        waitResolve?.();
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {
+        await currentWait;
+      },
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'original instructions',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await expect.poll(() => prompts.length, { timeout: 1_000 }).toBe(1);
+
+    const sendResult = await manager.send(started.runId, {
+      message: 'User update: finish immediately.',
+      delivery: 'interrupt',
+    });
+    expect(sendResult.ok).toBe(true);
+
+    await expect.poll(() => prompts.length, { timeout: 1_000 }).toBe(2);
+    expect(prompts[1]).toContain('deliverables');
+    expect(prompts[1]).toContain('User update: finish immediately.');
+
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)?.status).toBe('succeeded');
+  });
+
 });

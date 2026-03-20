@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentBackend, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 import { sendBackendLongLivedRun } from '@/agent/executionRuns/runtime/backendLongLivedSend';
 
@@ -12,13 +12,13 @@ function createResumableBackendHarness(): Readonly<{
   const emit = (msg: any) => handler?.(msg);
 
   const backend: AgentBackend = {
-    async startSession(): Promise<{ sessionId: SessionId }> {
+    async startSession(): Promise<StartSessionResult> {
       return { sessionId: 'child_session_started' as SessionId };
     },
-    async loadSession(_sessionId: SessionId): Promise<{ sessionId: SessionId }> {
+    async loadSession(_sessionId: SessionId): Promise<StartSessionResult> {
       return { sessionId: 'child_session_loaded' as SessionId };
     },
-    async loadSessionWithReplayCapture(_sessionId: SessionId): Promise<{ sessionId: SessionId; replay: unknown[] }> {
+    async loadSessionWithReplayCapture(_sessionId: SessionId): Promise<StartSessionResult & { replay: unknown[] }> {
       return { sessionId: 'child_session_loaded' as SessionId, replay: [] };
     },
     async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
