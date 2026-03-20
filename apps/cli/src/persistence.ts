@@ -240,6 +240,7 @@ export interface DaemonLocallyPersistedState {
   httpPort: number;
   startedAt: number;
   startedWithCliVersion: string;
+  machineId?: string;
   lastHeartbeatAt?: number;
   daemonLogPath?: string;
   controlToken?: string;
@@ -250,6 +251,7 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   httpPort: z.number().int().positive(),
   startedAt: z.number().int().nonnegative(),
   startedWithCliVersion: z.string(),
+  machineId: z.string().min(1).optional(),
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
   daemonLogPath: z.string().optional(),
   controlToken: z.string().optional(),
@@ -289,6 +291,7 @@ function normalizeDaemonState(
     httpPort: value.httpPort,
     startedAt,
     startedWithCliVersion: value.startedWithCliVersion,
+    machineId: undefined,
     lastHeartbeatAt,
     daemonLogPath: value.daemonLogPath,
   };
@@ -655,9 +658,7 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
     }
 
     if (candidates.length === 0) return null;
-    if (candidates.length === 1) return candidates[0];
 
-    // Prefer "alive" daemons when multiple stale files exist (we still fail closed if ambiguous).
     const alive = candidates.filter((state) => {
       try {
         process.kill(state.pid, 0);
@@ -666,6 +667,10 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
         return false;
       }
     });
+
+    if (candidates.length === 1) return alive[0] ?? null;
+
+    // Prefer "alive" daemons when multiple stale files exist (we still fail closed if ambiguous).
     if (alive.length === 1) return alive[0];
     return null;
   } catch {

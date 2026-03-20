@@ -55,21 +55,57 @@ describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
     expect(process.env.TSX_TSCONFIG_PATH).toBeUndefined();
   });
 
-  it('falls back to current bun script path when dist entrypoint is missing in bundled runtime', async () => {
+  it('falls back to tsx entrypoint in a source checkout even when variant/stack env is missing', async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return {
+        ...actual,
+        existsSync: (path: string) => {
+          if (path.endsWith('dist/index.mjs')) return false;
+          if (path.endsWith('src/index.ts')) return true;
+          return actual.existsSync(path);
+        },
+      };
+    });
+
+    const mod = (await import('./spawnHappyCLI')) as typeof import('./spawnHappyCLI');
+    const invocation = mod.buildHappyCliSubprocessInvocation(['--version']);
+    expect(invocation.argv).toContain('--import');
+    expect(invocation.argv).toEqual(
+      expect.arrayContaining([expect.stringMatching(/node_modules\/tsx\/dist\/esm\/index\.mjs$/)]),
+    );
+    expect(invocation.argv.join(' ')).toContain('src/index.ts');
+    expect(invocation.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.json$/));
+    expect(process.env.TSX_TSCONFIG_PATH).toBeUndefined();
+  });
+
+  it('uses argv-only fallback when dist entrypoint is missing in a self-contained bundled runtime', async () => {
     vi.resetModules();
     vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME', 'bun');
     vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', '/$bunfs/dist/index.mjs');
 
     const originalArgv = [...process.argv];
-    process.argv = ['bun', '/$bunfs/root/happier-darwin-arm64', 'daemon', 'start-sync'];
+    const originalExecPath = process.execPath;
+    process.argv = ['/Applications/Happier.app/Contents/MacOS/happier', '/$bunfs/root/happier-darwin-arm64', 'daemon', 'start-sync'];
 
     try {
+      Object.defineProperty(process, 'execPath', {
+        value: '/Applications/Happier.app/Contents/MacOS/happier',
+        configurable: true,
+      });
       const mod = (await import('./spawnHappyCLI')) as typeof import('./spawnHappyCLI');
       const invocation = mod.buildHappyCliSubprocessInvocation(['daemon', 'start-sync']);
       expect(invocation.runtime).toBe('bun');
-      expect(invocation.argv).toEqual(['/$bunfs/root/happier-darwin-arm64', 'daemon', 'start-sync']);
+      expect(invocation.argv).toEqual(['daemon', 'start-sync']);
     } finally {
       process.argv = originalArgv;
+      Object.defineProperty(process, 'execPath', {
+        value: originalExecPath,
+        configurable: true,
+      });
     }
   });
 });

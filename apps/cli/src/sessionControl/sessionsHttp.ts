@@ -74,14 +74,16 @@ export async function fetchSessionByIdCompat(params: Readonly<{ token: string; s
     if (!looksLikeMissingV2SessionRoute404(response.data, params.sessionId)) return null;
 
     let cursor: string | undefined = undefined;
-    for (let page = 0; page < 20; page++) {
+    const seenCursors = new Set<string>();
+    while (true) {
       const res = await fetchSessionsPage({ token: params.token, cursor, limit: 200 });
       const match = res.sessions.find((row) => (row as any) && String((row as any).id ?? '') === params.sessionId);
       if (match) return match as unknown as RawSessionRecord;
       if (!res.hasNext || !res.nextCursor) return null;
+      if (seenCursors.has(res.nextCursor)) return null;
+      seenCursors.add(res.nextCursor);
       cursor = res.nextCursor;
     }
-    return null;
   }
   if (response.status === 401 || response.status === 403) {
     throw new Error(`Unauthorized (${response.status})`);

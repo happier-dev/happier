@@ -53,4 +53,29 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     await expect(fetchSessionByIdCompat({ token: 't', sessionId: 's1' })).rejects.toThrow('Unexpected /v2/sessions response shape');
     expect(getSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('continues scanning beyond 20 pages when the compat fallback session appears later', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 404,
+      data: { error: 'Not found', path: '/v2/sessions/s-final', method: 'GET' },
+    } as any);
+
+    for (let page = 0; page < 21; page += 1) {
+      getSpy.mockResolvedValueOnce({
+        status: 200,
+        data: makeSessionFixtureListResponse(
+          page === 20 ? [makeSessionFixtureRow({ id: 's-final', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' })] : [],
+          {
+            nextCursor: page === 20 ? null : `cursor-${page + 1}`,
+            hasNext: page !== 20,
+          },
+        ),
+      } as any);
+    }
+
+    const res = await fetchSessionByIdCompat({ token: 't', sessionId: 's-final' });
+    expect(res).toMatchObject({ id: 's-final', dataEncryptionKey: 'dek' });
+    expect(getSpy).toHaveBeenCalledTimes(22);
+  });
 });

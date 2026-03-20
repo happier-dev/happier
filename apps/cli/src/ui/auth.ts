@@ -683,23 +683,45 @@ export async function ensureMachineIdInSettings(opts?: {
 
         const nextMachineIdByServerId = { ...(s.machineIdByServerId ?? {}) };
         const prevMachineIdForServer = nextMachineIdByServerId[activeServerId];
+        const nextLastSubByServerId = { ...(s.lastTokenSubByServerId ?? {}) };
+        const nextConfirmed = { ...(s.machineIdConfirmedByServerByServerId ?? {}) };
+        const hadLastSub = activeServerId in nextLastSubByServerId;
+        const hadConfirmed = activeServerId in nextConfirmed;
 
         if (!accountId) {
             const current = prevMachineIdForServer;
+            if (hadLastSub) delete nextLastSubByServerId[activeServerId];
+            if (hadConfirmed) delete nextConfirmed[activeServerId];
+
             if (forceNew || !current) {
                 const machineId = randomUUID();
                 nextMachineIdByServerId[activeServerId] = machineId;
                 return {
                     ...s,
                     machineIdByServerId: nextMachineIdByServerId,
+                    lastTokenSubByServerId: nextLastSubByServerId,
+                    machineIdConfirmedByServerByServerId: nextConfirmed,
                     // derived (not persisted in v5+)
                     machineId,
                 };
             }
-            return s;
+
+            if (!hadLastSub && !hadConfirmed) {
+                return {
+                    ...s,
+                    machineId: current,
+                };
+            }
+
+            return {
+                ...s,
+                lastTokenSubByServerId: nextLastSubByServerId,
+                machineIdConfirmedByServerByServerId: nextConfirmed,
+                // derived (not persisted in v5+)
+                machineId: current,
+            };
         }
 
-        const nextLastSubByServerId = { ...(s.lastTokenSubByServerId ?? {}) };
         const previousAccountId = typeof nextLastSubByServerId[activeServerId] === 'string'
             ? String(nextLastSubByServerId[activeServerId]).trim()
             : '';
@@ -729,8 +751,7 @@ export async function ensureMachineIdInSettings(opts?: {
         const needsLastSubUpdate = previousAccountId !== accountId;
         const needsPerAccountUpdate = perAccountMachineId !== machineId;
 
-        const nextConfirmed = { ...(s.machineIdConfirmedByServerByServerId ?? {}) };
-        const needsConfirmedUpdate = needsServerMachineIdUpdate && activeServerId in nextConfirmed;
+        const needsConfirmedUpdate = (needsServerMachineIdUpdate || needsLastSubUpdate) && activeServerId in nextConfirmed;
 
         if (!needsServerMachineIdUpdate && !needsLastSubUpdate && !needsPerAccountUpdate && !needsConfirmedUpdate) {
             return s;
@@ -758,8 +779,16 @@ export async function ensureMachineIdInSettings(opts?: {
     return { machineId: settings.machineId };
 }
 
-export async function ensureMachineIdForCredentials(credentials: Credentials): Promise<{ machineId: string }> {
-    const tokenPayload = decodeJwtPayload(credentials.token);
+export async function ensureMachineIdForCredentials(
+    credentials: Credentials,
+    opts?: { forceNew?: boolean },
+): Promise<{ machineId: string }> {
+    let tokenPayload: Record<string, unknown> | null = null;
+    try {
+        tokenPayload = decodeJwtPayload(credentials.token);
+    } catch {
+        tokenPayload = null;
+    }
     const accountId = typeof tokenPayload?.sub === 'string' ? tokenPayload.sub.trim() : null;
 
     let previousAccountId: string | null = null;
@@ -779,10 +808,13 @@ export async function ensureMachineIdForCredentials(credentials: Credentials): P
         }
     }
 
-    const ensured = await ensureMachineIdInSettings({ accountId });
+    const ensured = await ensureMachineIdInSettings({
+        accountId,
+        forceNew: Boolean(opts?.forceNew) && !accountId,
+    });
     if (accountId && previousAccountId && previousAccountId !== accountId) {
         logger.info(
-            `[AUTH] tokenSub changed for server=${activeServerIdForLog ?? 'unknown'} ${previousAccountId} -> ${accountId} machineId=${ensured.machineId}`,
+            `[AUTH] tokenSub changed for server=${activeServerIdForLog ?? 'unknown'} machineId=${ensured.machineId} (account ids redacted)`,
         );
     }
 
@@ -818,17 +850,23 @@ export async function authAndSetupMachineIfNeeded(): Promise<{
 
     // Make sure we have a machine ID.
     // Server machine entity will be created either by the daemon or by the CLI.
-    const { machineId } = await ensureMachineIdForCredentials(credentials);
+    const { machineId } = await ensureMachineIdForCredentials(credentials, { forceNew: newAuth });
 
     logger.debug(`[AUTH] Machine ID: ${machineId}`);
 
-    if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
-        try {
-            await ensureDaemonRunningForSessionCommand();
-        } catch (e) {
-            // Non-fatal: the session can still run without daemon, but remote spawn/control will be degraded.
-            logger.debug('[AUTH] Failed to auto-start daemon (non-fatal)', e);
-        }
+    if (
+      shouldAutoStartDaemonAfterAuth({
+        env: process.env,
+        isDaemonProcess: configuration.isDaemonProcess,
+        startedBy: 'terminal',
+      })
+    ) {
+      try {
+        await ensureDaemonRunningForSessionCommand();
+      } catch (e) {
+        // Non-fatal: the session can still run without daemon, but remote spawn/control will be degraded.
+        logger.debug('[AUTH] Failed to auto-start daemon (non-fatal)', e);
+      }
     }
 
     return { credentials, machineId };

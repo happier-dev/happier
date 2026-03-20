@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -50,41 +50,73 @@ describe('readDaemonState', () => {
 
     it('falls back to any daemon state file under servers/ when the active server daemon state path is missing', async () => {
         const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-state-fallback-'));
+        const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: number | NodeJS.Signals) => {
+            if (signal === 0 && pid === 456) return true;
+            const error = new Error('ESRCH') as NodeJS.ErrnoException;
+            error.code = 'ESRCH';
+            throw error;
+        }) as typeof process.kill);
 
-        vi.resetModules();
-        process.env.HAPPIER_HOME_DIR = homeDir;
-        // Choose an active server id that does not have a daemon state file.
-        process.env.HAPPIER_ACTIVE_SERVER_ID = 'localhost-53288';
+        try {
+            vi.resetModules();
+            process.env.HAPPIER_HOME_DIR = homeDir;
+            // Choose an active server id that does not have a daemon state file.
+            process.env.HAPPIER_ACTIVE_SERVER_ID = 'localhost-53288';
 
-        const [{ configuration }, { readDaemonState }] = await Promise.all([
-            import('./configuration'),
-            import('./persistence'),
-        ]);
+            const [{ configuration }, { readDaemonState }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
 
-        // Write a daemon state file under a different server id to simulate stack-managed daemon ids.
-        const fallbackPath = join(homeDir, 'servers', 'stack_test__id_default', 'daemon.state.json');
-        mkdirSync(dirname(fallbackPath), { recursive: true });
-        writeFileSync(
-            fallbackPath,
-            JSON.stringify(
-                {
-                    pid: 456,
-                    httpPort: 5173,
-                    startedAt: Date.now(),
-                    startedWithCliVersion: '0.0.0-test',
-                    controlToken: 'token-456',
-                },
-                null,
-                2
-            ),
-            'utf-8'
-        );
+            // Write a daemon state file under a different server id to simulate stack-managed daemon ids.
+            const fallbackPath = join(homeDir, 'servers', 'stack_test__id_default', 'daemon.state.json');
+            mkdirSync(dirname(fallbackPath), { recursive: true });
+            writeFileSync(
+                fallbackPath,
+                JSON.stringify(
+                    {
+                        pid: 456,
+                        httpPort: 5173,
+                        startedAt: Date.now(),
+                        startedWithCliVersion: '0.0.0-test',
+                        controlToken: 'token-456',
+                    },
+                    null,
+                    2
+                ),
+                'utf-8'
+            );
 
-        // Sanity: active daemon state path should be different (and missing).
-        expect(configuration.daemonStateFile).not.toBe(fallbackPath);
+            // Sanity: active daemon state path should be different (and missing).
+            expect(configuration.daemonStateFile).not.toBe(fallbackPath);
 
-        const state = await readDaemonState();
-        expect(state?.pid).toBe(456);
+            const state = await readDaemonState();
+            expect(state?.pid).toBe(456);
+
+            rmSync(dirname(fallbackPath), { recursive: true, force: true });
+            const stalePath = join(homeDir, 'servers', 'stack_test__id_stale', 'daemon.state.json');
+            mkdirSync(dirname(stalePath), { recursive: true });
+            writeFileSync(
+                stalePath,
+                JSON.stringify(
+                    {
+                        pid: 999_999,
+                        httpPort: 5173,
+                        startedAt: Date.now(),
+                        startedWithCliVersion: '0.0.0-test',
+                        controlToken: 'token-stale',
+                    },
+                    null,
+                    2
+                ),
+                'utf-8'
+            );
+
+            const staleState = await readDaemonState();
+            expect(staleState).toBeNull();
+        } finally {
+            killSpy.mockRestore();
+        }
     });
 
     it('accepts legacy startTime fields and normalizes to startedAt', async () => {
