@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
+const navigateWithBlurOnWebSpy = vi.fn((action: () => void) => action());
+const deferOnWebSpy = vi.fn((action: () => void) => action());
 const linkingCanOpenURLSpy = vi.fn(async () => false);
 const linkingOpenURLSpy = vi.fn(async () => {});
 const requestReviewSpy = vi.fn();
@@ -43,6 +45,14 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
+}));
+
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+    navigateWithBlurOnWeb: (action: () => void) => navigateWithBlurOnWebSpy(action),
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    deferOnWeb: (action: () => void) => deferOnWebSpy(action),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -199,6 +209,8 @@ vi.mock('@/utils/system/requestReview', () => ({
 
 afterEach(() => {
     routerPushSpy.mockClear();
+    navigateWithBlurOnWebSpy.mockClear();
+    deferOnWebSpy.mockClear();
     linkingCanOpenURLSpy.mockClear();
     linkingOpenURLSpy.mockClear();
     requestReviewSpy.mockClear();
@@ -243,6 +255,27 @@ describe('SettingsView', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
+    });
+
+    it('blurs the active element before routing to Features on web', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const featuresItem = items.find((item: any) => item?.props?.title === 'settings.featuresTitle');
+        expect(featuresItem).toBeTruthy();
+
+        await act(async () => {
+            featuresItem!.props.onPress();
+        });
+
+        expect(deferOnWebSpy).toHaveBeenCalledTimes(1);
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {

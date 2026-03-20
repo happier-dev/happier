@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockFeatureEnabled: (featureId: string) => boolean = (featureId: string) => featureId === 'execution.runs';
+const automationsSupportState = {
+    enabled: false,
+    discoverable: false,
+    blockedBy: 'server' as string | null,
+};
 
 const routerPushSpy = vi.fn();
 
@@ -168,7 +173,11 @@ vi.mock('@/utils/system/bugReportActionTrail', () => ({
 }));
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
-    useAutomationsSupport: () => ({ enabled: false }),
+    useAutomationsSupport: () => ({
+        enabled: automationsSupportState.enabled,
+        discoverable: automationsSupportState.discoverable,
+        blockedBy: automationsSupportState.blockedBy,
+    }),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -182,6 +191,9 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 afterEach(() => {
     routerPushSpy.mockClear();
+    automationsSupportState.enabled = false;
+    automationsSupportState.discoverable = false;
+    automationsSupportState.blockedBy = 'server';
 });
 
 describe('SettingsView (runs entry)', () => {
@@ -204,7 +216,7 @@ describe('SettingsView (runs entry)', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/runs');
     });
 
-    it('does not include a Sub-agent entry (it is located under Session settings)', async () => {
+    it('includes a Transcript entry that routes to /settings/session/transcript', async () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
@@ -213,11 +225,21 @@ describe('SettingsView (runs entry)', () => {
         });
 
         const items = tree.root.findAllByType('Item' as any);
-        const subAgentItem = items.find((item: any) => item?.props?.title === 'Sub-agent');
-        expect(subAgentItem).toBeFalsy();
+        const transcriptItem = items.find((item: any) => item?.props?.title === 'settings.transcript');
+        expect(transcriptItem).toBeTruthy();
+
+        await act(async () => {
+            transcriptItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/transcript');
     });
 
-    it('does not include an Actions entry (it is located under Session settings)', async () => {
+    it('keeps the automations entry discoverable when only local feature flags are off and routes to Features', async () => {
+        automationsSupportState.enabled = false;
+        automationsSupportState.discoverable = true;
+        automationsSupportState.blockedBy = 'local_policy';
+
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
@@ -226,8 +248,72 @@ describe('SettingsView (runs entry)', () => {
         });
 
         const items = tree.root.findAllByType('Item' as any);
-        const actionsItem = items.find((item: any) => item?.props?.title === 'Actions');
-        expect(actionsItem).toBeFalsy();
+        const automationsItem = items.find((item: any) => item?.props?.title === 'settings.automations');
+        expect(automationsItem).toBeTruthy();
+        expect(automationsItem?.props?.subtitle).toBe('settingsFeatures.expAutomationsSubtitle');
+
+        await act(async () => {
+            automationsItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+    });
+
+    it('includes a Permissions entry that routes to /settings/session/permissions', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const permissionsItem = items.find((item: any) => item?.props?.title === 'settings.permissions');
+        expect(permissionsItem).toBeTruthy();
+
+        await act(async () => {
+            permissionsItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/permissions');
+    });
+
+    it('includes a Subagents entry that routes to /settings/sub-agent', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const subAgentItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.groupTitle');
+        expect(subAgentItem).toBeTruthy();
+
+        await act(async () => {
+            subAgentItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/sub-agent');
+    });
+
+    it('includes an Actions entry that routes to /settings/actions', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const actionsItem = items.find((item: any) => item?.props?.title === 'common.actions');
+        expect(actionsItem).toBeTruthy();
+
+        await act(async () => {
+            actionsItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/actions');
     });
 
     it("omits the What's New entry when changelog UI is disabled by build policy", async () => {
@@ -263,7 +349,7 @@ describe('SettingsView (runs entry)', () => {
 
         const items = tree.root.findAllByType('Item' as any);
         const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.sourceControl');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.filesSourceControl');
         const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
 
         expect(voiceItem).toBeFalsy();
@@ -283,7 +369,7 @@ describe('SettingsView (runs entry)', () => {
 
         const items = tree.root.findAllByType('Item' as any);
         const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.sourceControl');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.filesSourceControl');
         const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
 
         expect(voiceItem).toBeTruthy();
