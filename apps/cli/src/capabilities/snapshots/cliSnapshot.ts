@@ -12,6 +12,7 @@ import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliRes
 import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { isProviderCliPathRunnable, providerCliPathRequiresJavaScriptRuntime } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +27,7 @@ export interface DetectCliRequest {
      */
     includeLoginStatus?: boolean;
     bypassCache?: boolean;
+    requestedCliNames?: readonly DetectCliName[];
 }
 
 export interface DetectCliEntry {
@@ -134,6 +136,9 @@ async function withCliSnapshotProbeTimeout<T>(promise: Promise<T>, timeoutMs: nu
 
 function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | null): string {
     const includeLoginStatus = params.includeLoginStatus === true ? '1' : '0';
+    const requestedCliNames = Array.isArray(params.requestedCliNames)
+        ? params.requestedCliNames.map((value) => String(value)).sort().join(',')
+        : '';
     const path = String(pathEnv ?? '');
     const pathExt = process.platform === 'win32' ? String(process.env.PATHEXT ?? '') : '';
     const home = String(process.env.HOME ?? '');
@@ -157,7 +162,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         })
         .join(':');
 
-    return `${includeLoginStatus}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${authEnvFingerprint}:${pathOverrides}`;
+    return `${includeLoginStatus}:${requestedCliNames}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${authEnvFingerprint}:${pathOverrides}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
@@ -282,18 +287,14 @@ function quoteShellArgument(value: string): string {
 }
 
 async function isCliPathRunnable(resolvedPath: string): Promise<boolean> {
-    if (!/\.(c?js)$/i.test(resolvedPath)) {
-        return true;
-    }
-
-    const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
+    return isProviderCliPathRunnable(resolvedPath, process.env, {
         isBunRuntime: typeof process.versions.bun === 'string',
+        currentExecPath: process.execPath,
     });
-    return Boolean(runtimeExecutable);
 }
 
 async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promise<string> {
-    if (!/\.(c?js)$/i.test(params.resolvedPath)) {
+    if (!providerCliPathRequiresJavaScriptRuntime(params.resolvedPath)) {
         return quoteShellArgument(params.resolvedPath);
     }
 
@@ -362,7 +363,7 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
         const timeoutMs = process.env.CI ? 2500 : 1200;
         const isWindows = process.platform === 'win32';
         const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
-        const isJsFile = /\.(c?js)$/i.test(params.resolvedPath);
+        const needsJavaScriptRuntime = providerCliPathRequiresJavaScriptRuntime(params.resolvedPath);
 
         const asString = (value: unknown): string => {
             if (typeof value === 'string') return value;
@@ -434,7 +435,7 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
 	            return second.semver;
 	        };
 
-        if (isJsFile) {
+        if (needsJavaScriptRuntime) {
             const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
                 isBunRuntime: typeof process.versions.bun === 'string',
             });
@@ -593,8 +594,11 @@ async function resolveCliPathForName(
 export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Promise<DetectCliSnapshot> {
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
     const includeLoginStatus = Boolean(data?.includeLoginStatus);
+    const requestedCliNames = Array.isArray(data?.requestedCliNames)
+        ? data.requestedCliNames.filter((name): name is DetectCliName => typeof name === 'string' && Object.prototype.hasOwnProperty.call(AGENTS, name))
+        : [];
     const probeTimeoutMs = resolveCliSnapshotProbeTimeoutMs(includeLoginStatus);
-    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus }, pathEnv);
+    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus, requestedCliNames }, pathEnv);
     const cached = data?.bypassCache ? null : cliSnapshotCache.get(cacheKey);
     if (!data?.bypassCache && cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
 
@@ -602,7 +606,9 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         const cached2 = cliSnapshotCache.get(cacheKey);
         if (!data?.bypassCache && cached2?.kind === 'success' && cliSnapshotCache.isFresh(cached2)) return cached2.value;
 
-    const names = Object.keys(AGENTS) as DetectCliName[];
+    const names = requestedCliNames.length > 0
+        ? requestedCliNames
+        : Object.keys(AGENTS) as DetectCliName[];
 
     const pairs = await Promise.all(
         names.map(async (name) => {
@@ -613,54 +619,59 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
             }
             const { resolvedPath, resolutionSource } = resolved;
 
-            const timedEntry = await withCliSnapshotProbeTimeout(
-                (async (): Promise<DetectCliEntry> => {
-                    const version = await detectCliVersion({ name, resolvedPath });
-                    const authStatus = includeLoginStatus ? await detectCliAuthStatus({ name, resolvedPath }) : null;
-                    const resolvedCommand = await resolveCliLaunchCommand({ resolvedPath });
-                    const isLoggedIn = includeLoginStatus
-                        ? (authStatus?.state === 'logged_in'
-                            ? true
-                            : authStatus?.state === 'logged_out'
-                                ? false
-                                : null)
-                        : null;
+            const [versionResult, authStatusResult, resolvedCommandResult] = await Promise.all([
+                withCliSnapshotProbeTimeout(
+                    detectCliVersion({ name, resolvedPath }),
+                    probeTimeoutMs,
+                ),
+                includeLoginStatus
+                    ? withCliSnapshotProbeTimeout(
+                        detectCliAuthStatus({ name, resolvedPath }),
+                        probeTimeoutMs,
+                    )
+                    : Promise.resolve(null),
+                withCliSnapshotProbeTimeout(
+                    resolveCliLaunchCommand({ resolvedPath }),
+                    probeTimeoutMs,
+                ),
+            ]);
 
+            const authStatus = (() => {
+                if (!includeLoginStatus) return null;
+                if (authStatusResult === CLI_SNAPSHOT_PROBE_TIMEOUT) {
                     return {
-                        available: true,
-                        resolvedPath,
-                        resolvedCommand,
-                        resolutionSource,
-                        ...(typeof version === 'string' ? { version } : {}),
-                        ...(includeLoginStatus ? { isLoggedIn } : {}),
-                        ...(includeLoginStatus ? { authStatus } : {}),
-                    };
-                })(),
-                probeTimeoutMs,
-            );
+                        checkedAt: Date.now(),
+                        state: 'unknown',
+                        reason: 'timeout',
+                        source: 'command',
+                    } satisfies CliAuthStatus;
+                }
+                return authStatusResult;
+            })();
 
-            if (timedEntry === CLI_SNAPSHOT_PROBE_TIMEOUT) {
-                const checkedAt = Date.now();
-                const entry: DetectCliEntry = {
-                    available: true,
-                    resolvedPath,
-                    resolutionSource,
-                    ...(includeLoginStatus
-                        ? {
-                            isLoggedIn: null,
-                            authStatus: {
-                                checkedAt,
-                                state: 'unknown',
-                                reason: 'timeout',
-                                source: 'command',
-                            } satisfies CliAuthStatus,
-                        }
-                        : {}),
-                };
-                return [name, entry] as const;
-            }
+            const isLoggedIn = includeLoginStatus
+                ? (authStatus?.state === 'logged_in'
+                    ? true
+                    : authStatus?.state === 'logged_out'
+                        ? false
+                        : null)
+                : null;
 
-            return [name, timedEntry] as const;
+            const entry: DetectCliEntry = {
+                available: true,
+                resolvedPath,
+                resolutionSource,
+                ...(resolvedCommandResult !== CLI_SNAPSHOT_PROBE_TIMEOUT && typeof resolvedCommandResult === 'string'
+                    ? { resolvedCommand: resolvedCommandResult }
+                    : {}),
+                ...(versionResult !== CLI_SNAPSHOT_PROBE_TIMEOUT && typeof versionResult === 'string'
+                    ? { version: versionResult }
+                    : {}),
+                ...(includeLoginStatus ? { isLoggedIn } : {}),
+                ...(includeLoginStatus ? { authStatus } : {}),
+            };
+
+            return [name, entry] as const;
         }),
     );
 
@@ -683,9 +694,13 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         }
     }
 
+    const pairEntries = Object.fromEntries(pairs) as Partial<Record<DetectCliName, DetectCliEntry>>;
+
     return {
         path: pathEnv,
-        clis: Object.fromEntries(pairs) as Record<DetectCliName, DetectCliEntry>,
+        clis: Object.fromEntries(
+            (Object.keys(AGENTS) as DetectCliName[]).map((name) => [name, pairEntries[name] ?? { available: false }]),
+        ) as Record<DetectCliName, DetectCliEntry>,
         tmux,
         windowsTerminal,
     };
