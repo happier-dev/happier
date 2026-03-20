@@ -17,7 +17,6 @@ import { repoRootDir } from '../paths';
 import { sleep } from '../timing';
 import { yarnCommand } from './commands';
 import { runLoggedCommand } from './spawnProcess';
-import { resolveWorkspaceCommandArgs } from './workspaceCommandArgs';
 
 let _ensurePromise: Promise<string> | null = null;
 let _ensureSharedPromise: Promise<void> | null = null;
@@ -221,7 +220,7 @@ export async function ensureCliSharedDepsBuilt(
       const runCommand = options.runCommand ?? runLoggedCommand;
       await runCommand({
         command: yarnCommand(),
-        args: resolveWorkspaceCommandArgs('@happier-dev/cli', 'build:shared'),
+        args: ['-s', 'workspace', '@happier-dev/cli', 'build:shared'],
         cwd: rootDir,
         env: { ...process.env, ...params.env, CI: '1' },
         stdoutPath: resolve(params.testDir, 'cli.buildShared.stdout.log'),
