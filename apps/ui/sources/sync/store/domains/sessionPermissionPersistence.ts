@@ -1,6 +1,9 @@
 import type { Session } from '../../domains/state/storageTypes';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../domains/state/persistence';
+import {
+    saveSessionPermissionModeUpdatedAts,
+    saveSessionPermissionModes,
+} from '../../domains/state/persistence';
 
 function extractSessionPermissionData(sessions: Record<string, Session>): {
     modes: Record<string, PermissionMode>;
@@ -10,11 +13,13 @@ function extractSessionPermissionData(sessions: Record<string, Session>): {
     const updatedAts: Record<string, number> = {};
 
     Object.entries(sessions).forEach(([id, sess]) => {
-        if (sess.permissionMode && sess.permissionMode !== 'default') {
-            modes[id] = sess.permissionMode;
-        }
-        if (typeof sess.permissionModeUpdatedAt === 'number') {
-            updatedAts[id] = sess.permissionModeUpdatedAt;
+        const updatedAt = sess.permissionModeUpdatedAt;
+        if (typeof updatedAt === 'number' && Number.isFinite(updatedAt)) {
+            updatedAts[id] = updatedAt;
+            // Persist the mode whenever we have a timestamp (including explicit resets to default).
+            if (sess.permissionMode) {
+                modes[id] = sess.permissionMode;
+            }
         }
     });
 
@@ -36,4 +41,3 @@ export function persistSessionPermissionData(sessions: Record<string, Session>):
         return null;
     }
 }
-

@@ -17,17 +17,20 @@ describe('useMessagesByIds', () => {
   it('returns a referentially stable array when store state is unchanged', async () => {
     const previousState = storage.getState();
     try {
+      const messagesById = {
+        'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+        'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
+      };
+
       storage.setState((state) => ({
         ...state,
         sessionMessages: {
           ...state.sessionMessages,
           's-1': {
             messageIdsOldestFirst: ['m-1', 'm-2'],
-            messagesById: {
-              'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
-              'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
-            },
-            messagesMap: {},
+            messagesById,
+            messagesMap: messagesById,
+            draftsByLocalId: {},
             reducerState: {} as any,
             latestThinkingMessageId: null,
             latestThinkingMessageActivityAtMs: null,
@@ -82,17 +85,20 @@ describe('useMessagesByIds', () => {
     const previousState = storage.getState();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
+      const messagesById = {
+        'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+        'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
+      };
+
       storage.setState((state) => ({
         ...state,
         sessionMessages: {
           ...state.sessionMessages,
           's-1': {
             messageIdsOldestFirst: ['m-1', 'm-2'],
-            messagesById: {
-              'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
-              'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
-            },
-            messagesMap: {},
+            messagesById,
+            messagesMap: messagesById,
+            draftsByLocalId: {},
             reducerState: {} as any,
             latestThinkingMessageId: null,
             latestThinkingMessageActivityAtMs: null,
