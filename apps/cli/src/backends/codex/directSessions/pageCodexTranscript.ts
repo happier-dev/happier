@@ -2,11 +2,16 @@ import { stat } from 'node:fs/promises';
 
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { readJsonlFileBackwardPage } from '@/backends/directSessions/filePaging/jsonlBackwardPager';
+import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
 
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
+import { encodeCodexDirectForwardCursor } from './codexDirectForwardCursor';
 import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
 import { mapCodexRolloutLineToDirectMessages } from './mapCodexRolloutLineToDirectMessages';
+import {
+  mapCodexDirectSessionAppServerPreviewToMessage,
+  resolveCodexDirectSessionAppServerMetadata,
+} from './resolveCodexDirectSessionAppServerMetadata';
 
 type CodexBackwardCursorV1 = Readonly<{
   v: 1;
@@ -46,7 +51,7 @@ export async function pageCodexTranscript(params: Readonly<{
   cursor?: string;
   maxBytes: number;
   maxItems: number;
-}>): Promise<Readonly<{ items: DirectTranscriptRawMessageV1[]; nextCursor: string | null; hasMore: boolean; truncated?: boolean }>> {
+}>): Promise<Readonly<{ items: DirectTranscriptRawMessageV1[]; nextCursor: string | null; tailCursor: string | null; hasMore: boolean; truncated?: boolean }>> {
   const env = params.env ?? process.env;
   const homes = await resolveCodexHomesForDirectSessionsSource({
     source: params.source,
@@ -69,15 +74,41 @@ export async function pageCodexTranscript(params: Readonly<{
     }
   }
 
+  const appServerMetadata = await resolveCodexDirectSessionAppServerMetadata({
+    source: params.source,
+    activeServerDir: params.activeServerDir,
+    remoteSessionId: params.remoteSessionId,
+    env,
+  });
   const files = best?.files ?? [];
   if (files.length === 0) {
-    return { items: [], nextCursor: null, hasMore: false };
+    const previewItem = appServerMetadata
+      ? mapCodexDirectSessionAppServerPreviewToMessage({ remoteSessionId: params.remoteSessionId, metadata: appServerMetadata })
+      : null;
+    const tailCursor = appServerMetadata
+      ? encodeCodexDirectForwardCursor({
+        v: 2,
+        kind: 'codexForwardAppServer',
+        updatedAtMs: appServerMetadata.updatedAtMs,
+        previewText: appServerMetadata.previewText,
+      })
+      : null;
+    return { items: previewItem ? [previewItem] : [], nextCursor: null, tailCursor, hasMore: false };
   }
+
+  const lastFile = files[files.length - 1]!;
+  const lastFileSize = await stat(lastFile.filePath).then((s) => s.size).catch(() => 0);
+  const tailCursor = encodeCodexDirectForwardCursor({
+    v: 1,
+    kind: 'codexForward',
+    fileRelPath: lastFile.fileRelPath,
+    offsetBytes: lastFileSize,
+  });
 
   if (params.direction !== 'older') {
     // Forward paging is not required for v1 UI flows (tail uses readAfter).
     // Return empty to avoid surprising ordering bugs until the UI needs it.
-    return { items: [], nextCursor: null, hasMore: false };
+    return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
 
   const cursor = decodeBackwardCursor(params.cursor);
@@ -160,11 +191,17 @@ export async function pageCodexTranscript(params: Readonly<{
   }
 
   const items = chunks.flat();
+  if (items.length === 0 && appServerMetadata) {
+    const previewItem = mapCodexDirectSessionAppServerPreviewToMessage({ remoteSessionId: params.remoteSessionId, metadata: appServerMetadata });
+    if (previewItem) {
+      return { items: [previewItem], nextCursor: null, tailCursor, hasMore: false, ...(truncated ? { truncated } : {}) };
+    }
+  }
   if (!nextCursorCandidate || items.length === 0) {
-    return { items, nextCursor: null, hasMore: false, ...(truncated ? { truncated } : {}) };
+    return { items, nextCursor: null, tailCursor, hasMore: false, ...(truncated ? { truncated } : {}) };
   }
 
   const hasMore = nextCursorCandidate.endOffsetBytes > 0 || files.findIndex((f) => f.fileRelPath === nextCursorCandidate.fileRelPath) > 0;
   const nextCursor = hasMore ? encodeBackwardCursor(nextCursorCandidate) : null;
-  return { items, nextCursor, hasMore, ...(truncated ? { truncated } : {}) };
+  return { items, nextCursor, tailCursor, hasMore, ...(truncated ? { truncated } : {}) };
 }

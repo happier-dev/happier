@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { pageCodexTranscript } from './pageCodexTranscript';
-import { readJsonlFileBackwardPage } from '@/backends/directSessions/filePaging/jsonlBackwardPager';
+import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
   return `${JSON.stringify({ type: 'session_meta', payload })}\n`;
@@ -78,6 +78,7 @@ describe('pageCodexTranscript', () => {
     expect(firstTypes).toEqual(['tool-call', 'tool-call-result']);
     expect(first.hasMore).toBe(true);
     expect(first.nextCursor).toBeTruthy();
+    expect(first.tailCursor).toBeTruthy();
 
     const second = await pageCodexTranscript({
       source: { kind: 'codexHome', home: 'user' },
@@ -99,5 +100,63 @@ describe('pageCodexTranscript', () => {
     expect(secondTypes).toEqual(['text', 'message']);
     expect(second.hasMore).toBe(false);
     expect(second.nextCursor).toBeNull();
+  });
+
+  it('falls back to app-server preview metadata when rollout files are missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-page-app-server-'));
+    const codexHome = join(root, 'codex-home');
+    await mkdir(codexHome, { recursive: true });
+
+    const sessionId = 'remote_preview';
+    const fakeAppServer = join(root, 'fake-codex-app-server.mjs');
+    await writeFile(
+      fakeAppServer,
+      [
+        '#!/usr/bin/env node',
+        'import readline from "node:readline";',
+        'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
+        'for await (const line of rl) {',
+        '  if (!line.trim()) continue;',
+        '  const msg = JSON.parse(line);',
+        '  if (msg.method === "initialize") {',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+        '    continue;',
+        '  }',
+        '  if (msg.method === "initialized") continue;',
+        '  if (msg.method === "thread/list") {',
+        `    process.stdout.write(JSON.stringify({ id: msg.id, result: { data: [{ id: ${JSON.stringify(sessionId)}, name: "App server preview", updatedAt: 1736000100, cwd: "/repo/from-app-server" }], nextCursor: null } }) + "\\n");`,
+        '    continue;',
+        '  }',
+        '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
+        '}',
+      ].join('\n'),
+      { encoding: 'utf8', mode: 0o755 },
+    );
+
+    const result = await pageCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome, HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxBytes: 1024 * 1024,
+      maxItems: 10,
+    });
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        raw: expect.objectContaining({
+          role: 'agent',
+          content: expect.objectContaining({
+            data: expect.objectContaining({
+              type: 'message',
+              message: 'App server preview',
+            }),
+          }),
+        }),
+      }),
+    ]);
+    expect(result.tailCursor).toBeTruthy();
+    expect(result.hasMore).toBe(false);
   });
 });

@@ -1,10 +1,9 @@
-import { readdir, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
-
 import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
 
-import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
-import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
+import { createCodexAppServerClient } from '../appServer/client/createCodexAppServerClient';
+import { listCodexDirectSessionCandidatesViaExistingAppServerClient } from '../appServer/session/listCodexDirectSessionCandidatesViaAppServer';
+import { listCodexDirectSessionCandidatesViaRollouts } from './listCodexDirectSessionCandidatesViaRollouts';
+import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
 
@@ -26,46 +25,64 @@ function decodeIndexCursor(raw: string | undefined): number {
   }
 }
 
-function parseResumeIdFromRolloutFilename(filePath: string): string | null {
-  const name = basename(filePath);
-  const match = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(name);
-  return match ? match[1] : null;
+function resolveCodexDirectListAppServerBudgetMs(env: NodeJS.ProcessEnv): number {
+  const raw = Number.parseInt(String(env.HAPPIER_CODEX_DIRECT_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS ?? ''), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 750;
 }
 
-async function collectRolloutFiles(params: Readonly<{ rootDir: string; maxDepth: number; archived: boolean }>): Promise<Array<{ filePath: string; mtimeMs: number; archived: boolean }>> {
-  const out: Array<{ filePath: string; mtimeMs: number; archived: boolean }> = [];
-  const maxDepth = Math.max(0, Math.trunc(params.maxDepth));
+async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly<{
+  source: DirectSessionsSource;
+  activeServerDir: string;
+  env: NodeJS.ProcessEnv;
+  searchTerm?: string;
+}>): Promise<DirectSessionCandidateV1[]> {
+  const budgetMs = resolveCodexDirectListAppServerBudgetMs(params.env);
+  const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
+    source: params.source,
+    activeServerDir: params.activeServerDir,
+    env: params.env,
+  });
 
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > maxDepth) return;
-
-    let entries: any[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
-      const full = join(dir, name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
-      try {
-        const s = await stat(full);
-        out.push({ filePath: full, mtimeMs: s.mtimeMs, archived: params.archived });
-      } catch {
-        // ignore unreadable
-      }
-    }
+  const listed: DirectSessionCandidateV1[] = [];
+  const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
+  for (const homeEntry of homeEntries) {
+    const processEnv = {
+      ...process.env,
+      ...params.env,
+      CODEX_HOME: homeEntry.codexHome,
+    } as NodeJS.ProcessEnv;
+    const client = await createCodexAppServerClient({ processEnv }).catch(() => null);
+    if (!client) continue;
+    const result = await Promise.race<DirectSessionCandidateV1[] | null>([
+      listCodexDirectSessionCandidatesViaExistingAppServerClient({ client, processEnv })
+        .then((value) => value)
+        .catch(() => null)
+        .finally(async () => {
+          await client.dispose().catch(() => undefined);
+        }),
+      new Promise<null>((resolve) => setTimeout(async () => {
+        await client.dispose().catch(() => undefined);
+        resolve(null);
+      }, budgetMs)),
+    ]);
+    if (!result) continue;
+    listed.push(...result.map((candidate) => ({
+      ...candidate,
+      details: {
+        ...(candidate.details ?? {}),
+        source: homeEntry.source,
+      },
+    })).filter((candidate) => {
+      if (!searchTerm) return true;
+      const details = candidate.details as Record<string, unknown> | undefined;
+      const cwd = typeof details?.cwd === 'string' ? details.cwd : undefined;
+      const title = candidate.title;
+      const haystack = `${candidate.remoteSessionId}${title ? ` ${title}` : ''}${cwd ? ` ${cwd}` : ''}`.toLowerCase();
+      return haystack.includes(searchTerm);
+    }));
   }
 
-  await walk(params.rootDir, 0);
-  return out;
+  return listed;
 }
 
 export async function listCodexSessionCandidates(params: Readonly<{
@@ -77,69 +94,60 @@ export async function listCodexSessionCandidates(params: Readonly<{
   searchTerm?: string;
 }>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
   const env = params.env ?? process.env;
-  const homes = await resolveCodexHomesForDirectSessionsSource({
+
+  const offset = decodeIndexCursor(params.cursor);
+  const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
+  const limit = Math.max(1, Math.trunc(params.limit));
+  const rolloutListing = await listCodexDirectSessionCandidatesViaRollouts({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env,
+    offset,
+    limit,
+    searchTerm,
+  });
+  const appServerCandidates = await listCodexSessionCandidatesViaAppServerWithBudget({
+    source: params.source,
+    activeServerDir: params.activeServerDir,
+    env,
+    searchTerm,
   });
 
-  const grouped = new Map<string, { updatedAtMs: number; archived: boolean; latestFilePath: string }>();
-  for (const home of homes) {
-    const sessionsDir = join(home, 'sessions');
-    const archivedDir = join(home, 'archived_sessions');
-    const files = [
-      ...(await collectRolloutFiles({ rootDir: sessionsDir, maxDepth: 10, archived: false })),
-      ...(await collectRolloutFiles({ rootDir: archivedDir, maxDepth: 10, archived: true })),
-    ];
-
-    for (const entry of files) {
-      const resumeId = parseResumeIdFromRolloutFilename(entry.filePath);
-      if (!resumeId) continue;
-      const existing = grouped.get(resumeId);
-      if (!existing) {
-        grouped.set(resumeId, { updatedAtMs: entry.mtimeMs, archived: entry.archived, latestFilePath: entry.filePath });
-        continue;
-      }
-      const nextUpdated = Math.max(existing.updatedAtMs, entry.mtimeMs);
-      const archived = existing.archived && entry.archived;
-      const latestFilePath = entry.mtimeMs >= existing.updatedAtMs ? entry.filePath : existing.latestFilePath;
-      grouped.set(resumeId, { updatedAtMs: nextUpdated, archived, latestFilePath });
-    }
+  if (appServerCandidates.length === 0) {
+    const nextOffset = offset + rolloutListing.candidates.length;
+    const nextCursor = nextOffset < rolloutListing.totalCount ? encodeIndexCursor(nextOffset) : null;
+    return {
+      candidates: rolloutListing.candidates,
+      nextCursor,
+    };
   }
 
-  const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
+  const effectiveRolloutListing = appServerCandidates.length > 0 && offset > 0
+    ? await listCodexDirectSessionCandidatesViaRollouts({
+      source: params.source,
+      activeServerDir: params.activeServerDir,
+      env,
+      offset: 0,
+      limit: offset + limit,
+      searchTerm,
+    })
+    : rolloutListing;
 
-  const candidates: DirectSessionCandidateV1[] = [];
-  for (const [remoteSessionId, group] of grouped.entries()) {
-    const meta = await readCodexSessionMetaFromRollout(group.latestFilePath);
-    const cwd = meta && typeof meta.cwd === 'string' ? meta.cwd : undefined;
-    const createdAtMs = (() => {
-      const ts = meta && typeof meta.timestamp === 'string' ? Date.parse(meta.timestamp) : NaN;
-      return Number.isFinite(ts) && ts >= 0 ? Math.trunc(ts) : Math.trunc(group.updatedAtMs);
-    })();
-
-    const details = cwd ? { cwd } : undefined;
-    if (searchTerm) {
-      const haystack = `${remoteSessionId}${cwd ? ` ${cwd}` : ''}`.toLowerCase();
-      if (!haystack.includes(searchTerm)) continue;
-    }
-
-    candidates.push({
-      remoteSessionId,
-      updatedAtMs: Math.trunc(group.updatedAtMs),
-      createdAtMs,
-      archived: group.archived,
-      ...(details ? { details } : {}),
-    });
+  const merged = new Map<string, DirectSessionCandidateV1>();
+  for (const candidate of appServerCandidates) {
+    merged.set(candidate.remoteSessionId, candidate);
+  }
+  for (const candidate of effectiveRolloutListing.candidates) {
+    merged.set(candidate.remoteSessionId, candidate);
   }
 
-  candidates.sort((a, b) => b.updatedAtMs - a.updatedAtMs || String(a.remoteSessionId).localeCompare(String(b.remoteSessionId)));
+  const candidates = Array.from(merged.values())
+    .sort((a, b) => b.updatedAtMs - a.updatedAtMs || String(a.remoteSessionId).localeCompare(String(b.remoteSessionId)))
+    .slice(offset, offset + limit);
+  const totalCount = Math.max(effectiveRolloutListing.totalCount, merged.size);
 
-  const limit = Math.max(1, Math.trunc(params.limit));
-  const offset = decodeIndexCursor(params.cursor);
-  const page = candidates.slice(offset, offset + limit);
-  const nextOffset = offset + page.length;
-  const nextCursor = nextOffset < candidates.length ? encodeIndexCursor(nextOffset) : null;
+  const nextOffset = offset + candidates.length;
+  const nextCursor = nextOffset < totalCount ? encodeIndexCursor(nextOffset) : null;
 
-  return { candidates: page, nextCursor };
+  return { candidates, nextCursor };
 }
