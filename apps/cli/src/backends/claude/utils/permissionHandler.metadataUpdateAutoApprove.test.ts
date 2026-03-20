@@ -3,13 +3,17 @@ import { describe, expect, it } from 'vitest';
 import type { EnhancedMode } from '../loop';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
-function timeout(ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    const id = setTimeout(() => {
-      clearTimeout(id);
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
       reject(new Error(`Timed out after ${ms}ms`));
     }, ms);
   });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
 }
 
 describe('Claude PermissionHandler - metadata updates while waiting for permission', () => {
@@ -33,13 +37,13 @@ describe('Claude PermissionHandler - metadata updates while waiting for permissi
     client.updateMetadata((current) => ({
       ...current,
       permissionMode: 'yolo',
-      permissionModeUpdatedAt: 123,
+      permissionModeUpdatedAt:
+        typeof current.permissionModeUpdatedAt === 'number' ? current.permissionModeUpdatedAt + 1 : 1,
     }));
 
-    const result = await Promise.race([pending, timeout(1_500)]);
+    const result = await withTimeout(pending, 1_500);
     expect(result).toMatchObject({ behavior: 'allow' });
     expect(client.agentState.requests['toolu_metadata_change_1']).toBeUndefined();
     expect(client.agentState.completedRequests['toolu_metadata_change_1']).toBeTruthy();
   });
 });
-
