@@ -35,7 +35,7 @@ describe('createAcpRuntime (in-flight steer)', () => {
 
     expect(backend.sendSteerPrompt).toHaveBeenCalledWith('sess_1', 'steer text');
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
     expect((runtime as any).isTurnInFlight()).toBe(false);
   });
 
@@ -83,7 +83,7 @@ describe('createAcpRuntime (in-flight steer)', () => {
       { timeout: 250 },
     );
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
     await vi.waitFor(() => {
       expect(activeMetadataWaits).toBe(0);
     });
@@ -113,6 +113,6 @@ describe('createAcpRuntime (in-flight steer)', () => {
 
     expect(backend.sendPrompt).not.toHaveBeenCalled();
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
   });
 });

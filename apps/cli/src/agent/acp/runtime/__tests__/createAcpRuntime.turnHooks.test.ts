@@ -44,6 +44,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       sendAgentMessage: (_provider, body) => {
         sent.push(body);
       },
+      sendTranscriptDraftDelta: () => {},
       sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
       sendUserTextMessageCommitted: async (_text, _opts) => {},
       fetchRecentTranscriptTextItemsForAcpImport: async () => [],
@@ -84,7 +85,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     backend.emit({ type: 'tool-call', toolName: 'Edit', args: { file_path: 'a.txt' }, callId: 't1' });
     backend.emit({ type: 'tool-result', toolName: 'Edit', callId: 't1', result: { ok: true } });
 
-    runtime.flushTurn();
+    await runtime.flushTurn();
 
     const taskCompleteIdx = sent.findIndex((m) => m?.type === 'task_complete');
     expect(taskCompleteIdx).toBeGreaterThan(-1);
@@ -113,6 +114,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       sendAgentMessage: (_provider, body) => {
         sent.push(body);
       },
+      sendTranscriptDraftDelta: () => {},
       sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
       sendUserTextMessageCommitted: async (_text, _opts) => {},
       fetchRecentTranscriptTextItemsForAcpImport: async () => [],
@@ -144,7 +146,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     runtime.beginTurn();
     backend.emit({ type: 'tool-call', toolName: 'think', args: { thinking: 'Hello' }, callId: 't1' });
     backend.emit({ type: 'tool-result', toolName: 'think', callId: 't1', result: { ok: true } });
-    runtime.flushTurn();
+    await runtime.flushTurn();
 
     expect(sent.some((m) => m?.type === 'tool-call' && String(m?.name ?? '').toLowerCase() === 'think')).toBe(false);
     expect(sent.some((m) => m?.type === 'tool-result' && m?.callId === 't1')).toBe(false);
@@ -158,6 +160,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     const session: AcpRuntimeSessionClient = {
       keepAlive: () => {},
       sendAgentMessage: () => {},
+      sendTranscriptDraftDelta: () => {},
       sendAgentMessageCommitted: async () => {},
       sendUserTextMessageCommitted: async () => {},
       fetchRecentTranscriptTextItemsForAcpImport: async () => [],
