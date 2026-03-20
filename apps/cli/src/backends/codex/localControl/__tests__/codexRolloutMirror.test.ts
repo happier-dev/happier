@@ -6,6 +6,12 @@ import { CodexRolloutMirror } from '../codexRolloutMirror';
 
 type CodexBody = { type?: string; message?: string; callId?: string };
 type SessionEvent = { type?: string; message?: string };
+type CommittedAgentMessage = {
+  provider: string;
+  body: { type?: string; message?: string; text?: string };
+  localId: string;
+  meta?: Record<string, unknown>;
+};
 
 const tempDirs = new Set<string>();
 
@@ -38,17 +44,14 @@ afterEach(async () => {
 
 describe('CodexRolloutMirror', () => {
   it('emits user + assistant messages and tool calls/results', async () => {
-    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-')));
-    const filePath = join(root, 'rollout.jsonl');
-    await writeFile(filePath, '');
-
     const userTexts: string[] = [];
     const codexBodies: CodexBody[] = [];
     const sessionEvents: SessionEvent[] = [];
     const codexSessionIds: string[] = [];
+    const committedMessages: CommittedAgentMessage[] = [];
 
     const mirror = new CodexRolloutMirror({
-      filePath,
+      filePath: '/tmp/codex-rollout-mirror-unused.jsonl',
       debug: false,
       onCodexSessionId: (id) => {
         codexSessionIds.push(id);
@@ -56,53 +59,57 @@ describe('CodexRolloutMirror', () => {
       session: {
         sendUserTextMessage: (text: string) => userTexts.push(text),
         sendCodexMessage: (body: unknown) => codexBodies.push(body as CodexBody),
+        sendAgentMessageCommitted: async (
+          provider: string,
+          body: unknown,
+          opts: { localId: string; meta?: Record<string, unknown> },
+        ) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+            meta: opts.meta,
+          });
+        },
+        sendTranscriptDraftDelta: () => {},
         sendSessionEvent: (event: unknown) => sessionEvents.push(event as SessionEvent),
       } as any,
     });
 
-    await mirror.start();
-    try {
-      await appendFile(filePath, `${JSON.stringify({ type: 'session_meta', payload: { id: 'sid' } })}\n`);
-      await appendFile(
-        filePath,
-        `${JSON.stringify({
-          type: 'response_item',
-          payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
-        })}\n`,
-      );
-      await appendFile(
-        filePath,
-        `${JSON.stringify({
-          type: 'response_item',
-          payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi' }] },
-        })}\n`,
-      );
-      await appendFile(
-        filePath,
-        `${JSON.stringify({
-          type: 'response_item',
-          payload: { type: 'function_call', name: 'exec_command', arguments: '{\"cmd\":\"echo hi\"}', call_id: 'call_1' },
-        })}\n`,
-      );
-      await appendFile(
-        filePath,
-        `${JSON.stringify({
-          type: 'response_item',
-          payload: { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
-        })}\n`,
-      );
+    await (mirror as any).onJson({ type: 'session_meta', payload: { id: 'sid' } });
+    await (mirror as any).onJson({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+    });
+    await (mirror as any).onJson({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi' }] },
+    });
+    await (mirror as any).onJson({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ' there' }] },
+    });
+    await (mirror as any).onJson({
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"echo hi"}', call_id: 'call_1' },
+    });
+    await (mirror as any).onJson({
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
+    });
 
-      await waitFor(() => {
-        expect(codexSessionIds).toEqual(['sid']);
-        expect(userTexts).toEqual(['hello']);
-        expect(codexBodies.some((b) => b.type === 'message' && b.message === 'hi')).toBe(true);
-        expect(codexBodies.some((b) => b.type === 'tool-call' && b.callId === 'call_1')).toBe(true);
-        expect(codexBodies.some((b) => b.type === 'tool-call-result' && b.callId === 'call_1')).toBe(true);
-      });
-      expect(sessionEvents).toEqual([]);
-    } finally {
-      await mirror.stop();
-    }
+    expect(codexSessionIds).toEqual(['sid']);
+    expect(userTexts).toEqual(['hello']);
+    expect(committedMessages.some((m) => m.provider === 'codex' && m.body.type === 'message' && m.body.message === 'hi')).toBe(true);
+    expect(committedMessages.some((m) => m.provider === 'codex' && m.body.type === 'message' && m.body.message === 'hi there')).toBe(true);
+    const segmentLocalIds = committedMessages
+      .filter((m) => m.body.type === 'message')
+      .map((m) => ((m.meta?.happierStreamSegmentV1 as { segmentLocalId?: string } | undefined)?.segmentLocalId ?? null))
+      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    expect(new Set(segmentLocalIds).size).toBe(1);
+    expect(codexBodies.some((b) => b.type === 'tool-call' && b.callId === 'call_1')).toBe(true);
+    expect(codexBodies.some((b) => b.type === 'tool-call-result' && b.callId === 'call_1')).toBe(true);
+    expect(sessionEvents).toEqual([]);
   });
 
   it('awaits codexSessionId publishing before processing later rollout lines', async () => {
@@ -172,6 +179,7 @@ describe('CodexRolloutMirror', () => {
 
     const codexSessionIds: string[] = [];
     const codexBodies: CodexBody[] = [];
+    const committedMessages: CommittedAgentMessage[] = [];
 
     const mirror = new CodexRolloutMirror({
       filePath,
@@ -182,6 +190,14 @@ describe('CodexRolloutMirror', () => {
       session: {
         sendUserTextMessage: () => {},
         sendCodexMessage: (body: unknown) => codexBodies.push(body as CodexBody),
+        sendAgentMessageCommitted: async (provider: string, body: unknown, opts: { localId: string }) => {
+          committedMessages.push({
+            provider,
+            body: body as { type?: string; message?: string; text?: string },
+            localId: opts.localId,
+          });
+        },
+        sendTranscriptDraftDelta: () => {},
         sendSessionEvent: () => {},
       } as any,
     });
@@ -190,7 +206,7 @@ describe('CodexRolloutMirror', () => {
     try {
       await waitFor(() => {
         expect(codexSessionIds).toEqual(['sid']);
-        expect(codexBodies.some((b) => b.type === 'message' && b.message === 'hello-before')).toBe(true);
+        expect(committedMessages.some((m) => m.provider === 'codex' && m.body.type === 'message' && m.body.message === 'hello-before')).toBe(true);
       });
     } finally {
       await mirror.stop();

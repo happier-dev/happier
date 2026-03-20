@@ -37,24 +37,50 @@ describe('supportsCodexVendorResume', () => {
     restoreEnv(baseline);
   });
 
-  it('rejects by default', () => {
-    expect(supportsCodexVendorResume({})).toBe(false);
+  it('allows by default (app-server)', () => {
+    expect(supportsCodexVendorResume({})).toBe(true);
   });
 
   it('allows when explicitly enabled via ACP for this spawn', () => {
     expect(supportsCodexVendorResume({ experimentalCodexAcp: true })).toBe(true);
   });
 
-  it('does not allow when HAPPIER_EXPERIMENTAL_CODEX_ACP is set (settings-only)', () => {
-    process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '1';
-    expect(supportsCodexVendorResume({})).toBe(false);
+  it('allows when codexBackendMode is explicitly set to acp', () => {
+    expect(
+      supportsCodexVendorResume({
+        codexBackendMode: 'acp',
+        experimentalCodexAcp: false,
+      }),
+    ).toBe(true);
   });
 
-  it('does not allow when explicitly disabled for this spawn, even if env is set', () => {
+  it('allows when codexBackendMode is explicitly set to appServer', () => {
+    expect(
+      supportsCodexVendorResume({
+        codexBackendMode: 'appServer',
+      }),
+    ).toBe(true);
+  });
+
+  it('prefers explicit codexBackendMode over the legacy ACP flag', () => {
+    expect(
+      supportsCodexVendorResume({
+        codexBackendMode: 'mcp',
+        experimentalCodexAcp: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('ignores HAPPIER_EXPERIMENTAL_CODEX_ACP env (capability is derived from spawn params)', () => {
+    process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '1';
+    expect(supportsCodexVendorResume({})).toBe(true);
+  });
+
+  it('does not allow when codexBackendMode is explicitly set to mcp', () => {
     process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '1';
     expect(
       supportsCodexVendorResume({
-        experimentalCodexAcp: false,
+        codexBackendMode: 'mcp',
       }),
     ).toBe(false);
   });

@@ -5,6 +5,7 @@ import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
+import { configuration } from '@/configuration';
 
 import { createCodexAcpBackend, type CodexAcpBackendOptions, type CodexAcpBackendResult } from '@/backends/codex/acp/backend';
 import { publishCodexSessionIdMetadata } from '@/backends/codex/utils/codexSessionIdMetadata';
@@ -30,9 +31,10 @@ export function createCodexAcpRuntime(params: {
   const drainPendingDuringTurn =
     (process.env.HAPPIER_E2E_ACP_TRACE_MARKERS ?? '').toString().trim() === '1';
 
-  return createAcpRuntime({
+  const runtime = createAcpRuntime({
     provider: 'codex',
     directory: params.directory,
+    happierSessionId: params.session.sessionId,
     session: params.session,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
@@ -77,8 +79,21 @@ export function createCodexAcpRuntime(params: {
       publishCodexSessionIdMetadata({
         session: params.session,
         getCodexThreadId: () => nextSessionId,
+        backendMode: 'acp',
+        transcriptStorage: process.env.HAPPIER_TRANSCRIPT_STORAGE === 'direct' ? 'direct' : 'persisted',
+        codexHome: process.env.CODEX_HOME ?? null,
+        activeServerDir: configuration.activeServerDir,
         lastPublished: lastCodexAcpThreadIdPublished,
       });
     },
   });
+
+  return {
+    ...runtime,
+    rollbackConversation: async () => ({
+      ok: false as const,
+      errorCode: 'unsupported_action',
+      errorMessage: 'Session rollback is unavailable for Codex ACP sessions',
+    }),
+  };
 }

@@ -53,7 +53,7 @@ function resolveToolApprovalQuestionOptions(questions: unknown): string[] {
   const approvalQuestion = questions.find((q) => {
     const id = (q as any)?.id;
     return typeof id === 'string' && id.startsWith('mcp_tool_call_approval_');
-  }) as any;
+  }) as any ?? questions.find((q) => Array.isArray((q as any)?.options)) as any;
   const options = approvalQuestion?.options;
   if (!Array.isArray(options)) return [];
   return options
@@ -62,7 +62,7 @@ function resolveToolApprovalQuestionOptions(questions: unknown): string[] {
     .filter((label) => label.length > 0);
 }
 
-function resolveApprovalChoiceLabel(params: { decision: PermissionDecision; questions: unknown; logger: LoggerSubset }): string | null {
+export function resolveApprovalChoiceLabel(params: { decision: PermissionDecision; questions: unknown; logger: LoggerSubset }): string | null {
   const options = resolveToolApprovalQuestionOptions(params.questions);
   if (options.length === 0) return null;
 

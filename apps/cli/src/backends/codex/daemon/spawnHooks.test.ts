@@ -5,7 +5,6 @@ import { join } from 'node:path';
 
 const ORIGINAL_ENV = {
   HAPPIER_CODEX_ACP_BIN: process.env.HAPPIER_CODEX_ACP_BIN,
-  HAPPIER_CODEX_ACP_NPX_MODE: process.env.HAPPIER_CODEX_ACP_NPX_MODE,
   PATH: process.env.PATH,
   CODEX_HOME: process.env.CODEX_HOME,
 };
@@ -23,12 +22,20 @@ async function createFakeBin(name: string): Promise<string> {
   return dir;
 }
 
+async function createNonExecutableBin(name: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-codex-spawnhooks-nonexec-'));
+  tempDirs.add(dir);
+  const isWindows = process.platform === 'win32';
+  const bin = join(dir, isWindows ? `${name}.cmd` : name);
+  await writeFile(bin, isWindows ? ['@echo off', 'echo ok', ''].join('\r\n') : '#!/bin/sh\necho ok\n', 'utf8');
+  if (!isWindows) await chmod(bin, 0o644);
+  return dir;
+}
+
 afterEach(async () => {
   process.chdir(ORIGINAL_CWD);
   if (ORIGINAL_ENV.HAPPIER_CODEX_ACP_BIN === undefined) delete process.env.HAPPIER_CODEX_ACP_BIN;
   else process.env.HAPPIER_CODEX_ACP_BIN = ORIGINAL_ENV.HAPPIER_CODEX_ACP_BIN;
-  if (ORIGINAL_ENV.HAPPIER_CODEX_ACP_NPX_MODE === undefined) delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
-  else process.env.HAPPIER_CODEX_ACP_NPX_MODE = ORIGINAL_ENV.HAPPIER_CODEX_ACP_NPX_MODE;
   if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
   else process.env.PATH = ORIGINAL_ENV.PATH;
   if (ORIGINAL_ENV.CODEX_HOME === undefined) delete process.env.CODEX_HOME;
@@ -41,6 +48,21 @@ afterEach(async () => {
 });
 
 describe('codexDaemonSpawnHooks.validateSpawn', () => {
+  it('validates ACP spawn when codexBackendMode=acp is set without the legacy flag', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-codex-spawnhooks-cwd-'));
+    tempDirs.add(cwd);
+    process.chdir(cwd);
+    process.env.HAPPIER_CODEX_ACP_BIN = './missing-codex-acp';
+
+    const { codexDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await codexDaemonSpawnHooks.validateSpawn!({
+      codexBackendMode: 'acp',
+    } as any);
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('expected ACP spawn validation to fail');
+    expect(res.errorMessage).toContain(join(cwd, 'missing-codex-acp'));
+  });
+
   it('reports an absolute missing path for relative HAPPIER_CODEX_ACP_BIN', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-codex-spawnhooks-cwd-'));
     tempDirs.add(cwd);
@@ -56,26 +78,37 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     expect(res.errorMessage).toContain(join(cwd, 'missing-codex-acp'));
   });
 
-  it('allows ACP spawn when codex-acp is not installed but npx is available (npx mode auto)', async () => {
+  it('rejects ACP spawn when codex-acp is not installed on PATH', async () => {
     delete process.env.HAPPIER_CODEX_ACP_BIN;
-    delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
 
-    const pathDir = await createFakeBin('npx');
+    const pathDir = await createFakeBin('other-cli');
     process.env.PATH = pathDir;
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await codexDaemonSpawnHooks.validateSpawn!({
       experimentalCodexAcp: true,
     } as any);
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
   });
 
-  it('rejects ACP spawn when npx mode is never and codex-acp is not installed', async () => {
+  it('rejects ACP spawn when codex-acp is not installed anywhere', async () => {
     delete process.env.HAPPIER_CODEX_ACP_BIN;
-    process.env.HAPPIER_CODEX_ACP_NPX_MODE = 'never';
-
     const pathDir = await mkdtemp(join(tmpdir(), 'happier-codex-spawnhooks-empty-'));
     tempDirs.add(pathDir);
+    process.env.PATH = pathDir;
+
+    const { codexDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await codexDaemonSpawnHooks.validateSpawn!({
+      experimentalCodexAcp: true,
+    } as any);
+    expect(res.ok).toBe(false);
+  });
+
+  it('rejects ACP spawn when codex-acp on PATH is not executable on Unix', async () => {
+    if (process.platform === 'win32') return;
+
+    delete process.env.HAPPIER_CODEX_ACP_BIN;
+    const pathDir = await createNonExecutableBin('codex-acp');
     process.env.PATH = pathDir;
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
@@ -147,5 +180,26 @@ describe('codexDaemonSpawnHooks.buildAuthEnv', () => {
     expect(authJson).toBe('{"accessToken":"token"}');
 
     res.cleanupOnExit?.();
+  });
+});
+
+describe('codexDaemonSpawnHooks.buildExtraEnvForChild', () => {
+  it('publishes the ACP env marker when codexBackendMode=acp is set', async () => {
+    const { codexDaemonSpawnHooks } = await import('./spawnHooks');
+    expect(
+      codexDaemonSpawnHooks.buildExtraEnvForChild?.({
+        codexBackendMode: 'acp',
+      } as any),
+    ).toEqual({ HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' });
+  });
+
+  it('does not publish the ACP env marker when codexBackendMode=appServer overrides the legacy flag', async () => {
+    const { codexDaemonSpawnHooks } = await import('./spawnHooks');
+    expect(
+      codexDaemonSpawnHooks.buildExtraEnvForChild?.({
+        codexBackendMode: 'appServer',
+        experimentalCodexAcp: true,
+      } as any),
+    ).toEqual({});
   });
 });

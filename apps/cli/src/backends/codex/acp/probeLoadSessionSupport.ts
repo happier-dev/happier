@@ -35,16 +35,17 @@ export async function probeCodexAcpLoadSessionSupport(opts?: { signal?: AbortSig
     type ProbeResult = Awaited<ReturnType<typeof probeAcpAgentCapabilities>>;
 
     const probePromise: Promise<ProbeResult> = (async () => {
-      const spawn = resolveCodexAcpSpawn();
+      const spawn = resolveCodexAcpSpawn({ disableUserMcpServers: true });
       return await probeAcpAgentCapabilities({
         command: spawn.command,
         args: spawn.args,
         cwd: process.cwd(),
-        env: {
+        env: buildCodexAcpEnvOverrides({
+          baseEnv: {
           NODE_ENV: 'production',
           DEBUG: '',
-          ...buildCodexAcpEnvOverrides(),
-        },
+          },
+        }),
         transport: new DefaultTransport('codex'),
         timeoutMs: resolveAcpProbeTimeoutMs('codex'),
       });

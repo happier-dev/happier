@@ -204,6 +204,36 @@ describe('runCodex fast-start', () => {
     expect(messages.join('\n')).toContain('HAPPIER_CODEX_ACP_BIN');
   });
 
+  it('seeds the Happy session path from an explicit directory override', async () => {
+    const { runCodex } = await import('./runCodex');
+    const credentials = { token: 'test' } as Credentials;
+
+    initializeBackendRunSessionImpl = async (opts: any) => {
+      expect(opts.metadata?.path).toBe('/tmp/happier-codex-directory');
+      const session = opts.api.sessionSyncClient({ id: 'sess_1', metadataVersion: 1 });
+      return {
+        session,
+        reconnectionHandle: null,
+        reportedSessionId: 'sess_1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    const runPromise = runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'local',
+      directory: '/tmp/happier-codex-directory',
+    }).catch(() => {});
+
+    try {
+      await expect(waitFor(localStarted.promise, 75)).resolves.toBeUndefined();
+    } finally {
+      localExit.resolve({ type: 'exit', code: 0 });
+      await runPromise;
+    }
+  });
+
   beforeEach(() => {
     localStarted = createDeferred<void>();
     localExit = createDeferred<{ type: 'exit'; code: number }>();

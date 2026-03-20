@@ -64,4 +64,20 @@ describe('handleCodexCliCommand', () => {
       startingMode: 'local',
     }));
   });
+
+  it('forwards explicit working directory aliases to runCodex', async () => {
+    const credentials = { token: 't' } as any;
+    vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
+    const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
+
+    await handleCodexCliCommand({
+      args: ['-C', '/tmp/from-short-flag', '--cd', '/tmp/from-long-flag'],
+      terminalRuntime: null,
+    } as any);
+
+    expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      directory: '/tmp/from-long-flag',
+    }));
+  });
 });

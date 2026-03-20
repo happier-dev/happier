@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionMode } from '@/api/types';
@@ -33,6 +33,14 @@ async function createFakeCodexAcpBinary(): Promise<{ dir: string; bin: string }>
   return { dir, bin };
 }
 
+async function createNonExecutableCodexAcpBinary(): Promise<{ dir: string; bin: string }> {
+  const { dir, bin } = await createFakeCodexAcpBinary();
+  if (process.platform !== 'win32') {
+    await chmod(bin, 0o644);
+  }
+  return { dir, bin };
+}
+
 async function createFakeCodexHome(mcpServers: string[]): Promise<{ dir: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'happier-codex-home-'));
   tempDirs.add(dir);
@@ -63,7 +71,7 @@ afterEach(async () => {
 });
 
 describe.sequential('resolveCodexAcpSpawn', () => {
-  it('disables Codex MCP servers by default for codex-acp spawns (Happier-managed)', async () => {
+  it('preserves Codex MCP servers by default for codex-acp spawns', async () => {
     const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
     process.env.CODEX_HOME = codexHome;
     const { bin } = await createFakeCodexAcpBinary();
@@ -72,6 +80,19 @@ describe.sequential('resolveCodexAcpSpawn', () => {
 
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();
+    expect(spawn.command).toBe(bin);
+    expect(spawn.args).toEqual([]);
+  }, 15_000);
+
+  it('can disable Codex MCP servers explicitly for probe-style spawns', async () => {
+    const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
+    process.env.CODEX_HOME = codexHome;
+    const { bin } = await createFakeCodexAcpBinary();
+    process.env.HAPPIER_CODEX_ACP_BIN = bin;
+    delete process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES;
+
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    const spawn = resolveCodexAcpSpawn({ disableUserMcpServers: true });
     expect(spawn.command).toBe(bin);
     expect(spawn.args).toEqual([
       '-c',
@@ -93,16 +114,7 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();
     expect(spawn.command).toBe(bin);
-    expect(spawn.args).toEqual([
-      '-c',
-      'mcp_servers.context7.enabled=false',
-      '-c',
-      'mcp_servers.playwright.enabled=false',
-      '-c',
-      'mcp_servers.sequential-thinking.enabled=false',
-      '-c',
-      'approval_policy="on-request"',
-    ]);
+    expect(spawn.args).toEqual(['-c', 'approval_policy="on-request"']);
   }, 15_000);
 
   it('resolves relative HAPPIER_CODEX_ACP_BIN to an absolute path', async () => {
@@ -124,16 +136,40 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     }
   }, 15_000);
 
+  it('rejects a non-executable HAPPIER_CODEX_ACP_BIN on Unix', async () => {
+    if (process.platform === 'win32') return;
+
+    const { dir: codexHome } = await createFakeCodexHome(['context7']);
+    process.env.CODEX_HOME = codexHome;
+    const { bin } = await createNonExecutableCodexAcpBinary();
+    process.env.HAPPIER_CODEX_ACP_BIN = bin;
+
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    expect(() => resolveCodexAcpSpawn()).toThrow(/not executable/i);
+  }, 15_000);
+
+  it('ignores non-executable PATH codex-acp candidates on Unix', async () => {
+    if (process.platform === 'win32') return;
+
+    const { dir: codexHome } = await createFakeCodexHome(['context7']);
+    process.env.CODEX_HOME = codexHome;
+    const { dir, bin } = await createNonExecutableCodexAcpBinary();
+    const emptyHappyHomeDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-empty-home-'));
+    tempDirs.add(emptyHappyHomeDir);
+    process.env.PATH = dir;
+    process.env.HAPPIER_HOME_DIR = emptyHappyHomeDir;
+    delete process.env.HAPPIER_CODEX_ACP_BIN;
+
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    const spawn = resolveCodexAcpSpawn();
+    expect(spawn.command).toBe('codex-acp');
+    expect(bin.endsWith('codex-acp')).toBe(true);
+  }, 15_000);
+
   const permissionModeCases: Array<{ permissionMode: PermissionMode; expectedArgs: string[] }> = [
     {
       permissionMode: 'safe-yolo',
       expectedArgs: [
-        '-c',
-        'mcp_servers.context7.enabled=false',
-        '-c',
-        'mcp_servers.playwright.enabled=false',
-        '-c',
-        'mcp_servers.sequential-thinking.enabled=false',
         '-c',
         'approval_policy="on-request"',
         '-c',
@@ -144,12 +180,6 @@ describe.sequential('resolveCodexAcpSpawn', () => {
       permissionMode: 'read-only',
       expectedArgs: [
         '-c',
-        'mcp_servers.context7.enabled=false',
-        '-c',
-        'mcp_servers.playwright.enabled=false',
-        '-c',
-        'mcp_servers.sequential-thinking.enabled=false',
-        '-c',
         'approval_policy="on-request"',
         '-c',
         'sandbox_mode="read-only"',
@@ -159,12 +189,6 @@ describe.sequential('resolveCodexAcpSpawn', () => {
       permissionMode: 'default',
       expectedArgs: [
         '-c',
-        'mcp_servers.context7.enabled=false',
-        '-c',
-        'mcp_servers.playwright.enabled=false',
-        '-c',
-        'mcp_servers.sequential-thinking.enabled=false',
-        '-c',
         'approval_policy="on-request"',
         '-c',
         'sandbox_mode="read-only"',
@@ -173,12 +197,6 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     {
       permissionMode: 'plan',
       expectedArgs: [
-        '-c',
-        'mcp_servers.context7.enabled=false',
-        '-c',
-        'mcp_servers.playwright.enabled=false',
-        '-c',
-        'mcp_servers.sequential-thinking.enabled=false',
         '-c',
         'approval_policy="on-request"',
         '-c',
@@ -198,12 +216,6 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const spawn = resolveCodexAcpSpawn({ permissionMode: 'yolo' });
     expect(spawn.command).toBe(bin);
     expect(spawn.args).toEqual([
-      '-c',
-      'mcp_servers.context7.enabled=false',
-      '-c',
-      'mcp_servers.playwright.enabled=false',
-      '-c',
-      'mcp_servers.sequential-thinking.enabled=false',
       '-c',
       'approval_policy="on-request"',
       '-c',
@@ -228,7 +240,7 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     },
   );
 
-  it('uses npx fallback by default when codex-acp is not installed', async () => {
+  it('prefers the managed codex-acp install when present', async () => {
     const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
     process.env.CODEX_HOME = codexHome;
     const { dir } = await createFakeCodexAcpBinary();
@@ -236,23 +248,83 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     delete process.env.HAPPIER_CODEX_ACP_BIN;
     delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
 
-    const pathDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-path-'));
-    tempDirs.add(pathDir);
-    process.env.PATH = pathDir;
+    const managedBin = join(dir, 'tools', 'codex-acp', 'current', 'bin', 'codex-acp');
+    await mkdir(join(dir, 'tools', 'codex-acp', 'current', 'bin'), { recursive: true });
+    await writeFile(managedBin, '#!/bin/sh\necho ok\n', 'utf8');
+    await chmod(managedBin, 0o755);
 
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();
-    expect(spawn.command).toBe('npx');
-    expect(spawn.args.slice(0, 3)).toEqual(['--prefer-offline', '-y', '@zed-industries/codex-acp']);
+    expect(spawn.command).toBe(managedBin);
+    expect(spawn.args).toEqual([]);
   });
 
-  it('prefers codex-acp on PATH when available (npx mode auto)', async () => {
+  it('ignores a non-executable managed codex-acp binary on Unix', async () => {
+    if (process.platform === 'win32') return;
+
+    const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
+    process.env.CODEX_HOME = codexHome;
+    const { dir } = await createFakeCodexAcpBinary();
+    process.env.HAPPIER_HOME_DIR = dir;
+    process.env.PATH = '';
+    delete process.env.HAPPIER_CODEX_ACP_BIN;
+    delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
+
+    const managedBin = join(dir, 'tools', 'codex-acp', 'current', 'bin', 'codex-acp');
+    await mkdir(join(dir, 'tools', 'codex-acp', 'current', 'bin'), { recursive: true });
+    await writeFile(managedBin, '#!/bin/sh\necho ok\n', 'utf8');
+    await chmod(managedBin, 0o644);
+
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    const spawn = resolveCodexAcpSpawn();
+    expect(spawn.command).toBe('codex-acp');
+  });
+
+  it('falls back to the legacy npm-style managed codex-acp install path', async () => {
     const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
     process.env.CODEX_HOME = codexHome;
     const { dir } = await createFakeCodexAcpBinary();
     process.env.HAPPIER_HOME_DIR = dir;
     delete process.env.HAPPIER_CODEX_ACP_BIN;
-    process.env.HAPPIER_CODEX_ACP_NPX_MODE = 'auto';
+    delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
+
+    const legacyBin = join(dir, 'tools', 'codex-acp', 'node_modules', '.bin', 'codex-acp');
+    await mkdir(join(dir, 'tools', 'codex-acp', 'node_modules', '.bin'), { recursive: true });
+    await writeFile(legacyBin, '#!/bin/sh\necho ok\n', 'utf8');
+    await chmod(legacyBin, 0o755);
+
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    const spawn = resolveCodexAcpSpawn();
+    expect(spawn.command).toBe(legacyBin);
+    expect(spawn.args).toEqual([]);
+  });
+
+  it('ignores the legacy npm-style managed codex-acp shim when no system node runtime is available', async () => {
+    const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
+    process.env.CODEX_HOME = codexHome;
+    const { dir } = await createFakeCodexAcpBinary();
+    process.env.HAPPIER_HOME_DIR = dir;
+    process.env.PATH = '';
+    delete process.env.HAPPIER_CODEX_ACP_BIN;
+    delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
+
+    const legacyBin = join(dir, 'tools', 'codex-acp', 'node_modules', '.bin', 'codex-acp');
+    await mkdir(join(dir, 'tools', 'codex-acp', 'node_modules', '.bin'), { recursive: true });
+    await writeFile(legacyBin, '#!/bin/sh\necho ok\n', 'utf8');
+    await chmod(legacyBin, 0o755);
+
+    const { resolveCodexAcpSpawn } = await import('./resolveCommand');
+    const spawn = resolveCodexAcpSpawn();
+    expect(spawn.command).toBe('codex-acp');
+    expect(spawn.args).toEqual([]);
+  });
+
+  it('prefers codex-acp on PATH when available', async () => {
+    const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
+    process.env.CODEX_HOME = codexHome;
+    const { dir } = await createFakeCodexAcpBinary();
+    process.env.HAPPIER_HOME_DIR = dir;
+    delete process.env.HAPPIER_CODEX_ACP_BIN;
 
     const { dir: pathDir, bin } = await createFakeCodexAcpBinary();
     // Rename fake to match PATH lookup expectation.
@@ -262,18 +334,11 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();
     expect(spawn.command).toBe('codex-acp');
-    expect(spawn.args).toEqual([
-      '-c',
-      'mcp_servers.context7.enabled=false',
-      '-c',
-      'mcp_servers.playwright.enabled=false',
-      '-c',
-      'mcp_servers.sequential-thinking.enabled=false',
-    ]);
+    expect(spawn.args).toEqual([]);
     expect(bin).toContain('codex-acp');
   });
 
-  it('disables npx fallback when npx mode is never', async () => {
+  it('ignores legacy npx mode overrides and keeps resolving codex-acp directly', async () => {
     const { dir: codexHome } = await createFakeCodexHome(['context7', 'sequential-thinking', 'playwright']);
     process.env.CODEX_HOME = codexHome;
     const { dir } = await createFakeCodexAcpBinary();
@@ -288,13 +353,6 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();
     expect(spawn.command).toBe('codex-acp');
-    expect(spawn.args).toEqual([
-      '-c',
-      'mcp_servers.context7.enabled=false',
-      '-c',
-      'mcp_servers.playwright.enabled=false',
-      '-c',
-      'mcp_servers.sequential-thinking.enabled=false',
-    ]);
+    expect(spawn.args).toEqual([]);
   });
 });

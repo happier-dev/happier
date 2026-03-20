@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { readOptionalFlagValue } from '@/cli/sessionStartArgs';
+import { readOptionalFlagValue, readOptionalFlagValueFromAliases } from '@/cli/sessionStartArgs';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -14,11 +14,15 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
       const startingModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
       const startingMode: 'local' | 'remote' | undefined =
         startingModeRaw === 'local' || startingModeRaw === 'remote' ? startingModeRaw : undefined;
+      const directoryRaw = readOptionalFlagValueFromAliases(args, ['-C', '--cd']);
+      const directory = typeof directoryRaw === 'string' && directoryRaw.trim().length > 0
+        ? directoryRaw.trim()
+        : undefined;
       if (startingModeRaw && !startingMode) {
         console.error(chalk.red(`Invalid --happy-starting-mode: ${startingModeRaw}. Use "local" or "remote".`));
         process.exit(1);
       }
-      return { startingMode };
+      return { startingMode, directory };
     },
   });
 }

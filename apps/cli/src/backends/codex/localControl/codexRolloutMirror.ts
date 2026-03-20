@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { JsonlFollower } from '@/agent/localControl/jsonlFollower';
+import { createStreamedTranscriptWriter, type StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { mapCodexRolloutEventToActions } from './rolloutMapper';
 
 export class CodexRolloutMirror {
     private follower: JsonlFollower | null = null;
+    private readonly streamedTranscriptWriter: StreamedTranscriptWriter;
 
     constructor(
         private readonly opts: {
@@ -13,7 +15,14 @@ export class CodexRolloutMirror {
             debug: boolean;
             onCodexSessionId: (id: string) => void | Promise<void>;
         },
-    ) {}
+    ) {
+        this.streamedTranscriptWriter = createStreamedTranscriptWriter({
+            provider: 'codex',
+            session: opts.session,
+            checkpointIntervalMs: 0,
+            checkpointMinChars: 1,
+        });
+    }
 
     async start(): Promise<void> {
         if (this.follower) return;
@@ -34,6 +43,7 @@ export class CodexRolloutMirror {
         const follower = this.follower;
         this.follower = null;
         await follower?.stop();
+        await this.streamedTranscriptWriter.flushAll({ reason: 'turn-end' });
     }
 
     private async onJson(value: unknown): Promise<void> {
@@ -44,18 +54,16 @@ export class CodexRolloutMirror {
                 continue;
             }
             if (action.type === 'user-text') {
+                await this.streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
                 this.opts.session.sendUserTextMessage(action.text);
                 continue;
             }
             if (action.type === 'assistant-text') {
-                this.opts.session.sendCodexMessage({
-                    type: 'message',
-                    message: action.text,
-                    id: randomUUID(),
-                });
+                this.streamedTranscriptWriter.appendAssistantDelta(action.text);
                 continue;
             }
             if (action.type === 'tool-call') {
+                await this.streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
                 this.opts.session.sendCodexMessage({
                     type: 'tool-call',
                     callId: action.callId,

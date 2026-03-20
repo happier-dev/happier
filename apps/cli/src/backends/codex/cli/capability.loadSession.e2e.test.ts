@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 
 import { cliCapability as codexCliCapability } from './capability';
 import { resolveCodexAcpSpawn } from '@/backends/codex/acp/resolveCommand';
+import type { DetectCliEntry, DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 
 type DetectArgs = Parameters<NonNullable<typeof codexCliCapability.detect>>[0];
 
@@ -47,13 +48,13 @@ function resolveProbeGate(): { enabled: boolean; reason: string } {
 
   const resolvedAcpPath = resolveCodexAcpIfAvailable();
   if (!resolvedAcpPath) {
-    return { enabled: false, reason: 'requires codex-acp binary (or npx fallback)' };
+    return { enabled: false, reason: 'requires codex-acp binary' };
   }
 
   return { enabled: true, reason: 'probe requirements satisfied' };
 }
 
-function makeUnavailableCliEntry() {
+function makeUnavailableCliEntry(): DetectCliEntry {
   return { available: false, resolvedPath: undefined };
 }
 
@@ -63,7 +64,6 @@ describe('cli.codex capability (ACP)', () => {
 
   probeIt(`detects session/load support when codex ACP is available [${gate.reason}]`, async () => {
     const originalAcpBin = process.env.HAPPIER_CODEX_ACP_BIN;
-    const originalNpxMode = process.env.HAPPIER_CODEX_ACP_NPX_MODE;
 
     // This is a real binary probe. Keep it opt-in (mirrors provider harness gating).
     try {
@@ -74,9 +74,6 @@ describe('cli.codex capability (ACP)', () => {
       if (envAcpBin) {
         process.env.HAPPIER_CODEX_ACP_BIN = envAcpBin;
       }
-      // Provider tests run in ephemeral environments where `codex-acp` is not installed.
-      // Prefer the documented `npx -y @zed-industries/codex-acp` path when probing.
-      process.env.HAPPIER_CODEX_ACP_NPX_MODE = 'force';
 
       const resolvedCodexPath = resolveBinaryOnPath('codex');
       expect(resolvedCodexPath).toBeTruthy();
@@ -97,11 +94,14 @@ describe('cli.codex capability (ACP)', () => {
             qwen: makeUnavailableCliEntry(),
             kimi: makeUnavailableCliEntry(),
             kilo: makeUnavailableCliEntry(),
+            kiro: makeUnavailableCliEntry(),
+            customAcp: makeUnavailableCliEntry(),
             pi: makeUnavailableCliEntry(),
             copilot: makeUnavailableCliEntry(),
           },
           tmux: { available: false },
-        },
+          windowsTerminal: { available: false },
+        } satisfies DetectCliSnapshot,
       };
 
       const rawResult = await codexCliCapability.detect({ request, context });
@@ -119,12 +119,6 @@ describe('cli.codex capability (ACP)', () => {
         delete process.env.HAPPIER_CODEX_ACP_BIN;
       } else {
         process.env.HAPPIER_CODEX_ACP_BIN = originalAcpBin;
-      }
-      if (originalNpxMode === undefined) {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
-      } else {
-        process.env.HAPPIER_CODEX_ACP_NPX_MODE = originalNpxMode;
       }
     }
   }, 60_000);
