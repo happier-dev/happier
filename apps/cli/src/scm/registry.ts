@@ -87,6 +87,9 @@ export function createScmBackendRegistry(backends: readonly ScmBackend[]) {
     }
 
     return {
+        listBackends: () => backends,
         selectBackend,
     };
 }
+
+export type ScmBackendRegistry = ReturnType<typeof createScmBackendRegistry>;
