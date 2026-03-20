@@ -73,8 +73,6 @@ describe('buildAccountSettingsSnapshot', () => {
             sessionReplayMaxSeedChars: 300_000,
             executionRunsGuidanceMaxChars: 6_000,
             attachmentsUploadsMaxFileBytes: 100 * 1024 * 1024,
-            attachmentsUploadsUploadTtlMs: 15 * 60 * 1000,
-            attachmentsUploadsChunkSizeBytes: 64 * 1024,
         });
 
         expect(snapshot.properties.acct_setting__scmReviewMaxFiles).toBe('large');
@@ -111,8 +109,5 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__sessionReplayMaxSeedChars).toBe('large');
         expect(snapshot.properties.acct_setting__executionRunsGuidanceMaxChars).toBe('large');
         expect(snapshot.properties.acct_setting__attachmentsUploadsMaxFileBytes).toBe('large');
-        expect(snapshot.properties.acct_setting__attachmentsUploadsUploadTtlMs).toBe('large');
-        expect(snapshot.properties.acct_setting__attachmentsUploadsChunkSizeBytes).toBe('small');
     });
 });
-
