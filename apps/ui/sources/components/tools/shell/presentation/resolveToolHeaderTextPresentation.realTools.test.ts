@@ -67,10 +67,34 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
         expect(model.subtitle).toBe('Summarize third run');
     });
 
-    it('normalizes TaskCreate to Task for rendering', () => {
+    it('renders SubAgentRun with Sub-agent title and compacted subtitle', () => {
+        const tool = makeToolCall({
+            name: 'SubAgentRun',
+            description:
+                '{"status":"timeout","summary":"Timed out after 120000ms","error":{"code":"execution_run_timeout","message":"Timed out after 120000ms"}}',
+        });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.subtitle).toBe('Timed out after 120000ms');
+    });
+
+    it('renders SubAgentRun with intent/backend context while running before transcript content arrives', () => {
+        const tool = makeToolCall({
+            name: 'SubAgentRun',
+            state: 'running',
+            input: { intent: 'review', backendId: 'codex' },
+            description: null,
+            result: null,
+        });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.subtitle).toBe('review · codex');
+    });
+
+    it('normalizes TaskCreate to SubAgent for rendering', () => {
         const tool = makeToolCall({ name: 'TaskCreate', input: { description: 'Summarize third run' } });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
-        expect(model.normalizedToolName).toBe('Task');
+        expect(model.normalizedToolName).toBe('SubAgent');
         expect(model.title).toBe('tools.names.subAgent');
         expect(model.subtitle).toBe('Summarize third run');
     });
@@ -95,6 +119,19 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
         expect(model.title).toBe('tools.names.question');
         expect(model.subtitle).toBe('Next Tool Stress?');
+    });
+
+    it('renders WorkspaceIndexingPermission with the shared translated default title', () => {
+        const tool = makeToolCall({
+            name: 'WorkspaceIndexingPermission',
+            input: {
+                options: [
+                    { id: 'allow', name: 'Allow indexing' },
+                ],
+            },
+        });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.title).toBe('tools.workspaceIndexingPermission.defaultTitle');
     });
 
     it('capitalizes simple lowercase tool names (skill)', () => {
