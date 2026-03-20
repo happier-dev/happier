@@ -68,6 +68,9 @@ vi.mock('@/sync/store/hooks', async () => {
 });
 
 const applySettingsSpy = vi.fn(async (_update: unknown) => {});
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
+}));
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: applySettingsSpy },
 }));
