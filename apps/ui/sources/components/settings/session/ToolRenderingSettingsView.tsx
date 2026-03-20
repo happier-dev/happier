@@ -13,29 +13,7 @@ import {
     TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS,
     type ToolViewDetailLevel,
 } from '@/components/settings/session/toolRendering/toolRenderingSettingOptions';
-
-const TOOL_OVERRIDE_KEYS: Array<{ toolName: string; title: string }> = [
-    { toolName: 'Bash', title: 'Bash' },
-    { toolName: 'Read', title: 'Read' },
-    { toolName: 'Write', title: 'Write' },
-    { toolName: 'Edit', title: 'Edit' },
-    { toolName: 'MultiEdit', title: 'MultiEdit' },
-    { toolName: 'Glob', title: 'Glob' },
-    { toolName: 'Grep', title: 'Grep' },
-    { toolName: 'LS', title: 'LS' },
-    { toolName: 'CodeSearch', title: 'CodeSearch' },
-    { toolName: 'TodoWrite', title: 'TodoWrite' },
-    { toolName: 'TodoRead', title: 'TodoRead' },
-    { toolName: 'WebFetch', title: 'WebFetch' },
-    { toolName: 'WebSearch', title: 'WebSearch' },
-    { toolName: 'Task', title: 'Task' },
-    { toolName: 'Patch', title: 'Patch' },
-    { toolName: 'Diff', title: 'Diff' },
-    { toolName: 'Reasoning', title: 'Reasoning' },
-    { toolName: 'ExitPlanMode', title: 'ExitPlanMode' },
-    { toolName: 'AskUserQuestion', title: 'AskUserQuestion' },
-    { toolName: 'change_title', title: 'change_title' },
-] as const;
+import { TOOL_RENDERING_OVERRIDE_ENTRIES } from '@/components/settings/session/toolRendering/toolRenderingOverrideEntries';
 
 export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettingsView() {
     const { theme } = useUnistyles();
@@ -53,10 +31,10 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                 title={t('settingsSession.toolDetailOverrides.title')}
                 footer={t('settingsSession.toolDetailOverrides.footer')}
             >
-                {TOOL_OVERRIDE_KEYS.map((toolKey, index) => {
+                {TOOL_RENDERING_OVERRIDE_ENTRIES.map((toolKey, index) => {
                     const override = (toolViewDetailLevelByToolName as any)?.[toolKey.toolName] as ToolViewDetailLevel | undefined;
                     const selected = override ?? 'default';
-                    const showDivider = index < TOOL_OVERRIDE_KEYS.length - 1;
+                    const showDivider = index < TOOL_RENDERING_OVERRIDE_ENTRIES.length - 1;
 
                     return (
                         <DropdownMenu
@@ -111,10 +89,10 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                 title={t('settingsSession.toolDetailOverrides.expandedTitle')}
                 footer={t('settingsSession.toolDetailOverrides.expandedFooter')}
             >
-                {TOOL_OVERRIDE_KEYS.map((toolKey, index) => {
+                {TOOL_RENDERING_OVERRIDE_ENTRIES.map((toolKey, index) => {
                     const override = (toolViewExpandedDetailLevelByToolName as any)?.[toolKey.toolName] as 'summary' | 'full' | undefined;
                     const selected = override ?? 'default';
-                    const showDivider = index < TOOL_OVERRIDE_KEYS.length - 1;
+                    const showDivider = index < TOOL_RENDERING_OVERRIDE_ENTRIES.length - 1;
 
                     return (
                         <DropdownMenu
