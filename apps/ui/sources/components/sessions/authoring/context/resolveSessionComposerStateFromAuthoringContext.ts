@@ -1,36 +1,35 @@
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import type { AgentId } from '@/agents/catalog/catalog';
 
-import type { ExistingSessionAutomationAuthoringContext } from './sessionAuthoringContext';
+import type {
+    ExistingSessionAutomationAuthoringContext,
+    LiveSessionAuthoringContext,
+} from './sessionAuthoringContext';
+import { resolveSessionComposerState, type SessionComposerState } from './resolveSessionComposerState';
 
-export type SessionComposerState = Readonly<{
-    agentId: AgentId;
-    machineName: string | null;
-    permissionMode: PermissionMode;
-    modelMode: ModelMode;
-    profileId: string | null;
-    currentPath: string;
-}>;
+export type SessionComposerAuthoringContext =
+    | ExistingSessionAutomationAuthoringContext
+    | LiveSessionAuthoringContext;
 
 export function resolveSessionComposerStateFromAuthoringContext(
-    context: ExistingSessionAutomationAuthoringContext,
-    params?: Readonly<{ fallbackAgentId?: AgentId | null }>,
+    context: SessionComposerAuthoringContext,
+    params?: Readonly<{
+        fallbackAgentId?: AgentId | null;
+    }>,
 ): SessionComposerState {
-    const agentId = isAgentId(context.draft.agentId)
-        ? context.draft.agentId
-        : (params?.fallbackAgentId ?? DEFAULT_AGENT_ID);
-    const machineNameCandidate = context.session.metadata?.displayName
-        || context.session.metadata?.host
-        || context.session.metadata?.machineId
-        || null;
+    if (context.kind === 'automationExistingSession') {
+        return resolveSessionComposerState({
+            snapshot: context.snapshot,
+            session: context.session,
+            permissionModeOverride: context.draft.permissionMode as SessionComposerState['permissionMode'] | null,
+            modelModeOverride: context.draft.modelId as SessionComposerState['modelMode'] | null,
+            profileIdOverride: context.draft.profileId ?? null,
+            currentPathOverride: context.draft.directory,
+        });
+    }
 
-    return {
-        agentId,
-        machineName: typeof machineNameCandidate === 'string' ? machineNameCandidate : null,
-        permissionMode: (context.draft.permissionMode ?? 'default') as PermissionMode,
-        modelMode: (context.draft.modelId ?? getAgentCore(agentId).model.defaultMode) as ModelMode,
-        profileId: context.draft.profileId,
-        currentPath: context.draft.directory,
-    };
+    return resolveSessionComposerState({
+        snapshot: context.snapshot,
+        session: context.session,
+        fallbackAgentId: params?.fallbackAgentId ?? null,
+    });
 }
-

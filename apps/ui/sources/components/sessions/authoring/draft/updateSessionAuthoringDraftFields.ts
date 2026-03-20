@@ -1,8 +1,11 @@
-import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import type { SessionAuthoringDraft } from './sessionAuthoringDraft';
 
-export function updateSessionAuthoringDraftPrompt(draft: SessionAuthoringDraft, prompt: string): SessionAuthoringDraft {
+export function updateSessionAuthoringDraftPrompt(
+    draft: SessionAuthoringDraft,
+    prompt: string,
+): SessionAuthoringDraft {
     return {
         ...draft,
         prompt,
@@ -12,35 +15,34 @@ export function updateSessionAuthoringDraftPrompt(draft: SessionAuthoringDraft, 
 
 export function updateSessionAuthoringDraftPermissionMode(
     draft: SessionAuthoringDraft,
-    permissionMode: string,
-    permissionModeUpdatedAt: number,
+    permissionMode: PermissionMode,
+    updatedAt: number,
 ): SessionAuthoringDraft {
     return {
         ...draft,
         permissionMode,
-        permissionModeUpdatedAt,
+        permissionModeUpdatedAt: updatedAt,
     };
 }
 
 export function updateSessionAuthoringDraftModelMode(
     draft: SessionAuthoringDraft,
-    modelId: string,
-    modelUpdatedAt: number,
+    modelMode: ModelMode,
+    updatedAt: number,
 ): SessionAuthoringDraft {
     return {
         ...draft,
-        modelId,
-        modelUpdatedAt,
+        modelId: modelMode,
+        modelUpdatedAt: updatedAt,
     };
 }
 
 export function updateSessionAuthoringDraftAutomation(
     draft: SessionAuthoringDraft,
-    automation: NewSessionAutomationDraft | null,
+    automation: SessionAuthoringDraft['automation'],
 ): SessionAuthoringDraft {
     return {
         ...draft,
         automation,
     };
 }
-

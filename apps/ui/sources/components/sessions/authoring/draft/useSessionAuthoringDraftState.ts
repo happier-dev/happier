@@ -2,13 +2,27 @@ import React from 'react';
 
 import type { SessionAuthoringDraft } from './sessionAuthoringDraft';
 
-export function useSessionAuthoringDraftState(initialDraft: SessionAuthoringDraft | null = null) {
-    const [draft, setDraft] = React.useState<SessionAuthoringDraft | null>(initialDraft);
-    const latestDraftRef = React.useRef<SessionAuthoringDraft | null>(draft);
+type SessionAuthoringDraftState = SessionAuthoringDraft | null;
+type SessionAuthoringDraftUpdate = React.SetStateAction<SessionAuthoringDraftState>;
 
-    React.useEffect(() => {
-        latestDraftRef.current = draft;
-    }, [draft]);
+export function useSessionAuthoringDraftState(
+    initialDraft: SessionAuthoringDraftState = null,
+): Readonly<{
+    draft: SessionAuthoringDraftState;
+    setDraft: React.Dispatch<SessionAuthoringDraftUpdate>;
+    latestDraftRef: React.MutableRefObject<SessionAuthoringDraftState>;
+}> {
+    const [draft, setDraftState] = React.useState<SessionAuthoringDraftState>(initialDraft);
+    const latestDraftRef = React.useRef<SessionAuthoringDraftState>(initialDraft);
+
+    const setDraft = React.useCallback((update: SessionAuthoringDraftUpdate) => {
+        const current = latestDraftRef.current;
+        const next = typeof update === 'function'
+            ? (update as (current: SessionAuthoringDraftState) => SessionAuthoringDraftState)(current)
+            : update;
+        latestDraftRef.current = next;
+        setDraftState(next);
+    }, []);
 
     return {
         draft,
@@ -16,4 +30,3 @@ export function useSessionAuthoringDraftState(initialDraft: SessionAuthoringDraf
         latestDraftRef,
     };
 }
-

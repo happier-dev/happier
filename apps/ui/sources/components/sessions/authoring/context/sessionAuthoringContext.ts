@@ -1,7 +1,9 @@
-import type { Session } from '@/sync/domains/state/storageTypes';
+import type { ExistingSessionAuthoringCapabilities } from '@/components/sessions/authoring/draft/sessionAuthoringDraftCapabilities';
+import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
-
-import type { SessionAuthoringDraft } from '../draft/sessionAuthoringDraft';
+import type { ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
+import type { SessionAuthoringSnapshot } from '@/sync/domains/sessionAuthoring/sessionAuthoringSnapshot';
 
 export type NewSessionAuthoringSubmissionMode = 'launch' | 'createAutomation' | 'editAutomation';
 export type NewSessionSubmitAccessibilityLabelKey =
@@ -18,25 +20,22 @@ export type NewSessionAuthoringContext = Readonly<{
     submitAccessibilityLabelKey?: NewSessionSubmitAccessibilityLabelKey;
 }>;
 
-export type ExistingSessionAutomationAvailability = Readonly<
-    | {
-        kind: 'hydrating';
-    }
-    | {
-        kind: 'blocked';
-        reason: 'session_not_found' | 'machine_id_missing' | 'resume_key_missing' | 'session_not_eligible';
-    }
-    | {
-        kind: 'ready';
-        machineId: string;
-    }
->;
-
 export type ExistingSessionAutomationAuthoringContext = Readonly<{
     kind: 'automationExistingSession';
-    session: Session;
+    session: ExistingSessionAuthoringSnapshotSession;
     draft: SessionAuthoringDraft;
+    snapshot: SessionAuthoringSnapshot;
+    capabilities: ExistingSessionAuthoringCapabilities;
     availability: ExistingSessionAutomationAvailability;
 }>;
 
-export type SessionAuthoringContext = NewSessionAuthoringContext | ExistingSessionAutomationAuthoringContext;
+export type LiveSessionAuthoringContext = Readonly<{
+    kind: 'liveSession';
+    session: ExistingSessionAuthoringSnapshotSession;
+    snapshot: SessionAuthoringSnapshot;
+}>;
+
+export type SessionAuthoringContext =
+    | NewSessionAuthoringContext
+    | ExistingSessionAutomationAuthoringContext
+    | LiveSessionAuthoringContext;
