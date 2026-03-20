@@ -51,6 +51,24 @@ function backend(input: {
         logList: async () => {
             throw new Error('not needed in this test');
         },
+        branchList: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchCreate: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchCheckout: async () => {
+            throw new Error('not needed in this test');
+        },
+        worktreeCreate: async () => {
+            throw new Error('not needed in this test');
+        },
+        worktreeRemove: async () => {
+            throw new Error('not needed in this test');
+        },
+        worktreePrune: async () => {
+            throw new Error('not needed in this test');
+        },
         remoteFetch: async () => {
             throw new Error('not needed in this test');
         },
@@ -58,6 +76,24 @@ function backend(input: {
             throw new Error('not needed in this test');
         },
         remotePush: async () => {
+            throw new Error('not needed in this test');
+        },
+        remotePublish: async () => {
+            throw new Error('not needed in this test');
+        },
+        stashList: async () => {
+            throw new Error('not needed in this test');
+        },
+        stashDrop: async () => {
+            throw new Error('not needed in this test');
+        },
+        stashPop: async () => {
+            throw new Error('not needed in this test');
+        },
+        stashApply: async () => {
+            throw new Error('not needed in this test');
+        },
+        stashShow: async () => {
             throw new Error('not needed in this test');
         },
     } satisfies ScmBackend;
@@ -127,5 +163,38 @@ describe('scm backend registry selection', () => {
 
         expect(selected?.backend.id).toBe('sapling');
         expect(selected?.mode).toBe('.git');
+    });
+
+    it('preserves the selected backend detection root path for downstream scm consumers', async () => {
+        const registry = createScmBackendRegistry([
+            backend({ id: 'git', detected: { isRepo: true, mode: '.git', rootPath: '/repo' }, modeSelectionScores: { '.git': 200 } }),
+        ]);
+
+        const selected = await registry.selectBackend({
+            cwd: '/repo/packages/app',
+            workingDirectory: '/repo',
+        });
+
+        expect(selected).toEqual(expect.objectContaining({
+            backend: expect.objectContaining({ id: 'git' }),
+            mode: '.git',
+            detection: {
+                isRepo: true,
+                mode: '.git',
+                rootPath: '/repo',
+            },
+        }));
+    });
+
+    it('returns null when no backend detects the working path as a repository', async () => {
+        const registry = createScmBackendRegistry([
+            backend({ id: 'git', detected: { isRepo: false, mode: null, rootPath: null } }),
+            backend({ id: 'sapling', detected: { isRepo: false, mode: null, rootPath: null } }),
+        ]);
+
+        await expect(registry.selectBackend({
+            cwd: '/not-a-repo',
+            workingDirectory: '/not-a-repo',
+        })).resolves.toBeNull();
     });
 });
