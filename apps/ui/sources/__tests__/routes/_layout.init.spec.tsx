@@ -16,8 +16,15 @@ const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayInte
 const sentryWrapMock = vi.fn((Component: any) => Component);
 const routerPushMock = vi.fn();
 
-const { fromModuleMock } = vi.hoisted(() => ({
+const { fromModuleMock, trackingState } = vi.hoisted(() => ({
     fromModuleMock: vi.fn(),
+    trackingState: {
+        client: null as null | {
+            identify?: ReturnType<typeof vi.fn>;
+            group?: ReturnType<typeof vi.fn>;
+            capture?: ReturnType<typeof vi.fn>;
+        },
+    },
 }));
 
 vi.mock('react-native-quick-base64', () => ({}));
@@ -171,8 +178,17 @@ vi.mock('posthog-react-native', () => {
 });
 
 vi.mock('@/track/tracking', () => ({
-    tracking: null,
+    get tracking() {
+        return trackingState.client;
+    },
 }));
+
+vi.mock('@/track/settingsAnalytics/SettingsAnalyticsRuntime', () => {
+    const React = require('react');
+    return {
+        SettingsAnalyticsRuntime: () => React.createElement('SettingsAnalyticsRuntime'),
+    };
+});
 
 vi.mock('@/sync/sync', () => ({
     syncRestore: syncRestoreMock,
@@ -266,6 +282,7 @@ describe('app/_layout init resilience', () => {
         else process.env.EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE = previousSentryReplaySessionRate;
         if (previousSentryReplayOnErrorRate === undefined) delete process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE;
         else process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = previousSentryReplayOnErrorRate;
+        trackingState.client = null;
         vi.resetModules();
         vi.clearAllMocks();
     });
@@ -290,10 +307,14 @@ describe('app/_layout init resilience', () => {
         const Notifications = await import('expo-notifications');
         expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
             PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
-            expect.objectContaining({ showBadge: true }),
+            expect.any(Object),
         );
         expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
             PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1,
+            expect.objectContaining({ showBadge: true }),
+        );
+        expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
+            PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
             expect.objectContaining({ showBadge: true }),
         );
     });
@@ -375,6 +396,29 @@ describe('app/_layout init resilience', () => {
         });
 
         expect(tree!.root.findAllByType('AppCrashRecoveryBoundary' as any)).toHaveLength(1);
+    });
+
+    it('mounts the settings analytics runtime inside PostHogProvider when tracking is enabled', async () => {
+        mockedPlatformOS = 'ios';
+        trackingState.client = {
+            identify: vi.fn(),
+            group: vi.fn(),
+            capture: vi.fn(),
+        };
+        const RootLayout = (await import('@/app/_layout')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(RootLayout));
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(tree!.root.findAllByType('PostHogProvider' as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('SettingsAnalyticsRuntime' as any)).toHaveLength(1);
     });
 
     it('navigates to the bug report screen on boot when a restart bug report intent is present', async () => {
