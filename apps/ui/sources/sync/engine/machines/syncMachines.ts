@@ -130,6 +130,7 @@ export async function fetchAndApplyMachines(params: {
     applyMachineDisplayEntries?: (machines: MachineDisplayRenderable[], options?: { replace?: boolean }) => void;
     cachedMachineDisplayEntries?: Record<string, MachineDisplayCacheEntryV1>;
     machineDisplayHydrationConcurrencyLimit?: number;
+    shouldContinue?: () => boolean;
     /**
      * When true, drop any locally-cached machines that are missing from the
      * latest fetch response.
@@ -144,6 +145,7 @@ export async function fetchAndApplyMachines(params: {
         params.request
         ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
     const concurrencyLimit = Math.max(1, Math.trunc(params.machineDisplayHydrationConcurrencyLimit ?? 4));
+    const shouldContinue = params.shouldContinue ?? (() => true);
 
     let response: Response;
     try {
@@ -185,6 +187,10 @@ export async function fetchAndApplyMachines(params: {
         updatedAt: number;
     }>;
 
+    if (!shouldContinue()) {
+        return;
+    }
+
     // First, collect and decrypt encryption keys for all machines
     const machineKeysMap = new Map<string, Uint8Array | null>();
     const keyResults = await runTasksWithLimit(
@@ -215,6 +221,10 @@ export async function fetchAndApplyMachines(params: {
 
     // Initialize machine encryptions
     await encryption.initializeMachines(machineKeysMap);
+
+    if (!shouldContinue()) {
+        return;
+    }
 
     const cachedMachineDisplayEntries = params.cachedMachineDisplayEntries ?? {};
     const shouldApplyMachineDisplays = typeof params.applyMachineDisplayEntries === 'function';
@@ -247,27 +257,29 @@ export async function fetchAndApplyMachines(params: {
         existingMachine: Machine | null | undefined,
     ): Machine => {
         const hasEncryptedDaemonState = typeof machine.daemonState === 'string' && machine.daemonState.length > 0;
-        return ({
-        id: machine.id,
-        seq: machine.seq,
-        createdAt: machine.createdAt,
-        updatedAt: machine.updatedAt,
-        active: machine.active,
-        activeAt: machine.activeAt,
-        revokedAt: machine.revokedAt ?? null,
-        metadataVersion: machine.metadataVersion,
-        metadata: cachedEntry?.metadataVersion === machine.metadataVersion
+        const metadata = cachedEntry?.metadataVersion === machine.metadataVersion && existingMachine?.metadata
             ? {
-                displayName: cachedEntry.displayName ?? null,
-                host: cachedEntry.host ?? null,
-                homeDir: cachedEntry.homeDir ?? null,
+                ...existingMachine.metadata,
+                displayName: cachedEntry.displayName ?? existingMachine.metadata.displayName,
+                host: cachedEntry.host ?? existingMachine.metadata.host,
+                homeDir: cachedEntry.homeDir ?? existingMachine.metadata.homeDir,
             }
-            : null,
-        daemonState: hasEncryptedDaemonState ? existingMachine?.daemonState ?? null : null,
-        daemonStateVersion: hasEncryptedDaemonState
-            ? existingMachine?.daemonStateVersion ?? (machine.daemonStateVersion || 0)
-            : (machine.daemonStateVersion || 0),
-    });
+            : null;
+        return ({
+            id: machine.id,
+            seq: machine.seq,
+            createdAt: machine.createdAt,
+            updatedAt: machine.updatedAt,
+            active: machine.active,
+            activeAt: machine.activeAt,
+            revokedAt: machine.revokedAt ?? null,
+            metadataVersion: machine.metadataVersion,
+            metadata,
+            daemonState: hasEncryptedDaemonState ? existingMachine?.daemonState ?? null : null,
+            daemonStateVersion: hasEncryptedDaemonState
+                ? existingMachine?.daemonStateVersion ?? (machine.daemonStateVersion || 0)
+                : (machine.daemonStateVersion || 0),
+        });
     };
 
     const decryptMachine = async (machine: typeof machines[number]): Promise<Machine | null> => {
@@ -318,7 +330,7 @@ export async function fetchAndApplyMachines(params: {
 
     if (shouldApplyMachineDisplays) {
         const displayEntries = machines.map((machine) => buildDisplayFromRowAndCache(machine, cachedMachineDisplayEntries[machine.id]));
-        params.applyMachineDisplayEntries!(displayEntries, { replace: true });
+        params.applyMachineDisplayEntries!(displayEntries, { replace: params.replace ?? false });
         applyMachines(
             machines.map((machine) =>
                 buildMachineFromRowAndCache(
@@ -333,7 +345,9 @@ export async function fetchAndApplyMachines(params: {
         if (machinesNeedingHydration.length > 0) {
             void runTasksWithLimit(
                 machinesNeedingHydration.map((machine) => async () => {
+                    if (!shouldContinue()) return null;
                     const decryptedMachine = await decryptMachine(machine);
+                    if (!shouldContinue()) return null;
                     if (decryptedMachine) {
                         applyMachines([decryptedMachine], false);
                     }

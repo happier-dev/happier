@@ -164,11 +164,7 @@ describe('fetchAndApplyMachines request override', () => {
             expect.objectContaining({
                 id: 'm_cached',
                 metadataVersion: 5,
-                metadata: expect.objectContaining({
-                    displayName: 'Cached machine',
-                    host: 'mbp',
-                    homeDir: '/home/u',
-                }),
+                metadata: null,
             }),
         ], false);
         expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
@@ -181,7 +177,7 @@ describe('fetchAndApplyMachines request override', () => {
                     homeDir: '/home/u',
                 }),
             }),
-        ], { replace: true });
+        ], { replace: false });
     });
 
     it('still hydrates machine daemonState when cache-hit display metadata is fresh', async () => {
@@ -450,7 +446,7 @@ describe('fetchAndApplyMachines request override', () => {
                 metadataVersion: 5,
                 metadata: null,
             }),
-        ], { replace: true });
+        ], { replace: false });
         expect(applyMachines).toHaveBeenCalledWith([
             expect.objectContaining({
                 id: 'm_cold',
@@ -631,5 +627,45 @@ describe('fetchAndApplyMachines request override', () => {
         });
 
         expect(Object.keys(machineStateById).sort()).toEqual(['m1', 'm2']);
+    });
+
+    it('skips applying machines when the caller scope is no longer active', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm1',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            applyMachineDisplayEntries,
+            cachedMachineDisplayEntries: {},
+            shouldContinue: () => false,
+        } as any);
+
+        expect(applyMachines).not.toHaveBeenCalled();
+        expect(applyMachineDisplayEntries).not.toHaveBeenCalled();
     });
 });
