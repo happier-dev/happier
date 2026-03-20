@@ -129,15 +129,13 @@ describe('ApiSessionClient message commit queue', () => {
 
     const { ApiSessionClient } = await import('./sessionClient');
 
-    const session: Session = {
-      id: 's1',
-      seq: 0,
-      encryptionMode: 'plain',
-      encryptionKey: new Uint8Array([1, 2, 3]),
-      encryptionVariant: 'legacy',
-      metadata: {
-        path: '/tmp',
-        host: 'test',
+	    const session: Session = {
+	      id: 's1',
+	      seq: 0,
+	      encryptionMode: 'plain',
+	      metadata: {
+	        path: '/tmp',
+	        host: 'test',
         homeDir: '/home/test',
         happyHomeDir: '/home/test/.happier',
         happyLibDir: '/home/test/.happier/lib',

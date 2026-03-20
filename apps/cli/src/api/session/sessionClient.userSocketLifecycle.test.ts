@@ -87,14 +87,39 @@ let sessionSocketStub: SocketStub | null = null;
 let userSocketStub: SocketStub | null = null;
 
 vi.mock('./sockets', () => ({
-  createSessionScopedSocket: () => {
-    if (!sessionSocketStub) throw new Error('Missing session socket stub');
-    return sessionSocketStub.socket as any;
-  },
   createUserScopedSocket: () => {
     if (!userSocketStub) throw new Error('Missing user socket stub');
     return userSocketStub.socket as any;
   },
+}));
+
+vi.mock('./connection/createSessionSocketTransport', () => ({
+  createSessionSocketTransport: () => {
+    if (!sessionSocketStub) throw new Error('Missing session socket stub');
+    return {
+      socket: sessionSocketStub.socket as any,
+      transport: {
+        connect: async () => {},
+        disconnect: async () => {},
+        destroy: async () => {},
+        isConnected: () => sessionSocketStub?.socket.connected === true,
+        onConnected: () => () => {},
+        onDisconnected: () => () => {},
+        onError: () => () => {},
+      },
+    };
+  },
+}));
+
+vi.mock('@happier-dev/connection-supervisor', () => ({
+  DEFAULT_MANAGED_CONNECTION_POLICY: {},
+  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
+    start: async () => {
+      params.createTransport();
+      await params.onConnected?.();
+    },
+    stop: async () => {},
+  }),
 }));
 
 vi.mock('./sessionMessageCatchUp', () => ({
@@ -110,16 +135,14 @@ describe('ApiSessionClient user socket lifecycle', () => {
     vi.useRealTimers();
   });
 
-  function createSession(): Session {
-    return {
-      id: 's1',
-      seq: 0,
-      encryptionMode: 'plain',
-      encryptionKey: new Uint8Array([1, 2, 3]),
-      encryptionVariant: 'legacy',
-      metadata: {
-        path: '/tmp',
-        host: 'test',
+	  function createSession(): Session {
+	    return {
+	      id: 's1',
+	      seq: 0,
+	      encryptionMode: 'plain',
+	      metadata: {
+	        path: '/tmp',
+	        host: 'test',
         homeDir: '/home/test',
         happyHomeDir: '/home/test/.happier',
         happyLibDir: '/home/test/.happier/lib',
@@ -141,6 +164,7 @@ describe('ApiSessionClient user socket lifecycle', () => {
 
     expect(userSocketStub.calls.connect).toBe(0);
     client.onUserMessage(() => {});
+    await Promise.resolve();
     expect(userSocketStub.calls.connect).toBe(1);
 
     await client.close();
@@ -166,4 +190,38 @@ describe('ApiSessionClient user socket lifecycle', () => {
 
     await client.close();
   });
+
+  it('emits metadata-updated after storing the fresh metadata snapshot from update-session', async () => {
+    vi.resetModules();
+    sessionSocketStub = createSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createSocketStub({ id: 'user-socket', connected: false });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createSession());
+    const snapshots: Array<string | null> = [];
+
+    client.on('metadata-updated', () => {
+      snapshots.push(client.getMetadataSnapshot()?.path ?? null);
+    });
+
+    sessionSocketStub.emit('update', {
+      id: 'u1',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        sid: 's1',
+        metadata: {
+          version: 1,
+          value: JSON.stringify({ path: '/tmp/fresh', host: 'test' }),
+        },
+      },
+    });
+
+    expect(snapshots).toEqual(['/tmp/fresh']);
+    expect(client.getMetadataSnapshot()?.path).toBe('/tmp/fresh');
+
+    await client.close();
+  });
+
 });

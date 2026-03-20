@@ -56,13 +56,14 @@ import {
 } from '@happier-dev/connection-supervisor';
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createSessionSocketTransport } from './connection/createSessionSocketTransport';
+import { connectionState } from '@/api/offline/serverConnectionErrors';
 
-function resolveSessionSocketMachineIdForBootstrap(_metadata: Metadata | null): string | undefined {
-    // Session-scoped sockets currently do not provision access-key rows before the initial
-    // connection attempt. Sending machineId here makes the server require a session access key
-    // that new daemon-backed sessions do not have yet, which rejects the socket and drops
-    // transcript commits. Keep bootstrap session-scoped-only until that contract is wired up.
-    return undefined;
+function resolveSessionSocketMachineIdForBootstrap(metadata: Metadata | null): string | undefined {
+    if (!metadata || typeof metadata.machineId !== 'string') {
+        return undefined;
+    }
+    const machineId = metadata.machineId.trim();
+    return machineId.length > 0 ? machineId : undefined;
 }
 
 export class ApiSessionClient extends EventEmitter {
@@ -340,6 +341,7 @@ export class ApiSessionClient extends EventEmitter {
             onConnected: async () => {
                 logger.debug('Socket connected successfully');
                 this.disconnectedSendLogged = false;
+                connectionState.recover();
                 this.rpcHandlerManager.onSocketConnect(this.socket);
 
                 const isReconnect = this.hasConnectedOnce;
@@ -721,7 +723,6 @@ export class ApiSessionClient extends EventEmitter {
 
     private scheduleNextStartupMessageCatchUpRetry(): void {
         if (this.closed) return;
-        if (this.lastObservedMessageSeq > 0) return;
         if (this.startupMessageCatchUpRetryTimer) return;
         if (!this.shouldRunStartupTranscriptCatchUp()) return;
 
@@ -736,7 +737,6 @@ export class ApiSessionClient extends EventEmitter {
         this.startupMessageCatchUpRetryTimer = setTimeout(() => {
             this.startupMessageCatchUpRetryTimer = null;
             if (this.closed) return;
-            if (this.lastObservedMessageSeq > 0) return;
 
             this.startupMessageCatchUpRetryIndex += 1;
             logger.debug('[API] Running startup transcript catch-up retry', {
