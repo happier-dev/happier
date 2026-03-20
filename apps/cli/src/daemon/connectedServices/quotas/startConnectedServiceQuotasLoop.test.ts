@@ -65,4 +65,33 @@ describe('startConnectedServiceQuotasLoop', () => {
     });
     expect(handle).toBeNull();
   });
+
+  it('pauses ticks until resume()', async () => {
+    const coordinator: { tickOnce: () => Promise<void> } = { tickOnce: vi.fn(async () => {}) };
+
+    let captured: (() => void) = () => {};
+    const setIntervalFn = ((fn: () => void) => {
+      captured = fn;
+      return 123;
+    });
+
+    const handle = startConnectedServiceQuotasLoop({
+      enabled: true,
+      tickMs: 10,
+      coordinator,
+      onTickError: vi.fn(),
+      setIntervalFn,
+      clearIntervalFn: vi.fn(),
+    });
+
+    handle?.pause();
+    captured();
+    await Promise.resolve();
+    expect(coordinator.tickOnce).not.toHaveBeenCalled();
+
+    handle?.resume();
+    captured();
+    await Promise.resolve();
+    expect(coordinator.tickOnce).toHaveBeenCalledTimes(1);
+  });
 });
