@@ -697,7 +697,7 @@ describe('settings', () => {
                 kimi: true,
                 kilo: true,
             });
-            expect(settingsDefaults.codexBackendMode).toBe('mcp');
+            expect(settingsDefaults.codexBackendMode).toBe('acp');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionDefaultPermissionModeByAgent).toMatchObject({
                 claude: 'default',

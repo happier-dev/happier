@@ -10,7 +10,6 @@ import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -115,8 +114,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     const canUseCamera = React.useMemo(() => {
         if (isRunningOnMac()) return false;
         if (Platform.OS !== 'web') return true;
-        if (!isWebQrScannerSupported()) return false;
-        return isWebMobileLikeQrScannerHost({ width, height });
+        return isWebQrScannerSupported();
     }, [height, width]);
 
     React.useEffect(() => {

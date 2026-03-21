@@ -37,8 +37,9 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: (_key: string, opts?: { count?: number }) => {
-        if (opts && typeof opts.count === 'number') return `+ ${opts.count} more`;
+    t: (_key: string, opts?: Record<string, unknown>) => {
+        if (opts && typeof (opts as any).count === 'number') return `+ ${(opts as any).count} more`;
+        if (opts && typeof (opts as any).subject === 'string') return `Create task: ${(opts as any).subject}`;
         return _key;
     },
 }));

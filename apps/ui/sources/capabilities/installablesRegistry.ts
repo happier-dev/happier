@@ -24,7 +24,7 @@ type SettingsKey = Extract<keyof KnownSettings, string>;
 
 export type InstallSpecSettingKey = {
     [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
-}[SettingsKey] | 'codexMcpResumeInstallSpec' | 'codexAcpInstallSpec';
+}[SettingsKey] | 'codexAcpInstallSpec';
 
 export type InstallableDepDataLike = {
     installed: boolean;
@@ -71,7 +71,7 @@ export function getInstallablesRegistryEntries(): readonly InstallableRegistryEn
             title: t('deps.installable.codexResume.title'),
             iconName: 'refresh-circle-outline',
             groupTitleKey: 'newSession.codexResumeBanner.title',
-            installSpecSettingKey: 'codexMcpResumeInstallSpec',
+            installSpecSettingKey: 'codexAcpInstallSpec',
             installSpecTitle: t('deps.installable.codexResume.installSpecTitle'),
             installSpecDescription: t('deps.installable.installSpecDescription'),
             installLabels: {

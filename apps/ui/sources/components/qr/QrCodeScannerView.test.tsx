@@ -126,7 +126,7 @@ describe('QrCodeScannerView', () => {
         expect(lastCameraProps).not.toBeNull();
     });
 
-    it('does not render a camera scanner on desktop web even when camera APIs exist', async () => {
+    it('renders a camera scanner on desktop web when camera APIs exist', async () => {
         platformOs = 'web';
         windowWidth = 1400;
         windowHeight = 900;
@@ -152,6 +152,6 @@ describe('QrCodeScannerView', () => {
                 />,
             );
         });
-        expect(lastCameraProps).toBeNull();
+        expect(lastCameraProps).not.toBeNull();
     });
 });

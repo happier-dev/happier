@@ -50,12 +50,6 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN = {
             footer: 'Optional. Leave empty to use default install sources.',
             fields: [
                 {
-                    key: 'codexMcpResumeInstallSpec',
-                    kind: 'text',
-                    title: 'Codex MCP resume install source',
-                    subtitle: 'npm package, git URL, or local file path',
-                },
-                {
                     key: 'codexAcpInstallSpec',
                     kind: 'text',
                     title: 'Codex ACP install source',

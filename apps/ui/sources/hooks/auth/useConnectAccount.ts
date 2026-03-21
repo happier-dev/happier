@@ -9,7 +9,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { parseAccountConnectDeepLink } from '@/auth/pairing/accountConnectUrl';
 import { isRunningOnMac } from '@/utils/platform/platform';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 
 interface UseConnectAccountOptions {
     onSuccess?: () => void;
@@ -52,8 +52,8 @@ export function useConnectAccount(options?: UseConnectAccountOptions) {
     }, [auth.credentials, options]);
 
     const connectAccount = React.useCallback(async () => {
-        const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
-        const canUseScanner = !isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb);
+        const webHasCamera = Platform.OS === 'web' && isWebQrScannerSupported();
+        const canUseScanner = !isRunningOnMac() && (Platform.OS !== 'web' || webHasCamera);
         if (!canUseScanner) {
             await Modal.alertAsync(t('common.error'), t('modals.qrScannerUnavailable'), [{ text: t('common.ok') }]);
             return;

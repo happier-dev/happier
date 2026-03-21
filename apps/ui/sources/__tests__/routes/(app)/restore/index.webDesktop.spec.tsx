@@ -47,7 +47,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 describe('/restore (web desktop)', () => {
-    it('defaults to the show-QR restore flow when the web environment is not mobile-like', async () => {
+    it('shows the camera scanner on web desktop when camera API is available', async () => {
         vi.stubGlobal('navigator', {
             maxTouchPoints: 0,
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
@@ -65,8 +65,8 @@ describe('/restore (web desktop)', () => {
             act(() => {
                 tree = create(<Screen />);
             });
-            const qrView = tree!.root.findAllByProps({ 'data-testid': 'RestoreQrView' });
-            expect(qrView).toHaveLength(1);
+            const scannerView = tree!.root.findAllByProps({ 'data-testid': 'RestoreScanComputerQrView' });
+            expect(scannerView).toHaveLength(1);
         } finally {
             act(() => {
                 tree?.unmount();

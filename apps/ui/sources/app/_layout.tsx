@@ -5,7 +5,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import { Asset } from 'expo-asset';
 import * as Notifications from 'expo-notifications';
-import { FontAwesome } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import {
     PUSH_NOTIFICATION_ACTION_IDS,
@@ -573,6 +573,7 @@ async function loadFonts() {
             'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
 
             ...FontAwesome.font,
+            ...Ionicons.font,
         };
 
         // On web, expo-font uses FontFaceObserver with a hard-coded ~6s timeout. In practice, this

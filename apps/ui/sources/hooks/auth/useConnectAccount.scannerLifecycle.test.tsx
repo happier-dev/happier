@@ -104,10 +104,10 @@ describe('useConnectAccount (scanner lifecycle)', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/scan/account');
   });
 
-  it('navigates to the in-app QR scanner on phone-sized web', async () => {
+  it('navigates to the in-app QR scanner on web when camera API exists', async () => {
     platformOS = 'web';
     windowDimensions = { width: 360, height: 800 };
-    vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
+    vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)', mediaDevices: { getUserMedia: async () => ({}) } } as any);
 
     const { useConnectAccount } = await import('./useConnectAccount');
 
@@ -128,7 +128,7 @@ describe('useConnectAccount (scanner lifecycle)', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/scan/account');
   });
 
-  it('does not open the scanner on desktop web even when the viewport is narrow', async () => {
+  it('does not open the scanner on web when camera API is unavailable', async () => {
     platformOS = 'web';
     windowDimensions = { width: 480, height: 700 };
     vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
