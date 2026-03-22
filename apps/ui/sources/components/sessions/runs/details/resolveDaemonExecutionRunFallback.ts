@@ -22,15 +22,6 @@ function readNonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function resolveSessionMachineId(sessionId: string): string | null {
-    const session = storage.getState().sessions?.[sessionId];
-    const machineId = readDisplayMachineIdForSession({
-        sessionId,
-        metadata: session?.metadata ?? null,
-    });
-    return machineId || null;
-}
-
 function buildDaemonProcessLine(entry: DaemonExecutionRunEntry | null): string | null {
     const processInfo = entry?.process;
     if (!processInfo || typeof processInfo !== 'object') return null;
@@ -82,7 +73,11 @@ export async function resolveDaemonExecutionRunFallback(params: Readonly<{
     runId: string;
     transcriptFallback?: ExecutionRunTranscriptFallback | null;
 }>): Promise<ExecutionRunDaemonFallback | null> {
-    const machineId = resolveSessionMachineId(params.sessionId);
+    const session = storage.getState().sessions?.[params.sessionId];
+    const machineId = readDisplayMachineIdForSession({
+        sessionId: params.sessionId,
+        metadata: session?.metadata ?? null,
+    }) || null;
     if (!machineId) return null;
     const serverId = resolveServerIdForSessionIdFromLocalCache(params.sessionId);
 

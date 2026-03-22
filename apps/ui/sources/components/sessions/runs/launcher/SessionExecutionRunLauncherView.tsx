@@ -22,7 +22,7 @@ import { useSession, useSettings } from '@/sync/domains/state/storage';
 import { buildExecutionRunsGuidanceBlock, coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resumeSession } from '@/sync/ops/sessions';
 import { t } from '@/text';
@@ -36,6 +36,7 @@ import { ActionInputFields, getValueAtPath, setValueAtTopLevelPatch, type Action
 
 import {
     EXECUTION_RUN_LAUNCH_INTENTS,
+    resolveExecutionRunLauncherActionId,
     type ExecutionRunIntent,
 } from './executionRunLauncherModel';
 
@@ -123,10 +124,12 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
         settings,
         enabled: session?.active === false,
     });
+    const sessionServerId = usePreferredServerIdForSession(props.sessionId);
 
     const { state: machineCapabilitiesState } = useMachineCapabilitiesCache({
         machineId,
         enabled: Boolean(machineId),
+        ...(sessionServerId ? { serverId: sessionServerId } : {}),
         request: { requests: [{ id: 'tool.executionRuns' }] } as any,
     });
 
@@ -160,7 +163,7 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     }, [backendChoices, session]);
 
     const buildSeedInput = React.useCallback((nextIntent: ExecutionRunIntent, previousInput?: Record<string, unknown> | null) => {
-        const actionId = nextIntent === 'review' ? 'review.start' : nextIntent === 'plan' ? 'subagents.plan.start' : 'subagents.delegate.start';
+        const actionId = resolveExecutionRunLauncherActionId(nextIntent);
         const previousInstructions = typeof getValueAtPath(previousInput ?? {}, 'instructions') === 'string'
             ? String(getValueAtPath(previousInput ?? {}, 'instructions'))
             : '';
@@ -174,7 +177,7 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     }, [agentId, initialBackendTarget, props.sessionId]);
 
     const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(() => buildSeedInput(initialIntent));
-    const actionId = intent === 'review' ? 'review.start' : intent === 'plan' ? 'subagents.plan.start' : 'subagents.delegate.start';
+    const actionId = resolveExecutionRunLauncherActionId(intent);
     const actionSpec = React.useMemo(() => getActionSpec(actionId as any), [actionId]);
     const fields = React.useMemo(
         () => resolveEffectiveActionInputFields(actionSpec as any, { sessionId: props.sessionId, ...actionInput }),
@@ -312,7 +315,6 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
 
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const { canLaunchExecutionRuns, canShowExecutionRunLauncher, executionRunsSupported } = useSessionExecutionRunLaunchability(props.sessionId, session);
-    const capabilityServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
     const waitingForExecutionRunCapabilities = React.useMemo(() => {
         if (canShowExecutionRunLauncher !== true) return false;
         if (canLaunchExecutionRuns === true) return false;
@@ -375,7 +377,7 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
 
                 const resumeResult = await resumeSession({
                     ...base,
-                    ...(capabilityServerId ? { serverId: capabilityServerId } : {}),
+                    ...(sessionServerId ? { serverId: sessionServerId } : {}),
                     ...buildResumeSessionExtrasFromUiState({
                         agentId,
                         settings,
@@ -421,7 +423,7 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
         closeSurface,
         intent,
         machineReachable,
-        capabilityServerId,
+        sessionServerId,
         props.presentation,
         props.sessionId,
         resumeCapabilityOptions,
