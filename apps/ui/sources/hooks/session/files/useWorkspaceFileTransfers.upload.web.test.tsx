@@ -14,10 +14,7 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
-    uploadBulkPayloadFromFile: () => {
-        throw new Error('legacy uploadBulkPayloadFromFile helper should not be used');
-    },
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles', () => ({
     uploadDaemonSessionFileFromReader: (...args: unknown[]) => uploadDaemonSessionFileFromReaderMock(...args),
 }));
 
