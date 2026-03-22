@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
+import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     let authenticated = false;
     const encoder = new TextEncoder();
@@ -74,28 +71,31 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend auth', () => {
   it('authenticates before creating a session when configured', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-auth-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
+    await withTempDir('happier-acp-auth-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
 
-    const backend = new AcpBackend({
-      agentName: 'test',
-      cwd: dir,
-      command: process.execPath,
-      args: [scriptPath],
-      authMethodId: 'openai-api-key',
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        authMethodId: 'openai-api-key',
+      });
+
+      try {
+        await expect(backend.startSession()).resolves.toEqual({ sessionId: 'test-session' });
+      } finally {
+        await backend.dispose();
+      }
     });
-
-    try {
-      await expect(backend.startSession()).resolves.toEqual({ sessionId: 'test-session' });
-    } finally {
-      await backend.dispose();
-      rmSync(dir, { recursive: true, force: true });
-    }
   }, 20_000);
 });

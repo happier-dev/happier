@@ -1,7 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/ui/logger', () => ({
@@ -14,14 +10,15 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 import { logger } from '@/ui/logger';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
 import { AcpBackend } from '../AcpBackend';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeStderrAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-stderr-agent.mjs');
-  writeFileSync(
-    scriptPath,
-    `
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-stderr-agent.mjs',
+    source: `
       process.stderr.write('Error handling notification {"jsonrpc":"2.0","method":"_kiro.dev/metadata"} {"code":-32601,"message":"\\\\\\"Method not found\\\\\\": _kiro.dev/metadata"}\\n');
       const decoder = new TextDecoder();
       let buf = '';
@@ -47,9 +44,7 @@ function writeFakeStderrAgentScript(params: { dir: string }): string {
         }
       });
     `,
-    'utf8',
-  );
-  return scriptPath;
+  });
 }
 
 describe('AcpBackend stderr suppression', () => {
@@ -59,36 +54,35 @@ describe('AcpBackend stderr suppression', () => {
   });
 
   it('does not debug-log stderr when the transport suppresses it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-stderr-suppress-'));
-    const scriptPath = writeFakeStderrAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-stderr-suppress-', async (dir) => {
+      const scriptPath = writeFakeStderrAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'kiro',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'kiro',
-          getInitTimeout: () => 1_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          handleStderr: () => ({ message: null, suppress: true }),
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            agentName: 'kiro',
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 1,
+            handleStderr: () => ({ message: null, suppress: true }),
+          }),
+        });
+        backendForCleanup = backend;
 
-      await backend.startSession();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+        await backend.startSession();
+        await new Promise((resolve) => setTimeout(resolve, 50));
 
-      const stderrDebugCalls = vi.mocked(logger.debug).mock.calls.filter(([first]) =>
-        typeof first === 'string' && first.includes('Error handling notification'),
-      );
-      expect(stderrDebugCalls).toHaveLength(0);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const stderrDebugCalls = vi.mocked(logger.debug).mock.calls.filter(([first]) =>
+          typeof first === 'string' && first.includes('Error handling notification'),
+        );
+        expect(stderrDebugCalls).toHaveLength(0);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   });
 });

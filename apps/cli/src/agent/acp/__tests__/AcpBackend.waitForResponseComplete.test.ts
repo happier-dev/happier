@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { OpenCodeTransport } from '@/backends/opencode/acp/transport';
 import { AcpBackend } from '../AcpBackend';
 import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: {
   dir: string;
@@ -595,782 +597,708 @@ describe('AcpBackend.waitForResponseComplete', () => {
   it('does not apply a default timeout when timeoutMs is omitted', async () => {
     vi.useFakeTimers();
 
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-no-default-timeout-'));
-    const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
-    let waiting: Promise<void> | null = null;
+    await withTempDir('happier-acp-no-default-timeout-', async (dir) => {
+      const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
+      let waiting: Promise<void> | null = null;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
-          agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
-
-      // Historically this defaulted to 120s and would unexpectedly kill long-lived work.
-      waiting = backend.waitForResponseComplete();
-
-      // If a default timeout is still applied, this would reject once the timer elapses.
-      await vi.advanceTimersByTimeAsync(121_000);
-
-      const marker = new Promise<'marker'>((resolve) => setTimeout(() => resolve('marker'), 0));
-      await vi.advanceTimersByTimeAsync(0);
-
-      await expect(
-        Promise.race([
-          waiting.then(() => 'completed' as const),
-          marker,
-        ]),
-      ).resolves.toBe('marker');
-    } finally {
-      vi.useRealTimers();
       try {
-        await backendForCleanup?.dispose();
-      } catch {
-        // best-effort
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        waiting = backend.waitForResponseComplete();
+        await vi.advanceTimersByTimeAsync(121_000);
+
+        const marker = new Promise<'marker'>((resolve) => setTimeout(() => resolve('marker'), 0));
+        await vi.advanceTimersByTimeAsync(0);
+
+        await expect(
+          Promise.race([
+            waiting.then(() => 'completed' as const),
+            marker,
+          ]),
+        ).resolves.toBe('marker');
+      } finally {
+        vi.useRealTimers();
+        try {
+          await backendForCleanup?.dispose();
+        } catch {
+          // best-effort
+        }
+        if (waiting) {
+          await waiting.catch(() => {});
+        }
       }
-      if (waiting) {
-        await waiting.catch(() => {});
-      }
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   }, 20_000);
 
   it('rejects waitForResponseComplete with AbortError after cancel', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-cancel-'));
-    const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-cancel-', async (dir) => {
+      const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      const waiting = backend.waitForResponseComplete(5_000);
+        const waiting = backend.waitForResponseComplete(5_000);
+        await backend.cancel(started.sessionId);
 
-      // Simulate user abort; backend should immediately stop waiting (without requiring
-      // the agent to emit an idle status or complete the tool call).
-      await backend.cancel(started.sessionId);
-
-      await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('rejects waitForResponseComplete with AbortError after dispose', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-dispose-'));
-    const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-dispose-', async (dir) => {
+      const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      const waiting = backend.waitForResponseComplete(5_000);
-      const waitingExpectation = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
-      await backend.dispose();
-      backendForCleanup = undefined;
+        const waiting = backend.waitForResponseComplete(5_000);
+        const waitingExpectation = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+        await backend.dispose();
+        backendForCleanup = undefined;
 
-      await waitingExpectation;
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await waitingExpectation;
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('does not time out while message chunks keep streaming', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-streaming-chunks-'));
-    const scriptPath = writeFakeAcpStreamingMessageChunksAgentScript({
-      dir,
-      chunkIntervalMs: 100,
-      chunkCount: 6,
-    });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
-          agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          // Keep idle timeout longer than the chunk interval so the backend does not
-          // incorrectly declare the response complete between chunks.
-          getIdleTimeout: () => 200,
-        } satisfies TransportHandler,
+    await withTempDir('happier-acp-streaming-chunks-', async (dir) => {
+      const scriptPath = writeFakeAcpStreamingMessageChunksAgentScript({
+        dir,
+        chunkIntervalMs: 100,
+        chunkCount: 6,
       });
-      backendForCleanup = backend;
+      let backendForCleanup: AcpBackend | undefined;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 200,
+          }),
+        });
+        backendForCleanup = backend;
 
-      // The turn takes ~600ms of streaming, so an absolute timeout of 250ms would fail.
-      // waitForResponseComplete should treat the timeout as a "stall" budget and continue waiting
-      // while chunks are still arriving.
-      await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('resolves when prompt completes without emitting any session/update events', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-prompt-complete-no-updates-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir, emitMessageChunkAfterPrompt: false });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-prompt-complete-no-updates-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir, emitMessageChunkAfterPrompt: false });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          getPostPromptNoUpdatesTimeoutMs: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            postPromptNoUpdatesTimeoutMs: 1,
+          }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('does not resolve before the first session/update arrives (delayed first chunk)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-delayed-first-chunk-'));
-    const scriptPath = writeFakeAcpAgentScript({
-      dir,
-      emitMessageChunkAfterPrompt: true,
-      messageChunkDelayMs: 200,
-    });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-delayed-first-chunk-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        emitMessageChunkAfterPrompt: true,
+        messageChunkDelayMs: 200,
+      });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          // Minimal idle timeout after the chunk so the test finishes quickly.
-          getIdleTimeout: () => 1,
-          // The "no updates" fallback must not fire before the first update arrives.
-          getPostPromptNoUpdatesTimeoutMs: () => 500,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-
-      const firstChunkSeen = new Promise<void>((resolve) => {
-        backend.onMessage((msg) => {
-          if (msg.type !== 'model-output') return;
-          resolve();
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            postPromptNoUpdatesTimeoutMs: 500,
+          }),
         });
-      });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const firstChunkSeen = new Promise<void>((resolve) => {
+          backend.onMessage((msg) => {
+            if (msg.type !== 'model-output') return;
+            resolve();
+          });
+        });
 
-      const first = await Promise.race([
-        backend.waitForResponseComplete(5_000).then(() => 'wait' as const),
-        firstChunkSeen.then(() => 'chunk' as const),
-      ]);
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      expect(first).toBe('chunk');
-      await expect(backend.waitForResponseComplete(5_000)).resolves.toBeUndefined();
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const first = await Promise.race([
+          backend.waitForResponseComplete(5_000).then(() => 'wait' as const),
+          firstChunkSeen.then(() => 'chunk' as const),
+        ]);
+
+        expect(first).toBe('chunk');
+        await expect(backend.waitForResponseComplete(5_000)).resolves.toBeUndefined();
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('resolves when idle status is emitted before waitForResponseComplete starts waiting', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-idle-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-idle-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-
-      const statuses: string[] = [];
-      const idleEmitted = new Promise<void>((resolve) => {
-        backend.onMessage((msg) => {
-          if (msg.type !== 'status') return;
-          statuses.push(msg.status);
-          if (msg.status === 'idle') resolve();
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
         });
-      });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const statuses: string[] = [];
+        const idleEmitted = new Promise<void>((resolve) => {
+          backend.onMessage((msg) => {
+            if (msg.type !== 'status') return;
+            statuses.push(msg.status);
+            if (msg.status === 'idle') resolve();
+          });
+        });
 
-      await idleEmitted;
-      expect(statuses).toContain('idle');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      await expect(backend.waitForResponseComplete(25)).resolves.toBeUndefined();
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await idleEmitted;
+        expect(statuses).toContain('idle');
+
+        await expect(backend.waitForResponseComplete(25)).resolves.toBeUndefined();
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('does not resolve before trailing assistant chunks that arrive after tool completion', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-tool-complete-then-chunks-'));
-    const scriptPath = writeFakeAcpToolCompletionThenMessageChunksAgentScript({
-      dir,
-      firstChunkDelayMs: 650,
-      chunkIntervalMs: 50,
-      chunks: ['PROFILE', '_STACK', '_MARKER_0306'],
-    });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-tool-complete-then-chunks-', async (dir) => {
+      const scriptPath = writeFakeAcpToolCompletionThenMessageChunksAgentScript({
+        dir,
+        firstChunkDelayMs: 650,
+        chunkIntervalMs: 50,
+        chunks: ['PROFILE', '_STACK', '_MARKER_0306'],
+      });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 500,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 500 }),
+        });
+        backendForCleanup = backend;
 
-      const chunks: string[] = [];
-      backend.onMessage((msg) => {
-        if (msg.type !== 'model-output') return;
-        if (typeof msg.textDelta !== 'string') return;
-        chunks.push(msg.textDelta);
-      });
+        const chunks: string[] = [];
+        backend.onMessage((msg) => {
+          if (msg.type !== 'model-output') return;
+          if (typeof msg.textDelta !== 'string') return;
+          chunks.push(msg.textDelta);
+        });
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      const waiting = backend.waitForResponseComplete(5_000);
-      const settledBeforeChunks = await Promise.race([
-        waiting.then(() => 'resolved' as const),
-        new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 600)),
-      ]);
-      expect(settledBeforeChunks).toBe('timer');
+        const waiting = backend.waitForResponseComplete(5_000);
+        const settledBeforeChunks = await Promise.race([
+          waiting.then(() => 'resolved' as const),
+          new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 600)),
+        ]);
+        expect(settledBeforeChunks).toBe('timer');
 
-      await waiting;
-      expect(chunks.join('')).toBe('PROFILE_STACK_MARKER_0306');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await waiting;
+        expect(chunks.join('')).toBe('PROFILE_STACK_MARKER_0306');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('does not resolve before staggered post-tool chunks that match OpenCode idle timing', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-opencode-staggered-post-tool-'));
-    const scriptPath = writeFakeAcpToolCompletionThenStaggeredMessageChunksAgentScript({
-      dir,
-      chunkDelaysMs: [100, 1_250, 2_450],
-      chunks: ['{"summary":"Open', 'Code delayed ', 'tail"}'],
+    await withTempDir('happier-acp-opencode-staggered-post-tool-', async (dir) => {
+      const scriptPath = writeFakeAcpToolCompletionThenStaggeredMessageChunksAgentScript({
+        dir,
+        chunkDelaysMs: [100, 1_250, 2_450],
+        chunks: ['{"summary":"Open', 'Code delayed ', 'tail"}'],
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const transport = new OpenCodeTransport();
+        transport.getInitTimeout = () => 5_000;
+        transport.getToolPatterns = () => [] as ToolPattern[];
+        const backend = new AcpBackend({
+          agentName: 'opencode',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: transport satisfies TransportHandler,
+        });
+        backendForCleanup = backend;
+
+        const chunks: string[] = [];
+        let resolveFirstChunk!: () => void;
+        const firstChunkSeen = new Promise<void>((resolve) => {
+          resolveFirstChunk = resolve;
+        });
+        let sawFirstChunk = false;
+
+        backend.onMessage((msg) => {
+          if (msg.type !== 'model-output' || typeof msg.textDelta !== 'string') return;
+          chunks.push(msg.textDelta);
+          if (!sawFirstChunk) {
+            sawFirstChunk = true;
+            resolveFirstChunk();
+          }
+        });
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+        const waiting = backend.waitForResponseComplete(8_000);
+
+        await firstChunkSeen;
+        const settledBeforeLateChunk = await Promise.race([
+          waiting.then(() => 'resolved' as const),
+          new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 700)),
+        ]);
+
+        expect(settledBeforeLateChunk).toBe('timer');
+        await waiting;
+        expect(chunks.join('')).toBe('{"summary":"OpenCode delayed tail"}');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
     });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const transport = new OpenCodeTransport();
-      transport.getInitTimeout = () => 5_000;
-      transport.getToolPatterns = () => [] as ToolPattern[];
-      const backend = new AcpBackend({
-        agentName: 'opencode',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: transport satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-
-      const chunks: string[] = [];
-      let resolveFirstChunk!: () => void;
-      const firstChunkSeen = new Promise<void>((resolve) => {
-        resolveFirstChunk = resolve;
-      });
-      let sawFirstChunk = false;
-
-      backend.onMessage((msg) => {
-        if (msg.type !== 'model-output' || typeof msg.textDelta !== 'string') return;
-        chunks.push(msg.textDelta);
-        if (!sawFirstChunk) {
-          sawFirstChunk = true;
-          resolveFirstChunk();
-        }
-      });
-
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
-      const waiting = backend.waitForResponseComplete(8_000);
-
-      await firstChunkSeen;
-      const settledBeforeLateChunk = await Promise.race([
-        waiting.then(() => 'resolved' as const),
-        new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 700)),
-      ]);
-
-      expect(settledBeforeLateChunk).toBe('timer');
-      await waiting;
-      expect(chunks.join('')).toBe('{"summary":"OpenCode delayed tail"}');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
   }, 20_000);
 
   it('does not resolve on a transient idle before a later tool phase resumes the turn', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-late-tool-phase-'));
-    const scriptPath = writeFakeAcpToolPhasesWithLateUpdatesAgentScript({
-      dir,
-      secondPhaseDelayMs: 1_200,
-    });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-late-tool-phase-', async (dir) => {
+      const scriptPath = writeFakeAcpToolPhasesWithLateUpdatesAgentScript({
+        dir,
+        secondPhaseDelayMs: 1_200,
+      });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 500,
-          getPostToolCallIdleTimeoutMs: () => 500,
-          getIdleWithoutAssistantMessageTimeoutMs: () => 1_500,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 500,
+            postToolCallIdleTimeoutMs: 500,
+            idleWithoutAssistantMessageTimeoutMs: 1_500,
+          }),
+        });
+        backendForCleanup = backend;
 
-      const statuses: string[] = [];
-      const chunks: string[] = [];
-      let idleCount = 0;
-      let resolveFirstIdle!: () => void;
-      const firstIdleSeen = new Promise<void>((resolve) => {
-        resolveFirstIdle = resolve;
-      });
-      let resolveSecondPhase!: () => void;
-      const secondPhaseSeen = new Promise<void>((resolve) => {
-        resolveSecondPhase = resolve;
-      });
+        const statuses: string[] = [];
+        const chunks: string[] = [];
+        let idleCount = 0;
+        let resolveFirstIdle!: () => void;
+        const firstIdleSeen = new Promise<void>((resolve) => {
+          resolveFirstIdle = resolve;
+        });
+        let resolveSecondPhase!: () => void;
+        const secondPhaseSeen = new Promise<void>((resolve) => {
+          resolveSecondPhase = resolve;
+        });
 
-      backend.onMessage((msg) => {
-        if (msg.type === 'status') {
-          statuses.push(msg.status);
-          if (msg.status === 'idle') {
-            idleCount += 1;
-            if (idleCount === 1) resolveFirstIdle();
+        backend.onMessage((msg) => {
+          if (msg.type === 'status') {
+            statuses.push(msg.status);
+            if (msg.status === 'idle') {
+              idleCount += 1;
+              if (idleCount === 1) resolveFirstIdle();
+            }
+            return;
           }
-          return;
-        }
-        if (msg.type !== 'model-output') return;
-        if (typeof msg.textDelta !== 'string') return;
-        chunks.push(msg.textDelta);
-        if (msg.textDelta.includes('"summary":"Ok"')) {
-          resolveSecondPhase();
-        }
-      });
+          if (msg.type !== 'model-output') return;
+          if (typeof msg.textDelta !== 'string') return;
+          chunks.push(msg.textDelta);
+          if (msg.textDelta.includes('"summary":"Ok"')) {
+            resolveSecondPhase();
+          }
+        });
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      const waiting = backend.waitForResponseComplete(5_000).then(() => 'resolved' as const);
-      await firstIdleSeen;
+        const waiting = backend.waitForResponseComplete(5_000).then(() => 'resolved' as const);
+        await firstIdleSeen;
 
-      const firstOutcome = await Promise.race([
-        waiting,
-        secondPhaseSeen.then(() => 'phase2' as const),
-        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
-      ]);
+        const firstOutcome = await Promise.race([
+          waiting,
+          secondPhaseSeen.then(() => 'phase2' as const),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
+        ]);
 
-      expect(firstOutcome).toBe('phase2');
-      expect(statuses).toContain('idle');
-      expect(chunks.join('')).toContain('"summary":"Ok"');
-      await expect(waiting).resolves.toBe('resolved');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        expect(firstOutcome).toBe('phase2');
+        expect(statuses).toContain('idle');
+        expect(chunks.join('')).toContain('"summary":"Ok"');
+        await expect(waiting).resolves.toBe('resolved');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('does not resolve on a transient post-tool idle before a later OpenCode tool phase resumes the turn', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-opencode-late-tool-phase-'));
-    const scriptPath = writeFakeAcpToolPhasesWithLateUpdatesAgentScript({
-      dir,
-      secondPhaseDelayMs: 1_200,
+    await withTempDir('happier-acp-opencode-late-tool-phase-', async (dir) => {
+      const scriptPath = writeFakeAcpToolPhasesWithLateUpdatesAgentScript({
+        dir,
+        secondPhaseDelayMs: 1_200,
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const transport = new OpenCodeTransport();
+        transport.getInitTimeout = () => 5_000;
+        transport.getToolPatterns = () => [] as ToolPattern[];
+
+        const backend = new AcpBackend({
+          agentName: 'opencode',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: transport satisfies TransportHandler,
+        });
+        backendForCleanup = backend;
+
+        let resolveFirstIdle!: () => void;
+        const firstIdleSeen = new Promise<void>((resolve) => {
+          resolveFirstIdle = resolve;
+        });
+        let resolveSecondPhase!: () => void;
+        const secondPhaseSeen = new Promise<void>((resolve) => {
+          resolveSecondPhase = resolve;
+        });
+
+        backend.onMessage((msg) => {
+          if (msg.type === 'status') {
+            if (msg.status === 'idle') resolveFirstIdle();
+            return;
+          }
+          if (msg.type !== 'model-output' || typeof msg.textDelta !== 'string') return;
+          if (msg.textDelta.includes('"summary":"Ok"')) {
+            resolveSecondPhase();
+          }
+        });
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        const waiting = backend.waitForResponseComplete(5_000).then(() => 'resolved' as const);
+        await firstIdleSeen;
+
+        const firstOutcome = await Promise.race([
+          waiting,
+          secondPhaseSeen.then(() => 'phase2' as const),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
+        ]);
+
+        expect(firstOutcome).toBe('phase2');
+        await expect(waiting).resolves.toBe('resolved');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
     });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const transport = new OpenCodeTransport();
-      transport.getInitTimeout = () => 5_000;
-      transport.getToolPatterns = () => [] as ToolPattern[];
-
-      const backend = new AcpBackend({
-        agentName: 'opencode',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: transport satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-
-      let resolveFirstIdle!: () => void;
-      const firstIdleSeen = new Promise<void>((resolve) => {
-        resolveFirstIdle = resolve;
-      });
-      let resolveSecondPhase!: () => void;
-      const secondPhaseSeen = new Promise<void>((resolve) => {
-        resolveSecondPhase = resolve;
-      });
-
-      backend.onMessage((msg) => {
-        if (msg.type === 'status') {
-          if (msg.status === 'idle') resolveFirstIdle();
-          return;
-        }
-        if (msg.type !== 'model-output' || typeof msg.textDelta !== 'string') return;
-        if (msg.textDelta.includes('"summary":"Ok"')) {
-          resolveSecondPhase();
-        }
-      });
-
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
-
-      const waiting = backend.waitForResponseComplete(5_000).then(() => 'resolved' as const);
-      await firstIdleSeen;
-
-      const firstOutcome = await Promise.race([
-        waiting,
-        secondPhaseSeen.then(() => 'phase2' as const),
-        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_500)),
-      ]);
-
-      expect(firstOutcome).toBe('phase2');
-      await expect(waiting).resolves.toBe('resolved');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
   }, 20_000);
 
   it('rejects waitForResponseComplete when ACP process exits non-zero after prompt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-exit-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir, exitCodeAfterPrompt: 52 });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-exit-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir, exitCodeAfterPrompt: 52 });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/52/);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/52/);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('rejects waitForResponseComplete when ACP process is terminated by a signal after prompt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-signal-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir, selfTerminateSignalAfterPrompt: 'SIGTERM' });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-signal-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir, selfTerminateSignalAfterPrompt: 'SIGTERM' });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
 
-      await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/SIGTERM/);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/SIGTERM/);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('rejects waitForResponseComplete when transport emits a status:error from stderr', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-stderr-error-'));
-    const scriptPath = writeFakeAcpAgentScript({
-      dir,
-      stderrAfterPromptText: 'Error code: 401 - invalid_authentication_error',
-      emitMessageChunkAfterPrompt: false,
-    });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-stderr-error-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        stderrAfterPromptText: 'Error code: 401 - invalid_authentication_error',
+        emitMessageChunkAfterPrompt: false,
+      });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          handleStderr: (text) => {
-            if (!text.includes('401')) return { message: null };
-            return { message: { type: 'status', status: 'error', detail: 'auth invalid' } };
-          },
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-
-      const errorStatusEmitted = new Promise<void>((resolve) => {
-        backend.onMessage((msg) => {
-          if (msg.type !== 'status') return;
-          if (msg.status !== 'error') return;
-          resolve();
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            handleStderr: (text) => {
+              if (!text.includes('401')) return { message: null };
+              return { message: { type: 'status', status: 'error', detail: 'auth invalid' } };
+            },
+          }),
         });
-      });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+        const errorStatusEmitted = new Promise<void>((resolve) => {
+          backend.onMessage((msg) => {
+            if (msg.type !== 'status') return;
+            if (msg.status !== 'error') return;
+            resolve();
+          });
+        });
 
-      await errorStatusEmitted;
-      await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/auth invalid/);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        await errorStatusEmitted;
+        await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/auth invalid/);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('rejects waitForResponseComplete when agent writes an error-like non-JSON stdout line during a prompt', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-error-chunk-'));
-    const scriptPath = writeFakeAcpAgentScript({
-      dir,
-      emitMessageChunkAfterPrompt: false,
-      stdoutAfterPromptText: 'Error: image exceeds 5 MB maximum',
-    });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
-          agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          // Match real ACP transports: non-JSON stdout must be filtered out so the ACP stream parser
-          // doesn't crash. The backend should still surface error-like dropped lines to callers.
-          filterStdoutLine: (line: string) => {
-            const trimmed = line.trim();
-            if (!trimmed) return null;
-            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (typeof parsed !== 'object' || parsed === null) return null;
-              return line;
-            } catch {
-              return null;
-            }
-          },
-        } satisfies TransportHandler,
+    await withTempDir('happier-acp-error-chunk-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        emitMessageChunkAfterPrompt: false,
+        stdoutAfterPromptText: 'Error: image exceeds 5 MB maximum',
       });
-      backendForCleanup = backend;
+      let backendForCleanup: AcpBackend | undefined;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            filterStdoutLine: (line: string) => {
+              const trimmed = line.trim();
+              if (!trimmed) return null;
+              if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+              try {
+                const parsed = JSON.parse(trimmed);
+                if (typeof parsed !== 'object' || parsed === null) return null;
+                return line;
+              } catch {
+                return null;
+              }
+            },
+          }),
+        });
+        backendForCleanup = backend;
 
-      await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/image exceeds 5 MB maximum/);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/image exceeds 5 MB maximum/);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('redacts sensitive tokens in surfaced dropped-stdout errors', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-error-redaction-'));
-    const scriptPath = writeFakeAcpAgentScript({
-      dir,
-      emitMessageChunkAfterPrompt: false,
-      stdoutAfterPromptText: 'Error: Authorization: Bearer abc/def+ghi==',
-    });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
-          agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          filterStdoutLine: (line: string) => {
-            const trimmed = line.trim();
-            if (!trimmed) return null;
-            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (typeof parsed !== 'object' || parsed === null) return null;
-              return line;
-            } catch {
-              return null;
-            }
-          },
-        } satisfies TransportHandler,
+    await withTempDir('happier-acp-error-redaction-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        emitMessageChunkAfterPrompt: false,
+        stdoutAfterPromptText: 'Error: Authorization: Bearer abc/def+ghi==',
       });
-      backendForCleanup = backend;
+      let backendForCleanup: AcpBackend | undefined;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
-
-      let caught: unknown;
       try {
-        await backend.waitForResponseComplete(250);
-      } catch (error) {
-        caught = error;
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            filterStdoutLine: (line: string) => {
+              const trimmed = line.trim();
+              if (!trimmed) return null;
+              if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+              try {
+                const parsed = JSON.parse(trimmed);
+                if (typeof parsed !== 'object' || parsed === null) return null;
+                return line;
+              } catch {
+                return null;
+              }
+            },
+          }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        let caught: unknown;
+        try {
+          await backend.waitForResponseComplete(250);
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        const message = (caught as Error).message;
+        expect(message).toContain('[REDACTED]');
+        expect(message).not.toContain('abc/def+ghi==');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
       }
-      expect(caught).toBeInstanceOf(Error);
-      const message = (caught as Error).message;
-      expect(message).toContain('[REDACTED]');
-      expect(message).not.toContain('abc/def+ghi==');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   }, 20_000);
 
   it('prefers the first transport error when stderr error is followed by a non-zero process exit', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-stderr-then-exit-'));
-    const scriptPath = writeFakeAcpAgentScript({
-      dir,
-      stderrAfterPromptText: 'Error code: 401 - invalid_authentication_error',
-      exitCodeAfterPrompt: 52,
-      emitMessageChunkAfterPrompt: false,
-    });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
-          agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          handleStderr: (text) => {
-            if (!text.includes('401')) return { message: null };
-            return { message: { type: 'status', status: 'error', detail: 'auth invalid' } };
-          },
-        } satisfies TransportHandler,
+    await withTempDir('happier-acp-stderr-then-exit-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        stderrAfterPromptText: 'Error code: 401 - invalid_authentication_error',
+        exitCodeAfterPrompt: 52,
+        emitMessageChunkAfterPrompt: false,
       });
-      backendForCleanup = backend;
+      let backendForCleanup: AcpBackend | undefined;
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            handleStderr: (text) => {
+              if (!text.includes('401')) return { message: null };
+              return { message: { type: 'status', status: 'error', detail: 'auth invalid' } };
+            },
+          }),
+        });
+        backendForCleanup = backend;
 
-      await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow(/auth invalid/);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow(/auth invalid/);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 });

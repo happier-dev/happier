@@ -4,7 +4,9 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createApprovedPermissionHandler, createFakeAcpRuntimeBackend } from '../createAcpRuntime.testkit';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (thinking state)', () => {
   it('sets thinking on beginTurn and clears on flushTurn', async () => {
@@ -13,21 +15,16 @@ describe('createAcpRuntime (thinking state)', () => {
     const thinkingChanges: boolean[] = [];
     const keepAliveThinking: boolean[] = [];
     const messageBuffer = new MessageBuffer();
+    const session = createBasicSessionClientWithOverrides({
+      keepAlive: (thinking: boolean) => {
+        keepAliveThinking.push(thinking);
+      },
+    });
 
     const runtime = createAcpRuntime({
       provider: 'pi',
       directory: '/tmp',
-      session: {
-        keepAlive: (thinking: boolean) => {
-          keepAliveThinking.push(thinking);
-        },
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: () => {},
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer,
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
@@ -55,19 +52,12 @@ describe('createAcpRuntime (thinking state)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 
     const thinkingChanges: boolean[] = [];
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'pi',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: () => {},
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
@@ -95,21 +85,16 @@ describe('createAcpRuntime (thinking state)', () => {
 
     const thinkingChanges: boolean[] = [];
     const keepAliveThinking: boolean[] = [];
+    const session = createBasicSessionClientWithOverrides({
+      keepAlive: (thinking: boolean) => {
+        keepAliveThinking.push(thinking);
+      },
+    });
 
     const runtime = createAcpRuntime({
       provider: 'codex',
       directory: '/tmp',
-      session: {
-        keepAlive: (thinking: boolean) => {
-          keepAliveThinking.push(thinking);
-        },
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: () => {},
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
@@ -152,19 +137,12 @@ describe('createAcpRuntime (thinking state)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 
     const thinkingChanges: boolean[] = [];
+    const session = createBasicSessionClientWithOverrides();
 
     const runtime = createAcpRuntime({
       provider: 'pi',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: () => {},
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),

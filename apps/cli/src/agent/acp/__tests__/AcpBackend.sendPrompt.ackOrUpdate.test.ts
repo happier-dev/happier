@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import {
+  createAcpSubprocessEnvScope,
+  createAcpTestTransportHandler,
+  writeAcpTestAgentScript,
+} from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,7 +19,6 @@ function writeFakeAcpAgentScript(params: {
   promptAckDelayMs: number;
   promptAckMode?: 'ok' | 'gemini_late_empty_response_error';
 }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent-delayed-prompt-ack.mjs');
   const ackDelayMs = Number.isFinite(params.promptAckDelayMs) ? params.promptAckDelayMs : 0;
   const ackMode = params.promptAckMode ?? 'ok';
   const src = `
@@ -91,12 +93,14 @@ function writeFakeAcpAgentScript(params: {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent-delayed-prompt-ack.mjs',
+    source: src,
+  });
 }
 
 function writeFakeAcpAgentNeverAckPromptScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent-never-ack-prompt.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -143,122 +147,109 @@ function writeFakeAcpAgentNeverAckPromptScript(params: { dir: string }): string 
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent-never-ack-prompt.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
   it('resolves once a session/update arrives even when the prompt ACK is delayed', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-sendprompt-first-update-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir, promptAckDelayMs: 5_000 });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-sendprompt-first-update-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir, promptAckDelayMs: 5_000 });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      const outcome = await Promise.race([
-        backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
-        delay(500).then(() => 'timeout' as const),
-      ]);
+        const started = await backend.startSession();
+        const outcome = await Promise.race([
+          backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
+          delay(500).then(() => 'timeout' as const),
+        ]);
 
-      expect(outcome).toBe('resolved');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        expect(outcome).toBe('resolved');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('ignores late Gemini empty-stream errors when sendPrompt returns early on first session/update', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-sendprompt-gemini-late-error-'));
-    const scriptPath = writeFakeAcpAgentScript({
-      dir,
-      promptAckDelayMs: 50,
-      promptAckMode: 'gemini_late_empty_response_error',
-    });
-    let backendForCleanup: AcpBackend | undefined;
-
-    try {
-      const backend = new AcpBackend({
-        agentName: 'gemini',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
-          agentName: 'gemini',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
+    await withTempDir('happier-acp-sendprompt-gemini-late-error-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        promptAckDelayMs: 50,
+        promptAckMode: 'gemini_late_empty_response_error',
       });
-      backendForCleanup = backend;
+      let backendForCleanup: AcpBackend | undefined;
 
-      const emitted: any[] = [];
-      backend.onMessage((msg) => emitted.push(msg));
+      try {
+        const backend = new AcpBackend({
+          agentName: 'gemini',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            agentName: 'gemini',
+            idleTimeoutMs: 1,
+          }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      const sendOutcome = await Promise.race([
-        backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
-        delay(500).then(() => 'timeout' as const),
-      ]);
-      expect(sendOutcome).toBe('resolved');
+        const emitted: any[] = [];
+        backend.onMessage((msg) => emitted.push(msg));
 
-      await backend.waitForResponseComplete(2_000);
-      await delay(200);
+        const started = await backend.startSession();
+        const sendOutcome = await Promise.race([
+          backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
+          delay(500).then(() => 'timeout' as const),
+        ]);
+        expect(sendOutcome).toBe('resolved');
 
-      const errorStatuses = emitted.filter((m) => m?.type === 'status' && m?.status === 'error');
-      expect(errorStatuses).toHaveLength(0);
-      expect((backend as any).responseCompletionError).toBeNull();
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await backend.waitForResponseComplete(2_000);
+        await delay(200);
+
+        const errorStatuses = emitted.filter((m) => m?.type === 'status' && m?.status === 'error');
+        expect(errorStatuses).toHaveLength(0);
+        expect((backend as any).responseCompletionError).toBeNull();
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 
   it('rejects when neither a prompt ACK nor a first session/update arrives', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-sendprompt-no-ack-no-update-'));
-    const scriptPath = writeFakeAcpAgentNeverAckPromptScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
-    const previousTimeout = process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS;
-    process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS = '50';
+    await withTempDir('happier-acp-sendprompt-no-ack-no-update-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentNeverAckPromptScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
+      const envScope = createAcpSubprocessEnvScope();
+      envScope.patch({ HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS: '50' });
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      await expect(backend.sendPrompt(started.sessionId, 'hi')).rejects.toThrow(/prompt ack|first session\/update|liveness/i);
-    } finally {
-      if (previousTimeout === undefined) {
-        delete process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS;
-      } else {
-        process.env.HAPPIER_ACP_PROMPT_LIVENESS_TIMEOUT_MS = previousTimeout;
+        const started = await backend.startSession();
+        await expect(backend.sendPrompt(started.sessionId, 'hi')).rejects.toThrow(/prompt ack|first session\/update|liveness/i);
+      } finally {
+        envScope.restore();
+        await backendForCleanup?.dispose().catch(() => {});
       }
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   }, 20_000);
 });

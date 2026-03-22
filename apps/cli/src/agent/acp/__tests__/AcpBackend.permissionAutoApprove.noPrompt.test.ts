@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakePermissionAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-permission-auto-approve-agent.mjs');
   const commandRequestText = `Requesting approval to perform: Run command \`node apps/cli/src/index.ts tools call --source happier --tool change_title --args-json '{"title":"Get QA Marker"}' --json\``;
   const src = `
     const decoder = new TextDecoder();
@@ -129,60 +125,61 @@ function writeFakePermissionAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-permission-auto-approve-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend auto-approved permission requests', () => {
   it('does not emit a permission-request event when the handler can auto-approve immediately', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-perm-auto-approve-'));
-    const scriptPath = writeFakePermissionAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-perm-auto-approve-', async (dir) => {
+      const scriptPath = writeFakePermissionAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const emitted: any[] = [];
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        permissionHandler: {
-          getImmediateDecision() {
-            return { decision: 'approved' as const };
-          },
-          async handleToolCall() {
-            return { decision: 'approved' as const };
-          },
-        },
-        transportHandler: {
+      try {
+        const emitted: any[] = [];
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 1_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 50,
-        } satisfies TransportHandler,
-      });
-      backendForCleanup = backend;
-      backend.onMessage((msg) => emitted.push(msg));
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          permissionHandler: {
+            getImmediateDecision() {
+              return { decision: 'approved' as const };
+            },
+            async handleToolCall() {
+              return { decision: 'approved' as const };
+            },
+          },
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 50,
+          }),
+        });
+        backendForCleanup = backend;
+        backend.onMessage((msg) => emitted.push(msg));
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'rename the session');
-      const startMs = Date.now();
-      while (!emitted.some((msg) => msg.type === 'tool-result') && Date.now() - startMs < 5_000) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'rename the session');
+        const startMs = Date.now();
+        while (!emitted.some((msg) => msg.type === 'tool-result') && Date.now() - startMs < 5_000) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+
+        expect(emitted.some((msg) => msg.type === 'permission-request')).toBe(false);
+        expect(
+          emitted.some(
+            (msg) =>
+              msg.type === 'tool-result'
+              && typeof msg.result === 'object'
+              && msg.result !== null,
+          ),
+        ).toBe(true);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
       }
-
-      expect(emitted.some((msg) => msg.type === 'permission-request')).toBe(false);
-      expect(
-        emitted.some(
-          (msg) =>
-            msg.type === 'tool-result'
-            && typeof msg.result === 'object'
-            && msg.result !== null,
-        ),
-      ).toBe(true);
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 });

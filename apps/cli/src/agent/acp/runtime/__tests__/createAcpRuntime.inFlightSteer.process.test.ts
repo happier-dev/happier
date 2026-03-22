@@ -9,7 +9,7 @@ import { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
 
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createApprovedPermissionHandler } from '../createAcpRuntime.testkit';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
 function writeSteerableAcpAgentScript(params: { dir: string }): string {
   const scriptPath = join(params.dir, 'fake-acp-agent-steer.mjs');

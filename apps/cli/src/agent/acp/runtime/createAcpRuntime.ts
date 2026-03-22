@@ -1031,7 +1031,9 @@ export function createAcpRuntime(params: {
     async setSessionMode(modeId: string): Promise<void> {
       const normalizedModeId = typeof modeId === 'string' ? modeId.trim() : '';
       if (!normalizedModeId) return;
-      if (!sessionId) return;
+      if (!sessionId) {
+        throw new Error(`${params.provider} ACP session was not started`);
+      }
 
       const b = await ensureBackend();
       if (!b.setSessionMode) return;
@@ -1041,7 +1043,9 @@ export function createAcpRuntime(params: {
     async setSessionModel(modelId: string): Promise<void> {
       const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
       if (!normalizedModelId) return;
-      if (!sessionId) return;
+      if (!sessionId) {
+        throw new Error(`${params.provider} ACP session was not started`);
+      }
 
       const controlTimeoutMs = resolveSessionControlTimeoutMs();
       const modelConfigOptionId = (() => {

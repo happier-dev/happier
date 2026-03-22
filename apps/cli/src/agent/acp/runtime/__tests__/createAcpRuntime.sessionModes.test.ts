@@ -1,22 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentMessage, EventMessage } from '@/agent/core/AgentMessage';
-import { createAcpRuntime, type AcpRuntimeBackend } from '../createAcpRuntime';
+import type { EventMessage } from '@/agent/core/AgentMessage';
+import { createAcpRuntime } from '../createAcpRuntime';
 import type { Metadata } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import {
-  createApprovedPermissionHandler,
-  createBasicSessionClient,
-  createDefaultMetadata,
-  createFakeAcpRuntimeBackend,
-  createSessionClientWithMetadata,
-} from '../createAcpRuntime.testkit';
+import { createBasicSessionClient, createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
 describe('createAcpRuntime (session modes)', () => {
   it('publishes ACP session modes into session metadata', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata(),
+      initialMetadata: createTestMetadata(),
     });
 
     const runtime = createAcpRuntime({
@@ -72,7 +69,7 @@ describe('createAcpRuntime (session modes)', () => {
   it('preserves available modes on current mode updates from canonical metadata', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata({
+      initialMetadata: createTestMetadata({
         sessionModesV1: {
           v: 1,
           provider: 'codex',
@@ -126,12 +123,11 @@ describe('createAcpRuntime (session modes)', () => {
 
   it('delegates setSessionMode to the backend when supported', async () => {
     let lastSet: { sessionId: string; modeId: string } | null = null;
-    const backend = {
-      ...createFakeAcpRuntimeBackend(),
+    const backend = createFakeAcpRuntimeBackend({
       async setSessionMode(sessionId: string, modeId: string) {
         lastSet = { sessionId, modeId };
       },
-    } as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'codex',
@@ -148,5 +144,20 @@ describe('createAcpRuntime (session modes)', () => {
     await runtime.setSessionMode('plan');
 
     expect(lastSet).toEqual({ sessionId: 'sess_main', modeId: 'plan' });
+  });
+
+  it('rejects setSessionMode before the ACP runtime has started', async () => {
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => createFakeAcpRuntimeBackend(),
+    });
+
+    await expect(runtime.setSessionMode('plan')).rejects.toThrow(/ACP session was not started/);
   });
 });

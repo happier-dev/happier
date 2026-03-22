@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
+import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -66,31 +63,34 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend loadSession cleanup on failure', () => {
   it('allows a second loadSession attempt after an upstream load failure without staying initialized', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-load-cleanup-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backend: AcpBackend | null = null;
+    await withTempDir('happier-acp-load-cleanup-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backend: AcpBackend | null = null;
 
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
-
-      await expect(backend.loadSession('resume-1')).rejects.toThrow(/No previous sessions found for this project/);
-      await expect(backend.loadSession('resume-1')).rejects.toThrow(/No previous sessions found for this project/);
-    } finally {
       try {
-        await backend?.dispose();
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
+
+        await expect(backend.loadSession('resume-1')).rejects.toThrow(/No previous sessions found for this project/);
+        await expect(backend.loadSession('resume-1')).rejects.toThrow(/No previous sessions found for this project/);
+      } finally {
+        try {
+          await backend?.dispose();
+        } catch {}
+      }
+    });
   }, 20_000);
 });

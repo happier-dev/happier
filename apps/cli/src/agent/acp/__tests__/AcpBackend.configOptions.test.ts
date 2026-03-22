@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
+import { writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 import type { AgentMessage } from '../../core';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -94,76 +91,81 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend session configOptions', () => {
   it('captures configOptions from newSession and can set a config option', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-config-options-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backend: AcpBackend | null = null;
+    await withTempDir('happier-acp-config-options-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backend: AcpBackend | null = null;
 
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
-
-      const events: AgentMessage[] = [];
-      backend.onMessage((msg) => {
-        if (msg.type === 'event') events.push(msg);
-      });
-
-      const started = await backend.startSession();
-      expect(started.sessionId).toBe('test-session');
-
-      expect(backend.getSessionConfigOptionsState()).toEqual([
-        expect.objectContaining({ id: 'mode', type: 'select', currentValue: 'ask' }),
-        expect.objectContaining({ id: 'telemetry', type: 'boolean', currentValue: 'false' }),
-      ]);
-
-      expect(events.some((e) => e.type === 'event' && e.name === 'config_options_state')).toBe(true);
-
-      await backend.setSessionConfigOption(started.sessionId, 'telemetry', 'true');
-      expect(backend.getSessionConfigOptionsState()).toEqual([expect.objectContaining({ id: 'telemetry', currentValue: 'true' })]);
-
-      expect(events.some((e) => e.type === 'event' && e.name === 'config_options_update')).toBe(true);
-    } finally {
       try {
-        await backend?.dispose();
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
+
+        const events: AgentMessage[] = [];
+        backend.onMessage((msg) => {
+          if (msg.type === 'event') events.push(msg);
+        });
+
+        const started = await backend.startSession();
+        expect(started.sessionId).toBe('test-session');
+
+        expect(backend.getSessionConfigOptionsState()).toEqual([
+          expect.objectContaining({ id: 'mode', type: 'select', currentValue: 'ask' }),
+          expect.objectContaining({ id: 'telemetry', type: 'boolean', currentValue: 'false' }),
+        ]);
+
+        expect(events.some((e) => e.type === 'event' && e.name === 'config_options_state')).toBe(true);
+
+        await backend.setSessionConfigOption(started.sessionId, 'telemetry', 'true');
+        expect(backend.getSessionConfigOptionsState()).toEqual([
+          expect.objectContaining({ id: 'telemetry', currentValue: 'true' }),
+        ]);
+
+        expect(events.some((e) => e.type === 'event' && e.name === 'config_options_update')).toBe(true);
+      } finally {
+        try {
+          await backend?.dispose();
+        } catch {}
+      }
+    });
   });
 
   it('clears configOptions state when setSessionConfigOption returns an empty list', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-config-options-clear-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backend: AcpBackend | null = null;
+    await withTempDir('happier-acp-config-options-clear-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backend: AcpBackend | null = null;
 
-    try {
-      backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-      });
-
-      const started = await backend.startSession();
-      expect(backend.getSessionConfigOptionsState()).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: 'telemetry' })]),
-      );
-
-      await backend.setSessionConfigOption(started.sessionId, 'clear', '1');
-      expect(backend.getSessionConfigOptionsState()).toEqual([]);
-    } finally {
       try {
-        await backend?.dispose();
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
+
+        const started = await backend.startSession();
+        expect(backend.getSessionConfigOptionsState()).toEqual(
+          expect.arrayContaining([expect.objectContaining({ id: 'telemetry' })]),
+        );
+
+        await backend.setSessionConfigOption(started.sessionId, 'clear', '1');
+        expect(backend.getSessionConfigOptionsState()).toEqual([]);
+      } finally {
+        try {
+          await backend?.dispose();
+        } catch {}
+      }
+    });
   });
 });

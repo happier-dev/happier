@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createApprovedPermissionHandler, createBasicSessionClient, createFakeAcpRuntimeBackend } from '../createAcpRuntime.testkit';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClient } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (in-flight steer)', () => {
   it('exposes turn-in-flight state and steerPrompt when enabled', async () => {

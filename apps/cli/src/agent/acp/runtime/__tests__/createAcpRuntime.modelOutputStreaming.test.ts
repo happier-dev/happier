@@ -5,32 +5,30 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createFakeAcpRuntimeBackend, createApprovedPermissionHandler } from '../createAcpRuntime.testkit';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (transcript streaming vNext)', () => {
   it('streams transcript drafts with a stable segment localId reused by durable checkpoints', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const draftCalls: Array<{ localId: string; deltaText: string }> = [];
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendTranscriptDraftDelta: (_provider, params) => {
+        draftCalls.push({ localId: params.localId, deltaText: params.deltaText });
+      },
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
+      },
+    });
 
     vi.useFakeTimers();
 
     const runtime = createAcpRuntime({
       provider: 'claude',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: (_provider, params) => {
-          draftCalls.push({ localId: params.localId, deltaText: params.deltaText });
-        },
-        sendAgentMessageCommitted: async (_provider, body, opts) => {
-          durableCalls.push({ localId: opts.localId, body, meta: opts.meta });
-        },
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
@@ -77,21 +75,16 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
   it('can disable draft buffering to emit each draft delta immediately', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const draftCalls: Array<{ deltaText: string }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendTranscriptDraftDelta: (_provider, params) => {
+        draftCalls.push({ deltaText: params.deltaText });
+      },
+    });
 
     const runtime = createAcpRuntime({
       provider: 'claude',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: (_provider, params) => {
-          draftCalls.push({ deltaText: params.deltaText });
-        },
-        sendAgentMessageCommitted: async () => {},
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
@@ -113,26 +106,21 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     let resolveInitialCommit: (() => void) | undefined;
     let durableCommitCount = 0;
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async () => {
+        durableCommitCount += 1;
+        if (durableCommitCount === 1) {
+          await new Promise<void>((resolve) => {
+            resolveInitialCommit = resolve;
+          });
+        }
+      },
+    });
 
     const runtime = createAcpRuntime({
       provider: 'claude',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: () => {},
-        sendAgentMessageCommitted: async () => {
-          durableCommitCount += 1;
-          if (durableCommitCount === 1) {
-            await new Promise<void>((resolve) => {
-              resolveInitialCommit = resolve;
-            });
-          }
-        },
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
@@ -166,21 +154,16 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
   it('flushes the active assistant segment before forwarding a permission request', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ body, meta: opts.meta });
+      },
+    });
 
     const runtime = createAcpRuntime({
       provider: 'claude',
       directory: '/tmp',
-      session: {
-        keepAlive: () => {},
-        sendAgentMessage: () => {},
-        sendTranscriptDraftDelta: () => {},
-        sendAgentMessageCommitted: async (_provider, body, opts) => {
-          durableCalls.push({ body, meta: opts.meta });
-        },
-        sendUserTextMessageCommitted: async () => {},
-        fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-        updateMetadata: () => {},
-      },
+      session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),

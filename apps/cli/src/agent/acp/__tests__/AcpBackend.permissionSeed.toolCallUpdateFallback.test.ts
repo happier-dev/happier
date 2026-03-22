@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -122,12 +118,14 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent.mjs',
+    source: src,
+  });
 }
 
 function writeFakeAcpWebFetchRefinementScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-web-fetch-refinement.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -243,41 +241,42 @@ function writeFakeAcpWebFetchRefinementScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-web-fetch-refinement.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend permission seed + tool_call_update fallback', () => {
-    it('reuses tool name from permission request when tool_call_update lacks kind, and preserves content when output is empty', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-perm-seed-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+  it('reuses tool name from permission request when tool_call_update lacks kind, and preserves content when output is empty', async () => {
+    await withTempDir('happier-acp-perm-seed-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
+      try {
         const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-          transportHandler: {
-            agentName: 'test',
-            getInitTimeout: () => 1_000,
-            getToolPatterns: () => [] as ToolPattern[],
-            getIdleTimeout: () => 50,
-          } satisfies TransportHandler,
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 50,
+          }),
           permissionHandler: {
             async handleToolCall() {
               return { decision: 'approved' as const };
             },
           },
         });
-      backendForCleanup = backend;
+        backendForCleanup = backend;
 
-      const toolResults: Array<{ toolName: string; result: unknown }> = [];
-      backend.onMessage((msg) => {
-        if (msg.type !== 'tool-result') return;
-        toolResults.push({ toolName: msg.toolName, result: msg.result });
-      });
+        const toolResults: Array<{ toolName: string; result: unknown }> = [];
+        backend.onMessage((msg) => {
+          if (msg.type !== 'tool-result') return;
+          toolResults.push({ toolName: msg.toolName, result: msg.result });
+        });
 
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'hi');
@@ -294,67 +293,65 @@ describe('AcpBackend permission seed + tool_call_update fallback', () => {
         expect(last.result).not.toBe('');
         expect(Array.isArray((last.result as any)?.output)).toBe(true);
       } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   });
 
   it('upgrades a generic read tool call to web_fetch when permission metadata becomes more specific later', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-perm-refine-'));
-    const scriptPath = writeFakeAcpWebFetchRefinementScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-perm-refine-', async (dir) => {
+      const scriptPath = writeFakeAcpWebFetchRefinementScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          getInitTimeout: () => 1_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 50,
-        } satisfies TransportHandler,
-        permissionHandler: {
-          async handleToolCall() {
-            return { decision: 'approved' as const };
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            initTimeoutMs: 1_000,
+            idleTimeoutMs: 50,
+          }),
+          permissionHandler: {
+            async handleToolCall() {
+              return { decision: 'approved' as const };
+            },
           },
-        },
-      });
-      backendForCleanup = backend;
+        });
+        backendForCleanup = backend;
 
-      const toolCalls: Array<{ toolName: string; args: unknown }> = [];
-      const toolResults: Array<{ toolName: string; result: unknown }> = [];
-      backend.onMessage((msg) => {
-        if (msg.type === 'tool-call') {
-          toolCalls.push({ toolName: msg.toolName, args: msg.args });
-          return;
+        const toolCalls: Array<{ toolName: string; args: unknown }> = [];
+        const toolResults: Array<{ toolName: string; result: unknown }> = [];
+        backend.onMessage((msg) => {
+          if (msg.type === 'tool-call') {
+            toolCalls.push({ toolName: msg.toolName, args: msg.args });
+            return;
+          }
+          if (msg.type === 'tool-result') {
+            toolResults.push({ toolName: msg.toolName, result: msg.result });
+          }
+        });
+
+        const started = await backend.startSession();
+        ((backend as unknown as { toolCallIdToNameMap: Map<string, string> }).toolCallIdToNameMap).set(
+          'call-web-1',
+          'read',
+        );
+        await backend.sendPrompt(started.sessionId, 'hi');
+
+        const startMs = Date.now();
+        while ((toolCalls.length === 0 || toolResults.length === 0) && Date.now() - startMs < 2_000) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
         }
-        if (msg.type === 'tool-result') {
-          toolResults.push({ toolName: msg.toolName, result: msg.result });
-        }
-      });
 
-      const started = await backend.startSession();
-      ((backend as unknown as { toolCallIdToNameMap: Map<string, string> }).toolCallIdToNameMap).set(
-        'call-web-1',
-        'read',
-      );
-      await backend.sendPrompt(started.sessionId, 'hi');
-
-      const startMs = Date.now();
-      while ((toolCalls.length === 0 || toolResults.length === 0) && Date.now() - startMs < 2_000) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(toolCalls.length).toBeGreaterThan(0);
+        expect(toolResults.length).toBeGreaterThan(0);
+        expect(toolCalls[toolCalls.length - 1]?.toolName).toBe('web_fetch');
+        expect(toolResults[toolResults.length - 1]?.toolName).toBe('web_fetch');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
       }
-
-      expect(toolCalls.length).toBeGreaterThan(0);
-      expect(toolResults.length).toBeGreaterThan(0);
-      expect(toolCalls[toolCalls.length - 1]?.toolName).toBe('web_fetch');
-      expect(toolResults[toolResults.length - 1]?.toolName).toBe('web_fetch');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 });

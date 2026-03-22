@@ -1,27 +1,18 @@
 import { describe, expect, it, afterEach } from 'vitest';
 
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
-import { rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildInitializeRequest, createAcpClientFsMethods } from '../AcpBackend';
 import type { AcpPermissionHandler } from '../AcpBackend';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
-function setEnv(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
-}
+const envScope = createEnvKeyScope(['HAPPIER_ACP_FS']);
 
 describe('AcpBackend ACP FS capability experiment', () => {
-  const previousNonStackFlag = process.env.HAPPIER_ACP_FS;
-
   afterEach(() => {
-    setEnv('HAPPIER_ACP_FS', previousNonStackFlag);
+    envScope.restore();
   });
 
   it('exposes buildInitializeRequest to allow ACP capabilities to be unit-tested', () => {
@@ -29,7 +20,7 @@ describe('AcpBackend ACP FS capability experiment', () => {
   });
 
   it('advertises fs.readTextFile/fs.writeTextFile when HAPPIER_ACP_FS is enabled', () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
     const req = buildInitializeRequest({ clientName: 'test', clientVersion: '0.0.0' });
     expect(req.clientCapabilities?.fs?.readTextFile).toBe(true);
@@ -37,7 +28,7 @@ describe('AcpBackend ACP FS capability experiment', () => {
   });
 
   it('advertises ACP fs capabilities by default', () => {
-    setEnv('HAPPIER_ACP_FS', undefined);
+    envScope.patch({ HAPPIER_ACP_FS: undefined });
 
     const req = buildInitializeRequest({ clientName: 'test', clientVersion: '0.0.0' });
     expect(req.clientCapabilities?.fs?.readTextFile).toBe(true);
@@ -45,12 +36,10 @@ describe('AcpBackend ACP FS capability experiment', () => {
   });
 
   it('writeTextFile is permission-gated when ACP fs is enabled', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-acp-fs-'));
-    const targetPath = join(workspace, 'a.txt');
-
-    try {
+    await withTempDir('happier-acp-fs-', async (workspace) => {
+      const targetPath = join(workspace, 'a.txt');
       const clientFs = createAcpClientFsMethods({
         cwd: workspace,
         permissionHandler: {
@@ -65,37 +54,29 @@ describe('AcpBackend ACP FS capability experiment', () => {
       ).rejects.toThrow(/denied/i);
 
       expect(existsSync(targetPath)).toBe(false);
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
+    });
   });
 
   it('readTextFile reads file content when ACP fs is enabled', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-acp-fs-'));
-    const targetPath = join(workspace, 'b.txt');
-
-    try {
+    await withTempDir('happier-acp-fs-', async (workspace) => {
+      const targetPath = join(workspace, 'b.txt');
       writeFileSync(targetPath, 'line1\nline2\nline3\n', 'utf8');
       const clientFs = createAcpClientFsMethods({ cwd: workspace });
 
       const res = await clientFs.readTextFile!({ sessionId: 's', path: targetPath, line: 2, limit: 1 });
       expect(res.content).toBe('line2');
       expect(readFileSync(targetPath, 'utf8')).toContain('line3');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
+    });
   });
 
   it('does not treat missing files under a symlinked cwd as path traversal (reports ENOENT instead)', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-acp-fs-root-'));
-    const workspaceReal = join(root, 'workspace-real');
-    const workspaceLink = join(root, 'workspace-link');
-
-    try {
+    await withTempDir('happier-acp-fs-root-', async (root) => {
+      const workspaceReal = join(root, 'workspace-real');
+      const workspaceLink = join(root, 'workspace-link');
       mkdirSync(workspaceReal, { recursive: true });
       symlinkSync(workspaceReal, workspaceLink);
 
@@ -103,20 +84,16 @@ describe('AcpBackend ACP FS capability experiment', () => {
       const missing = join(workspaceLink, 'missing.txt');
 
       await expect(clientFs.readTextFile!({ sessionId: 's', path: missing })).rejects.toThrow(/ENOENT/i);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it('readTextFile rejects paths that escape cwd', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-acp-fs-root-'));
-    const workspace = join(root, 'workspace');
-    const outside = join(root, 'outside');
-    const outsideFile = join(outside, 'outside.txt');
-
-    try {
+    await withTempDir('happier-acp-fs-root-', async (root) => {
+      const workspace = join(root, 'workspace');
+      const outside = join(root, 'outside');
+      const outsideFile = join(outside, 'outside.txt');
       // Prepare test files.
       mkdirSync(workspace, { recursive: true });
       mkdirSync(outside, { recursive: true });
@@ -125,20 +102,16 @@ describe('AcpBackend ACP FS capability experiment', () => {
       const clientFs = createAcpClientFsMethods({ cwd: workspace });
       await expect(clientFs.readTextFile!({ sessionId: 's', path: outsideFile })).rejects.toThrow(/permission denied|traversal/i);
       await expect(clientFs.readTextFile!({ sessionId: 's', path: '../outside/outside.txt' })).rejects.toThrow(/permission denied|traversal/i);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it('writeTextFile rejects paths that escape cwd even when approved', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-acp-fs-root-'));
-    const workspace = join(root, 'workspace');
-    const outside = join(root, 'outside');
-    const outsideFile = join(outside, 'outside.txt');
-
-    try {
+    await withTempDir('happier-acp-fs-root-', async (root) => {
+      const workspace = join(root, 'workspace');
+      const outside = join(root, 'outside');
+      const outsideFile = join(outside, 'outside.txt');
       mkdirSync(workspace, { recursive: true });
       mkdirSync(outside, { recursive: true });
 
@@ -155,21 +128,17 @@ describe('AcpBackend ACP FS capability experiment', () => {
       await expect(clientFs.writeTextFile!({ sessionId: 's', path: '../outside/outside.txt', content: 'nope' })).rejects.toThrow(/permission denied|traversal/i);
 
       expect(existsSync(outsideFile)).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it('writeTextFile rejects writes through symlinks that point outside cwd', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-acp-fs-root-'));
-    const workspace = join(root, 'workspace');
-    const outside = join(root, 'outside');
-    const outsideFile = join(outside, 'outside.txt');
-    const linkPath = join(workspace, 'link.txt');
-
-    try {
+    await withTempDir('happier-acp-fs-root-', async (root) => {
+      const workspace = join(root, 'workspace');
+      const outside = join(root, 'outside');
+      const outsideFile = join(outside, 'outside.txt');
+      const linkPath = join(workspace, 'link.txt');
       mkdirSync(workspace, { recursive: true });
       mkdirSync(outside, { recursive: true });
       writeFileSync(outsideFile, 'original', 'utf8');
@@ -186,21 +155,17 @@ describe('AcpBackend ACP FS capability experiment', () => {
 
       await expect(clientFs.writeTextFile!({ sessionId: 's', path: linkPath, content: 'nope' })).rejects.toThrow(/permission denied|traversal/i);
       expect(readFileSync(outsideFile, 'utf8')).toBe('original');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 
   it('writeTextFile rejects writes when a missing child is nested under a symlinked ancestor outside cwd', async () => {
-    setEnv('HAPPIER_ACP_FS', '1');
+    envScope.patch({ HAPPIER_ACP_FS: '1' });
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-acp-fs-root-'));
-    const workspace = join(root, 'workspace');
-    const outside = join(root, 'outside');
-    const linkDir = join(workspace, 'linkdir');
-    const escapedFile = join(outside, 'nested', 'via-symlink.txt');
-
-    try {
+    await withTempDir('happier-acp-fs-root-', async (root) => {
+      const workspace = join(root, 'workspace');
+      const outside = join(root, 'outside');
+      const linkDir = join(workspace, 'linkdir');
+      const escapedFile = join(outside, 'nested', 'via-symlink.txt');
       mkdirSync(workspace, { recursive: true });
       mkdirSync(outside, { recursive: true });
       symlinkSync(outside, linkDir);
@@ -222,8 +187,6 @@ describe('AcpBackend ACP FS capability experiment', () => {
         })
       ).rejects.toThrow(/permission denied|traversal/i);
       expect(existsSync(escapedFile)).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    });
   });
 });

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpRuntime } from '../createAcpRuntime';
-import { createApprovedPermissionHandler, createSessionClientWithMetadata } from '../createAcpRuntime.testkit';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));

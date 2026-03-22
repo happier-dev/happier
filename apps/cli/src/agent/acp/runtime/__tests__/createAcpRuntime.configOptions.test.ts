@@ -1,22 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentMessage, EventMessage } from '@/agent/core/AgentMessage';
-import { createAcpRuntime, type AcpRuntimeBackend } from '../createAcpRuntime';
+import type { EventMessage } from '@/agent/core/AgentMessage';
+import { createAcpRuntime } from '../createAcpRuntime';
 import type { Metadata } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import {
-  createApprovedPermissionHandler,
-  createBasicSessionClient,
-  createDefaultMetadata,
-  createFakeAcpRuntimeBackend,
-  createSessionClientWithMetadata,
-} from '../createAcpRuntime.testkit';
+import { createBasicSessionClient, createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
 describe('createAcpRuntime (configOptions)', () => {
   it('publishes ACP configOptions into session metadata', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, metadataUpdates, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata(),
+      initialMetadata: createTestMetadata(),
     });
 
     const runtime = createAcpRuntime({
@@ -66,7 +63,7 @@ describe('createAcpRuntime (configOptions)', () => {
   it('clears ACP configOptions metadata when the provider reports an empty list', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata(),
+      initialMetadata: createTestMetadata(),
     });
 
     const runtime = createAcpRuntime({
@@ -107,12 +104,11 @@ describe('createAcpRuntime (configOptions)', () => {
 
   it('normalizes boolean values before delegating setSessionConfigOption', async () => {
     let lastSet: { sessionId: string; configId: string; value: unknown } | null = null;
-    const backend = {
-      ...createFakeAcpRuntimeBackend(),
+    const backend = createFakeAcpRuntimeBackend({
       async setSessionConfigOption(sessionId: string, configId: string, value: unknown) {
         lastSet = { sessionId, configId, value };
       },
-    } as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -133,12 +129,11 @@ describe('createAcpRuntime (configOptions)', () => {
 
   it('trims string values before delegating setSessionConfigOption', async () => {
     let lastSet: { sessionId: string; configId: string; value: unknown } | null = null;
-    const backend = {
-      ...createFakeAcpRuntimeBackend(),
+    const backend = createFakeAcpRuntimeBackend({
       async setSessionConfigOption(sessionId: string, configId: string, value: unknown) {
         lastSet = { sessionId, configId, value };
       },
-    } as AcpRuntimeBackend & { emit: (msg: AgentMessage) => void };
+    });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -160,7 +155,7 @@ describe('createAcpRuntime (configOptions)', () => {
   it('refreshes acpSessionModelsV1 when config_options_state model changes', async () => {
     const backend = createFakeAcpRuntimeBackend();
     const { session, getMetadata } = createSessionClientWithMetadata({
-      initialMetadata: createDefaultMetadata(),
+      initialMetadata: createTestMetadata(),
     });
 
     const runtime = createAcpRuntime({
