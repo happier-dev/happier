@@ -1,7 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,9 +35,7 @@ describe('WorkspaceIndexingPermissionView', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(WorkspaceIndexingPermissionView, { tool, metadata: null, messages: [] } as any));
-        });
+        tree = (await renderScreen(React.createElement(WorkspaceIndexingPermissionView, { tool, metadata: null, messages: [] } as any))).tree;
 
         const texts = tree.root.findAllByType('Text' as any).map((n: any) => n.props.children);
         const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string' || typeof c === 'number');
@@ -70,11 +70,7 @@ describe('WorkspaceIndexingPermissionView', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(WorkspaceIndexingPermissionView, { tool, metadata: null, messages: [], detailLevel: 'full' } as any)
-            );
-        });
+        tree = (await renderScreen(React.createElement(WorkspaceIndexingPermissionView, { tool, metadata: null, messages: [], detailLevel: 'full' } as any))).tree;
 
         const joined = tree.root.findAllByType('Text' as any).map((n: any) => String(n.props.children)).join(' ');
         expect(joined).toContain('Indexing helps the agent search your codebase faster');

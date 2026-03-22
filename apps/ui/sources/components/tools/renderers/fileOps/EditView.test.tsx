@@ -1,7 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
 import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,12 +19,15 @@ vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
         return undefined;
     },
-}));
+});
+});
 
 describe('EditView', () => {
     it('truncates long edit strings by default', async () => {
@@ -37,9 +42,7 @@ describe('EditView', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(EditView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
 
         expect(diffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -66,9 +69,7 @@ describe('EditView', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(EditView, makeToolViewProps(tool)));
-        });
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
 
         expect(diffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -89,11 +90,7 @@ describe('EditView', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(EditView, makeToolViewProps(tool, { detailLevel: 'full' }))
-            );
-        });
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
         expect(diffSpy).toHaveBeenCalledWith(
             expect.objectContaining({

@@ -1,8 +1,10 @@
 import React from 'react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,12 +16,13 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: any) => React.createElement('CodeView', { code }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => {
         const last = key.split('.').pop() ?? key;
         return last.charAt(0).toUpperCase() + last.slice(1);
-    },
-}));
+    } });
+});
 
 describe('AgentTeamView', () => {
     let AgentTeamView!: React.ComponentType<ReturnType<typeof makeToolViewProps>>;
@@ -30,9 +33,7 @@ describe('AgentTeamView', () => {
 
     async function renderTool(tool: ReturnType<typeof makeToolCall>): Promise<renderer.ReactTestRenderer> {
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AgentTeamView, makeToolViewProps(tool)));
-        });
+        tree = (await renderScreen(React.createElement(AgentTeamView, makeToolViewProps(tool)))).tree;
         return tree;
     }
 

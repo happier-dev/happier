@@ -1,6 +1,9 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { collectHostText } from '../../shell/views/ToolView.testHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,9 +16,10 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('SubAgentRunView', () => {
     let SubAgentRunView: any;
@@ -30,9 +34,7 @@ describe('SubAgentRunView', () => {
 
     it('renders sidechain text messages while running (detailLevel=full)', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'running',
                         input: { intent: 'plan' },
@@ -43,19 +45,15 @@ describe('SubAgentRunView', () => {
                         { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'Working...', isThinking: false },
                     ] as any}
                     detailLevel="full"
-                />,
-            );
-        });
+                />)).tree;
 
-        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\n');
+        const text = collectHostText(tree).join('\n');
         expect(text).toContain('Working...');
     });
 
     it('renders sidechain text messages for abort-like Request interrupted errors', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'error',
                         input: { intent: 'delegate' },
@@ -66,19 +64,15 @@ describe('SubAgentRunView', () => {
                         { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 3', isThinking: false },
                     ] as any}
                     detailLevel="full"
-                />,
-            );
-        });
+                />)).tree;
 
-        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\n');
+        const text = collectHostText(tree).join('\n');
         expect(text).toContain('TICK 3');
     });
 
     it('renders a review digest from findingsDigest v2 shape', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'completed',
                         result: {
@@ -92,20 +86,16 @@ describe('SubAgentRunView', () => {
                     } as any}
                     metadata={null as any}
                     messages={[] as any}
-                />,
-            );
-        });
+                />)).tree;
 
-        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\n');
+        const text = collectHostText(tree).join('\n');
         expect(text).toContain('tools.subAgentRunView.reviewDigestTitle');
         expect(text).toContain('Avoid any');
     });
 
     it('renders a plan summary when intent is plan', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'completed',
                         input: { intent: 'plan' },
@@ -113,20 +103,16 @@ describe('SubAgentRunView', () => {
                     } as any}
                     metadata={null as any}
                     messages={[] as any}
-                />,
-            );
-        });
+                />)).tree;
 
-        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\\n');
+        const text = collectHostText(tree).join('\\n');
         expect(text).toContain('tools.subAgentRunView.planTitle');
         expect(text).toContain('Do A then B.');
     });
 
     it('renders a delegate summary when intent is delegate', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'completed',
                         input: { intent: 'delegate' },
@@ -134,20 +120,16 @@ describe('SubAgentRunView', () => {
                     } as any}
                     metadata={null as any}
                     messages={[] as any}
-                />,
-            );
-        });
+                />)).tree;
 
-        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\\n');
+        const text = collectHostText(tree).join('\\n');
         expect(text).toContain('tools.subAgentRunView.delegateTitle');
         expect(text).toContain('Delegated output.');
     });
 
     it('renders structured fallback for error state when result payload exists', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'error',
                         input: { intent: 'delegate' },
@@ -155,18 +137,14 @@ describe('SubAgentRunView', () => {
                     } as any}
                     metadata={null as any}
                     messages={[] as any}
-                />,
-            );
-        });
+                />)).tree;
 
-        expect(tree.root.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+        expect(structuredResultViewPropsSpy).toHaveBeenCalledTimes(1);
     });
 
     it('coerces error tool state to completed for structured timeout fallback', async () => {
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <SubAgentRunView
+        tree = (await renderScreen(<SubAgentRunView
                     tool={{
                         state: 'error',
                         input: { intent: 'delegate' },
@@ -178,11 +156,9 @@ describe('SubAgentRunView', () => {
                     } as any}
                     metadata={null as any}
                     messages={[] as any}
-                />,
-            );
-        });
+                />)).tree;
 
-        expect(tree.root.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+        expect(structuredResultViewPropsSpy).toHaveBeenCalledTimes(1);
         const firstCall = structuredResultViewPropsSpy.mock.calls[0]?.[0];
         expect(firstCall?.tool?.state).toBe('completed');
     });

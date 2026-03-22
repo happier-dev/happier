@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
 
@@ -19,7 +20,7 @@ vi.mock('@/utils/path/pathUtils', () => ({
     resolvePath: (p: string) => p,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useSetting: () => true,
 }));
 
@@ -35,14 +36,10 @@ describe('PatchView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { PatchView } = await import('./PatchView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     PatchView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 

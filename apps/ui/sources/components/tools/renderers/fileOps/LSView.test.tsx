@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
 import { expectListSummary, makeCompletedTool } from '../core/listView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,9 +20,7 @@ describe('LSView', () => {
         const tool = makeCompletedTool('LS', { path: '/tmp' }, { entries });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(LSView, makeToolViewProps(tool)));
-        });
+        tree = (await renderScreen(React.createElement(LSView, makeToolViewProps(tool)))).tree;
 
         expectListSummary({
             tree,
@@ -37,9 +37,7 @@ describe('LSView', () => {
         const tool = makeCompletedTool('LS', { path: '/tmp' }, { entries });
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(LSView, makeToolViewProps(tool, { detailLevel: 'full' })));
-        });
+        tree = (await renderScreen(React.createElement(LSView, makeToolViewProps(tool, { detailLevel: 'full' })))).tree;
 
         expectListSummary({
             tree,

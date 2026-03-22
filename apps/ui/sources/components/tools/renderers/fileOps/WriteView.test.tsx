@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,12 +19,14 @@ vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        return undefined;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'showLineNumbersInToolViews') return false;
+            return undefined;
+        },
+    }),
+);
 
 describe('WriteView', () => {
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -39,14 +42,10 @@ describe('WriteView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { WriteView } = await import('./WriteView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     WriteView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 

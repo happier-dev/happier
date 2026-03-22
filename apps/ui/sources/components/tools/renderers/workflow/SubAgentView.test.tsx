@@ -1,51 +1,51 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            ActivityIndicator: 'ActivityIndicator',
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            surface: '#fff',
-            divider: '#ddd',
-            shadow: { color: '#000', opacity: 0.2 },
-            textSecondary: '#666',
-            warning: '#f90',
-            success: '#0a0',
-            textDestructive: '#a00',
-        },
-    };
-    return {
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-        useUnistyles: () => ({ theme }),
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (_key: string, opts?: { count?: number; subject?: string }) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (_key: string, opts?: { count?: number; subject?: string }) => {
         if (_key === 'tools.taskLikeSummary.createTaskWithSubject' && opts && typeof opts.subject === 'string') {
             return `Create task: ${opts.subject}`;
         }
         if (_key === 'tools.taskLikeSummary.createTask') return 'Create task';
         if (opts && typeof opts.count === 'number') return `+ ${opts.count} more`;
         return _key;
-    },
-}));
+    } });
+});
 
 vi.mock('../../catalog', () => ({
     knownTools: {},
@@ -111,14 +111,10 @@ describe('SubAgentView', () => {
     ) {
         const { SubAgentView } = await import('./SubAgentView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     SubAgentView,
                     makeToolViewProps(tool, { messages, ...(detailLevel ? { detailLevel } : {}) }),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 

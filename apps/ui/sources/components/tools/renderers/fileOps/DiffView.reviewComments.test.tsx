@@ -1,14 +1,19 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
     DiffFilesListView: (props: any) => {
@@ -45,7 +50,9 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
         if (key === 'wrapLinesInDiffs') return true;
@@ -54,7 +61,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
     useSessionReviewCommentsDrafts: () => [],
     storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
-}));
+});
+});
 
 vi.mock('@/sync/domains/settings/settings', () => ({
     settingsDefaults: {
@@ -62,13 +70,15 @@ vi.mock('@/sync/domains/settings/settings', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 describe('DiffView (review comments)', () => {
     it('passes a renderInlineUnifiedDiff override when review comments are enabled and sessionId is available', async () => {
@@ -82,9 +92,7 @@ describe('DiffView (review comments)', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(React.createElement(DiffView, makeToolViewProps(tool, { sessionId: 's1', detailLevel: 'full' })));
-        });
+        await renderScreen(React.createElement(DiffView, makeToolViewProps(tool, { sessionId: 's1', detailLevel: 'full' })));
 
         const props = diffFilesListSpy.mock.calls[0]?.[0];
         expect(typeof props?.renderInlineUnifiedDiff).toBe('function');
