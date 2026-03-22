@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
+import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { OverlayPortalHost, OverlayPortalProvider } from './OverlayPortal';
 import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
 
@@ -16,8 +17,32 @@ import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
  * popovers render in the same coordinate space as their anchors.
  */
 export function PopoverPortalTargetProvider(props: { children: React.ReactNode }) {
-    // Web uses ReactDOM portals; scoping a native overlay host is unnecessary.
-    if (Platform.OS === 'web') return <>{props.children}</>;
+    if (Platform.OS === 'web') {
+        const [webPortalTarget, setWebPortalTarget] = React.useState<HTMLElement | null>(null);
+
+        return (
+            <ModalPortalTargetProvider target={webPortalTarget}>
+                <View style={{ flex: 1 }} pointerEvents="box-none">
+                    {props.children}
+                    <div
+                        data-happy-popover-portal-host=""
+                        ref={(node) => {
+                            setWebPortalTarget((prev) => (prev === node ? prev : node));
+                        }}
+                        style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: 0,
+                            height: 0,
+                            overflow: 'visible',
+                            pointerEvents: 'none',
+                        }}
+                    />
+                </View>
+            </ModalPortalTargetProvider>
+        );
+    }
 
     const rootRef = React.useRef<any>(null);
     const [layout, setLayout] = React.useState(() => ({ width: 0, height: 0 }));
