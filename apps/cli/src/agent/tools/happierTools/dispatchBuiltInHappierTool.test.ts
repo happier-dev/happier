@@ -422,8 +422,12 @@ describe('built-in Happier tools', () => {
     });
   });
 
-  it('defaults delegate execution_run_start to workspace_write permission mode', async () => {
+  it('routes delegate execution_run_start through the shared action tool executor', async () => {
     const startExecutionRun = vi.fn(async (_sessionId: string, request: unknown) => ok(request));
+    const executeActionByToolName = vi.fn(
+      async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
+        ok({ toolName, args, defaultSessionId }),
+    );
 
     const result = await dispatchBuiltInHappierTool({
       toolName: 'execution_run_start',
@@ -436,35 +440,28 @@ describe('built-in Happier tools', () => {
       deps: {
         changeTitle: async () => ({ success: true }),
         startExecutionRun,
-        executeActionByToolName: async () => unsupported(),
+        executeActionByToolName,
       },
     });
 
-    expect(startExecutionRun).toHaveBeenCalledWith('sess-1', {
-      intent: 'delegate',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    expect(executeActionByToolName).toHaveBeenCalledWith('subagents_delegate_start', expect.objectContaining({
+      sessionId: 'sess-1',
       instructions: 'Delegate.',
-      permissionMode: 'workspace_write',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-    });
+      backendTargetKeys: ['agent:claude'],
+    }), 'sess-1');
+    expect(startExecutionRun).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
-      result: {
-        intent: 'delegate',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        instructions: 'Delegate.',
-        permissionMode: 'workspace_write',
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
-        ioMode: 'request_response',
-      },
+      result: expect.objectContaining({ toolName: 'subagents_delegate_start' }),
     });
   });
 
-  it('defaults voice_agent execution_run_start to long_lived streaming mode', async () => {
+  it('routes voice_agent execution_run_start through the shared action tool executor', async () => {
     const startExecutionRun = vi.fn(async (_sessionId: string, request: unknown) => ok(request));
+    const executeActionByToolName = vi.fn(
+      async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
+        ok({ toolName, args, defaultSessionId }),
+    );
 
     const result = await dispatchBuiltInHappierTool({
       toolName: 'execution_run_start',
@@ -477,30 +474,53 @@ describe('built-in Happier tools', () => {
       deps: {
         changeTitle: async () => ({ success: true }),
         startExecutionRun,
-        executeActionByToolName: async () => unsupported(),
+        executeActionByToolName,
       },
     });
 
-    expect(startExecutionRun).toHaveBeenCalledWith('sess-1', {
-      intent: 'voice_agent',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    expect(executeActionByToolName).toHaveBeenCalledWith('voice_agent_start', expect.objectContaining({
+      sessionId: 'sess-1',
       instructions: 'Start voice agent.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'long_lived',
-      ioMode: 'streaming',
-    });
+      backendTargetKeys: ['agent:claude'],
+    }), 'sess-1');
+    expect(startExecutionRun).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
-      result: {
-        intent: 'voice_agent',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        instructions: 'Start voice agent.',
-        permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'long_lived',
-        ioMode: 'streaming',
+      result: expect.objectContaining({ toolName: 'voice_agent_start' }),
+    });
+  });
+
+  it('routes plan execution_run_start through the shared action tool executor', async () => {
+    const startExecutionRun = vi.fn(async (_sessionId: string, request: unknown) => ok(request));
+    const executeActionByToolName = vi.fn(
+      async (toolName: string, args: unknown, defaultSessionId: string): Promise<HappierBuiltInToolDispatchResult> =>
+        ok({ toolName, args, defaultSessionId }),
+    );
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'plan',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        instructions: 'Plan.',
       },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun,
+        executeActionByToolName,
+      },
+    });
+
+    expect(executeActionByToolName).toHaveBeenCalledWith('subagents_plan_start', expect.objectContaining({
+      sessionId: 'sess-1',
+      instructions: 'Plan.',
+      backendTargetKeys: ['agent:codex'],
+    }), 'sess-1');
+    expect(startExecutionRun).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: true,
+      result: expect.objectContaining({ toolName: 'subagents_plan_start' }),
     });
   });
 
