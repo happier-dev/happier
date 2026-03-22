@@ -1,19 +1,34 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { findFirstByType, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    PanResponder: { create: () => ({ panHandlers: {} }) },
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Pressable: 'Pressable',
+            PanResponder: {
+                create: () => ({ panHandlers: {} }),
+            },
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.default ?? null,
+            },
+        }
+    );
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('ResizableDockedPaneVertical (web pointer drag)', () => {
     it('commits height as the user drags (resizeEdge=bottom)', async () => {
@@ -32,9 +47,7 @@ describe('ResizableDockedPaneVertical (web pointer drag)', () => {
         const { ResizableDockedPaneVertical } = await import('./ResizableDockedPaneVertical');
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ResizableDockedPaneVertical
+        tree = (await renderScreen(<ResizableDockedPaneVertical
                     heightPx={320}
                     minHeightPx={200}
                     maxHeightPx={480}
@@ -42,13 +55,11 @@ describe('ResizableDockedPaneVertical (web pointer drag)', () => {
                     onCommitHeightPx={onCommitHeightPx}
                 >
                     <ViewStub />
-                </ResizableDockedPaneVertical>
-            );
-        });
+                </ResizableDockedPaneVertical>)).tree;
 
-        const webHandle = (tree! as any).root.findByType('Pressable');
+        const webHandle = findFirstByType(tree!, 'Pressable');
         await act(async () => {
-            webHandle.props.onPressIn({
+            invokeTestInstanceHandler(webHandle, 'onPressIn', {
                 clientY: 100,
                 preventDefault: vi.fn(),
                 stopPropagation: vi.fn(),
@@ -92,9 +103,7 @@ describe('ResizableDockedPaneVertical (web pointer drag)', () => {
         const { ResizableDockedPaneVertical } = await import('./ResizableDockedPaneVertical');
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ResizableDockedPaneVertical
+        tree = (await renderScreen(<ResizableDockedPaneVertical
                     heightPx={360}
                     minHeightPx={200}
                     maxHeightPx={480}
@@ -102,13 +111,11 @@ describe('ResizableDockedPaneVertical (web pointer drag)', () => {
                     onCommitHeightPx={onCommitHeightPx}
                 >
                     <ViewStub />
-                </ResizableDockedPaneVertical>
-            );
-        });
+                </ResizableDockedPaneVertical>)).tree;
 
-        const webHandle = (tree! as any).root.findByType('Pressable');
+        const webHandle = findFirstByType(tree!, 'Pressable');
         await act(async () => {
-            webHandle.props.onPressIn({
+            invokeTestInstanceHandler(webHandle, 'onPressIn', {
                 clientY: 100,
                 preventDefault: vi.fn(),
                 stopPropagation: vi.fn(),
@@ -170,13 +177,11 @@ describe('ResizableDockedPaneVertical (web pointer drag)', () => {
         }
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<TestHarness />);
-        });
+        tree = (await renderScreen(<TestHarness />)).tree;
 
-        const webHandle = (tree! as any).root.findByType('Pressable');
+        const webHandle = findFirstByType(tree!, 'Pressable');
         await act(async () => {
-            webHandle.props.onPressIn({
+            invokeTestInstanceHandler(webHandle, 'onPressIn', {
                 clientY: 100,
                 preventDefault: vi.fn(),
                 stopPropagation: vi.fn(),

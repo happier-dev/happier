@@ -1,20 +1,29 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { MultiPaneHostWithBottom } from './MultiPaneHostWithBottom';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
 
 describe('MultiPaneHostWithBottom (overlayBottom)', () => {
-    it('renders a scrim for overlay bottom and closes on scrim press', () => {
+    const originalWindow = (globalThis as any).window;
+    const originalKeyboardEvent = (globalThis as any).KeyboardEvent;
+
+    afterEach(() => {
+        standardCleanup();
+        vi.useRealTimers();
+        (globalThis as any).window = originalWindow;
+        (globalThis as any).KeyboardEvent = originalKeyboardEvent;
+    });
+
+    it('renders a scrim for overlay bottom and closes on scrim press', async () => {
         vi.useFakeTimers();
         const onCloseBottom = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHostWithBottom
+        const screen = await renderScreen(<MultiPaneHostWithBottom
                     main={<Main />}
                     rightPane={null}
                     detailsPane={null}
@@ -32,11 +41,12 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
                     bottomDockMaxHeightPx={600}
                     onCloseBottom={onCloseBottom}
                     onCommitBottomDockHeightPx={() => {}}
-                />
-            );
-        });
+                />);
 
-        const scrim = tree!.root.findByProps({ testID: 'multi-pane-bottom-scrim' });
+        const scrim = screen.findByTestId('multi-pane-bottom-scrim');
+        if (!scrim) {
+            throw new Error('Expected bottom scrim to be present');
+        }
 
         act(() => {
             scrim.props.onPress();
@@ -48,7 +58,7 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
         expect(onCloseBottom).toHaveBeenCalledTimes(1);
     });
 
-    it('closes overlay bottom on Escape key press and prevents inner pane closures', () => {
+    it('closes overlay bottom on Escape key press and prevents inner pane closures', async () => {
         vi.useFakeTimers();
         const onCloseBottom = vi.fn();
         const onCloseRight = vi.fn();
@@ -63,10 +73,7 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
             }
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHostWithBottom
+        const screen = await renderScreen(<MultiPaneHostWithBottom
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={null}
@@ -84,11 +91,9 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
                     bottomDockMaxHeightPx={600}
                     onCloseBottom={onCloseBottom}
                     onCommitBottomDockHeightPx={() => {}}
-                />
-            );
-        });
+                />);
 
-        expect(tree!.root.findByProps({ testID: 'multi-pane-bottom-scrim' })).toBeTruthy();
+        expect(screen.findByTestId('multi-pane-bottom-scrim')).toBeTruthy();
         act(() => {
             (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
         });
@@ -101,11 +106,8 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
         expect(onCloseRight).toHaveBeenCalledTimes(0);
     });
 
-    it('keeps the overlay bottom resizable', () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHostWithBottom
+    it('keeps the overlay bottom resizable', async () => {
+        const screen = await renderScreen(<MultiPaneHostWithBottom
                     main={<Main />}
                     rightPane={null}
                     detailsPane={null}
@@ -123,12 +125,10 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
                     bottomDockMaxHeightPx={600}
                     onCloseBottom={() => {}}
                     onCommitBottomDockHeightPx={() => {}}
-                />
-            );
-        });
+                />);
 
-        expect(tree!.root.findAllByProps({ testID: 'multi-pane-bottom-overlay-pane' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findAllByProps({ testID: 'multi-pane-bottom-overlay-resize-handle' }).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('multi-pane-bottom-overlay-pane')).toBeTruthy();
+        expect(screen.findByTestId('multi-pane-bottom-overlay-resize-handle')).toBeTruthy();
     });
 });
 

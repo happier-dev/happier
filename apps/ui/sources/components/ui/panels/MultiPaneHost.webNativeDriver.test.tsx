@@ -1,35 +1,39 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedTimingConfigs: any[] = [];
 
 vi.mock('react-native', async () => {
-  const ReactMod = await import('react');
-  const stub = await import('../../../dev/reactNativeStub');
-  return {
-    ...stub,
-    Platform: { ...(stub as any).Platform, OS: 'web' },
-    Animated: {
-      ...(stub as any).Animated,
-      Value: function Value(this: any, initial: number) {
-        this.__value = initial;
-        this.interpolate = (config: any) => ({ __interpolateConfig: config, __value: initial });
-      },
-      timing: (_value: any, config: any) => {
-        capturedTimingConfigs.push(config);
-        return { start: () => undefined };
-      },
-    },
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-    Pressable: (props: any) => ReactMod.createElement('Pressable', props, props.children),
-  };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+            Animated: {
+                Value: function Value(this: any, initial: number) {
+                this.__value = initial;
+                this.interpolate = (config: any) => ({ __interpolateConfig: config, __value: initial });
+              },
+                timing: (_value: any, config: any) => {
+                capturedTimingConfigs.push(config);
+                return { start: () => undefined };
+              },
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('@/dev/testkit');
+  return await createUnistylesMock({
     theme: {
       dark: false,
       colors: {
@@ -37,8 +41,8 @@ vi.mock('react-native-unistyles', () => ({
         surfaceElevated: '#ffffff',
       },
     },
-  }),
-}));
+  });
+});
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
   useReducedMotionPreference: () => false,
@@ -53,9 +57,7 @@ describe('pane hosts (web native driver)', () => {
     const { MultiPaneHost } = await import('./MultiPaneHost');
     const { MultiPaneHostWithBottom } = await import('./MultiPaneHostWithBottom');
 
-    await act(async () => {
-      renderer.create(
-        <>
+    await renderScreen(<>
           <MultiPaneHost
             main={<Main />}
             rightPane={<Right />}
@@ -87,9 +89,7 @@ describe('pane hosts (web native driver)', () => {
             onCloseBottom={() => {}}
             onCommitBottomDockHeightPx={() => {}}
           />
-        </>,
-      );
-    });
+        </>);
 
     expect(capturedTimingConfigs.length).toBeGreaterThan(0);
     for (const config of capturedTimingConfigs) {
