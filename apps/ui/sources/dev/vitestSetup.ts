@@ -9,6 +9,8 @@ process.env.HAPPIER_FEATURE_POLICY_ENV = '';
 // Some browser-oriented libraries (e.g. xterm add-ons) ship UMD bundles that expect a `self` global.
 // Define it up-front so Vitest can import those modules in Node without crashing during module eval.
 const g = globalThis as any;
+g.IS_REACT_ACT_ENVIRONMENT = true;
+
 if (!Object.prototype.hasOwnProperty.call(g, 'self') || g.self == null) {
     try {
         Object.defineProperty(g, 'self', {
@@ -127,6 +129,8 @@ vi.mock('react-native', async () => await import('./reactNativeStub'));
 const store = new Map<string, unknown>();
 const localStorageBacking = new Map<string, string>();
 const sessionStorageBacking = new Map<string, string>();
+
+vi.mock('expo-notifications', async () => await import('./expoNotificationsStub'));
 
 beforeEach(() => {
     // Some test files enable fake timers and forget to restore them. Force real timers at the start
@@ -295,6 +299,10 @@ vi.mock('expo-constants', () => ({
         manifest2: null,
     },
 }));
+
+// `expo-modules-core` is the shared native bridge used by Expo packages and can resolve into TS
+// source entrypoints that Vitest cannot transform safely under Node.
+vi.mock('expo-modules-core', async () => await import('./expoModulesCoreStub'));
 
 // `expo-updates` is native-oriented and pulls in platform-specific modules that Node/Vitest can't parse.
 vi.mock('expo-updates', () => ({

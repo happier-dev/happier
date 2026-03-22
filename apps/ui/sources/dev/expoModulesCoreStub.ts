@@ -20,3 +20,9 @@ export function requireNativeModule(moduleName: string): never {
     // Tests that actually rely on native behavior should mock the specific module.
     return {} as never;
 }
+
+export default {
+    Platform,
+    requireOptionalNativeModule,
+    requireNativeModule,
+};

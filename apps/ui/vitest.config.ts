@@ -6,6 +6,26 @@ import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/feat
 const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
 const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 4;
 
+function resolveExpoNodeModuleStub(id: string): string | null {
+    if (id === 'expo-modules-core' || /(?:^|[\\/])node_modules[\\/](?:@[^\\/]+[\\/])?expo-modules-core[\\/]src[\\/]index\.ts$/.test(id) || /expo-modules-core[\\/]src[\\/]index\.ts$/.test(id)) {
+        return resolve('./sources/dev/expoModulesCoreStub.ts');
+    }
+
+    if (id === 'expo-constants' || /(?:^|[\\/])node_modules[\\/](?:@[^\\/]+[\\/])?expo-constants[\\/]src[\\/]Constants\.ts$/.test(id) || /expo-constants[\\/]src[\\/]Constants\.ts$/.test(id)) {
+        return resolve('./sources/dev/expoConstantsStub.ts');
+    }
+
+    return null;
+}
+
+const expoNodeModuleStubsPlugin = {
+    name: 'happier-vitest-expo-node-module-stubs',
+    enforce: 'pre' as const,
+    resolveId(id: string) {
+        return resolveExpoNodeModuleStub(id);
+    },
+};
+
 export default defineConfig({
     define: {
         __DEV__: false,
@@ -37,7 +57,10 @@ export default defineConfig({
             HAPPIER_FEATURE_POLICY_ENV: '',
         },
         setupFiles: [resolve('./sources/dev/vitestSetup.ts')],
-        include: ['sources/**/*.{spec,test}.{ts,tsx}'],
+        include: [
+            'sources/**/*.{spec,test}.{ts,tsx}',
+            'tools/**/*.{spec,test}.{ts,tsx}',
+        ],
         exclude: [
             'sources/**/*.integration.test.{ts,tsx}',
             'sources/**/*.real.integration.test.{ts,tsx}',
@@ -66,7 +89,8 @@ export default defineConfig({
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
             // Expo packages commonly depend on `expo-modules-core`, whose exports point to TS sources that import `react-native`.
             // In node/Vitest we stub the minimal surface needed by our tests.
-            { find: 'expo-modules-core', replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
+            { find: /expo-modules-core\/src\/index\.ts$/, replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
+            { find: /^expo-modules-core(?:\/.*)?$/, replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
             // `expo-constants` uses conditional exports that Vite/Vitest can't always resolve cleanly under node.
             { find: 'expo-constants', replacement: resolve('./sources/dev/expoConstantsStub.ts') },
             // `expo-localization` depends on Expo modules that don't exist in Vitest's node env.
@@ -117,4 +141,5 @@ export default defineConfig({
             { find: '@', replacement: resolve('./sources') },
         ],
     },
+    plugins: [expoNodeModuleStubsPlugin],
 })
