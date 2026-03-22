@@ -1,31 +1,27 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const windowStub = { innerWidth: 1440 } as Window & typeof globalThis;
+(globalThis as unknown as { window: Window & typeof globalThis }).window = windowStub;
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
-
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            surface: '#ffffff',
-            divider: '#e5e7eb',
-            text: '#111827',
-            textSecondary: '#6b7280',
-            button: {
-                primary: {
-                    background: '#2563eb',
-                },
-            },
-            warningCritical: '#dc2626',
-            success: '#16a34a',
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: <T,>(values: { web?: T; ios?: T; default?: T }) => values.web ?? values.ios ?? values.default,
         },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-    };
+        useWindowDimensions: () => ({ width: 1440, height: 900 }),
+    });
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -49,22 +45,18 @@ describe('SelectionTiles', () => {
         const { SelectionTiles } = await import('./SelectionTiles');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SelectionTiles
+        tree = (await renderScreen(<SelectionTiles
                     options={[
                         { id: 'session_menu', title: 'Session menu' },
                         { id: 'command_palette', title: 'Command palette' },
                     ]}
                     value={null}
                     onChange={onChange}
-                />,
-            );
-        });
+                />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
+        const pressables = tree.findAllByType('Pressable' as any);
         await act(async () => {
-            pressables[1]!.props.onPress();
+            await pressTestInstanceAsync(pressables[1]!);
         });
 
         expect(pressables[0]!.props.accessibilityRole).toBe('radio');
@@ -78,9 +70,7 @@ describe('SelectionTiles', () => {
         const { SelectionTiles } = await import('./SelectionTiles');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SelectionTiles
+        tree = (await renderScreen(<SelectionTiles
                     selectionMode="multiple"
                     options={[
                         { id: 'voice_panel', title: 'Voice panel' },
@@ -88,16 +78,14 @@ describe('SelectionTiles', () => {
                     ]}
                     value={['voice_panel']}
                     onChange={onChange}
-                />,
-            );
-        });
+                />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
+        const pressables = tree.findAllByType('Pressable' as any);
         await act(async () => {
-            pressables[1]!.props.onPress();
+            await pressTestInstanceAsync(pressables[1]!);
         });
         await act(async () => {
-            pressables[0]!.props.onPress();
+            await pressTestInstanceAsync(pressables[0]!);
         });
 
         expect(pressables[0]!.props.accessibilityRole).toBe('checkbox');
@@ -113,24 +101,151 @@ describe('SelectionTiles', () => {
         const { SelectionTiles } = await import('./SelectionTiles');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SelectionTiles
+        tree = (await renderScreen(<SelectionTiles
                     selectionMode="multiple"
                     options={[
                         { id: 'voice_tool', title: 'Voice tool', disabled: true, badge: 'Unavailable' },
                     ]}
                     value={[]}
                     onChange={onChange}
-                />,
-            );
-        });
+                />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
+        const pressables = tree.findAllByType('Pressable' as any);
         await act(async () => {
-            pressables[0]!.props.onPress();
+            await pressTestInstanceAsync(pressables[0]!);
         });
 
         expect(onChange).not.toHaveBeenCalled();
     });
+
+    it('assigns stable tile test ids when a prefix is provided', async () => {
+        const onChange = vi.fn();
+        const { SelectionTiles } = await import('./SelectionTiles');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SelectionTiles
+                    options={[
+                        { id: 'build', title: 'Build' },
+                        { id: 'review', title: 'Review' },
+                    ]}
+                    value={'build'}
+                    onChange={onChange}
+                    testIdPrefix="engine-mode"
+                />)).tree;
+
+        expect(() => tree.findByProps({ testID: 'engine-mode:build' })).not.toThrow();
+        expect(() => tree.findByProps({ testID: 'engine-mode:review' })).not.toThrow();
+    });
+
+    it('uses two columns for medium-width compact three-option layouts', async () => {
+        const onChange = vi.fn();
+        const { SelectionTiles } = await import('./SelectionTiles');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SelectionTiles
+                    options={[
+                        { id: 'a', title: 'A' },
+                        { id: 'b', title: 'B' },
+                        { id: 'c', title: 'C' },
+                    ]}
+                    density="compact"
+                    value={'a'}
+                    onChange={onChange}
+                    testIdPrefix="medium-grid"
+                />)).tree;
+
+        const grid = tree.findByType('View' as any);
+        await act(async () => {
+            grid.props.onLayout?.({
+                nativeEvent: {
+                    layout: { width: 300, height: 120, x: 0, y: 0 },
+                },
+            });
+        });
+
+        const optionA = tree.findByProps({ testID: 'medium-grid:a' });
+        const resolvedStyle = optionA.props.style({ pressed: false });
+        const flattenedStyle = Object.assign(
+            {},
+            ...(Array.isArray(resolvedStyle)
+                ? resolvedStyle.filter(Boolean)
+                : [resolvedStyle].filter(Boolean)),
+        );
+
+        expect(flattenedStyle.width).toBe(145);
+    });
+
+    it('uses a multi-column compact fallback before a layout measurement is available on web', async () => {
+        const onChange = vi.fn();
+        const { SelectionTiles } = await import('./SelectionTiles');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SelectionTiles
+                    options={[
+                        { id: 'a', title: 'A' },
+                        { id: 'b', title: 'B' },
+                        { id: 'c', title: 'C' },
+                        { id: 'd', title: 'D' },
+                    ]}
+                    density="compact"
+                    value={'a'}
+                    onChange={onChange}
+                    testIdPrefix="fallback-grid"
+                />)).tree;
+
+        const optionA = tree.findByProps({ testID: 'fallback-grid:a' });
+        const resolvedStyle = optionA.props.style({ pressed: false });
+        const flattenedStyle = Object.assign(
+            {},
+            ...(Array.isArray(resolvedStyle)
+                ? resolvedStyle.filter(Boolean)
+                : [resolvedStyle].filter(Boolean)),
+        );
+
+        expect(flattenedStyle.width).toBe('48%');
+        expect(flattenedStyle.maxWidth).toBe('48%');
+        expect(flattenedStyle.flexGrow).toBe(0);
+        expect(flattenedStyle.flexShrink).toBe(0);
+    });
+
+    it('keeps a forced two-column compact layout at narrower measured widths for popover model grids', async () => {
+        const onChange = vi.fn();
+        const { SelectionTiles } = await import('./SelectionTiles');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SelectionTiles
+                    options={[
+                        { id: 'a', title: 'A' },
+                        { id: 'b', title: 'B' },
+                        { id: 'c', title: 'C' },
+                        { id: 'd', title: 'D' },
+                    ]}
+                    density="compact"
+                    value={'a'}
+                    onChange={onChange}
+                    minimumColumns={2}
+                    testIdPrefix="forced-grid"
+                />)).tree;
+
+        const grid = tree.findByType('View' as any);
+        await act(async () => {
+            grid.props.onLayout?.({
+                nativeEvent: {
+                    layout: { width: 240, height: 120, x: 0, y: 0 },
+                },
+            });
+        });
+
+        const optionA = tree.findByProps({ testID: 'forced-grid:a' });
+        const resolvedStyle = optionA.props.style({ pressed: false });
+        const flattenedStyle = Object.assign(
+            {},
+            ...(Array.isArray(resolvedStyle)
+                ? resolvedStyle.filter(Boolean)
+                : [resolvedStyle].filter(Boolean)),
+        );
+
+        expect(flattenedStyle.width).toBe(115);
+    });
+
 });

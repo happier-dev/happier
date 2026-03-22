@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SearchableListSelector } from './SearchableListSelector';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const mockEnv = vi.hoisted(() => ({
@@ -21,26 +23,33 @@ type RenderedAccessoryTree = {
     unmount(): void;
 };
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (spec: { web?: unknown; ios?: unknown; default?: unknown }) =>
-            (spec && 'web' in spec ? spec.web : spec?.default),
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+                select: (spec: { web?: unknown; ios?: unknown; default?: unknown }) =>
+                    (spec && 'web' in spec ? spec.web : spec?.default),
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) =>
         mockEnv.iconsRenderAsText ? React.createElement(React.Fragment, null, '.') : React.createElement('Ionicons', props, null),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        rt: { themeName: 'light' },
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -52,17 +61,18 @@ vi.mock('react-native-unistyles', () => ({
                 button: { primary: { background: '#00f' } },
             },
         },
-    }),
-    StyleSheet: { create: () => ({}) },
-}));
+        rt: { themeName: 'light' },
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
@@ -117,16 +127,12 @@ describe('SearchableListSelector (disabled items)', () => {
         };
 
         let tree: RenderedTree | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SearchableListSelector
+        tree = (await renderScreen(<SearchableListSelector
                     config={config}
                     items={[...items] as any}
                     selectedItem={null}
                     onSelect={onSelect}
-                />,
-            );
-        });
+                />)).tree;
 
         const renderedItems = tree!.root.findAllByType('Item');
         const rowA = renderedItems.find((n) => n.props.title === 'A');
@@ -172,17 +178,13 @@ describe('SearchableListSelector (disabled items)', () => {
         };
 
         let tree: RenderedTree | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SearchableListSelector
+        tree = (await renderScreen(<SearchableListSelector
                     config={config}
                     items={[...items] as any}
                     selectedItem={null}
                     onSelect={onSelect}
                     testIdPrefix="selector"
-                />,
-            );
-        });
+                />)).tree;
 
         const renderedItems = tree!.root.findAllByType('Item');
         const rowA = renderedItems.find((n) => n.props.title === 'A');
@@ -223,18 +225,14 @@ describe('SearchableListSelector (disabled items)', () => {
             accessoryTree: null,
         };
         try {
-            await act(async () => {
-                renderState.tree = renderer.create(
-                    <SearchableListSelector
+            renderState.tree = (await renderScreen(<SearchableListSelector
                         config={config}
                         items={[...items] as any}
                         favoriteItems={[...items] as any}
                         selectedItem={items[0] as any}
                         onSelect={() => {}}
                         onToggleFavorite={() => {}}
-                    />,
-                );
-            });
+                    />)).tree;
 
             const renderedTree = renderState.tree;
             if (!renderedTree) throw new Error('Expected rendered selector tree');
@@ -259,9 +257,7 @@ describe('SearchableListSelector (disabled items)', () => {
                 for (const child of children) walk(child, nextParent);
             };
 
-            await act(async () => {
-                renderState.accessoryTree = renderer.create(rowA!.props.rightElement);
-            });
+            renderState.accessoryTree = (await renderScreen(rowA!.props.rightElement)).tree;
             const renderedAccessoryTree = renderState.accessoryTree;
             if (!renderedAccessoryTree) throw new Error('Expected accessory tree');
             walk(renderedAccessoryTree.toJSON(), null);

@@ -8,24 +8,26 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default ?? values?.ios ?? values?.android },
-        View: React.forwardRef((props: any, ref: any) => {
-            const { children, testID, ...rest } = props;
-            return React.createElement('div', {
-                ...rest,
-                ref,
-                'data-testid': testID,
-            }, children);
-        }),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                View: React.forwardRef((props: any, ref: any) => {
+                    const { children, testID, ...rest } = props;
+                    return React.createElement('div', {
+                        ...rest,
+                        ref,
+                        'data-testid': testID,
+                    }, children);
+                }),
+            }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: () => ({}) },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },

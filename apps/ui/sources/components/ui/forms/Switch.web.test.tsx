@@ -1,27 +1,22 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 const actEnvironmentGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
-vi.mock('react-native', () => ({
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    View: (props: any) => React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        View: (props: any) => React.createElement('View', props, props.children),
+    });
+});
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            switch: {
-                track: { active: '#0f0', inactive: '#999' },
-                thumb: { active: '#fff' },
-            },
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 describe('Switch.web', () => {
@@ -39,15 +34,11 @@ describe('Switch.web', () => {
         const { Switch } = await import('./Switch.web');
         let tree!: renderer.ReactTestRenderer;
 
-        await act(async () => {
-            tree = renderer.create(
-                <Switch
+        tree = (await renderScreen(<Switch
                     value
                     onValueChange={() => {}}
                     testID="settings-toggle"
-                />,
-            );
-        });
+                />)).tree;
 
         const pressable = tree.root.findByType('Pressable' as any);
         expect(pressable.props.accessibilityRole).toBe('switch');

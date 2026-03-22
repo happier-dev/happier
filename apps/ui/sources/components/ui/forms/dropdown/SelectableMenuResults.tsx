@@ -9,6 +9,19 @@ import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRow
 import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
 import { Text } from '@/components/ui/text/Text';
 
+type WebMouseDownActivationEvent = Readonly<{
+    button?: number;
+    nativeEvent?: Readonly<{ button?: number }>;
+    preventDefault?: () => void;
+    stopPropagation?: () => void;
+}>;
+
+function asWebMouseDownActivationEvent(event: unknown): WebMouseDownActivationEvent {
+    if (!event || typeof event !== 'object') {
+        return {};
+    }
+    return event as WebMouseDownActivationEvent;
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -81,6 +94,10 @@ export function SelectableMenuResults(props: {
         }
         props.onPressItem(item);
     }, [props.onPressItem]);
+    const isPrimaryWebActivationEvent = React.useCallback((event: WebMouseDownActivationEvent) => {
+        const button = event.nativeEvent?.button ?? event.button;
+        return typeof button !== 'number' || button === 0;
+    }, []);
 
     const content = (
         <View style={styles.container}>
@@ -97,11 +114,11 @@ export function SelectableMenuResults(props: {
                     const handleOptionMouseDownCapture =
                         Platform.OS === 'web'
                             ? ((event: unknown) => {
+                                const activationEvent = asWebMouseDownActivationEvent(event);
                                 if (item.disabled) return;
-                                if (!(event instanceof MouseEvent)) return;
-                                if (typeof event.button === 'number' && event.button !== 0) return;
-                                event.preventDefault();
-                                event.stopPropagation();
+                                if (!isPrimaryWebActivationEvent(activationEvent)) return;
+                                activationEvent.preventDefault?.();
+                                activationEvent.stopPropagation?.();
                                 handleMouseDownActivatedPress(item);
                             })
                             : undefined;
