@@ -11,6 +11,7 @@ const mockEnv = vi.hoisted(() => ({
     iconsRenderAsText: false,
 }));
 
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
 type RenderedAccessoryTree = {
     toJSON(): unknown;
     unmount(): void;
@@ -206,7 +207,7 @@ describe('SearchableListSelector (disabled items)', () => {
         mockEnv.iconsRenderAsText = true;
 
         const renderState: {
-            tree: RenderedTree | null;
+            tree: RenderedScreen['tree'] | null;
             accessoryTree: RenderedAccessoryTree | null;
         } = {
             tree: null,
@@ -231,7 +232,11 @@ describe('SearchableListSelector (disabled items)', () => {
             renderState.accessoryTree = (await renderScreen(rowA!.props.rightElement)).tree;
             const renderedAccessoryTree = renderState.accessoryTree;
             if (!renderedAccessoryTree) throw new Error('Expected accessory tree');
-            expect(collectUnexpectedRawTextNodes(renderedAccessoryTree.toJSON())).toEqual([]);
+            expect(
+                collectUnexpectedRawTextNodes(
+                    renderedAccessoryTree.toJSON() as Parameters<typeof collectUnexpectedRawTextNodes>[0],
+                ),
+            ).toEqual([]);
         } finally {
             mockEnv.iconsRenderAsText = false;
             act(() => {
