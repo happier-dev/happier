@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const { runDoctorCommandMock, buildDoctorSnapshotMock } = vi.hoisted(() => ({
   runDoctorCommandMock: vi.fn<(..._args: unknown[]) => Promise<void>>(async () => {}),
@@ -41,24 +42,22 @@ import { handleDoctorCliCommand } from './doctor';
 
 describe('happier doctor --json', () => {
   it('prints a single redacted JSON snapshot and does not run the human doctor output', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await handleDoctorCliCommand({
-      args: ['doctor', '--json'],
-      rawArgv: ['node', 'happier', 'doctor', '--json'],
-      terminalRuntime: null,
-    });
+    const output = captureConsoleJsonOutput<{ server?: { serverUrl?: string }; accountId?: string }>();
 
     try {
-      expect(runDoctorCommandMock).not.toHaveBeenCalled();
-      expect(logSpy).toHaveBeenCalledTimes(1);
+      await handleDoctorCliCommand({
+        args: ['doctor', '--json'],
+        rawArgv: ['node', 'happier', 'doctor', '--json'],
+        terminalRuntime: null,
+      });
 
-      const printed = String(logSpy.mock.calls[0]?.[0] ?? '');
-      const parsed = JSON.parse(printed) as { server?: { serverUrl?: string }; accountId?: string };
+      expect(runDoctorCommandMock).not.toHaveBeenCalled();
+      expect(output.logs).toHaveLength(1);
+      const parsed = output.json();
       expect(parsed.accountId).toBe('acct_123');
       expect(parsed.server?.serverUrl).toBe('https://api.happier.dev');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });

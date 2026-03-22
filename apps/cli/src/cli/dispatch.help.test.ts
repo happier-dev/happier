@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 const defaultHandlerSpy = vi.fn(async () => {});
 
@@ -15,15 +16,16 @@ vi.mock('@/backends/catalog', async (importOriginal) => {
 import { dispatchCli } from './dispatch';
 
 describe('dispatchCli root help', () => {
-  const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  let output = captureConsoleLogAndMuteStdout();
 
   beforeEach(() => {
     defaultHandlerSpy.mockClear();
-    consoleLogSpy.mockClear();
+    output.restore();
+    output = captureConsoleLogAndMuteStdout();
   });
 
   afterEach(() => {
-    consoleLogSpy.mockClear();
+    output.restore();
   });
 
   it('prints vendor-agnostic root help without invoking the default backend handler', async () => {
@@ -34,8 +36,8 @@ describe('dispatchCli root help', () => {
     });
 
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('happier - AI CLI On the Go'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('happier codex'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.not.stringContaining('Claude Code Options'));
+    expect(output.logs).toContainEqual(expect.stringContaining('happier - AI CLI On the Go'));
+    expect(output.logs).toContainEqual(expect.stringContaining('happier codex'));
+    expect(output.logs).not.toContainEqual(expect.stringContaining('Claude Code Options'));
   });
 });

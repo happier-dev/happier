@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { withTempDirSync } from '@/testkit/fs/tempDir';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 import { maybeAutoUpdateNotice } from './autoUpdateNotice';
 
@@ -9,51 +11,55 @@ function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function withUpdateHomeDir<T>(fn: (homeDir: string) => T): T {
+  return withTempDirSync('happy-cli-update-', fn);
+}
+
 describe('maybeAutoUpdateNotice', () => {
   it('prints a throttled update notice and updates notifiedAt', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const cacheDir = join(homeDir, 'cache');
-      mkdirSync(cacheDir, { recursive: true });
-      const cachePath = join(cacheDir, 'update.json');
-      writeJson(cachePath, {
-        checkedAt: 1,
-        latest: '9.9.9',
-        current: '1.0.0',
-        runtimeVersion: null,
-        invokerVersion: '1.0.0',
-        updateAvailable: true,
-        notifiedAt: null,
-      });
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.json');
+        writeJson(cachePath, {
+          checkedAt: 1,
+          latest: '9.9.9',
+          current: '1.0.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
 
-      const spawnDetached = vi.fn();
+        const spawnDetached = vi.fn();
 
-      maybeAutoUpdateNotice({
-        argv: ['start'],
-        isTTY: true,
-        homeDir,
-        cliRootDir: '/repo/apps/cli',
-        env: {},
-        nowMs: 100_000,
-        spawnDetached,
-        notifyIntervalMs: 1000,
-        checkIntervalMs: 1000,
-      });
+        maybeAutoUpdateNotice({
+          argv: ['start'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1000,
+        });
 
-      expect(stderr).toHaveBeenCalledWith(expect.stringContaining('update available'));
-      expect(spawnDetached).toHaveBeenCalled();
+        expect(output.text()).toContain('update available');
+        expect(spawnDetached).toHaveBeenCalled();
 
-      const updated = JSON.parse(readFileSync(cachePath, 'utf8'));
-      expect(updated.notifiedAt).toBe(100_000);
-    } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+        const updated = JSON.parse(readFileSync(cachePath, 'utf8'));
+        expect(updated.notifiedAt).toBe(100_000);
+      } finally {
+        output.restore();
+      }
+    });
   });
 
   it('does nothing when update checks are disabled', () => {
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const output = captureConsoleText();
     const spawnDetached = vi.fn();
     try {
       maybeAutoUpdateNotice({
@@ -68,220 +74,220 @@ describe('maybeAutoUpdateNotice', () => {
         checkIntervalMs: 1000,
       });
 
-      expect(stderr).not.toHaveBeenCalled();
+      expect(output.lines).toHaveLength(0);
       expect(spawnDetached).not.toHaveBeenCalled();
     } finally {
-      stderr.mockRestore();
+      output.restore();
     }
   });
 
 
   it('prefers the installed package-dist entrypoint for background update checks', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const cliRootDir = join(homeDir, 'cli', 'current');
-    try {
-      mkdirSync(join(cliRootDir, 'package-dist'), { recursive: true });
-      writeFileSync(join(cliRootDir, 'package-dist', 'index.mjs'), 'export {};\n', 'utf8');
-      const cacheDir = join(homeDir, 'cache');
-      mkdirSync(cacheDir, { recursive: true });
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cliRootDir = join(homeDir, 'cli', 'current');
+        mkdirSync(join(cliRootDir, 'package-dist'), { recursive: true });
+        writeFileSync(join(cliRootDir, 'package-dist', 'index.mjs'), 'export {};\n', 'utf8');
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
 
-      const spawnDetached = vi.fn();
+        const spawnDetached = vi.fn();
 
-      maybeAutoUpdateNotice({
-        argv: ['start'],
-        isTTY: true,
-        homeDir,
-        cliRootDir,
-        env: {},
-        nowMs: 100_000,
-        spawnDetached,
-        notifyIntervalMs: 1000,
-        checkIntervalMs: 0,
-      });
-
-      expect(spawnDetached).toHaveBeenCalledWith({
-        script: join(cliRootDir, 'package-dist', 'index.mjs'),
-        args: ['self', 'check', '--quiet'],
-        cwd: cliRootDir,
-        env: expect.objectContaining({ HAPPIER_CLI_UPDATE_CHECK_SPAWNED: '1' }),
-      });
-    } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
-    }
-  });
-  it('does not crash when spawnDetached throws', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      expect(() =>
         maybeAutoUpdateNotice({
           argv: ['start'],
+          isTTY: true,
+          homeDir,
+          cliRootDir,
+          env: {},
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 0,
+        });
+
+        expect(spawnDetached).toHaveBeenCalledWith({
+          script: join(cliRootDir, 'package-dist', 'index.mjs'),
+          args: ['self', 'check', '--quiet'],
+          cwd: cliRootDir,
+          env: expect.objectContaining({ HAPPIER_CLI_UPDATE_CHECK_SPAWNED: '1' }),
+        });
+        expect(output.lines).toHaveLength(0);
+      } finally {
+        output.restore();
+      }
+    });
+  });
+  it('does not crash when spawnDetached throws', () => {
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        expect(() =>
+          maybeAutoUpdateNotice({
+            argv: ['start'],
+            isTTY: true,
+            homeDir,
+            cliRootDir: '/repo/apps/cli',
+            env: {},
+            nowMs: 100_000,
+            spawnDetached: () => {
+              throw new Error('boom');
+            },
+            notifyIntervalMs: 1000,
+            checkIntervalMs: 0,
+          }),
+        ).not.toThrow();
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
+  it('does not spawn background checks for --version invocations', () => {
+    const output = captureConsoleText();
+    const spawnDetached = vi.fn();
+
+    try {
+      withUpdateHomeDir((homeDir) => {
+        maybeAutoUpdateNotice({
+          argv: ['--version'],
           isTTY: true,
           homeDir,
           cliRootDir: '/repo/apps/cli',
           env: {},
           nowMs: 100_000,
-          spawnDetached: () => {
-            throw new Error('boom');
-          },
+          spawnDetached,
           notifyIntervalMs: 1000,
-          checkIntervalMs: 0,
-        }),
-      ).not.toThrow();
-    } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
-    }
-  });
-
-  it('does not spawn background checks for --version invocations', () => {
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const spawnDetached = vi.fn();
-
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    try {
-      maybeAutoUpdateNotice({
-        argv: ['--version'],
-        isTTY: true,
-        homeDir,
-        cliRootDir: '/repo/apps/cli',
-        env: {},
-        nowMs: 100_000,
-        spawnDetached,
-        notifyIntervalMs: 1000,
-        checkIntervalMs: 1000,
+          checkIntervalMs: 1000,
+        });
       });
 
-      expect(stderr).not.toHaveBeenCalled();
+      expect(output.lines).toHaveLength(0);
       expect(spawnDetached).not.toHaveBeenCalled();
     } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
+      output.restore();
     }
   });
 
   it('does not print an update notice for self commands when argv includes flag values', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const cacheDir = join(homeDir, 'cache');
-      mkdirSync(cacheDir, { recursive: true });
-      const cachePath = join(cacheDir, 'update.json');
-      writeJson(cachePath, {
-        checkedAt: 99_000,
-        latest: '9.9.9',
-        current: '1.0.0',
-        runtimeVersion: null,
-        invokerVersion: '1.0.0',
-        updateAvailable: true,
-        notifiedAt: null,
-      });
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.json');
+        writeJson(cachePath, {
+          checkedAt: 99_000,
+          latest: '9.9.9',
+          current: '1.0.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
 
-      const spawnDetached = vi.fn();
+        const spawnDetached = vi.fn();
 
-      maybeAutoUpdateNotice({
-        argv: ['--config', '/path/to/config', 'self', 'check'],
-        isTTY: true,
-        homeDir,
-        cliRootDir: '/repo/apps/cli',
-        env: {},
-        nowMs: 100_000,
-        spawnDetached,
-        notifyIntervalMs: 1000,
-        checkIntervalMs: 1_000_000,
-      });
+        maybeAutoUpdateNotice({
+          argv: ['--config', '/path/to/config', 'self', 'check'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1_000_000,
+        });
 
-      expect(stderr).not.toHaveBeenCalled();
-      expect(spawnDetached).not.toHaveBeenCalled();
-    } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+        expect(output.lines).toHaveLength(0);
+        expect(spawnDetached).not.toHaveBeenCalled();
+      } finally {
+        output.restore();
+      }
+    });
   });
 
   it('does not print an update notice for self commands when argv includes short-flag values', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const cacheDir = join(homeDir, 'cache');
-      mkdirSync(cacheDir, { recursive: true });
-      const cachePath = join(cacheDir, 'update.json');
-      writeJson(cachePath, {
-        checkedAt: 99_000,
-        latest: '9.9.9',
-        current: '1.0.0',
-        runtimeVersion: null,
-        invokerVersion: '1.0.0',
-        updateAvailable: true,
-        notifiedAt: null,
-      });
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.json');
+        writeJson(cachePath, {
+          checkedAt: 99_000,
+          latest: '9.9.9',
+          current: '1.0.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
 
-      const spawnDetached = vi.fn();
+        const spawnDetached = vi.fn();
 
-      maybeAutoUpdateNotice({
-        argv: ['-c', '/path/to/config', 'self', 'check'],
-        isTTY: true,
-        homeDir,
-        cliRootDir: '/repo/apps/cli',
-        env: {},
-        nowMs: 100_000,
-        spawnDetached,
-        notifyIntervalMs: 1000,
-        checkIntervalMs: 1_000_000,
-      });
+        maybeAutoUpdateNotice({
+          argv: ['-c', '/path/to/config', 'self', 'check'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1_000_000,
+        });
 
-      expect(stderr).not.toHaveBeenCalled();
-      expect(spawnDetached).not.toHaveBeenCalled();
-    } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+        expect(output.lines).toHaveLength(0);
+        expect(spawnDetached).not.toHaveBeenCalled();
+      } finally {
+        output.restore();
+      }
+    });
   });
 
   it('does not print an update notice for self commands with leading boolean long flags', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const cacheDir = join(homeDir, 'cache');
-      mkdirSync(cacheDir, { recursive: true });
-      const cachePath = join(cacheDir, 'update.json');
-      writeJson(cachePath, {
-        checkedAt: 99_000,
-        latest: '9.9.9',
-        current: '1.0.0',
-        runtimeVersion: null,
-        invokerVersion: '1.0.0',
-        updateAvailable: true,
-        notifiedAt: null,
-      });
+    withUpdateHomeDir((homeDir) => {
+      const output = captureConsoleText();
+      try {
+        const cacheDir = join(homeDir, 'cache');
+        mkdirSync(cacheDir, { recursive: true });
+        const cachePath = join(cacheDir, 'update.json');
+        writeJson(cachePath, {
+          checkedAt: 99_000,
+          latest: '9.9.9',
+          current: '1.0.0',
+          runtimeVersion: null,
+          invokerVersion: '1.0.0',
+          updateAvailable: true,
+          notifiedAt: null,
+        });
 
-      const spawnDetached = vi.fn();
+        const spawnDetached = vi.fn();
 
-      maybeAutoUpdateNotice({
-        argv: ['--force', 'self', 'check'],
-        isTTY: true,
-        homeDir,
-        cliRootDir: '/repo/apps/cli',
-        env: {},
-        nowMs: 100_000,
-        spawnDetached,
-        notifyIntervalMs: 1000,
-        checkIntervalMs: 1_000_000,
-      });
+        maybeAutoUpdateNotice({
+          argv: ['--force', 'self', 'check'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          nowMs: 100_000,
+          spawnDetached,
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 1_000_000,
+        });
 
-      expect(stderr).not.toHaveBeenCalled();
-      expect(spawnDetached).not.toHaveBeenCalled();
-    } finally {
-      stderr.mockRestore();
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+        expect(output.lines).toHaveLength(0);
+        expect(spawnDetached).not.toHaveBeenCalled();
+      } finally {
+        output.restore();
+      }
+    });
   });
 
   it('does not spawn multiple concurrent background checks', () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
-    try {
+    withUpdateHomeDir((homeDir) => {
       const cacheDir = join(homeDir, 'cache');
       mkdirSync(cacheDir, { recursive: true });
       const cachePath = join(cacheDir, 'update.json');
@@ -321,8 +327,6 @@ describe('maybeAutoUpdateNotice', () => {
       });
 
       expect(spawnDetached).toHaveBeenCalledTimes(1);
-    } finally {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+    });
   });
 });

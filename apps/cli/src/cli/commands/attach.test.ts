@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials, Settings } from '@/persistence';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { handleAttachCommand } from './attach';
 
@@ -35,7 +35,7 @@ describe('happier attach', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_remote_tmux_1',
       active: true,
       encryptionMode: 'plain',
@@ -71,7 +71,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_missing_machine_1',
       active: true,
       encryptionMode: 'plain',
@@ -116,7 +116,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_local_marker_1',
       active: true,
       encryptionMode: 'plain',
@@ -162,7 +162,7 @@ describe('happier attach', () => {
     };
     const fetchSessionsPageFn = vi.fn(async () => ({
       sessions: [
-        makeSessionFixtureRow({
+        createSessionRecordFixture({
           id: 'sid_attachable_1',
           active: true,
           updatedAt: 20,
@@ -179,7 +179,7 @@ describe('happier attach', () => {
             },
           }),
         }),
-        makeSessionFixtureRow({
+        createSessionRecordFixture({
           id: 'sid_not_attachable_1',
           active: true,
           updatedAt: 10,
@@ -195,7 +195,7 @@ describe('happier attach', () => {
             },
           }),
         }),
-        makeSessionFixtureRow({
+        createSessionRecordFixture({
           id: 'sid_remote_tmux_1',
           active: true,
           updatedAt: 30,
@@ -211,7 +211,7 @@ describe('happier attach', () => {
             },
           }),
         }),
-        makeSessionFixtureRow({
+        createSessionRecordFixture({
           id: 'sid_remote_opencode_1',
           active: true,
           updatedAt: 35,
@@ -227,7 +227,7 @@ describe('happier attach', () => {
             opencodeServerBaseUrlExplicit: true,
           }),
         }),
-        makeSessionFixtureRow({
+        createSessionRecordFixture({
           id: 'sid_inactive_1',
           active: false,
           updatedAt: 40,
@@ -314,7 +314,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_1',
       active: true,
       encryptionMode: 'plain',
@@ -358,7 +358,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_publish_1',
       active: true,
       encryptionMode: 'plain',
@@ -402,7 +402,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_publish_fail_1',
       active: true,
       encryptionMode: 'plain',
@@ -438,7 +438,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_claude_1',
       active: true,
       encryptionMode: 'plain',
@@ -525,7 +525,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_windows_1',
       active: true,
       encryptionMode: 'plain',
@@ -583,7 +583,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_windows_hidden_1',
       active: true,
       encryptionMode: 'plain',
