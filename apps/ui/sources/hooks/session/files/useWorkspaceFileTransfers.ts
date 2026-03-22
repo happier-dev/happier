@@ -424,6 +424,8 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
         const nativeSinkRef: { current: NativeDownloadSink | null } = { current: null };
         const downloadedChunks: Uint8Array[] = [];
+        let webBufferedBytes = 0;
+        let webExceededLimit = false;
         const webDownloadMaxBytes = resolveWebDownloadMaxBytes();
         const updateProgress = (progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => {
             setDownloadState((prev) => prev.status === 'downloading'
@@ -438,6 +440,23 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 destination: {
                     writeBytes: async (bytes) => {
                         if (Platform.OS === 'web') {
+                            if (webExceededLimit) {
+                                return;
+                            }
+
+                            webBufferedBytes += bytes.byteLength;
+                            if (webBufferedBytes > webDownloadMaxBytes) {
+                                webExceededLimit = true;
+                                // Stop the transfer as early as possible without throwing through the pipeline.
+                                try {
+                                    controller.abort();
+                                } catch {}
+
+                                webBufferedBytes = 0;
+                                downloadedChunks.length = 0;
+                                return;
+                            }
+
                             downloadedChunks.push(new Uint8Array(bytes));
                             return;
                         }
@@ -454,6 +473,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     },
                     cleanup: async () => {
                         if (Platform.OS === 'web') {
+                            webBufferedBytes = 0;
                             downloadedChunks.length = 0;
                             return;
                         }
@@ -478,6 +498,8 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                                 error: 'File exceeds the web download size limit',
                             };
                         }
+                        webBufferedBytes = 0;
+                        webExceededLimit = false;
                         return;
                     }
 
@@ -493,6 +515,11 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 signal: controller.signal,
                 onProgress: updateProgress,
             });
+
+            if (Platform.OS === 'web' && webExceededLimit) {
+                setDownloadState({ status: 'error', error: 'File exceeds the web download size limit' });
+                return { ok: false, error: 'File exceeds the web download size limit' };
+            }
 
             if (!res.ok) {
                 setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
@@ -544,6 +571,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 : prev);
             return { ok: true };
         } finally {
+            if (Platform.OS === 'web') {
+                webBufferedBytes = 0;
+                downloadedChunks.length = 0;
+            }
             downloadAbortRef.current = null;
         }
     }, [params.sessionId]);
