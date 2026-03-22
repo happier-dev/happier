@@ -1,15 +1,22 @@
 import { describe, expect, test, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+
+const envScope = createEnvKeyScope([
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_SESSION_ATTACH_FILE',
+]);
 
 describe('readSessionAttachFromEnv', () => {
   test('rejects attach files outside the session-attach dir', async () => {
-    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
-    const dir = await mkdtemp(join(tmpdir(), 'happy-attach-'));
+    const dir = await createTempDir('happy-attach-');
     try {
-      process.env.HAPPIER_HOME_DIR = dir;
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
 
       vi.resetModules();
 
@@ -24,26 +31,18 @@ describe('readSessionAttachFromEnv', () => {
 
       await expect(readSessionAttachFromEnv()).rejects.toThrow('Invalid session attach file location');
     } finally {
-      if (previousHomeDir === undefined) {
-        delete process.env.HAPPIER_HOME_DIR;
-      } else {
-        process.env.HAPPIER_HOME_DIR = previousHomeDir;
-      }
-      if (previousAttachFile === undefined) {
-        delete process.env.HAPPIER_SESSION_ATTACH_FILE;
-      } else {
-        process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
-      }
-      await rm(dir, { recursive: true, force: true });
+      envScope.restore();
+      await removeTempDir(dir);
     }
   });
 
   test('rejects symlink attach files (must be a regular file)', async () => {
-    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
-    const dir = await mkdtemp(join(tmpdir(), 'happy-attach-'));
+    const dir = await createTempDir('happy-attach-');
     try {
-      process.env.HAPPIER_HOME_DIR = dir;
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
 
       vi.resetModules();
 
@@ -66,26 +65,18 @@ describe('readSessionAttachFromEnv', () => {
       await expect(stat(linkPath)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(targetPath)).resolves.toBeTruthy();
     } finally {
-      if (previousHomeDir === undefined) {
-        delete process.env.HAPPIER_HOME_DIR;
-      } else {
-        process.env.HAPPIER_HOME_DIR = previousHomeDir;
-      }
-      if (previousAttachFile === undefined) {
-        delete process.env.HAPPIER_SESSION_ATTACH_FILE;
-      } else {
-        process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
-      }
-      await rm(dir, { recursive: true, force: true });
+      envScope.restore();
+      await removeTempDir(dir);
     }
   });
 
   test('reads, validates, and deletes legacy v1 attach file (e2ee)', async () => {
-    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
-    const dir = await mkdtemp(join(tmpdir(), 'happy-attach-'));
+    const dir = await createTempDir('happy-attach-');
     try {
-      process.env.HAPPIER_HOME_DIR = dir;
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
 
       vi.resetModules();
 
@@ -111,26 +102,18 @@ describe('readSessionAttachFromEnv', () => {
       // File should be deleted.
       await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
-      if (previousHomeDir === undefined) {
-        delete process.env.HAPPIER_HOME_DIR;
-      } else {
-        process.env.HAPPIER_HOME_DIR = previousHomeDir;
-      }
-      if (previousAttachFile === undefined) {
-        delete process.env.HAPPIER_SESSION_ATTACH_FILE;
-      } else {
-        process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
-      }
-      await rm(dir, { recursive: true, force: true });
+      envScope.restore();
+      await removeTempDir(dir);
     }
   });
 
   test('reads, validates, and deletes v2 attach file (plain)', async () => {
-    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-    const previousAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
-    const dir = await mkdtemp(join(tmpdir(), 'happy-attach-'));
+    const dir = await createTempDir('happy-attach-');
     try {
-      process.env.HAPPIER_HOME_DIR = dir;
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
 
       vi.resetModules();
 
@@ -155,17 +138,8 @@ describe('readSessionAttachFromEnv', () => {
       // File should be deleted.
       await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
-      if (previousHomeDir === undefined) {
-        delete process.env.HAPPIER_HOME_DIR;
-      } else {
-        process.env.HAPPIER_HOME_DIR = previousHomeDir;
-      }
-      if (previousAttachFile === undefined) {
-        delete process.env.HAPPIER_SESSION_ATTACH_FILE;
-      } else {
-        process.env.HAPPIER_SESSION_ATTACH_FILE = previousAttachFile;
-      }
-      await rm(dir, { recursive: true, force: true });
+      envScope.restore();
+      await removeTempDir(dir);
     }
   });
 });
