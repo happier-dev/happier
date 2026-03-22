@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
-    WorkspaceReplicationJobRecordSchema,
+    safeParseWorkspaceReplicationJobRecordFromDiskValue,
     type WorkspaceReplicationJobRecord,
 } from '../jobs/workspaceReplicationJobStore';
 import { createWorkspaceReplicationPaths } from '../state/workspaceReplicationPaths';
@@ -10,8 +10,7 @@ import { createWorkspaceReplicationPaths } from '../state/workspaceReplicationPa
 async function readWorkspaceReplicationJobRecord(filePath: string): Promise<WorkspaceReplicationJobRecord | null> {
     try {
         const raw = await readFile(filePath, 'utf8');
-        const parsed = WorkspaceReplicationJobRecordSchema.safeParse(JSON.parse(raw));
-        return parsed.success ? parsed.data : null;
+        return safeParseWorkspaceReplicationJobRecordFromDiskValue(JSON.parse(raw));
     } catch {
         return null;
     }
@@ -57,4 +56,3 @@ export async function listWorkspaceReplicationJobs(params: Readonly<{
         throw error;
     }
 }
-
