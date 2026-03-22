@@ -1,7 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -107,12 +107,10 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
                     virtualizeFileList
                 />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
-        expect(pressables.length).toBeGreaterThan(0);
+        const pressable = findTestInstanceByTypeContainingText(tree, 'Pressable', 'src/a.ts');
+        expect(pressable).toBeTruthy();
 
-        act(() => {
-            pressables[0]!.props.onPress();
-        });
+        pressTestInstance(pressable, 'DiffFilesListView file row');
 
         expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(1);
         expect(onToggleExpanded).toHaveBeenCalledWith('k1');

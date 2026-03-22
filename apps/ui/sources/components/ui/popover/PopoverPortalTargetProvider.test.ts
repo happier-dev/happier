@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
-import { findAllByType } from '@/dev/testkit/harness/popoverHarness';
+import { findAllByType, findFirstHostNodeByTestId } from '@/dev/testkit/harness/popoverHarness';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -103,9 +103,11 @@ describe('PopoverPortalTargetProvider (native)', () => {
                     ),
                 ))).tree;
 
-        const innerRoot = tree?.root.findByProps({ testID: 'inner-root' });
+        const innerRoot = tree ? findFirstHostNodeByTestId(tree, 'inner-root') : null;
         expect(innerRoot ? findAllByType(innerRoot, 'PopoverChild').length : 0).toBe(1);
-        expect(tree?.root.findByProps({ testID: 'outer-host' }) ? findAllByType(tree.root.findByProps({ testID: 'outer-host' }), 'PopoverChild').length : 0).toBe(0);
+
+        const outerHost = tree ? findFirstHostNodeByTestId(tree, 'outer-host') : null;
+        expect(outerHost ? findAllByType(outerHost, 'PopoverChild').length : 0).toBe(0);
     });
 
     it('removes portal content when popover closes', async () => {

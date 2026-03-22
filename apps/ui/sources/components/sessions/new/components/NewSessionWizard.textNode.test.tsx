@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
@@ -116,9 +116,7 @@ describe('NewSessionWizard', () => {
     it('does not render the legacy visible session type section even when the feature flag is enabled', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
-        let tree!: renderer.ReactTestRenderer;
-        try {
-            tree = (await renderScreen(<NewSessionWizard
+        const screen = await renderScreen(<NewSessionWizard
                         layout={{
                             theme: {
                                 colors: {
@@ -249,15 +247,13 @@ describe('NewSessionWizard', () => {
                             emptyAutocompleteSuggestions: async () => [],
                             agentInputExtraActionChips: [],
                         }}
-                    />)).tree;
-
-            const textNodes = tree.root.findAllByType('Text' as any).map((node) => node.props.children).flat().filter(Boolean);
-            expect(textNodes).not.toContain('newSession.selectSessionTypeTitle');
-            expect(textNodes).not.toContain('newSession.selectSessionTypeDescription');
+                    />);
+        try {
+            const textContent = screen.getTextContent();
+            expect(textContent).not.toContain('newSession.selectSessionTypeTitle');
+            expect(textContent).not.toContain('newSession.selectSessionTypeDescription');
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await screen.unmount();
         }
     });
 

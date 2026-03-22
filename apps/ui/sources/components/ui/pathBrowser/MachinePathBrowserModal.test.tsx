@@ -8,7 +8,7 @@ import {
     PATH_BROWSER_CONFIRM_TEST_ID,
     PATH_BROWSER_MODAL_TEST_ID,
 } from './pathBrowserTestIds';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,9 +19,7 @@ async function waitForTestId(screen: ReturnType<typeof renderScreen> extends Pro
         if (target) {
             return target;
         }
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
     }
     return screen.findByTestId(testID);
 }
@@ -227,7 +225,7 @@ describe('MachinePathBrowserModal', () => {
             const rootToggle = screen.findByTestId(getPathBrowserToggleTestId('/'));
             expect(rootToggle).toBeTruthy();
             rootToggle?.props.onMouseDownCapture?.({ stopPropagation });
-            await rootToggle?.props.onPress({ stopPropagation, nativeEvent: { stopPropagation } });
+            invokeTestInstanceHandler(rootToggle, 'onPress', { stopPropagation, nativeEvent: { stopPropagation } });
         });
 
         await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
@@ -254,9 +252,7 @@ describe('MachinePathBrowserModal', () => {
 
         let confirmButton = await waitForTestId(screen, PATH_BROWSER_CONFIRM_TEST_ID);
         for (let index = 0; index < 8 && confirmButton?.props?.disabled !== false; index += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
+            await flushHookEffects({ cycles: 1, turns: 1 });
             confirmButton = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
         }
 
@@ -301,9 +297,7 @@ describe('MachinePathBrowserModal', () => {
                 />);
 
         for (let index = 0; index < 8 && flatListScrollToIndexMock.mock.calls.length === 0; index += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
+            await flushHookEffects({ cycles: 1, turns: 1 });
         }
 
         expect(flatListScrollToIndexMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -329,9 +323,7 @@ describe('MachinePathBrowserModal', () => {
                 />);
 
         for (let index = 0; index < 8; index += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
+            await flushHookEffects({ cycles: 1, turns: 1 });
         }
 
         const confirmButton = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);

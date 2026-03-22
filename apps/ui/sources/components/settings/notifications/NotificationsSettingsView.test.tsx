@@ -337,10 +337,9 @@ describe('NotificationsSettingsView', () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
         const screen = await renderSettingsView(<NotificationsSettingsView />);
-        const addWebhookItem = requireRow(screen, 'settings-notifications-add-webhook');
 
         await act(async () => {
-            await addWebhookItem.props.onPress();
+            screen.pressRow('settings-notifications-add-webhook');
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
@@ -450,10 +449,9 @@ describe('NotificationsSettingsView', () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
         const screen = await renderSettingsView(<NotificationsSettingsView />);
-        const signingSecretItem = requireRowByTitle(screen, 'settingsNotifications.webhooks.signingSecretTitle');
 
         await act(async () => {
-            await signingSecretItem.props.onPress();
+            screen.pressRowByTitle('settingsNotifications.webhooks.signingSecretTitle');
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({

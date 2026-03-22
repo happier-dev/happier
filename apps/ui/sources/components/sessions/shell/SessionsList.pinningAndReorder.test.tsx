@@ -2,7 +2,13 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { findTestInstanceByTypeContainingText, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    findTestInstanceByTypeContainingText,
+    invokeTestInstanceHandler,
+    pressTestInstance,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -346,7 +352,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         );
 
         await act(async () => {
-            footerPressable.props.onPress();
+            pressTestInstance(footerPressable, 'expected archived sessions footer button');
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/archived');
@@ -386,8 +392,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             'expected sess_a session row',
         );
 
-        expect(typeof row.props.onSetTags).toBe('function');
-        row.props.onSetTags(['urgent']);
+        invokeTestInstanceHandler(row, 'onSetTags', ['urgent'], 'expected sess_a session row');
 
         expect(setSessionTagsV1).toHaveBeenCalledTimes(1);
         expect(setSessionTagsV1.mock.calls[0]?.[0]).toEqual({
@@ -426,10 +431,9 @@ describe('SessionsList pinning + per-group ordering', () => {
             findSessionItem(screen, 'sess_a'),
             'expected sess_a session row',
         );
-        expect(typeof row.props.onTogglePinned).toBe('function');
 
         await act(async () => {
-            row.props.onTogglePinned();
+            invokeTestInstanceHandler(row, 'onTogglePinned', undefined, 'expected sess_a session row');
         });
 
         expect(setPinnedSessionKeysV1).toHaveBeenCalledTimes(1);
@@ -469,9 +473,7 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         const screen = await renderSessionsList();
 
-        const textNodes = screen.root.findAllByType('Text');
-        const textChildren = textNodes.map((n: any) => n.props.children);
-        expect(textChildren).toContain('~/repoA');
+        expect(findTestInstanceByTypeContainingText(screen.root, 'Text', '~/repoA')).toBeTruthy();
 
         const row1 = expectPresent(
             findSessionItem(screen, 'sess_p1'),

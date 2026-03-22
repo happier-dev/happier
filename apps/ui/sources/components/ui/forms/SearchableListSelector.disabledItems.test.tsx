@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SearchableListSelector } from './SearchableListSelector';
-import { renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,13 +11,6 @@ const mockEnv = vi.hoisted(() => ({
     iconsRenderAsText: false,
 }));
 
-type RenderedItemNode = { props: Record<string, any> };
-type RenderedTree = {
-    root: {
-        findAllByType(type: unknown): RenderedItemNode[];
-    };
-    unmount(): void;
-};
 type RenderedAccessoryTree = {
     toJSON(): unknown;
     unmount(): void;
@@ -126,27 +119,26 @@ describe('SearchableListSelector (disabled items)', () => {
             isItemDisabled: (item: any) => item.id === 'b',
         };
 
-        let tree: RenderedTree | null = null;
-        tree = (await renderScreen(<SearchableListSelector
+        const screen = await renderScreen(<SearchableListSelector
                     config={config}
                     items={[...items] as any}
                     selectedItem={null}
                     onSelect={onSelect}
-                />)).tree;
+                    testIdPrefix="selector"
+                />);
 
-        const renderedItems = tree!.root.findAllByType('Item');
-        const rowA = renderedItems.find((n) => n.props.title === 'A');
-        const rowB = renderedItems.find((n) => n.props.title === 'B');
+        const rowA = screen.findByTestId('selector:a');
+        const rowB = screen.findByTestId('selector:b');
         expect(rowA).toBeTruthy();
         expect(rowB).toBeTruthy();
 
         expect(rowA!.props.disabled).toBeFalsy();
         expect(rowB!.props.disabled).toBe(true);
 
-        rowB!.props.onPress?.();
+        screen.pressByTestId('selector:b');
         expect(onSelect).not.toHaveBeenCalled();
 
-        rowA!.props.onPress?.();
+        screen.pressByTestId('selector:a');
         expect(onSelect).toHaveBeenCalledTimes(1);
         expect(onSelect).toHaveBeenCalledWith(items[0]);
     });
@@ -177,20 +169,16 @@ describe('SearchableListSelector (disabled items)', () => {
             allowCustomInput: false,
         };
 
-        let tree: RenderedTree | null = null;
-        tree = (await renderScreen(<SearchableListSelector
+        const screen = await renderScreen(<SearchableListSelector
                     config={config}
                     items={[...items] as any}
                     selectedItem={null}
                     onSelect={onSelect}
                     testIdPrefix="selector"
-                />)).tree;
+                />);
 
-        const renderedItems = tree!.root.findAllByType('Item');
-        const rowA = renderedItems.find((n) => n.props.title === 'A');
-        const rowB = renderedItems.find((n) => n.props.title === 'B');
-        expect(rowA?.props.testID).toBe('selector:a');
-        expect(rowB?.props.testID).toBe('selector:b');
+        expect(screen.findByTestId('selector:a')?.props.testID).toBe('selector:a');
+        expect(screen.findByTestId('selector:b')?.props.testID).toBe('selector:b');
     });
 
     it('does not emit raw text nodes inside row accessories when icons render as text on web', async () => {
@@ -232,36 +220,18 @@ describe('SearchableListSelector (disabled items)', () => {
                         selectedItem={items[0] as any}
                         onSelect={() => {}}
                         onToggleFavorite={() => {}}
+                        testIdPrefix="selector"
                     />)).tree;
 
             const renderedTree = renderState.tree;
             if (!renderedTree) throw new Error('Expected rendered selector tree');
-            const renderedItems = renderedTree.root.findAllByType('Item');
-            const rowA = renderedItems.find((n) => n.props.title === 'A');
+            const rowA = renderedTree.findByTestId('selector:a');
             expect(rowA?.props.rightElement).toBeTruthy();
-
-            const badNodes: Array<{ parent: string | null; value: string }> = [];
-            const walk = (node: any, parentType: string | null) => {
-                if (node == null) return;
-                if (typeof node === 'string' || typeof node === 'number') {
-                    const value = String(node);
-                    if (parentType !== 'Text' && value.trim().length > 0) badNodes.push({ parent: parentType, value });
-                    return;
-                }
-                if (Array.isArray(node)) {
-                    for (const child of node) walk(child, parentType);
-                    return;
-                }
-                const nextParent = typeof node.type === 'string' ? node.type : parentType;
-                const children = Array.isArray(node.children) ? node.children : [];
-                for (const child of children) walk(child, nextParent);
-            };
 
             renderState.accessoryTree = (await renderScreen(rowA!.props.rightElement)).tree;
             const renderedAccessoryTree = renderState.accessoryTree;
             if (!renderedAccessoryTree) throw new Error('Expected accessory tree');
-            walk(renderedAccessoryTree.toJSON(), null);
-            expect(badNodes).toEqual([]);
+            expect(collectUnexpectedRawTextNodes(renderedAccessoryTree.toJSON())).toEqual([]);
         } finally {
             mockEnv.iconsRenderAsText = false;
             act(() => {

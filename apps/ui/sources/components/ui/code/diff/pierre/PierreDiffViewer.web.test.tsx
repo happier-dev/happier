@@ -97,9 +97,9 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        let tree: renderer.ReactTestRenderer;
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
         await renderer.act(async () => {
-            tree = (await renderScreen(<div style={{ maxHeight: 320 }}>
+            screen = await renderScreen(<div style={{ maxHeight: 320 }}>
                     <PierreDiffViewer
                         mode="unified"
                         filePath="src/a.ts"
@@ -109,11 +109,10 @@ describe('PierreDiffViewer (web)', () => {
                         showPrefix={true}
                         virtualized={true}
                     />
-                </div>)).tree;
+                </div>);
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const wrapper = tree!.root.findByProps({ 'data-testid': 'pierre-diff-viewer' });
+        const wrapper = screen.findByProps({ 'data-testid': 'pierre-diff-viewer' });
         expect(wrapper.props.style?.maxHeight).toBe('inherit');
     });
 
@@ -714,20 +713,20 @@ describe('PierreDiffViewer (web)', () => {
         fileDiffSpy.mockClear();
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        let tree: renderer.ReactTestRenderer;
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
         await renderer.act(async () => {
-            tree = (await renderScreen(<PierreDiffViewer
+            screen = await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/empty.bin"
                     unifiedDiff=""
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />)).tree;
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(0);
-        expect(JSON.stringify((tree! as any).toJSON())).toContain('files.noChanges');
+        expect(JSON.stringify((screen.tree as any).toJSON())).toContain('files.noChanges');
     });
 
     it('does not crash when the patch is not a single-file unified diff (e.g. binary placeholders)', async () => {
@@ -770,25 +769,25 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        let tree: renderer.ReactTestRenderer;
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
             await renderer.act(async () => {
-                tree = (await renderScreen(<PierreDiffViewer
+                screen = await renderScreen(<PierreDiffViewer
                         mode="unified"
                         filePath="src/a.ts"
                         unifiedDiff={patch}
                         wrapLines={true}
                         showLineNumbers={true}
                         showPrefix={true}
-                    />)).tree;
+                    />);
             });
         } finally {
             consoleErrorSpy.mockRestore();
             fileDiffSpy.mockReset();
         }
 
-        const fallback = (tree! as any).root.findByProps({ 'data-testid': 'pierre-diff-fallback' });
+        const fallback = screen.findByProps({ 'data-testid': 'pierre-diff-fallback' });
         const fallbackText = String((fallback.children ?? []).join(''));
         expect(fallbackText).toContain('--- a/a.ts');
         expect(fallbackText).toContain('+++ b/a.ts');
@@ -814,22 +813,22 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        let tree: renderer.ReactTestRenderer;
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
         await renderer.act(async () => {
-            tree = (await renderScreen(<PierreDiffViewer
+            screen = await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="a.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />)).tree;
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
         expect(String(options?.patchText ?? '')).not.toContain('diff --git a/b.ts b/b.ts');
-        expect((tree! as any).root.findAllByProps({ 'data-testid': 'pierre-diff-fallback' }).length).toBe(0);
+        expect(screen.findAllByProps({ 'data-testid': 'pierre-diff-fallback' }).length).toBe(0);
     });
 
     it('extracts the requested file from a multi-file patch (does not assume the first diff is the target)', async () => {
