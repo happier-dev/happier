@@ -40,12 +40,19 @@ function resolveCodexAcpPreToolIdleTimeoutMs(): number {
 }
 
 export function createCodexAcpBackend(options: CodexAcpBackendOptions): CodexAcpBackendResult {
-  const spawn = resolveCodexAcpSpawn({ permissionMode: options.permissionMode });
+  const mergedEnv = {
+    ...process.env,
+    ...options.env,
+  };
+  const spawn = resolveCodexAcpSpawn({
+    permissionMode: options.permissionMode,
+    env: mergedEnv,
+  });
 
   const authMethodId = (() => {
-    const openAiKey = typeof process.env.OPENAI_API_KEY === 'string' ? process.env.OPENAI_API_KEY.trim() : '';
+    const openAiKey = typeof mergedEnv.OPENAI_API_KEY === 'string' ? mergedEnv.OPENAI_API_KEY.trim() : '';
     if (openAiKey) return 'openai-api-key';
-    const codexKey = typeof process.env.CODEX_API_KEY === 'string' ? process.env.CODEX_API_KEY.trim() : '';
+    const codexKey = typeof mergedEnv.CODEX_API_KEY === 'string' ? mergedEnv.CODEX_API_KEY.trim() : '';
     if (codexKey) return 'codex-api-key';
     return undefined;
   })();

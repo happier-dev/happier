@@ -108,6 +108,81 @@ describe('createCodexAcpBackend', () => {
     20_000,
   );
 
+  it(
+    'uses scoped OPENAI_API_KEY and scoped codex-acp env instead of host process env',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-scoped-auth-'));
+      const agentScript = join(dir, 'fake-acp-agent.mjs');
+      const wrapper = join(dir, 'scoped-codex-acp');
+      try {
+        writeFileSync(
+          agentScript,
+          `
+            process.stdin.resume();
+            setInterval(() => {}, 1000);
+          `,
+          'utf8',
+        );
+
+        writeFileSync(wrapper, `#!/bin/sh\n\"${process.execPath}\" \"${agentScript}\"\n`, 'utf8');
+        await (await import('node:fs/promises')).chmod(wrapper, 0o755);
+
+        await withEnv({
+          HAPPIER_VARIANT: 'stable',
+          HAPPIER_HOME_DIR: undefined,
+          CODEX_HOME: undefined,
+          HAPPIER_CODEX_ACP_BIN: undefined,
+          OPENAI_API_KEY: undefined,
+        }, async () => {
+          const mod = await import('./backend');
+          const created = mod.createCodexAcpBackend({
+            cwd: dir,
+            env: {
+              CODEX_HOME: dir,
+              HAPPIER_CODEX_ACP_BIN: wrapper,
+              OPENAI_API_KEY: 'scoped-openai-key',
+            },
+          });
+          const backend = created.backend as any;
+          expect(created.spawn.command).toBe(wrapper);
+          expect(backend.options.authMethodId).toBe('openai-api-key');
+          await created.backend.dispose();
+        });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
+
+  it('prefers scoped OPENAI_API_KEY from backend env over ambient host env', async () => {
+    const captured: Array<any> = [];
+
+    await withEnv({
+      HAPPIER_VARIANT: 'stable',
+      HAPPIER_CODEX_ACP_BIN: '/bin/echo',
+      OPENAI_API_KEY: undefined,
+      CODEX_API_KEY: undefined,
+    }, async () => {
+      vi.doMock('@/agent/acp/AcpBackend', () => ({
+        AcpBackend: class {
+          constructor(opts: any) {
+            captured.push(opts);
+          }
+        },
+      }));
+
+      const mod = await import('./backend');
+      mod.createCodexAcpBackend({
+        cwd: '/tmp',
+        env: { OPENAI_API_KEY: 'sk-scoped' },
+      });
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0].authMethodId).toBe('openai-api-key');
+    });
+  });
+
   it('uses codex-acp directly when it resolves from PATH', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-home-'));
     const pathDir = join(homeDir, 'bin');

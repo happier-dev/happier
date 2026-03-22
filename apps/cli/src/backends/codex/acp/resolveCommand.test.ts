@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { PermissionMode } from '@/api/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createExecutableShim } from '@/testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 const ENV_KEYS = [
   'CODEX_HOME',
@@ -13,23 +15,17 @@ const ENV_KEYS = [
   'PATH',
 ] as const;
 
-const ORIGINAL_ENV: Record<(typeof ENV_KEYS)[number], string | undefined> = {
-  CODEX_HOME: process.env.CODEX_HOME,
-  HAPPIER_CODEX_ACP_BIN: process.env.HAPPIER_CODEX_ACP_BIN,
-  HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES,
-  HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-  HAPPIER_CODEX_ACP_NPX_MODE: process.env.HAPPIER_CODEX_ACP_NPX_MODE,
-  PATH: process.env.PATH,
-};
-
 const tempDirs = new Set<string>();
+let envScope = createEnvKeyScope(ENV_KEYS);
 
 async function createFakeCodexAcpBinary(): Promise<{ dir: string; bin: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-'));
+  const bin = await createExecutableShim({
+    dirPrefix: 'happier-codex-acp-',
+    fileName: process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
+    contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+  const dir = dirname(bin);
   tempDirs.add(dir);
-  const bin = join(dir, 'codex-acp');
-  await writeFile(bin, '#!/bin/sh\necho ok\n', 'utf8');
-  await chmod(bin, 0o755);
   return { dir, bin };
 }
 
@@ -42,7 +38,7 @@ async function createNonExecutableCodexAcpBinary(): Promise<{ dir: string; bin: 
 }
 
 async function createFakeCodexHome(mcpServers: string[]): Promise<{ dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-codex-home-'));
+  const dir = await createTempDir('happier-codex-home-');
   tempDirs.add(dir);
   const configPath = join(dir, 'config.toml');
   const configBody = mcpServers.map((name) => `[mcp_servers.${name}]\ncommand = \"echo\"\nargs = []\n`).join('\n');
@@ -50,22 +46,12 @@ async function createFakeCodexHome(mcpServers: string[]): Promise<{ dir: string 
   return { dir };
 }
 
-function restoreTrackedEnv() {
-  for (const key of ENV_KEYS) {
-    const value = ORIGINAL_ENV[key];
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-}
-
 afterEach(async () => {
-  restoreTrackedEnv();
+  envScope.restore();
+  envScope = createEnvKeyScope(ENV_KEYS);
   vi.resetModules();
   for (const dir of tempDirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
   tempDirs.clear();
 });
@@ -154,7 +140,7 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const { dir: codexHome } = await createFakeCodexHome(['context7']);
     process.env.CODEX_HOME = codexHome;
     const { dir, bin } = await createNonExecutableCodexAcpBinary();
-    const emptyHappyHomeDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-empty-home-'));
+    const emptyHappyHomeDir = await createTempDir('happier-codex-acp-empty-home-');
     tempDirs.add(emptyHappyHomeDir);
     process.env.PATH = dir;
     process.env.HAPPIER_HOME_DIR = emptyHappyHomeDir;
@@ -346,7 +332,7 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     delete process.env.HAPPIER_CODEX_ACP_BIN;
     process.env.HAPPIER_CODEX_ACP_NPX_MODE = 'never';
 
-    const pathDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-path-'));
+    const pathDir = await createTempDir('happier-codex-acp-path-');
     tempDirs.add(pathDir);
     process.env.PATH = pathDir;
 
