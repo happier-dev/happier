@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleCodexCliCommand } from './command';
 import * as authModule from '@/ui/auth';
 import * as runCodexModule from '@/backends/codex/runCodex';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -13,7 +14,7 @@ describe('handleCodexCliCommand', () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`exit:${code ?? 0}`);
     }) as any);
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const output = captureConsoleText();
 
     try {
       await expect(
@@ -22,10 +23,10 @@ describe('handleCodexCliCommand', () => {
           terminalRuntime: null,
         } as any),
       ).rejects.toThrow('exit:1');
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --happy-starting-mode'));
+      expect(output.text()).toContain('Invalid --happy-starting-mode');
     } finally {
       exitSpy.mockRestore();
-      errorSpy.mockRestore();
+      output.restore();
     }
   });
 
