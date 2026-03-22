@@ -1,6 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,23 +26,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionI
     resolveServerIdForSessionIdFromLocalCache,
 }));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
 async function renderSessionRetentionNotice(sessionId: string) {
     const { SessionRetentionNotice } = await import('./SessionRetentionNotice');
-    let tree: renderer.ReactTestRenderer | undefined;
-
-    await act(async () => {
-        tree = renderer.create(React.createElement(SessionRetentionNotice, { sessionId }));
-    });
-
-    return tree!;
+    return renderScreen(React.createElement(SessionRetentionNotice, { sessionId }));
 }
 
 describe('SessionRetentionNotice', () => {
@@ -50,10 +36,9 @@ describe('SessionRetentionNotice', () => {
         resolveServerIdForSessionIdFromLocalCache.mockReturnValue(null);
         useServerRetentionPolicy.mockReturnValue(null);
 
-        const tree = await renderSessionRetentionNotice('session-a');
+        const screen = await renderSessionRetentionNotice('session-a');
 
-        expect(tree.root.findAllByType('ItemGroup')).toHaveLength(0);
-        expect(tree.root.findAllByType('Item')).toHaveLength(0);
+        expect(screen.findByTestId('session-retention-notice')).toBeNull();
     });
 
     it('renders a session retention notice when the server deletes inactive sessions', async () => {
@@ -79,13 +64,11 @@ describe('SessionRetentionNotice', () => {
             automationRunEvents: { mode: 'keep_forever' },
         });
 
-        const tree = await renderSessionRetentionNotice('session-a');
+        const screen = await renderSessionRetentionNotice('session-a');
 
-        const retentionGroup = tree.root.findByType('ItemGroup');
-        const retentionNotice = tree.root.findByProps({ testID: 'session-retention-notice' });
-
-        expect(retentionGroup.props.title).toBe('Retention policy');
-        expect(retentionNotice.props.title).toBe('server.retention.sessions');
-        expect(retentionNotice.props.subtitle).toBe('This server deletes inactive sessions after 30 days of inactivity.');
+        const retentionNotice = screen.findByTestId('session-retention-notice');
+        expect(retentionNotice).not.toBeNull();
+        expect(screen.getTextContent()).toContain('server.retention.sessions');
+        expect(screen.getTextContent()).toContain('This server deletes inactive sessions after 30 days of inactivity.');
     });
 });

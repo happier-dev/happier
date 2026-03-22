@@ -350,7 +350,7 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushHookEffects({ runAllTimers: true });
+            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
 
@@ -393,7 +393,7 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushHookEffects({ runAllTimers: true });
+            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
@@ -435,7 +435,7 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushHookEffects({ runAllTimers: true });
+            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);

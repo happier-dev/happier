@@ -1,9 +1,9 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createModalModuleMock,
     createPartialStorageModuleMock,
-    flushHookEffects,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -21,6 +21,10 @@ import {
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 import { SessionScmStashDetailsView } from './SessionScmStashDetailsView';
+import {
+    resolveManagedStashRetryDelayMs,
+    resolveManagedStashRetryMaxIntervalMs,
+} from './scmStashRetry';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,6 +60,9 @@ const sessionScmStashPopSpy = vi.fn<
 const sessionScmStashDropSpy = vi.fn<
     (sessionId: string, request: ScmStashDropRequest) => Promise<ScmStashDropResponse>
 >(async (_sessionId, _request) => ({ success: true }));
+
+const managedStashRetryMaxIntervalMs = resolveManagedStashRetryMaxIntervalMs(undefined);
+const managedStashRetryDelayMs = resolveManagedStashRetryDelayMs(0, managedStashRetryMaxIntervalMs);
 
 let scmWriteEnabled = true;
 
@@ -176,16 +183,19 @@ describe('SessionScmStashDetailsView', () => {
 
     async function renderStashDetailsView() {
         const screen = await renderScreen(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        await flushHookEffects({ cycles: 2 });
+        await vi.waitFor(() => {
+            expect(sessionScmStashListSpy).toHaveBeenCalledTimes(1);
+        });
         return screen;
     }
 
     it('loads managed stashes and renders the diff for the first stash', async () => {
         await renderStashDetailsView();
 
-        expect(sessionScmStashListSpy).toHaveBeenCalledTimes(1);
-        expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
-        expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
+        await vi.waitFor(() => {
+            expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
+            expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
+        });
     });
 
     it('retries the selected stash diff when the backend is transiently unavailable', async () => {
@@ -221,9 +231,13 @@ describe('SessionScmStashDetailsView', () => {
 
         expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
 
-        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(managedStashRetryDelayMs);
+        });
 
-        expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => {
+            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
+        });
 
         expect(diffFilesListSpy).toHaveBeenCalled();
     });
@@ -237,9 +251,13 @@ describe('SessionScmStashDetailsView', () => {
         });
 
         const screen = await renderStashDetailsView();
-        await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(managedStashRetryMaxIntervalMs);
+        });
+        await vi.waitFor(() => {
+            expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
+        });
 
-        expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
         expect(screen.getTextContent()).toContain('RPC method not available');
     });
 
@@ -258,9 +276,13 @@ describe('SessionScmStashDetailsView', () => {
         });
 
         const screen = await renderStashDetailsView();
-        await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(managedStashRetryMaxIntervalMs);
+        });
+        await vi.waitFor(() => {
+            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
+        });
 
-        expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
         expect(screen.getTextContent()).toContain('RPC method not available');
     });
 

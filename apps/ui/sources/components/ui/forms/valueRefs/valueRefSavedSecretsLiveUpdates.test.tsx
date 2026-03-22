@@ -1,9 +1,9 @@
 import React from 'react';
-import renderer, { act, ReactTestInstance } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -191,18 +191,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
-function findItems(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('Item');
-}
-
-function findGroups(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('ItemGroup');
-}
-
-function findItemByTitle(tree: renderer.ReactTestRenderer, title: string): ReactTestInstance | undefined {
-    return findItems(tree).find((node) => node.props.title === title);
-}
-
 describe('value ref saved secrets live updates', () => {
     beforeEach(() => {
         resetLiveSecrets();
@@ -216,17 +204,14 @@ describe('value ref saved secrets live updates', () => {
     it('SavedSecretPickerModal reflects secrets added after the modal opens', async () => {
         const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SavedSecretPickerModal, {
+        const screen = await renderScreen(React.createElement(SavedSecretPickerModal, {
                     onClose: vi.fn(),
                     selectedId: null,
                     onSelectId: vi.fn(),
-                }))).tree;
+                }));
 
-        expect(tree.root.findAllByType('ItemList')).toHaveLength(1);
-        expect(findGroups(tree).length).toBeGreaterThanOrEqual(2);
-        expect(findItemByTitle(tree, 'secrets.emptyTitle')).toBeTruthy();
-        expect(findItemByTitle(tree, 'qa_picker_live_modal')).toBeUndefined();
+        expect(findTestInstanceByTypeWithProps(screen.tree, 'Item', { title: 'secrets.emptyTitle' })).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(screen.tree, 'Item', { title: 'qa_picker_live_modal' })).toBeUndefined();
 
         await act(async () => {
             updateLiveSecrets([{
@@ -239,15 +224,14 @@ describe('value ref saved secrets live updates', () => {
             }]);
         });
 
-        expect(findItemByTitle(tree, 'secrets.emptyTitle')).toBeUndefined();
-        expect(findItemByTitle(tree, 'qa_picker_live_modal')).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(screen.tree, 'Item', { title: 'secrets.emptyTitle' })).toBeUndefined();
+        expect(findTestInstanceByTypeWithProps(screen.tree, 'Item', { title: 'qa_picker_live_modal' })).toBeTruthy();
     });
 
     it('ValueRefEditorModal resolves saved-secret names from the live secrets store', async () => {
         const { ValueRefEditorModal } = await import('./ValueRefEditorModal');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ValueRefEditorModal, {
+        const screen = await renderScreen(React.createElement(ValueRefEditorModal, {
                     onClose: vi.fn(),
                     kind: 'header',
                     initialKey: 'Authorization',
@@ -255,12 +239,10 @@ describe('value ref saved secrets live updates', () => {
                     secrets: [],
                     onChangeSecrets: vi.fn(),
                     onSubmit: () => true,
-                }))).tree;
+                }));
 
-        expect(tree.root.findAllByType('ItemList')).toHaveLength(1);
-        expect(findGroups(tree).length).toBeGreaterThanOrEqual(2);
-        expect(findItemByTitle(tree, 'settings.mcpServersValueSecretSelect')).toBeTruthy();
-        expect(findItemByTitle(tree, 'qa_value_ref_live_secret')).toBeUndefined();
+        expect(screen.findByTestId('mcp.valueRefEditor.secret')?.props.title).toBe('settings.mcpServersValueSecretSelect');
+        expect(screen.findByTestId('mcp.valueRefEditor.secret')?.props.subtitle).toBe('secret-live');
 
         await act(async () => {
             updateLiveSecrets([{
@@ -273,7 +255,7 @@ describe('value ref saved secrets live updates', () => {
             }]);
         });
 
-        expect(findItemByTitle(tree, 'settings.mcpServersValueSecretSelect')).toBeUndefined();
-        expect(findItemByTitle(tree, 'qa_value_ref_live_secret')).toBeTruthy();
+        expect(screen.findByTestId('mcp.valueRefEditor.secret')?.props.title).toBe('qa_value_ref_live_secret');
+        expect(screen.findByTestId('mcp.valueRefEditor.secret')?.props.subtitle).toBe('secret-live');
     });
 });

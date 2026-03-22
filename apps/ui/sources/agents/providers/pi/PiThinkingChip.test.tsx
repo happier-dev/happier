@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '../../../dev/testkit';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 
@@ -30,7 +31,7 @@ vi.mock('react-native', async () => {
         View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
             React.createElement('View', props, props.children),
         Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, props.children),
+            React.createElement('Pressable', { testID: 'pi-thinking-level-chip-trigger', ...props }, props.children),
     });
 });
 
@@ -92,24 +93,18 @@ describe('createPiThinkingLevelChip', () => {
             selectedOptionId: 'off',
         }));
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            const rendered = chip.render({
-                chipStyle: () => ({}),
-                showLabel: true,
-                iconColor: '#fff',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null } as any,
-            });
-            expect(rendered).toBeTruthy();
-            tree = renderer.create(rendered as React.ReactElement);
+        const rendered = chip.render({
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#fff',
+            textStyle: {},
+            countTextStyle: {},
+            popoverAnchorRef: { current: null } as any,
         });
+        expect(rendered).toBeTruthy();
 
-        const pressable = tree!.root.findByType('Pressable');
-        await act(async () => {
-            pressable.props.onPress();
-        });
+        const screen = await renderScreen(rendered as React.ReactElement);
+        await screen.pressByTestIdAsync('pi-thinking-level-chip-trigger');
 
         expect(setThinkingLevel).not.toHaveBeenCalled();
         expect(mocks.modalShowMock).not.toHaveBeenCalled();

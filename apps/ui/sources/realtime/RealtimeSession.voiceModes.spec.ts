@@ -189,6 +189,11 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function advanceFakeTimersAndFlush(ms: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
+  await Promise.resolve();
+}
+
 describe('Realtime voice modes', () => {
   const originalFetch = globalThis.fetch;
 
@@ -288,7 +293,7 @@ describe('Realtime voice modes', () => {
           }),
         );
 
-        await vi.advanceTimersByTimeAsync(30_000);
+        await advanceFakeTimersAndFlush(30_000);
 
         expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -482,7 +487,7 @@ describe('Realtime voice modes', () => {
           startPromise.then(() => 'resolved' as const),
           new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1)),
         ]);
-        await vi.advanceTimersByTimeAsync(1);
+        await advanceFakeTimersAndFlush(1);
 
         expect(await race).toBe('resolved');
         expect(presentPaywall).toHaveBeenCalledTimes(1);
@@ -585,7 +590,7 @@ describe('Realtime voice modes', () => {
           stopPromise.then(() => 'stopped' as const),
           new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1_000)),
         ]);
-        await vi.advanceTimersByTimeAsync(1_000);
+        await advanceFakeTimersAndFlush(1_000);
 
         expect(await race).toBe('stopped');
         expect(endSession).toHaveBeenCalledTimes(1);

@@ -2,7 +2,7 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findAllByType, findFirstByType, renderScreen } from '@/dev/testkit';
-
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -242,10 +242,11 @@ describe('CodeLinesView', () => {
         const previousDocument = (globalThis as any).document;
         (globalThis as any).document = { getElementById };
 
+        let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         try {
             const { CodeLinesView } = await import('./CodeLinesView');
 
-            await renderScreen(<CodeLinesView
+            screen = await renderScreen(<CodeLinesView
                         scrollToLineId="b"
                         lines={[
                             {
@@ -273,12 +274,13 @@ describe('CodeLinesView', () => {
                         ]}
                     />);
 
-            // Effect uses a 0ms timeout.
-            vi.runAllTimers();
+            // Only flush the initial 0ms scroll attempt; the effect keeps retrying at 50ms.
+            await flushHookEffects({ cycles: 1, turns: 1, runOnlyPendingTimers: true });
 
             expect(getElementById).toHaveBeenCalledWith('b');
             expect(scrollIntoView).toHaveBeenCalled();
         } finally {
+            await screen?.unmount();
             (globalThis as any).document = previousDocument;
             vi.useRealTimers();
         }
@@ -287,15 +289,15 @@ describe('CodeLinesView', () => {
     it('falls back to setting scrollTop on the nearest scroll container when the target element is not mounted', async () => {
         vi.useFakeTimers();
 
-            const scrollContainer: any = {
-                scrollTop: 0,
-                clientHeight: 100,
-                scrollHeight: 1000,
-                parentElement: null,
-                scrollTo: vi.fn(({ top }: { top: number }) => {
-                    scrollContainer.scrollTop = top;
-                }),
-            };
+        const scrollContainer: any = {
+            scrollTop: 0,
+            clientHeight: 100,
+            scrollHeight: 1000,
+            parentElement: null,
+            scrollTo: vi.fn(({ top }: { top: number }) => {
+                scrollContainer.scrollTop = top;
+            }),
+        };
 
         const anchorElement: any = {
             id: 'a',
@@ -311,10 +313,11 @@ describe('CodeLinesView', () => {
         const previousDocument = (globalThis as any).document;
         (globalThis as any).document = { getElementById };
 
+        let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         try {
             const { CodeLinesView } = await import('./CodeLinesView');
 
-            await renderScreen(<CodeLinesView
+            screen = await renderScreen(<CodeLinesView
                         scrollToLineId="b"
                         lines={[
                             {
@@ -342,11 +345,13 @@ describe('CodeLinesView', () => {
                         ]}
                     />);
 
-            vi.runAllTimers();
+            // Only flush the initial 0ms scroll attempt; the effect keeps retrying at 50ms.
+            await flushHookEffects({ cycles: 1, turns: 1, runOnlyPendingTimers: true });
 
             // Estimated row height is 22px; index 1 should land at ~22px.
             expect(scrollContainer.scrollTop).toBe(22);
         } finally {
+            await screen?.unmount();
             (globalThis as any).document = previousDocument;
             vi.useRealTimers();
         }
