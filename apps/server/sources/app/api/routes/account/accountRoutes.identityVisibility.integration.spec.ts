@@ -19,7 +19,7 @@ describe("Account identity visibility (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await harness.resetDbTables([
             () => db.accountIdentity.deleteMany(),

@@ -19,7 +19,7 @@ describe("Account profile (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await harness.resetDbTables([
             () => db.accountIdentity.deleteMany(),
@@ -158,7 +158,7 @@ describe("Account profile (integration)", () => {
     });
 
     it("GET /v1/account/profile returns empty connectedServices + connectedServicesV2 when connected services feature is disabled", async () => {
-        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
+        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0" });
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),

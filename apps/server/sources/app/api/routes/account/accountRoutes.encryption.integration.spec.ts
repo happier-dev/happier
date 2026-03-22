@@ -1,135 +1,169 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
-
-let dbAccountFindUnique: any;
-let dbAccountUpdate: any;
-let dbServiceAccountTokenCount: any;
-let dbAutomationCount: any;
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findUnique: (...args: any[]) => dbAccountFindUnique(...args),
-            update: (...args: any[]) => dbAccountUpdate(...args),
-        },
-        serviceAccountToken: {
-            count: (...args: any[]) => dbServiceAccountTokenCount(...args),
-        },
-        automation: {
-            count: (...args: any[]) => dbAutomationCount(...args),
-        },
-    },
-}));
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { accountRoutes } from "./accountRoutes";
 
 describe("accountRoutes (encryption mode integration)", () => {
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-account-encryption-", initAuth: false });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness.close();
+    });
+
+    beforeEach(() => {
+        vi.resetModules();
+        harness.resetEnv();
+    });
+
+    afterEach(async () => {
+        harness.resetEnv();
+        await harness.resetDbTables([
+            () => db.accountChange.deleteMany(),
+            () => db.serviceAccountToken.deleteMany(),
+            () => db.automation.deleteMany(),
+            () => db.repeatKey.deleteMany(),
+            () => db.account.deleteMany(),
+        ]);
+    });
+
     it("GET /v1/account/encryption returns account encryption mode", async () => {
-        dbAccountFindUnique = vi.fn(async () => ({
-            encryptionMode: "e2ee",
-            encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
-            publicKey: "pub",
-        }));
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-encryption-get",
+                encryptionMode: "e2ee",
+                encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
+            },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "GET",
+                    url: "/v1/account/encryption",
+                    headers: { "x-test-user-id": account.id },
+                });
 
-        const handler = getRouteHandler(app, "GET", "/v1/account/encryption");
-        const reply = createReplyStub();
-
-        const response = await handler({ userId: "u1" }, reply);
-
-        expect(response).toEqual({ mode: "e2ee", updatedAt: 1771322400000 });
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({ mode: "e2ee", updatedAt: 1771322400000 });
+            },
+        );
     });
 
     it("PATCH /v1/account/encryption returns 404 when account opt-out is disabled", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "0";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "0",
+        });
 
-        dbAccountUpdate = vi.fn(async () => ({
-            encryptionMode: "plain",
-            encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
-        }));
+        const account = await db.account.create({
+            data: { publicKey: "pk-account-encryption-optout-disabled", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { mode: "plain" },
+                });
 
-        const handler = getRouteHandler(app, "PATCH", "/v1/account/encryption");
-        const reply = createReplyStub();
+                expect(res.statusCode).toBe(404);
+                expect(res.json()).toEqual({ error: "not_found" });
+            },
+        );
 
-        const response = await handler({ userId: "u1", body: { mode: "plain" } }, reply);
-
-        expect(response).toBeUndefined();
-        expect(reply.code).toHaveBeenCalledWith(404);
-        expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
-        expect(dbAccountUpdate).not.toHaveBeenCalled();
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { encryptionMode: true },
+        });
+        expect(stored?.encryptionMode).toBe("e2ee");
     });
 
     it("PATCH /v1/account/encryption updates the account mode when account opt-out is enabled", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
 
-        dbAccountFindUnique = vi.fn(async () => ({
-            encryptionMode: "e2ee",
-            encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
-            publicKey: "pub",
-            settings: null,
-        }));
-        dbServiceAccountTokenCount = vi.fn(async () => 0);
-        dbAutomationCount = vi.fn(async () => 0);
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-encryption-update",
+                encryptionMode: "e2ee",
+                encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
+            },
+            select: { id: true },
+        });
 
-        dbAccountUpdate = vi.fn(async () => ({
-            encryptionMode: "plain",
-            encryptionModeUpdatedAt: new Date("2026-02-17T11:00:00.000Z"),
-        }));
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { mode: "plain" },
+                });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
-
-        const handler = getRouteHandler(app, "PATCH", "/v1/account/encryption");
-        const reply = createReplyStub();
-
-        const response = await handler({ userId: "u1", body: { mode: "plain" } }, reply);
-
-        expect(dbAccountUpdate).toHaveBeenCalledWith(
-            expect.objectContaining({
-                where: { id: "u1" },
-                data: expect.objectContaining({ encryptionMode: "plain", encryptionModeUpdatedAt: expect.any(Date) }),
-            }),
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toMatchObject({ mode: "plain", updatedAt: expect.any(Number) });
+            },
         );
-        expect(response).toEqual({ mode: "plain", updatedAt: 1771326000000 });
+
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { encryptionMode: true, encryptionModeUpdatedAt: true },
+        });
+        expect(stored?.encryptionMode).toBe("plain");
+        expect(stored?.encryptionModeUpdatedAt?.getTime()).toBeGreaterThan(1771322400000);
     });
 
     it("PATCH /v1/account/encryption rejects mode flips that require migration", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
 
-        dbAccountFindUnique = vi.fn(async () => ({
-            encryptionMode: "e2ee",
-            encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
-            publicKey: "pub",
-            settings: "cipher",
-        }));
-        dbServiceAccountTokenCount = vi.fn(async () => 0);
-        dbAutomationCount = vi.fn(async () => 0);
-        dbAccountUpdate = vi.fn(async () => ({
-            encryptionMode: "plain",
-            encryptionModeUpdatedAt: new Date("2026-02-17T11:00:00.000Z"),
-        }));
+        const account = await db.account.create({
+            data: {
+                publicKey: "pk-account-encryption-migration-required",
+                encryptionMode: "e2ee",
+                encryptionModeUpdatedAt: new Date("2026-02-17T10:00:00.000Z"),
+                settings: "cipher",
+            },
+            select: { id: true },
+        });
 
-        const { accountRoutes } = await import("./accountRoutes");
-        const app = createFakeRouteApp();
-        accountRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "PATCH",
+                    url: "/v1/account/encryption",
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { mode: "plain" },
+                });
 
-        const handler = getRouteHandler(app, "PATCH", "/v1/account/encryption");
-        const reply = createReplyStub();
+                expect(res.statusCode).toBe(400);
+                expect(res.json()).toEqual({ error: "migration-required" });
+            },
+        );
 
-        const response = await handler({ userId: "u1", body: { mode: "plain" } }, reply);
-
-        expect(reply.code).toHaveBeenCalledWith(400);
-        expect(reply.send).toHaveBeenCalledWith({ error: "migration-required" });
-        expect(dbAccountUpdate).not.toHaveBeenCalled();
+        const stored = await db.account.findUnique({
+            where: { id: account.id },
+            select: { encryptionMode: true, settings: true },
+        });
+        expect(stored?.encryptionMode).toBe("e2ee");
+        expect(stored?.settings).toBe("cipher");
     });
 });
