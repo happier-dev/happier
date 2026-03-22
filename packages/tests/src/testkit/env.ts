@@ -1,3 +1,6 @@
+export type EnvOverrides = Record<string, string | undefined>;
+export type EnvValues = Record<string, string | undefined>;
+
 export function envFlag(name: string | string[], defaultValue = false): boolean {
   const names = Array.isArray(name) ? name : [name];
   for (const key of names) {
@@ -11,6 +14,67 @@ export function envFlag(name: string | string[], defaultValue = false): boolean 
     continue;
   }
   return defaultValue;
+}
+
+export function applyEnvOverrides(overrides: EnvOverrides): () => void {
+  const snapshot = snapshotEnvValues(Object.keys(overrides));
+  applyEnvValues(overrides);
+
+  return () => {
+    restoreEnvValues(snapshot);
+  };
+}
+
+export async function withEnvOverrides<T>(overrides: EnvOverrides, run: () => Promise<T> | T): Promise<T> {
+  const restore = applyEnvOverrides(overrides);
+  try {
+    return await run();
+  } finally {
+    restore();
+  }
+}
+
+export function applyEnvValues(values: EnvValues): void {
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
+}
+
+export function snapshotEnvValues(keys: readonly string[]): EnvValues {
+  const snapshot: EnvValues = {};
+  for (const key of keys) {
+    const value = process.env[key];
+    snapshot[key] = value === undefined ? undefined : value;
+  }
+  return snapshot;
+}
+
+export function restoreEnvValues(snapshot: EnvValues): void {
+  applyEnvValues(snapshot);
+}
+
+export function snapshotProcessEnv(): NodeJS.ProcessEnv {
+  return { ...process.env };
+}
+
+export function restoreProcessEnv(snapshot: NodeJS.ProcessEnv): void {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in snapshot)) {
+      delete process.env[key];
+    }
+  }
+
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (value === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
 }
 
 function resolveHappierHappyAlias(name: string): string | null {
