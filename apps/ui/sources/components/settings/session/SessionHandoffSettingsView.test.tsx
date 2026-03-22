@@ -1,21 +1,24 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const settingsState: Record<string, any> = {};
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 accent: {
@@ -28,8 +31,8 @@ vi.mock('react-native-unistyles', () => ({
                 success: '#0f0',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -56,18 +59,25 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => [
-        settingsState[key],
-        (next: any) => {
-            settingsState[key] = next;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSettingMutable: (key: string) => [
+                settingsState[key],
+                (next: any) => {
+                    settingsState[key] = next;
+                },
+            ],
         },
-    ],
-}));
+    });
+});
 
 describe('SessionHandoffSettingsView', () => {
     beforeEach(() => {
@@ -85,11 +95,8 @@ describe('SessionHandoffSettingsView', () => {
     it('updates handoff defaults for workspace transfer strategy, conflict policy, ignored files, and direct target mode', async () => {
         const mod = await import('./SessionHandoffSettingsView');
         const SessionHandoffSettingsView = mod.default;
-
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionHandoffSettingsView));
-        });
+        const screen = await renderScreen(React.createElement(SessionHandoffSettingsView));
+        let tree: ReactTestRenderer = screen.tree;
 
         const switchNode = tree.root.findByType('Switch' as any);
         await act(async () => {
@@ -115,7 +122,7 @@ describe('SessionHandoffSettingsView', () => {
         });
 
         await act(async () => {
-            tree = renderer.create(React.createElement(SessionHandoffSettingsView));
+            tree = (await renderScreen(React.createElement(SessionHandoffSettingsView))).tree;
         });
 
         const globInput = tree.root.findByType('TextInput' as any);
