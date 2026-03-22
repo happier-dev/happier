@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 
 import { decodeBase64 } from '@/api/encryption';
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
-import { createEnvKeyScope, setStdioTtyForTest } from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 const spawnSyncMock = vi.fn();
 
@@ -38,7 +39,7 @@ describe('auth pair-remote (ssh) (json)', () => {
   beforeEach(async () => {
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
-    localHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-auth-local-'));
+    localHomeDir = await createTempDir('happier-cli-auth-local-');
     restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
     spawnSyncMock.mockReset();
   });
@@ -49,7 +50,7 @@ describe('auth pair-remote (ssh) (json)', () => {
     envScope.restore();
     vi.resetModules();
     vi.unstubAllGlobals();
-    await rm(localHomeDir, { recursive: true, force: true });
+    await removeTempDir(localHomeDir);
   });
 
   it('orchestrates remote request + local approve + remote wait using ssh', async () => {
@@ -104,11 +105,11 @@ describe('auth pair-remote (ssh) (json)', () => {
       vi.resetModules();
       const { handleAuthPairRemote } = await import('./auth/pairRemote');
       const { decryptWithEphemeralKey } = await import('@/ui/auth');
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const output = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
       } finally {
-        logSpy.mockRestore();
+        output.restore();
       }
 
       expect(spawnSyncMock).toHaveBeenCalledTimes(2);
@@ -126,7 +127,10 @@ describe('auth pair-remote (ssh) (json)', () => {
       const response = requests.get(remotePublicKey)?.response;
       expect(typeof response).toBe('string');
       const decrypted = decryptWithEphemeralKey(decodeBase64(String(response)), remoteKeypair.secretKey);
-      expect(Array.from(decrypted ?? [])).toEqual(Array.from(legacySecret));
+      const expectedMachineKey = deriveAccountMachineKeyFromRecoverySecret(legacySecret);
+      expect(decrypted).not.toBeNull();
+      expect(decrypted?.[0]).toBe(0);
+      expect(Array.from(decrypted?.slice(1, 33) ?? [])).toEqual(Array.from(expectedMachineKey));
     } finally {
       restoreAxios();
       await app.close().catch(() => {});
@@ -187,11 +191,11 @@ describe('auth pair-remote (ssh) (json)', () => {
       vi.resetModules();
       const { handleAuthPairRemote } = await import('./auth/pairRemote');
       const { decryptWithEphemeralKey } = await import('@/ui/auth');
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const output = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
       } finally {
-        logSpy.mockRestore();
+        output.restore();
       }
 
       const response = requests.get(remotePublicKey)?.response;

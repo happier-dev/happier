@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
-import { captureConsoleLogAndMuteStdout, createEnvKeyScope, setStdioTtyForTest } from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 type RequestRow = {
   claimSecretHash: string;
@@ -38,8 +40,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
   beforeEach(async () => {
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
-    remoteHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-auth-remote-'));
-    localHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-auth-local-'));
+    remoteHomeDir = await createTempDir('happier-cli-auth-remote-');
+    localHomeDir = await createTempDir('happier-cli-auth-local-');
     restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
   });
 
@@ -49,11 +51,11 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     envScope.restore();
     vi.resetModules();
     vi.unstubAllGlobals();
-    await rm(remoteHomeDir, { recursive: true, force: true });
-    await rm(localHomeDir, { recursive: true, force: true });
+    await removeTempDir(remoteHomeDir);
+    await removeTempDir(localHomeDir);
   });
 
-  it('pairs a remote machine by creating a claim-gated request, approving it with an authenticated local CLI, then waiting and writing matching credentials on the remote', async () => {
+  it('pairs a remote machine by creating a claim-gated request, approving it with an authenticated local CLI, then waiting and writing dataKey credentials on the remote', async () => {
     const requests = new Map<string, RequestRow>();
     const app = fastify({ logger: false });
 
@@ -158,7 +160,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       });
       vi.resetModules();
       const { writeCredentialsLegacy } = await import('@/persistence');
-      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'local-token' });
+      const legacySecret = new Uint8Array(32).fill(9);
+      await writeCredentialsLegacy({ secret: legacySecret, token: 'local-token' });
 
       vi.resetModules();
       const { handleAuthApprove } = await import('./auth/approve');
@@ -189,7 +192,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         const parsed = JSON.parse(waitOut.logs[0] ?? '');
         expect(parsed.success).toBe(true);
         expect(parsed.token).toBe('issued-token');
-        expect(parsed.encryptionType).toBe('legacy');
+        expect(parsed.encryptionType).toBe('dataKey');
       } finally {
         waitOut.restore();
       }
@@ -197,7 +200,10 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       const { readCredentials } = await import('@/persistence');
       const creds = await readCredentials();
       expect(creds?.token).toBe('issued-token');
-      expect(creds?.encryption.type).toBe('legacy');
+      expect(creds?.encryption.type).toBe('dataKey');
+      expect(Array.from(creds?.encryption.type === 'dataKey' ? creds.encryption.machineKey : [])).toEqual(
+        Array.from(deriveAccountMachineKeyFromRecoverySecret(legacySecret)),
+      );
     } finally {
       restoreAxios();
       await app.close().catch(() => {});

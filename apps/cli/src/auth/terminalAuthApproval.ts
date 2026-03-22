@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { readCredentials } from '@/persistence';
@@ -35,13 +36,14 @@ function encryptForTerminal(recipientPublicKey: Uint8Array, plaintext: Uint8Arra
 }
 
 function buildApprovalPayload(creds: NonNullable<Awaited<ReturnType<typeof readCredentials>>>): Uint8Array {
-  if (creds.encryption.type === 'legacy') {
-    return creds.encryption.secret;
-  }
+  const machineKey =
+    creds.encryption.type === 'legacy'
+      ? deriveAccountMachineKeyFromRecoverySecret(creds.encryption.secret)
+      : creds.encryption.machineKey;
 
   const plaintext = new Uint8Array(33);
   plaintext[0] = 0;
-  plaintext.set(creds.encryption.machineKey, 1);
+  plaintext.set(machineKey, 1);
   return plaintext;
 }
 
