@@ -5,12 +5,26 @@ import { logger } from "@/ui/logger";
 import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
 import { listBuiltInHappierTools } from "@/agent/tools/happierTools/listBuiltInHappierTools";
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
+import type { Metadata } from "@/api/types";
 import { configuration } from "@/configuration";
+import type { ExecutionRunServiceResult } from "@/session/services/executionRuns";
+
+export type HappyMcpExecutionRunService = Readonly<{
+    start: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    list: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    get: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    send: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    stop: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+    action: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
+}>;
 
 export type HappyMcpSessionClient = {
     sessionId: string;
     rpcHandlerManager: RpcHandlerManagerLike;
     sendClaudeSessionMessage(message: any, meta?: Record<string, unknown>): void;
+    updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
+    getMetadataSnapshot?(): Metadata | null;
+    executionRuns?: HappyMcpExecutionRunService;
 };
 
 export async function startHappyServer(client: HappyMcpSessionClient) {

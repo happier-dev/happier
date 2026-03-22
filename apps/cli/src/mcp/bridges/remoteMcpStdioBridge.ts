@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   try {
     const raw = await readFile(configPath, 'utf8');
     if (isSafeTmpMcpConfigFilePath(configPath, REMOTE_BRIDGE_CONFIG_PREFIX)) {
-      unlink(configPath).catch(() => {});
+      await unlink(configPath).catch(() => {});
     }
     config = RemoteBridgeConfigSchema.parse(JSON.parse(raw));
   } catch (err) {

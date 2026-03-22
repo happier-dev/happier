@@ -1,7 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import { randomUUID } from 'node:crypto';
-
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { logger } from '@/ui/logger';
 
@@ -9,7 +7,11 @@ import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpR
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
+import { normalizeExecutionRunToolResult } from '@/agent/tools/happierTools/normalizeExecutionRunToolResult';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { createCliActionInventoryDeps } from '@/session/actions/createCliActionDeps';
+import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
+import { createSessionTitleMetadataUpdater } from '@/session/services/setSessionTitle';
 import { createActionExecutor, getActionSpec, isActionSpecSurfacedOn, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
@@ -18,13 +20,9 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
   const changeTitleHandler = async (title: string) => {
     logger.debug('[happierMCP] Changing title to:', title);
     try {
-      client.sendClaudeSessionMessage({
-        type: 'summary',
-        summary: title,
-        leafUuid: randomUUID(),
-      });
+      await client.updateMetadata((metadata) => createSessionTitleMetadataUpdater({ title })(metadata));
 
-      return { success: true };
+      return { success: true, title };
     } catch (error) {
       return { success: false, error: String(error) };
     }
@@ -37,14 +35,35 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
 
   const sessionScopedRpc = async (method: string, params: unknown) =>
     await client.rpcHandlerManager.invokeLocal(method, params);
+  const sessionMetadataSnapshot = client.getMetadataSnapshot?.() ?? null;
+  const executionRuns = client.executionRuns ?? {
+    start: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc('execution.run.start', request)),
+    list: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc('execution.run.list', request)),
+    get: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc('execution.run.get', request)),
+    send: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc('execution.run.send', request)),
+    stop: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc('execution.run.stop', request)),
+    action: async (request: unknown) =>
+      normalizeExecutionRunRpcPayload(await sessionScopedRpc('execution.run.action', request)),
+  };
+  const inventoryDeps = createCliActionInventoryDeps({
+    token: '',
+    sessionId: client.sessionId,
+    ctx: { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' },
+    rawSession: sessionMetadataSnapshot ? { metadata: sessionMetadataSnapshot } : null,
+  });
 
   const deps: ActionExecutorDeps = {
-    executionRunStart: async (_sessionId, request) => await sessionScopedRpc('execution.run.start', request),
-    executionRunList: async (_sessionId, _request) => await sessionScopedRpc('execution.run.list', {}),
-    executionRunGet: async (_sessionId, request) => await sessionScopedRpc('execution.run.get', request),
-    executionRunSend: async (_sessionId, request) => await sessionScopedRpc('execution.run.send', request),
-    executionRunStop: async (_sessionId, request) => await sessionScopedRpc('execution.run.stop', request),
-    executionRunAction: async (_sessionId, request) => await sessionScopedRpc('execution.run.action', request),
+    executionRunStart: async (_sessionId, request) => await executionRuns.start(request),
+    executionRunList: async (_sessionId, request) => await executionRuns.list(request),
+    executionRunGet: async (_sessionId, request) => await executionRuns.get(request),
+    executionRunSend: async (_sessionId, request) => await executionRuns.send(request),
+    executionRunStop: async (_sessionId, request) => await executionRuns.stop(request),
+    executionRunAction: async (_sessionId, request) => await executionRuns.action(request),
 
     daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
       const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
@@ -66,14 +85,11 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     pathsListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:paths.list_recent' }),
     machinesList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' }),
     serversList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:servers.list' }),
-    reviewEnginesList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.engines.list' }),
-    agentsBackendsList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.backends.list' }),
-    agentsModelsList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.models.list' }),
+    ...inventoryDeps,
     sessionSendMessage: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.message.send' }),
     sessionPermissionRespond: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' }),
     sessionUserActionAnswer: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.user_action.answer' }),
     sessionModeSet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.mode.set' }),
-    sessionModesList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.modes.list' }),
     sessionTargetPrimarySet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.target.primary.set' }),
     sessionTargetTrackedSet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.target.tracked.set' }),
     sessionList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.list' }),
@@ -106,16 +122,17 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
         toolName: tool.name,
         args,
         sessionId: client.sessionId,
+        surface: 'mcp',
         deps: {
           changeTitle: async (_sessionId, title) => {
             const response = await changeTitleHandler(title);
             logger.debug('[happierMCP] Response:', response);
             return response;
           },
-          startExecutionRun: async (_sessionId, request) => ({
-            ok: true,
-            result: await sessionScopedRpc('execution.run.start', request),
-          }),
+          startExecutionRun: async (_sessionId, request) =>
+            normalizeExecutionRunToolResult(
+              await executionRuns.start(request),
+            ),
           executeActionByToolName: actionToolBridge.executeActionByToolName,
           resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, client.sessionId),
           isActionEnabled: actionToolBridge.isActionEnabled,
