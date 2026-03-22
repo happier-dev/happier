@@ -65,6 +65,13 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   jobId: string;
   now?: () => number;
   resolveSourceOfferById: (offerId: string) => Promise<WorkspaceReplicationSourceOffer>;
+  assertSafeToApply?: (input: Readonly<{
+    job: WorkspaceReplicationJobRecord;
+    offer: WorkspaceReplicationSourceOffer;
+  }>) => Promise<null | Readonly<{
+    blockingDivergenceCandidates: readonly unknown[];
+    lastErrorMessage?: string;
+  }>>;
   transferMissingBlobsToTargetCas: (input: Readonly<{
     job: WorkspaceReplicationJobRecord;
     offer: WorkspaceReplicationSourceOffer;
@@ -151,6 +158,54 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
 
   if (latest.cancelRequestedAtMs || latest.status.status === 'aborted') {
     return latest;
+  }
+
+  // 1.5) one-way-safe divergence gating (fail closed)
+  if (params.assertSafeToApply) {
+    const safeCheck = await params.assertSafeToApply({
+      job: latest,
+      offer,
+    }).catch(async (error: unknown) => {
+      if (isCancelRequestedError(error)) {
+        return await abortJobAndReturn({
+          jobStore: params.jobStore,
+          jobId: params.jobId,
+          now: params.now,
+        });
+      }
+      return await markJobFailedAndRethrow({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        error,
+      });
+    });
+
+    if (safeCheck && 'jobId' in safeCheck) {
+      return safeCheck;
+    }
+
+    if (safeCheck && safeCheck.blockingDivergenceCandidates.length > 0) {
+      const nowMs = resolveNowMs(params.now);
+      latest = await runWorkspaceReplicationJob({
+        jobStore: params.jobStore,
+        jobId: params.jobId,
+        now: params.now,
+        run: async (record) => ({
+          ...record,
+          failedAtMs: record.failedAtMs ?? nowMs,
+          lastErrorMessage: safeCheck.lastErrorMessage ?? record.lastErrorMessage ?? 'Target workspace diverged since last baseline',
+          status: {
+            ...record.status,
+            status: 'failed',
+            phase: 'planning',
+            checkpoint: 'relationship_resolved',
+            blockingDivergenceCandidates: [...safeCheck.blockingDivergenceCandidates],
+          },
+        }),
+      });
+      return latest;
+    }
   }
 
   // 2) missing digests negotiated (local CAS contains check)
