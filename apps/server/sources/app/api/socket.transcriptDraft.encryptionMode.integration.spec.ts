@@ -12,29 +12,6 @@ type ClientSocket = ReturnType<typeof ioClient>;
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-function withEnvPatch<T>(patch: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
-    const previous: Record<string, string | undefined> = {};
-    for (const [key, value] of Object.entries(patch)) {
-        previous[key] = process.env[key];
-        if (value === undefined) {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-            delete process.env[key];
-        } else {
-            process.env[key] = value;
-        }
-    }
-    return fn().finally(() => {
-        for (const [key, value] of Object.entries(previous)) {
-            if (value === undefined) {
-                // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                delete process.env[key];
-            } else {
-                process.env[key] = value;
-            }
-        }
-    });
-}
-
 async function waitForConnect(socket: ClientSocket): Promise<void> {
     if (socket.connected) return;
     await new Promise<void>((resolve, reject) => {
@@ -133,6 +110,7 @@ describe("socket transcript-draft (encryption mode enforcement)", () => {
     });
 
     afterEach(async () => {
+        harness.resetEnv();
         if (server) {
             await server.close();
             server = null;
@@ -213,70 +191,70 @@ describe("socket transcript-draft (encryption mode enforcement)", () => {
     }, 30_000);
 
     it("clamps transcript-draft createdAt timestamps to a bounded skew window", async () => {
-        await withEnvPatch({ HAPPIER_TRANSCRIPT_DRAFT_CREATED_AT_MAX_SKEW_MS: "1" }, async () => {
-            const account = await db.account.create({ data: { publicKey: `pk-${Date.now()}` }, select: { id: true } });
-            const token = await auth.createToken(account.id);
+        harness.resetEnv({ HAPPIER_TRANSCRIPT_DRAFT_CREATED_AT_MAX_SKEW_MS: "1" });
 
-            const sessionId = "s-e2ee-clamp";
-            await db.session.create({
-                data: { id: sessionId, tag: `t-${Date.now()}`, accountId: account.id, encryptionMode: "e2ee", metadata: "{}" },
+        const account = await db.account.create({ data: { publicKey: `pk-${Date.now()}` }, select: { id: true } });
+        const token = await auth.createToken(account.id);
+
+        const sessionId = "s-e2ee-clamp";
+        await db.session.create({
+            data: { id: sessionId, tag: `t-${Date.now()}`, accountId: account.id, encryptionMode: "e2ee", metadata: "{}" },
+        });
+
+        server = await startSocketServer();
+        const socket = connectSessionScopedSocket({ url: server.url, token, sessionId });
+        try {
+            await waitForConnect(socket);
+
+            const sentAt = Date.now();
+            socket.emit("transcript-draft", {
+                sid: sessionId,
+                localId: "l1",
+                segmentKind: "assistant",
+                sidechainId: null,
+                delta: { t: "encrypted", c: "cipher" },
+                createdAt: sentAt + 60_000,
             });
 
-            server = await startSocketServer();
-            const socket = connectSessionScopedSocket({ url: server.url, token, sessionId });
-            try {
-                await waitForConnect(socket);
-
-                const sentAt = Date.now();
-                socket.emit("transcript-draft", {
-                    sid: sessionId,
-                    localId: "l1",
-                    segmentKind: "assistant",
-                    sidechainId: null,
-                    delta: { t: "encrypted", c: "cipher" },
-                    createdAt: sentAt + 60_000,
-                });
-
-                const payload = await waitForEphemeral(socket, 3_000);
-                expect(payload.type).toBe("transcript-draft");
-                expect(payload.sessionId).toBe(sessionId);
-                expect(payload.createdAt).toBeGreaterThanOrEqual(sentAt - 5_000);
-                expect(payload.createdAt).toBeLessThanOrEqual(Date.now() + 5_000);
-            } finally {
-                socket.close();
-            }
-        });
+            const payload = await waitForEphemeral(socket, 3_000);
+            expect(payload.type).toBe("transcript-draft");
+            expect(payload.sessionId).toBe(sessionId);
+            expect(payload.createdAt).toBeGreaterThanOrEqual(sentAt - 5_000);
+            expect(payload.createdAt).toBeLessThanOrEqual(Date.now() + 5_000);
+        } finally {
+            socket.close();
+        }
     }, 30_000);
 
     it("drops transcript-draft deltas above the configured max size", async () => {
-        await withEnvPatch({ HAPPIER_TRANSCRIPT_DRAFT_MAX_BYTES: "10" }, async () => {
-            const account = await db.account.create({ data: { publicKey: `pk-${Date.now()}` }, select: { id: true } });
-            const token = await auth.createToken(account.id);
+        harness.resetEnv({ HAPPIER_TRANSCRIPT_DRAFT_MAX_BYTES: "10" });
 
-            const sessionId = "s-e2ee-max-bytes";
-            await db.session.create({
-                data: { id: sessionId, tag: `t-${Date.now()}`, accountId: account.id, encryptionMode: "e2ee", metadata: "{}" },
+        const account = await db.account.create({ data: { publicKey: `pk-${Date.now()}` }, select: { id: true } });
+        const token = await auth.createToken(account.id);
+
+        const sessionId = "s-e2ee-max-bytes";
+        await db.session.create({
+            data: { id: sessionId, tag: `t-${Date.now()}`, accountId: account.id, encryptionMode: "e2ee", metadata: "{}" },
+        });
+
+        server = await startSocketServer();
+        const socket = connectSessionScopedSocket({ url: server.url, token, sessionId });
+        try {
+            await waitForConnect(socket);
+
+            socket.emit("transcript-draft", {
+                sid: sessionId,
+                localId: "l1",
+                segmentKind: "assistant",
+                sidechainId: null,
+                delta: { t: "encrypted", c: "01234567890" }, // 11 bytes
+                createdAt: 123,
             });
 
-            server = await startSocketServer();
-            const socket = connectSessionScopedSocket({ url: server.url, token, sessionId });
-            try {
-                await waitForConnect(socket);
-
-                socket.emit("transcript-draft", {
-                    sid: sessionId,
-                    localId: "l1",
-                    segmentKind: "assistant",
-                    sidechainId: null,
-                    delta: { t: "encrypted", c: "01234567890" }, // 11 bytes
-                    createdAt: 123,
-                });
-
-                await assertNoEphemeral(socket, 500);
-            } finally {
-                socket.close();
-            }
-        });
+            await assertNoEphemeral(socket, 500);
+        } finally {
+            socket.close();
+        }
     }, 30_000);
 
     it("drops encrypted transcript-draft deltas for plaintext sessions", async () => {
