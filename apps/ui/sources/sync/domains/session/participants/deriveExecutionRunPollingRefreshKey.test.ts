@@ -10,6 +10,7 @@ function createToolMessage(params: {
     state: 'running' | 'completed' | 'error';
     input?: any;
     result?: any;
+    toolExtras?: Record<string, unknown>;
 }): ToolCallMessage {
     const now = Date.now();
     return {
@@ -26,6 +27,7 @@ function createToolMessage(params: {
             completedAt: params.state === 'running' ? null : now + 1,
             description: null,
             ...(params.result !== undefined ? { result: params.result } : {}),
+            ...(params.toolExtras ?? {}),
         },
         children: [],
     };
@@ -83,5 +85,20 @@ describe('deriveExecutionRunPollingRefreshKey', () => {
 
         expect(after).not.toBe(before);
         expect(after).toContain('run_ffffffff-1111-2222-3333-444444444444');
+    });
+
+    it('includes transcript tool ids exposed by SubAgent transcript tool calls', () => {
+        const key = deriveExecutionRunPollingRefreshKey([
+            createToolMessage({
+                id: 'subagent-legacy-1',
+                name: 'SubAgent',
+                state: 'running',
+                input: { label: 'legacy' },
+                result: { status: 'running' },
+                toolExtras: { id: 'tool_subagent_legacy_1' },
+            }),
+        ] satisfies Message[]);
+
+        expect(key).toContain('tool_subagent_legacy_1');
     });
 });

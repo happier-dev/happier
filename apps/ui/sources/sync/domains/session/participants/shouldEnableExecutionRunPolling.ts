@@ -1,4 +1,5 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 
 export function shouldEnableExecutionRunPolling(params: Readonly<{
     executionRunsFeatureEnabled: boolean;
@@ -10,6 +11,6 @@ export function shouldEnableExecutionRunPolling(params: Readonly<{
     // whose run status can change asynchronously (e.g., runs continuing after an interrupted tool call).
     return params.messages.some((message) => {
         if (!message || message.kind !== 'tool-call') return false;
-        return message.tool?.name === 'SubAgentRun';
+        return isSubAgentTranscriptToolName(message.tool?.name ?? '');
     });
 }

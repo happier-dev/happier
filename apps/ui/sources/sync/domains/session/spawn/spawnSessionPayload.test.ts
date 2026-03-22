@@ -117,4 +117,15 @@ describe('buildSpawnHappySessionRpcParams', () => {
             }),
         }));
     });
+
+    it('omits legacy spawn token passthrough when present on a compatibility-shaped input', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            token: 'legacy-spawn-token',
+        } as any);
+
+        expect(params).not.toHaveProperty('token');
+    });
 });

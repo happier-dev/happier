@@ -18,7 +18,6 @@ export interface SpawnSessionOptions {
     directory: string;
     transcriptStorage?: 'persisted' | 'direct';
     approvedNewDirectoryCreation?: boolean;
-    token?: string;
     backendTarget: BackendTargetRefV1;
     // Session-scoped profile identity (non-secret). Empty string means "no profile".
     profileId?: string;
@@ -73,7 +72,6 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     directory: string
     transcriptStorage?: 'persisted' | 'direct'
     approvedNewDirectoryCreation?: boolean
-    token?: string
     backendTarget: BackendTargetRefV1
     profileId?: string
     environmentVariables?: Record<string, string>
@@ -98,7 +96,6 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation = false,
-        token,
         backendTarget,
         environmentVariables,
         profileId,
@@ -134,7 +131,6 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation,
-        token,
         backendTarget,
         profileId,
         environmentVariables,

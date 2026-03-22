@@ -1,4 +1,5 @@
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
+import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 
 const EXECUTION_RUN_ID_REGEX = /run_[0-9a-f-]{8,}/gi;
 
@@ -86,9 +87,12 @@ export function deriveExecutionRunPollingRefreshKey(messages: readonly Message[]
         const tool = message.tool;
         if (!tool) continue;
 
-        if (tool.name === 'SubAgentRun') {
+        if (isSubAgentTranscriptToolName(tool.name)) {
             const runId = readExecutionRunIdFromToolPayload(tool);
-            if (runId) subAgentRunIds.add(runId);
+            const signalId =
+                runId
+                ?? (typeof tool.id === 'string' ? tool.id.trim() : '');
+            if (signalId) subAgentRunIds.add(signalId);
         }
 
         if (toolNameLooksLikeExecutionRunStart(tool.name)) {

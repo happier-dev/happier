@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSession: () => ({ metadata: {} }),
     useSessionMessages: () => ({
         messages: [
@@ -51,7 +53,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
         ],
     }),
-}));
+});
+});
 
 describe('useDerivedSessionChangeSet', () => {
     it('derives a session change set and provider diffs from canonical Diff messages', async () => {
