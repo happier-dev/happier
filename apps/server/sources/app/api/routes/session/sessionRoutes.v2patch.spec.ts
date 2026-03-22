@@ -1,20 +1,14 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
     buildUpdateSessionUpdate,
-    createSessionRouteReply,
     emitUpdate,
     patchSession,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 patch", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
     });
@@ -30,20 +24,14 @@ describe("sessionRoutes v2 patch", () => {
             agentState: { version: 3, value: null },
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("PATCH", "/v2/sessions/:sessionId");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                body: {
-                    metadata: { ciphertext: "mNew", expectedVersion: 1 },
-                    agentState: { ciphertext: null, expectedVersion: 2 },
-                },
+        const route = await createSessionRouteTestBuilder("PATCH", "/v2/sessions/:sessionId");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: {
+                metadata: { ciphertext: "mNew", expectedVersion: 1 },
+                agentState: { ciphertext: null, expectedVersion: 2 },
             },
-            reply,
-        );
+        });
 
         expect(patchSession).toHaveBeenCalledWith({
             actorUserId: "u1",
@@ -82,19 +70,13 @@ describe("sessionRoutes v2 patch", () => {
             current: { metadata: { version: 9, value: "m9" } },
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("PATCH", "/v2/sessions/:sessionId");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                body: {
-                    metadata: { ciphertext: "mNew", expectedVersion: 1 },
-                },
+        const route = await createSessionRouteTestBuilder("PATCH", "/v2/sessions/:sessionId");
+        const { response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: {
+                metadata: { ciphertext: "mNew", expectedVersion: 1 },
             },
-            reply,
-        );
+        });
 
         expect(res).toEqual({
             success: false,
@@ -111,19 +93,13 @@ describe("sessionRoutes v2 patch", () => {
             current: null,
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("PATCH", "/v2/sessions/:sessionId");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                body: {
-                    metadata: { ciphertext: "mNew", expectedVersion: 1 },
-                },
+        const route = await createSessionRouteTestBuilder("PATCH", "/v2/sessions/:sessionId");
+        const { reply, response: res } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: {
+                metadata: { ciphertext: "mNew", expectedVersion: 1 },
             },
-            reply,
-        );
+        });
 
         expect(reply.code).toHaveBeenCalledWith(500);
         expect(res).toEqual({ error: "Failed to update session" });

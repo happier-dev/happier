@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+
 const emitUpdate = vi.fn();
 const buildNewMessageUpdate = vi.fn(() => ({ type: "new-message" }));
 const buildPendingChangedUpdate = vi.fn(() => ({ type: "pending-changed" }));
@@ -21,32 +23,6 @@ vi.mock("@/app/session/pending/pendingMessageService", async (importOriginal) =>
         materializeNextPendingMessage,
     };
 });
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get(path: string, _opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, handler);
-    }
-    post(path: string, _opts: any, handler: any) {
-        this.routes.set(`POST ${path}`, handler);
-    }
-    put(path: string, _opts: any, handler: any) {
-        this.routes.set(`PUT ${path}`, handler);
-    }
-    patch(path: string, _opts: any, handler: any) {
-        this.routes.set(`PATCH ${path}`, handler);
-    }
-    delete(path: string, _opts: any, handler: any) {
-        this.routes.set(`DELETE ${path}`, handler);
-    }
-}
-
-function replyStub() {
-    const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-    return reply;
-}
 
 describe("sessionPendingRoutes (materialize-next)", () => {
     beforeEach(() => {
@@ -76,12 +52,14 @@ describe("sessionPendingRoutes (materialize-next)", () => {
         });
 
         const { sessionPendingRoutes } = await import("./pendingRoutes");
-        const app = new FakeApp();
-        sessionPendingRoutes(app as any);
-
-        const handler = app.routes.get("POST /v2/sessions/:sessionId/pending/materialize-next");
-        const reply = replyStub();
-        const res = await handler({ userId: "actor", params: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending/materialize-next",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
+        const { response: res } = await route.invoke({ userId: "actor", params: { sessionId: "s1" } });
 
         expect(res).toEqual({
             ok: true,
@@ -119,12 +97,14 @@ describe("sessionPendingRoutes (materialize-next)", () => {
             .mockImplementation(() => undefined);
 
         const { sessionPendingRoutes } = await import("./pendingRoutes");
-        const app = new FakeApp();
-        sessionPendingRoutes(app as any);
-
-        const handler = app.routes.get("POST /v2/sessions/:sessionId/pending/materialize-next");
-        const reply = replyStub();
-        const res = await handler({ userId: "actor", params: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending/materialize-next",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
+        const { response: res } = await route.invoke({ userId: "actor", params: { sessionId: "s1" } });
 
         expect(res).toEqual({
             ok: true,

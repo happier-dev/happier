@@ -1,20 +1,14 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { encodeV2SessionListCursorV1 } from "@happier-dev/protocol";
 
 import {
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 sessions snapshot", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
         sessionFindMany.mockReset();
@@ -91,16 +85,10 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                query: { limit: 2 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { response: res } = await route.invoke({
+            query: { limit: 2 },
+        });
 
         expect(res).toEqual({
             sessions: [

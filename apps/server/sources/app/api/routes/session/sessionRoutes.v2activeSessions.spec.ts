@@ -1,18 +1,12 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 active sessions listing", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
         sessionFindMany.mockReset();
@@ -73,16 +67,10 @@ describe("sessionRoutes v2 active sessions listing", () => {
             },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions/active");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                query: { limit: 2 },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/active");
+        const { response: res } = await route.invoke({
+            query: { limit: 2 },
+        });
 
         expect(sessionFindMany).toHaveBeenCalledWith(
             expect.objectContaining({

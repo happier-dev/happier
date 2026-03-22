@@ -1,9 +1,8 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createEnvReset } from "../../testkit/env";
 
 import {
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     sessionFindFirst,
     sessionFindMany,
@@ -14,11 +13,10 @@ import {
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v1 sessions snapshot", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
+    const resetStoragePolicyEnv = createEnvReset();
 
     beforeEach(() => {
+        resetStoragePolicyEnv();
         resetSessionRouteMocks();
         sessionFindMany.mockReset();
         sessionShareFindMany.mockReset();
@@ -50,15 +48,8 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         ]);
         sessionShareFindMany.mockResolvedValue([]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { response: res } = await route.invoke();
 
         expect(res).toEqual({
             sessions: [
@@ -98,15 +89,8 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions");
+        const { response: res } = await route.invoke();
 
         expect(res).toEqual({
             sessions: [
@@ -137,16 +121,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             lastActiveAt: now,
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                body: { tag: "t1", metadata: "m1", agentState: null, dataEncryptionKey: null },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        const { response: res } = await route.invoke({
+            body: { tag: "t1", metadata: "m1", agentState: null, dataEncryptionKey: null },
+        });
 
         expect(sessionFindFirst).not.toHaveBeenCalled();
         expect(txSessionFindFirst).toHaveBeenCalled();
@@ -178,16 +156,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             lastActiveAt: now,
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        const res = await handler(
-            {
-                userId: "u1",
-                body: { tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        const { response: res } = await route.invoke({
+            body: { tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null },
+        });
 
         expect(sessionFindFirst).not.toHaveBeenCalled();
         expect(txSessionFindFirst).toHaveBeenCalled();
@@ -201,7 +173,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
     });
 
     it("POST /v1/sessions forwards encryptionMode=plain when plaintext storage is optional", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
 
         const now = new Date(1);
         txSessionFindFirst.mockResolvedValue(null);
@@ -222,16 +194,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             encryptionMode: "plain",
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        await handler(
-            {
-                userId: "u1",
-                body: { tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null, encryptionMode: "plain" },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        await route.invoke({
+            body: { tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null, encryptionMode: "plain" },
+        });
 
         expect(txSessionCreate).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -243,7 +209,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
     });
 
     it("POST /v1/sessions defaults encryptionMode to the account mode when not specified", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
 
         const now = new Date(1);
         txSessionFindFirst.mockResolvedValue(null);
@@ -265,16 +231,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             encryptionMode: "plain",
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        await handler(
-            {
-                userId: "u1",
-                body: { tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        await route.invoke({
+            body: { tag: "t2", metadata: "m2", agentState: null, dataEncryptionKey: null },
+        });
 
         expect(txSessionCreate).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -305,16 +265,10 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             encryptionMode: "e2ee",
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v1/sessions");
-        const reply = createSessionRouteReply();
-
-        await handler(
-            {
-                userId: "u1",
-                body: { tag: "t2", metadata: "m2", agentState: "state-1", dataEncryptionKey: null },
-            },
-            reply,
-        );
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        await route.invoke({
+            body: { tag: "t2", metadata: "m2", agentState: "state-1", dataEncryptionKey: null },
+        });
 
         expect(txSessionCreate).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -326,29 +280,17 @@ describe("sessionRoutes v1 sessions snapshot", () => {
     });
 
     it("POST /v1/sessions returns a stable error code when the requested encryptionMode is disallowed by storage policy", async () => {
-        const prevStoragePolicy = process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "required_e2ee";
+        resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee" });
 
-        try {
-            const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v1/sessions");
-            const reply = createSessionRouteReply();
+        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+        const { reply } = await route.invoke({
+            body: { tag: "t1", metadata: "m1", agentState: null, dataEncryptionKey: null, encryptionMode: "plain" },
+        });
 
-            await handler(
-                {
-                    userId: "u1",
-                    body: { tag: "t1", metadata: "m1", agentState: null, dataEncryptionKey: null, encryptionMode: "plain" },
-                },
-                reply,
-            );
-
-            expect(reply.code).toHaveBeenCalledWith(400);
-            expect(reply.send).toHaveBeenCalledWith({
-                error: "invalid-params",
-                code: "storage_policy_requires_e2ee",
-            });
-        } finally {
-            if (typeof prevStoragePolicy === "string") process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = prevStoragePolicy;
-            else delete (process.env as any).HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
-        }
+        expect(reply.code).toHaveBeenCalledWith(400);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "invalid-params",
+            code: "storage_policy_requires_e2ee",
+        });
     });
 });

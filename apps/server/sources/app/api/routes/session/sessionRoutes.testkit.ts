@@ -1,6 +1,8 @@
 import { vi } from "vitest";
 
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import type { RouteRequestOverrides } from "../../testkit/requestFixtures";
 
 type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -40,29 +42,34 @@ export const requireAccessLevel = vi.fn((access: any, required: any) => {
 });
 export const getSessionParticipantUserIds = vi.fn<(...args: any[]) => Promise<string[]>>(async () => []);
 
-export const sessionFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
-export const sessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-export const sessionFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-export const sessionUpdate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
-    throw new Error("sessionUpdate not configured for test");
-});
-export const sessionMessageFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
-export const sessionMessageFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-export const sessionMessageFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-export const sessionShareFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
-
-export const txSessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-export const txSessionFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-export const txSessionCreate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
-    throw new Error("txSessionCreate not configured for test");
-});
-export const txSessionUpdate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
-    throw new Error("txSessionUpdate not configured for test");
-});
-export const txAccountFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
-
 export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
+
+const sessionDbMocks = createDbMocks({
+    session: ["findMany", "findFirst", "findUnique", "update"],
+    sessionShare: ["findMany"],
+    sessionMessage: ["findMany", "findFirst", "findUnique"],
+} as const);
+
+const txDbMocks = createDbMocks({
+    account: ["findUnique"],
+    session: ["create", "findFirst", "findUnique", "update"],
+} as const);
+
+export const sessionFindMany = sessionDbMocks.db.session.findMany;
+export const sessionFindFirst = sessionDbMocks.db.session.findFirst;
+export const sessionFindUnique = sessionDbMocks.db.session.findUnique;
+export const sessionUpdate = sessionDbMocks.db.session.update;
+export const sessionMessageFindMany = sessionDbMocks.db.sessionMessage.findMany;
+export const sessionMessageFindFirst = sessionDbMocks.db.sessionMessage.findFirst;
+export const sessionMessageFindUnique = sessionDbMocks.db.sessionMessage.findUnique;
+export const sessionShareFindMany = sessionDbMocks.db.sessionShare.findMany;
+
+export const txSessionFindFirst = txDbMocks.db.session.findFirst;
+export const txSessionFindUnique = txDbMocks.db.session.findUnique;
+export const txSessionCreate = txDbMocks.db.session.create;
+export const txSessionUpdate = txDbMocks.db.session.update;
+export const txAccountFindUnique = txDbMocks.db.account.findUnique;
 
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
@@ -95,22 +102,7 @@ vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findMany: sessionFindMany,
-            findFirst: sessionFindFirst,
-            findUnique: sessionFindUnique,
-            update: sessionUpdate,
-        },
-        sessionShare: { findMany: sessionShareFindMany },
-        sessionMessage: {
-            findMany: sessionMessageFindMany,
-            findFirst: sessionMessageFindFirst,
-            findUnique: sessionMessageFindUnique,
-        },
-    },
-}));
+installDbModuleMock({ db: sessionDbMocks.db });
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
@@ -118,24 +110,14 @@ export const markAccountChanged = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
 vi.mock("@/storage/inTx", () => ({
-    inTx: vi.fn(async (fn: any) =>
-        await fn({
-            account: {
-                findUnique: txAccountFindUnique,
-            },
-            session: {
-                create: txSessionCreate,
-                findFirst: txSessionFindFirst,
-                findUnique: txSessionFindUnique,
-                update: txSessionUpdate,
-            },
-        }),
-    ),
+    inTx: vi.fn(async (fn: any) => await fn(txDbMocks.db)),
     afterTx: vi.fn(),
 }));
 
 export function resetSessionRouteMocks(): void {
     vi.clearAllMocks();
+    sessionDbMocks.reset();
+    txDbMocks.reset();
     randomKeyNaked.mockReturnValue("upd-id");
     checkSessionAccess.mockResolvedValue({ level: "owner" });
     getSessionParticipantUserIds.mockResolvedValue([]);
@@ -172,20 +154,18 @@ async function importSessionRoutesModule(): Promise<typeof import("./sessionRout
     return await sessionRoutesModulePromise;
 }
 
-export async function preloadSessionRoutes(): Promise<void> {
-    await importSessionRoutesModule();
-}
-
-export async function registerSessionRoutesAndGetHandler(method: RouteMethod, path: string) {
+export async function createSessionRouteTestBuilder(
+    method: RouteMethod,
+    path: string,
+    options: { defaultRequest?: RouteRequestOverrides } = {},
+) {
     const { sessionRoutes } = await importSessionRoutesModule();
-    const app = createFakeRouteApp();
-    sessionRoutes(app as any);
-    return {
-        app,
-        handler: getRouteHandler(app, method, path),
-    };
-}
-
-export function createSessionRouteReply() {
-    return createReplyStub();
+    return createRouteTestBuilder({
+        method,
+        path,
+        defaultRequest: { userId: "u1", ...options.defaultRequest },
+        registerRoutes(app) {
+            sessionRoutes(app as any);
+        },
+    });
 }
