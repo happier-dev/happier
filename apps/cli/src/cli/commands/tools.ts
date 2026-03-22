@@ -4,7 +4,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
@@ -36,7 +36,7 @@ function resolveToolsCommandDeps(overrides?: Partial<ToolsCommandDeps>): ToolsCo
     readCredentials,
     initializeBackendApiContext,
     bootstrapAccountSettingsContext,
-    listBuiltInHappierTools: async () => listBuiltInHappierTools(),
+    listBuiltInHappierTools: async () => listBuiltInHappierTools({ surface: 'cli' }),
     callBuiltInHappierTool,
     resolveCustomHappierToolsContext,
     listResolvedCustomHappierTools,
@@ -232,12 +232,16 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
             },
           }, { exitCode: 0 });
         } else {
+          const candidates = 'candidates' in result && Array.isArray(result.candidates)
+            ? result.candidates
+            : undefined;
           printJsonEnvelope({
             ok: false,
             kind,
             error: {
               code: result.errorCode,
               message: result.error,
+              ...(candidates ? { candidates } : {}),
             },
           }, { exitCode: 1 });
         }

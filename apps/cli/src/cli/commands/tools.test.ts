@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { handleToolsCommand } from './tools';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 function createBaseDeps() {
   return {
@@ -16,8 +17,7 @@ function createBaseDeps() {
 
 describe('happier tools --json', () => {
   it('prints a tools_list JSON envelope grouped by source', async () => {
-    const logs: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => logs.push(args.join(' ')));
+    const output = captureConsoleLogAndMuteStdout();
     const initializeBackendApiContext = vi.fn(async () => ({ api: {} as any, machineId: 'machine-1' }));
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -37,7 +37,7 @@ describe('happier tools --json', () => {
         }),
       } as any);
 
-      const parsed = JSON.parse(logs.join('\n').trim());
+      const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('tools_list');
       expect(parsed.data?.sources?.happier).toEqual([
@@ -51,14 +51,13 @@ describe('happier tools --json', () => {
       }));
       expect(process.exitCode).toBe(0);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
       process.exitCode = prevExitCode;
     }
   });
 
   it('prints a tools_list JSON envelope with warnings when one custom source is unavailable', async () => {
-    const logs: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => logs.push(args.join(' ')));
+    const output = captureConsoleLogAndMuteStdout();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
 
@@ -78,7 +77,7 @@ describe('happier tools --json', () => {
         }),
       } as any);
 
-      const parsed = JSON.parse(logs.join('\n').trim());
+      const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('tools_list');
       expect(parsed.data?.sources?.playwright).toEqual([
@@ -89,14 +88,13 @@ describe('happier tools --json', () => {
       ]);
       expect(process.exitCode).toBe(0);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
       process.exitCode = prevExitCode;
     }
   });
 
   it('allows happier tools list without a session id', async () => {
-    const logs: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => logs.push(args.join(' ')));
+    const output = captureConsoleLogAndMuteStdout();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
 
@@ -109,7 +107,7 @@ describe('happier tools --json', () => {
         listResolvedCustomHappierTools: async () => ({ tools: [], warnings: [] }),
       } as any);
 
-      const parsed = JSON.parse(logs.join('\n').trim());
+      const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('tools_list');
       expect(parsed.data?.sources?.happier).toEqual([
@@ -117,14 +115,13 @@ describe('happier tools --json', () => {
       ]);
       expect(process.exitCode).toBe(0);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
       process.exitCode = prevExitCode;
     }
   });
 
   it('prints a tools_call JSON envelope for built-in Happier tools', async () => {
-    const logs: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => logs.push(args.join(' ')));
+    const output = captureConsoleLogAndMuteStdout();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
 
@@ -150,7 +147,7 @@ describe('happier tools --json', () => {
         }),
       } as any);
 
-      const parsed = JSON.parse(logs.join('\n').trim());
+      const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('tools_call');
       expect(parsed.data).toEqual({
@@ -165,14 +162,13 @@ describe('happier tools --json', () => {
       });
       expect(process.exitCode).toBe(0);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
       process.exitCode = prevExitCode;
     }
   });
 
   it('prints a tools_call JSON envelope for custom Happier-managed tools', async () => {
-    const logs: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => logs.push(args.join(' ')));
+    const output = captureConsoleLogAndMuteStdout();
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
 
@@ -198,7 +194,7 @@ describe('happier tools --json', () => {
         }),
       } as any);
 
-      const parsed = JSON.parse(logs.join('\n').trim());
+      const parsed = JSON.parse(output.logs.join('\n').trim());
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('tools_call');
       expect(parsed.data).toEqual({
@@ -213,7 +209,51 @@ describe('happier tools --json', () => {
       });
       expect(process.exitCode).toBe(0);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
+      process.exitCode = prevExitCode;
+    }
+  });
+
+  it('includes session ambiguity candidates in the tools_call JSON error envelope for built-in Happier tools', async () => {
+    const output = captureConsoleLogAndMuteStdout();
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+
+    try {
+      await handleToolsCommand([
+        'call',
+        '--session-id',
+        'sess',
+        '--directory',
+        '/tmp/workspace',
+        '--source',
+        'happier',
+        '--tool',
+        'change_title',
+        '--args-json',
+        '{"title":"Renamed"}',
+        '--json',
+      ], {
+        ...createBaseDeps(),
+        callBuiltInHappierTool: async () => ({
+          ok: false,
+          errorCode: 'session_id_ambiguous',
+          error: 'Session id is ambiguous',
+          candidates: ['sess-1', 'sess-2'],
+        }),
+      } as any);
+
+      const parsed = JSON.parse(output.logs.join('\n').trim());
+      expect(parsed.ok).toBe(false);
+      expect(parsed.kind).toBe('tools_call');
+      expect(parsed.error).toEqual({
+        code: 'session_id_ambiguous',
+        message: 'Session id is ambiguous',
+        candidates: ['sess-1', 'sess-2'],
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
       process.exitCode = prevExitCode;
     }
   });
