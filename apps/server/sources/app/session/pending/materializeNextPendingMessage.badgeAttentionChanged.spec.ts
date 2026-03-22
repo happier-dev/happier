@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock } from "../../api/testkit/dbMocks";
 
 const resolveSessionPendingOwnerAccess = vi.fn(async () => ({ ok: true as const }));
 vi.mock("@/app/session/pending/resolveSessionPendingAccess", () => ({
@@ -15,18 +17,11 @@ vi.mock("@/app/session/pending/markPendingStateChangedParticipants", () => ({
     markPendingStateChangedParticipants,
 }));
 
-const dbSessionFindUnique = vi.fn();
-const dbSessionPendingMessageFindFirst = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findUnique: dbSessionFindUnique,
-        },
-        sessionPendingMessage: {
-            findFirst: dbSessionPendingMessageFindFirst,
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    session: ["findUnique"],
+    sessionPendingMessage: ["findFirst"],
+} as const);
+installDbModuleMock({ db: dbMocks.db });
 
 const txSessionPendingMessageFindFirst = vi.fn();
 const txSessionMessageFindFirst = vi.fn();
@@ -59,11 +54,18 @@ vi.mock("@/app/features/catalog/readFeatureEnv", () => ({
     readEncryptionFeatureEnv: () => ({ storagePolicy: "required_e2ee" }),
 }));
 
+let materializeNextPendingMessage: typeof import("./materializeNextPendingMessage").materializeNextPendingMessage;
+
 describe("materializeNextPendingMessage badgeAttentionChanged", () => {
+    beforeAll(async () => {
+        ({ materializeNextPendingMessage } = await import("./materializeNextPendingMessage"));
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
+        dbMocks.reset();
 
-        dbSessionFindUnique.mockResolvedValue({
+        dbMocks.db.session.findUnique.mockResolvedValue({
             encryptionMode: "e2ee",
             seq: 0,
             pendingCount: 1,
@@ -73,7 +75,7 @@ describe("materializeNextPendingMessage badgeAttentionChanged", () => {
             active: true,
             archivedAt: null,
         });
-        dbSessionPendingMessageFindFirst.mockResolvedValue({ localId: "l1" });
+        dbMocks.db.sessionPendingMessage.findFirst.mockResolvedValue({ localId: "l1" });
 
         txSessionPendingMessageFindFirst.mockResolvedValue({
             localId: "l1",
@@ -116,8 +118,6 @@ describe("materializeNextPendingMessage badgeAttentionChanged", () => {
     });
 
     it("computes badgeAttentionChanged from the transactional pre-update session state", async () => {
-        const { materializeNextPendingMessage } = await import("./materializeNextPendingMessage");
-
         const result = await materializeNextPendingMessage({ actorUserId: "u1", sessionId: "s1" });
 
         expect(result).toMatchObject({
