@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,18 +47,21 @@ vi.mock('react', async () => {
   };
 });
 
-vi.mock('react-native', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-native')>();
-  return {
-    ...actual,
-    Pressable: (props: any) => React.createElement('Pressable', props, typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
-    View: (props: any) => React.createElement('View', props, props.children),
-    Platform: { ...actual.Platform, OS: 'web' },
-    AppState: {
-      currentState: 'active',
-      addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Pressable: (props: any) => React.createElement('Pressable', props, typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
+                                    View: (props: any) => React.createElement('View', props, props.children),
+                                    Platform: {
+                                        OS: 'web',
+                                    },
+                                    AppState: {
+                                        currentState: 'active',
+                                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                                    },
+                                }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -86,52 +91,43 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
   };
 });
 
-vi.mock('react-native-unistyles', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-native-unistyles')>();
-  return {
-    ...actual,
-    StyleSheet: {
-      create: (factory: any) => (typeof factory === 'function' ? factory({
-        colors: {
-          header: { tint: '#fff' },
-          card: { border: '#ddd', background: '#fff' },
-          text: { primary: '#000', secondary: '#666' },
-          status: { warning: '#f5a623' },
-          accent: { blue: '#007aff' },
-          surface: '#fff',
-        },
-        spacing: (value: number) => value * 4,
-      }) : factory),
-    },
-    useUnistyles: () => ({
-      theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
         colors: {
           header: { tint: '#fff' },
         },
       },
-    }),
-  };
+    });
 });
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: {
     push: vi.fn(),
-  }),
-}));
+  },
+    });
+    return expoRouterMock.module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => storageState.current,
     subscribe: () => () => {},
   },
-  useSettings: () => storageState.current.settings,
-  useSetting: (key: string) => {
+    useSettings: () => storageState.current.settings,
+    useSetting: (key: string) => {
     if (key === 'actionsSettingsV1') return actionsSettingsState.current;
     if (key === 'sessionReplayEnabled') return true;
     if (key === 'voice') return voiceSettingState.current;
     return null;
   },
-}));
+});
+});
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['claude'],
@@ -157,9 +153,10 @@ vi.mock('@/sync/domains/actions/buildActionDraftInput', () => ({
   buildActionDraftInput: buildActionDraftInputMock,
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (promise: Promise<unknown>, _opts?: unknown) => {
@@ -167,11 +164,10 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   },
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: vi.fn(),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
@@ -274,10 +270,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <SessionHeaderActionMenu
+    const screen = await renderScreen(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -286,15 +279,13 @@ describe('SessionHeaderActionMenu handoff', () => {
               flavor: 'claude',
             },
           } as any}
-        />,
-      );
-    });
+        />);
 
-    const dropdown = tree.root.findByType('DropdownMenu' as any);
+    const dropdown = screen.findByType('DropdownMenu' as any);
     await act(async () => {
       dropdown.props.onSelect('session.handoff');
-      await Promise.resolve();
     });
+    await flushHookEffects({ cycles: 1 });
 
     expect(runSessionHandoffPickerFlowMock).toHaveBeenCalledWith({
       execute: expect.any(Function),
@@ -313,10 +304,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <SessionHeaderActionMenu
+    const screen = await renderScreen(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -330,15 +318,13 @@ describe('SessionHeaderActionMenu handoff', () => {
               },
             },
           } as any}
-        />,
-      );
-    });
+        />);
 
-    const dropdown = tree.root.findByType('DropdownMenu' as any);
+    const dropdown = screen.findByType('DropdownMenu' as any);
     await act(async () => {
       dropdown.props.onSelect('subagents.plan.start');
-      await Promise.resolve();
     });
+    await flushHookEffects({ cycles: 1 });
 
     expect(buildActionDraftInputMock).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'subagents.plan.start',
@@ -386,10 +372,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <SessionHeaderActionMenu
+    const screen = await renderScreen(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -398,11 +381,9 @@ describe('SessionHeaderActionMenu handoff', () => {
               flavor: 'codex',
             },
           } as any}
-        />,
-      );
-    });
+        />);
 
-    const dropdown = tree.root.findByType('DropdownMenu' as any);
+    const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -415,8 +396,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     teleportVoiceAgentToSessionRootMock.mockResolvedValue({ ok: true });
     await act(async () => {
       dropdown.props.onSelect('voice.teleport');
-      await Promise.resolve();
     });
+    await flushHookEffects({ cycles: 1 });
 
     expect(teleportVoiceAgentToSessionRootMock).toHaveBeenCalledWith({ sessionId: 'sess_1' });
   });
@@ -453,10 +434,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <SessionHeaderActionMenu
+    const screen = await renderScreen(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -465,11 +443,9 @@ describe('SessionHeaderActionMenu handoff', () => {
               flavor: 'codex',
             },
           } as any}
-        />,
-      );
-    });
+        />);
 
-    const dropdown = tree.root.findByType('DropdownMenu' as any);
+    const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -483,10 +459,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('drops execution-run menu items after execution runs are disabled in settings', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <SessionHeaderActionMenu
+    const screen = await renderScreen(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -495,11 +468,9 @@ describe('SessionHeaderActionMenu handoff', () => {
               flavor: 'claude',
             },
           } as any}
-        />,
-      );
-    });
+        />);
 
-    let dropdown = tree.root.findByType('DropdownMenu' as any);
+    let dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -521,8 +492,9 @@ describe('SessionHeaderActionMenu handoff', () => {
     await act(async () => {
       dropdown.props.onOpenChange(true);
     });
+    await flushHookEffects({ cycles: 1 });
 
-    dropdown = tree.root.findByType('DropdownMenu' as any);
+    dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
