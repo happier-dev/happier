@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
+import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempDir';
 import {
   resolveTscBin,
   runTsc,
@@ -10,6 +10,11 @@ import {
   syncCliRuntimeDependencies,
   withBuildSharedDepsLock,
 } from '../buildSharedDeps.mjs';
+import {
+  createPackageLayoutSandbox,
+  writeCliBundledHostPackage,
+  writeRuntimeDependencyStub,
+} from './testkit/packageLayoutSandbox';
 
 describe('buildSharedDeps', () => {
   it('surfaces which tsconfig failed when compilation throws', () => {
@@ -210,71 +215,77 @@ describe('buildSharedDeps', () => {
   });
 
   it('bundles tweetnacl into the CLI publish tree for packaged installs', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'happy-build-shared-runtime-'));
-    mkdirSync(resolve(repoRoot, 'node_modules', 'tweetnacl'), { recursive: true });
-    mkdirSync(resolve(repoRoot, 'apps', 'cli'), { recursive: true });
-    writeFileSync(
-      resolve(repoRoot, 'node_modules', 'tweetnacl', 'package.json'),
-      JSON.stringify({ name: 'tweetnacl', version: '1.0.3', main: 'nacl-fast.js' }),
-      'utf8',
-    );
-    writeFileSync(resolve(repoRoot, 'node_modules', 'tweetnacl', 'nacl-fast.js'), 'module.exports = {};', 'utf8');
-    writeFileSync(
-      resolve(repoRoot, 'apps', 'cli', 'package.json'),
-      JSON.stringify({
-        name: '@happier-dev/cli',
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-build-shared-runtime-');
+
+    try {
+      writeRuntimeDependencyStub({
+        repoRoot,
+        packageName: 'tweetnacl',
+        manifestOverrides: {
+          version: '1.0.3',
+          main: 'nacl-fast.js',
+        },
+        files: {
+          'nacl-fast.js': 'module.exports = {};\n',
+        },
+      });
+      writeCliBundledHostPackage({
+        happyCliDir,
         dependencies: {
           tweetnacl: '^1.0.3',
         },
-      }),
-      'utf8',
-    );
-    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
-    writeFileSync(resolve(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
+      });
 
-    syncCliRuntimeDependencies({ repoRoot });
+      syncCliRuntimeDependencies({ repoRoot });
 
-    expect(existsSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', 'tweetnacl', 'package.json'))).toBe(true);
-    expect(existsSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', 'tweetnacl', 'nacl-fast.js'))).toBe(true);
+      expect(existsSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', 'tweetnacl', 'package.json'))).toBe(true);
+      expect(existsSync(resolve(repoRoot, 'apps', 'cli', 'node_modules', 'tweetnacl', 'nacl-fast.js'))).toBe(true);
+    } finally {
+      cleanup();
+    }
   });
 
   it('serializes concurrent shared-deps builds through a single lock', async () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'happy-build-shared-lock-'));
-    const lockPath = resolve(rootDir, 'cli-shared-deps-build.lock');
-    const events: string[] = [];
-    let releaseFirst: (() => void) | null = null;
+    const rootDir = createTempDirSync('happy-build-shared-lock-');
+    try {
+      const lockPath = resolve(rootDir, 'cli-shared-deps-build.lock');
+      const events: string[] = [];
+      let releaseFirst: (() => void) | null = null;
 
-    const first = withBuildSharedDepsLock(async () => {
-      events.push('first:start');
-      await new Promise<void>((resolvePromise) => {
-        releaseFirst = resolvePromise;
+      const first = withBuildSharedDepsLock(async () => {
+        events.push('first:start');
+        await new Promise<void>((resolvePromise) => {
+          releaseFirst = resolvePromise;
+        });
+        events.push('first:end');
+      }, {
+        lockPath,
+        timeoutMs: 2_000,
+        pollIntervalMs: 10,
+        staleAfterMs: 1_000,
       });
-      events.push('first:end');
-    }, {
-      lockPath,
-      timeoutMs: 2_000,
-      pollIntervalMs: 10,
-      staleAfterMs: 1_000,
-    });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(events).toEqual(['first:start']);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events).toEqual(['first:start']);
 
-    const second = withBuildSharedDepsLock(async () => {
-      events.push('second:start');
-    }, {
-      lockPath,
-      timeoutMs: 2_000,
-      pollIntervalMs: 10,
-      staleAfterMs: 1_000,
-    });
+      const second = withBuildSharedDepsLock(async () => {
+        events.push('second:start');
+      }, {
+        lockPath,
+        timeoutMs: 2_000,
+        pollIntervalMs: 10,
+        staleAfterMs: 1_000,
+      });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(events).toEqual(['first:start']);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events).toEqual(['first:start']);
 
-    releaseFirst?.();
-    await Promise.all([first, second]);
+      releaseFirst?.();
+      await Promise.all([first, second]);
 
-    expect(events).toEqual(['first:start', 'first:end', 'second:start']);
+      expect(events).toEqual(['first:start', 'first:end', 'second:start']);
+    } finally {
+      removeTempDirSync(rootDir);
+    }
   });
 });

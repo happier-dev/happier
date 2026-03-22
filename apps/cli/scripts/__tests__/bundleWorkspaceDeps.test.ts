@@ -1,143 +1,112 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { bundleWorkspaceDeps } from '../bundleWorkspaceDeps.mjs';
-
-function writeJson(path: string, value: unknown) {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-}
+import {
+  createPackageLayoutSandbox,
+  writeCliBundledHostPackage,
+  writeRuntimeDependencyStub,
+  writeWorkspacePackageFixture,
+} from './testkit/packageLayoutSandbox';
 
 describe('bundleWorkspaceDeps', () => {
   it('copies dist + writes a sanitized package.json without install scripts', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'happy-bundle-workspace-deps-'));
-    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
-    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-workspace-deps-');
 
-    // Hoisted runtime deps used by bundled workspaces (resolved from workspace package.json).
-    mkdirSync(resolve(repoRoot, 'node_modules', 'base64-js'), { recursive: true });
-    writeJson(resolve(repoRoot, 'node_modules', 'base64-js', 'package.json'), {
-      name: 'base64-js',
-      version: '1.5.1',
-      main: 'index.js',
-    });
-    writeFileSync(resolve(repoRoot, 'node_modules', 'base64-js', 'index.js'), 'module.exports = {};\n', 'utf8');
-    mkdirSync(resolve(repoRoot, 'node_modules', '@noble', 'hashes'), { recursive: true });
-    writeJson(resolve(repoRoot, 'node_modules', '@noble', 'hashes', 'package.json'), {
-      name: '@noble/hashes',
-      version: '1.8.0',
-      main: 'index.js',
-    });
-    writeFileSync(resolve(repoRoot, 'node_modules', '@noble', 'hashes', 'index.js'), 'module.exports = {};\n', 'utf8');
-    mkdirSync(resolve(repoRoot, 'node_modules', 'tweetnacl'), { recursive: true });
-    writeJson(resolve(repoRoot, 'node_modules', 'tweetnacl', 'package.json'), {
-      name: 'tweetnacl',
-      version: '1.0.3',
-      main: 'nacl-fast.js',
-    });
-    writeFileSync(resolve(repoRoot, 'node_modules', 'tweetnacl', 'nacl-fast.js'), 'module.exports = {};', 'utf8');
+    try {
+      // Hoisted runtime deps used by bundled workspaces (resolved from workspace package.json).
+      writeRuntimeDependencyStub({
+        repoRoot,
+        packageName: 'base64-js',
+        manifestOverrides: { version: '1.5.1' },
+      });
+      writeRuntimeDependencyStub({
+        repoRoot,
+        packageName: '@noble/hashes',
+        manifestOverrides: { version: '1.8.0' },
+      });
+      writeRuntimeDependencyStub({
+        repoRoot,
+        packageName: 'tweetnacl',
+        manifestOverrides: { version: '1.0.3', main: 'nacl-fast.js' },
+        files: { 'nacl-fast.js': 'module.exports = {};\n' },
+      });
 
-    const agentsDir = resolve(repoRoot, 'packages', 'agents');
-    const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
-    const connectionSupervisorDir = resolve(repoRoot, 'packages', 'connection-supervisor');
-    const protocolDir = resolve(repoRoot, 'packages', 'protocol');
-    const transfersDir = resolve(repoRoot, 'packages', 'transfers');
-    const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
-    const happyCliDir = resolve(repoRoot, 'apps', 'cli');
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: [
+          '@happier-dev/agents',
+          '@happier-dev/cli-common',
+          '@happier-dev/connection-supervisor',
+          '@happier-dev/protocol',
+          '@happier-dev/transfers',
+          '@happier-dev/release-runtime',
+        ],
+      });
 
-    mkdirSync(resolve(agentsDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(connectionSupervisorDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(transfersDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
-    mkdirSync(happyCliDir, { recursive: true });
-    writeJson(resolve(happyCliDir, 'package.json'), {
-      name: '@happier-dev/cli',
-      bundledDependencies: [
-        '@happier-dev/agents',
-        '@happier-dev/cli-common',
-        '@happier-dev/connection-supervisor',
-        '@happier-dev/protocol',
-        '@happier-dev/transfers',
-        '@happier-dev/release-runtime',
-      ],
-    });
-
-    writeJson(resolve(agentsDir, 'package.json'), {
-      name: '@happier-dev/agents',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      scripts: { postinstall: 'echo should-not-run' },
-      devDependencies: { typescript: '^5' },
-    });
-    writeJson(resolve(protocolDir, 'package.json'), {
-      name: '@happier-dev/protocol',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      scripts: { postinstall: 'echo should-not-run' },
-      dependencies: {
-        'base64-js': '^1.5.1',
-        '@noble/hashes': '^1.8.0',
-        tweetnacl: '^1.0.3',
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/agents',
+      packageName: '@happier-dev/agents',
+      manifestOverrides: {
+        scripts: { postinstall: 'echo should-not-run' },
+        devDependencies: { typescript: '^5' },
       },
+      files: { 'dist/index.js': 'export const x = 1;\n' },
     });
-    writeJson(resolve(cliCommonDir, 'package.json'), {
-      name: '@happier-dev/cli-common',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      scripts: { postinstall: 'echo should-not-run' },
-    });
-    writeJson(resolve(connectionSupervisorDir, 'package.json'), {
-      name: '@happier-dev/connection-supervisor',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      scripts: { postinstall: 'echo should-not-run' },
-    });
-    writeJson(resolve(releaseRuntimeDir, 'package.json'), {
-      name: '@happier-dev/release-runtime',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      scripts: { postinstall: 'echo should-not-run' },
-      devDependencies: { typescript: '^5' },
-    });
-    writeJson(resolve(transfersDir, 'package.json'), {
-      name: '@happier-dev/transfers',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      scripts: { postinstall: 'echo should-not-run' },
-      dependencies: {
-        '@happier-dev/protocol': '0.0.0',
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/protocol',
+      packageName: '@happier-dev/protocol',
+      manifestOverrides: {
+        scripts: { postinstall: 'echo should-not-run' },
+        dependencies: {
+          'base64-js': '^1.5.1',
+          '@noble/hashes': '^1.8.0',
+          tweetnacl: '^1.0.3',
+        },
       },
+      files: { 'dist/index.js': 'export const y = 2;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/cli-common',
+      packageName: '@happier-dev/cli-common',
+      manifestOverrides: { scripts: { postinstall: 'echo should-not-run' } },
+      files: { 'dist/index.js': 'export const z = 3;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/connection-supervisor',
+      packageName: '@happier-dev/connection-supervisor',
+      manifestOverrides: { scripts: { postinstall: 'echo should-not-run' } },
+      files: { 'dist/index.js': 'export const q = 4;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/transfers',
+      packageName: '@happier-dev/transfers',
+      manifestOverrides: {
+        scripts: { postinstall: 'echo should-not-run' },
+        dependencies: {
+          '@happier-dev/protocol': '0.0.0',
+        },
+      },
+      files: { 'dist/index.js': 'export const transfer = true;\n' },
+    });
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/release-runtime',
+      packageName: '@happier-dev/release-runtime',
+      manifestOverrides: {
+        scripts: { postinstall: 'echo should-not-run' },
+        devDependencies: { typescript: '^5' },
+      },
+      files: { 'dist/index.js': 'export const w = 4;\n' },
     });
 
-    writeFileSync(resolve(agentsDir, 'dist', 'index.js'), 'export const x = 1;\n', 'utf8');
-    writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const y = 2;\n', 'utf8');
-    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
-    writeFileSync(resolve(connectionSupervisorDir, 'dist', 'index.js'), 'export const q = 4;\n', 'utf8');
-    writeFileSync(resolve(transfersDir, 'dist', 'index.js'), 'export const transfer = true;\n', 'utf8');
-    writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const w = 4;\n', 'utf8');
-
-    bundleWorkspaceDeps({ repoRoot, happyCliDir });
+      bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
     // Protocol runtime deps should be vendored under the bundled protocol package.
     expect(
@@ -195,90 +164,77 @@ describe('bundleWorkspaceDeps', () => {
     expect(bundledTransfersPkgJson.scripts).toBeUndefined();
     expect(bundledTransfersPkgJson.name).toBe('@happier-dev/transfers');
 
-    expect(bundledReleaseRuntimePkgJson.scripts).toBeUndefined();
-    expect(bundledReleaseRuntimePkgJson.devDependencies).toBeUndefined();
-    expect(bundledReleaseRuntimePkgJson.name).toBe('@happier-dev/release-runtime');
+      expect(bundledReleaseRuntimePkgJson.scripts).toBeUndefined();
+      expect(bundledReleaseRuntimePkgJson.devDependencies).toBeUndefined();
+      expect(bundledReleaseRuntimePkgJson.name).toBe('@happier-dev/release-runtime');
+    } finally {
+      cleanup();
+    }
   });
 
   it('vendors the external runtime dependency tree for bundled workspace packages', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'happy-bundle-workspace-deps-tree-'));
-    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
-    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-workspace-deps-tree-');
 
-    const protocolDir = resolve(repoRoot, 'packages', 'protocol');
-    const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
-    const happyCliDir = resolve(repoRoot, 'apps', 'cli');
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: ['@happier-dev/protocol', '@happier-dev/release-runtime'],
+      });
 
-    const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
-    const depBDir = resolve(repoRoot, 'node_modules', 'dep-b');
-
-    mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
-    mkdirSync(happyCliDir, { recursive: true });
-    writeJson(resolve(happyCliDir, 'package.json'), {
-      name: '@happier-dev/cli',
-      bundledDependencies: ['@happier-dev/protocol', '@happier-dev/release-runtime'],
-    });
-    mkdirSync(depADir, { recursive: true });
-    mkdirSync(depBDir, { recursive: true });
-
-    writeJson(resolve(protocolDir, 'package.json'), {
-      name: '@happier-dev/protocol',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-      dependencies: {
-        'dep-a': '^1.0.0',
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/protocol',
+      packageName: '@happier-dev/protocol',
+      manifestOverrides: {
+        dependencies: {
+          'dep-a': '^1.0.0',
+        },
       },
+      files: { 'dist/index.js': 'export const y = 2;\n' },
     });
-    writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const y = 2;\n', 'utf8');
-    writeJson(resolve(releaseRuntimeDir, 'package.json'), {
-      name: '@happier-dev/release-runtime',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      types: './dist/index.d.ts',
-      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: 'packages/release-runtime',
+      packageName: '@happier-dev/release-runtime',
+      files: { 'dist/index.js': 'export const w = 4;\n' },
     });
-    writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const w = 4;\n', 'utf8');
 
-    writeJson(resolve(depADir, 'package.json'), {
-      name: 'dep-a',
-      version: '1.0.0',
-      main: 'index.js',
-      dependencies: {
-        'dep-b': '^1.0.0',
+    writeRuntimeDependencyStub({
+      repoRoot,
+      packageName: 'dep-a',
+      manifestOverrides: {
+        dependencies: {
+          'dep-b': '^1.0.0',
+        },
       },
+      files: { 'index.js': 'module.exports = { a: true };\n' },
     });
-    writeFileSync(resolve(depADir, 'index.js'), 'module.exports = { a: true };\n', 'utf8');
-
-    writeJson(resolve(depBDir, 'package.json'), { name: 'dep-b', version: '1.0.0', main: 'index.js' });
-    writeFileSync(resolve(depBDir, 'index.js'), 'module.exports = { b: true };\n', 'utf8');
+    writeRuntimeDependencyStub({
+      repoRoot,
+      packageName: 'dep-b',
+      files: { 'index.js': 'module.exports = { b: true };\n' },
+    });
 
     // Minimal stubs for other bundled workspace packages.
     for (const pkg of [
-      { name: '@happier-dev/agents', dir: resolve(repoRoot, 'packages', 'agents') },
-      { name: '@happier-dev/cli-common', dir: resolve(repoRoot, 'packages', 'cli-common') },
-      { name: '@happier-dev/transfers', dir: resolve(repoRoot, 'packages', 'transfers') },
+      { name: '@happier-dev/agents', workspacePath: 'packages/agents' },
+      { name: '@happier-dev/cli-common', workspacePath: 'packages/cli-common' },
+      { name: '@happier-dev/transfers', workspacePath: 'packages/transfers' },
     ]) {
-      mkdirSync(resolve(pkg.dir, 'dist'), { recursive: true });
-      writeJson(resolve(pkg.dir, 'package.json'), {
-        name: pkg.name,
-        version: '0.0.0',
-        type: 'module',
-        main: './dist/index.js',
-        types: './dist/index.d.ts',
-        exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
-        dependencies: {
-          '@happier-dev/protocol': '0.0.0',
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: pkg.workspacePath,
+        packageName: pkg.name,
+        manifestOverrides: {
+          dependencies: {
+            '@happier-dev/protocol': '0.0.0',
+          },
         },
+        files: { 'dist/index.js': 'export const x = 1;\n' },
       });
-      writeFileSync(resolve(pkg.dir, 'dist', 'index.js'), 'export const x = 1;\n', 'utf8');
     }
 
-    bundleWorkspaceDeps({ repoRoot, happyCliDir });
+      bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
     // dep-a is vendored because protocol declares it.
     expect(() =>
@@ -289,62 +245,57 @@ describe('bundleWorkspaceDeps', () => {
     ).not.toThrow();
 
     // dep-b is vendored transitively because dep-a depends on it.
-    expect(() =>
-      readFileSync(
-        resolve(
-          happyCliDir,
-          'node_modules',
-          '@happier-dev',
-          'protocol',
-          'node_modules',
-          'dep-a',
-          'node_modules',
-          'dep-b',
-          'package.json',
+      expect(() =>
+        readFileSync(
+          resolve(
+            happyCliDir,
+            'node_modules',
+            '@happier-dev',
+            'protocol',
+            'node_modules',
+            'dep-a',
+            'node_modules',
+            'dep-b',
+            'package.json',
+          ),
+          'utf8',
         ),
-        'utf8',
-      ),
-    ).not.toThrow();
+      ).not.toThrow();
+    } finally {
+      cleanup();
+    }
   });
 
   it('derives bundled workspaces from the host package bundledDependencies manifest', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'happy-bundle-manifest-'));
-    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
-    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-manifest-');
 
-    const agentsDir = resolve(repoRoot, 'packages', 'agents');
-    const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
-    const happyCliDir = resolve(repoRoot, 'apps', 'cli');
+    try {
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/agents',
+        packageName: '@happier-dev/agents',
+        manifestOverrides: { exports: { '.': { default: './dist/index.js' } } },
+        files: { 'dist/index.js': 'export const agent = true;\n' },
+      });
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/cli-common',
+        packageName: '@happier-dev/cli-common',
+        manifestOverrides: { exports: { '.': { default: './dist/index.js' } } },
+        files: { 'dist/index.js': 'export const cliCommon = true;\n' },
+      });
 
-    mkdirSync(resolve(agentsDir, 'dist'), { recursive: true });
-    mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
-    mkdirSync(happyCliDir, { recursive: true });
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: ['@happier-dev/cli-common'],
+      });
 
-    writeJson(resolve(agentsDir, 'package.json'), {
-      name: '@happier-dev/agents',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      exports: { '.': { default: './dist/index.js' } },
-    });
-    writeJson(resolve(cliCommonDir, 'package.json'), {
-      name: '@happier-dev/cli-common',
-      version: '0.0.0',
-      type: 'module',
-      main: './dist/index.js',
-      exports: { '.': { default: './dist/index.js' } },
-    });
-    writeFileSync(resolve(agentsDir, 'dist', 'index.js'), 'export const agent = true;\n', 'utf8');
-    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const cliCommon = true;\n', 'utf8');
+      bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
-    writeJson(resolve(happyCliDir, 'package.json'), {
-      name: '@happier-dev/cli',
-      bundledDependencies: ['@happier-dev/cli-common'],
-    });
-
-    bundleWorkspaceDeps({ repoRoot, happyCliDir });
-
-    expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'))).toBe(true);
-    expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'agents', 'package.json'))).toBe(false);
+      expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'))).toBe(true);
+      expect(existsSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'agents', 'package.json'))).toBe(false);
+    } finally {
+      cleanup();
+    }
   });
 });

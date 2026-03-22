@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { createTempDirSync } from '../../src/testkit/fs/tempDir';
 import { preparePkgrollPackageManifest, runPkgrollBuild } from '../runPkgrollBuild.mjs';
 
 describe('runPkgrollBuild', () => {
@@ -52,7 +52,7 @@ describe('runPkgrollBuild', () => {
   });
 
   it('restores the original package manifest after pkgroll finishes', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-cli-pkgroll-manifest-'));
+    const dir = createTempDirSync('happier-cli-pkgroll-manifest-');
     const packageJsonPath = join(dir, 'package.json');
     const original = {
       main: './package-dist/index.cjs',
