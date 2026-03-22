@@ -34,8 +34,14 @@ export const PixelRatio = {
     roundToNearestPixel: (value: number) => value,
 } as const;
 
-export const Platform = { OS: 'node', select: (x: any) => x?.default ?? x?.web ?? x?.ios ?? x?.android } as const;
-export const AppState = { addEventListener: () => ({ remove: () => {} }) } as const;
+export const Platform = {
+    OS: 'node',
+    select: (x: any) => x?.default ?? x?.web ?? x?.native ?? x?.ios ?? x?.android,
+} as const;
+export const AppState = {
+    currentState: 'active',
+    addEventListener: () => ({ remove: () => {} }),
+} as const;
 export const InteractionManager = { runAfterInteractions: (fn: () => void) => fn() } as const;
 export const Linking = {
     canOpenURL: async () => true,
@@ -50,7 +56,7 @@ function flattenStyle(style: any): any {
     if (typeof style === 'object') return style;
     return {};
 }
-export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle } as const;
+export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle, hairlineWidth: 1 } as const;
 // Many components spread this object into style definitions.
 (StyleSheet as any).absoluteFillObject = {};
 export const TurboModuleRegistry = {
