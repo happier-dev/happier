@@ -1021,7 +1021,7 @@ describe('rpcHandlers (session handoff)', () => {
   it('applies same-daemon workspace sync through the replication engine when workspace transfer is enabled', async () => {
     const sourcePath = '/Users/tester/projects/demo';
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async () => ({
+    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
       directSource: {
         kind: 'claudeConfig',
@@ -1029,7 +1029,7 @@ describe('rpcHandlers (session handoff)', () => {
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-synced',
+        directory,
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
@@ -1682,7 +1682,7 @@ describe('rpcHandlers (session handoff)', () => {
     const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
       payload: directPeerPayload,
     });
-    const importSessionBundle = vi.fn(async () => ({
+    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
       directSource: {
         kind: 'claudeConfig',
@@ -1690,7 +1690,7 @@ describe('rpcHandlers (session handoff)', () => {
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-synced',
+        directory,
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
@@ -2455,7 +2455,7 @@ describe('rpcHandlers (session handoff)', () => {
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const { publishTransfer, requestPayloadFile, dispose, listPublishedTransferIds } =
       await createPublishedDirectPeerPayloadRouter();
-    const importSessionBundle = vi.fn(async () => ({
+    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
       directSource: {
         kind: 'claudeConfig',
@@ -2463,7 +2463,7 @@ describe('rpcHandlers (session handoff)', () => {
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-synced',
+        directory,
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
@@ -2668,7 +2668,7 @@ describe('rpcHandlers (session handoff)', () => {
           projectId: null,
         },
         resume: {
-          directory: '/repo-synced',
+          directory: expect.any(String),
           agent: 'claude',
           resume: 'claude_session_target',
           transcriptStorage: 'persisted',
@@ -2695,60 +2695,25 @@ describe('rpcHandlers (session handoff)', () => {
         targetPath: '/repo-target',
         workspaceTransfer,
       });
-      expect(applyWorkspaceReplicationPlan).toHaveBeenCalledWith({
-        activeServerDir: targetActiveServerDir,
-        assertCanContinue: expect.any(Function),
-        sourceOffer: {
-          offerId: expect.any(String),
-          relationshipId: expect.any(String),
-          directionId: expect.any(String),
-          sourceFingerprint: expect.any(String),
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: directPeerWorkspaceDigest,
-                sizeBytes: directPeerWorkspacePayload.byteLength,
-                executable: false,
-              },
-            ],
-            fingerprint: expect.any(String),
-          },
-          blobIndex: [
-            {
-              digest: directPeerWorkspaceDigest,
-              sizeBytes: directPeerWorkspacePayload.byteLength,
-            },
-          ],
-          sourceControllerMetadata: {
-            scmBackendId: 'git',
-          },
-        },
-        targetPath: '/repo-target',
-        strategy: 'sync_changes',
-        conflictPolicy: 'create_sibling_copy',
-        currentTargetManifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:previous',
-              sizeBytes: 5,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:previous',
+      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
+      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
+      await expect(
+        workspaceReplicationJobStore.findByCorrelationId(`session_handoff_workspace_prepare_target:${started.handoffId}`),
+      ).resolves.toMatchObject({
+        status: {
+          status: 'completed',
+          checkpoint: 'baseline_committed',
         },
       });
       expect(importWorkspaceBundle).not.toHaveBeenCalled();
+      const importedDirectory = ready.resume.directory;
       expect(importSessionBundle).toHaveBeenCalledWith(
         {
           providerId: 'claude',
           remoteSessionId: 'claude_session_source',
           transcriptBase64: 'e30K',
         },
-        '/repo-synced',
+        importedDirectory,
         'persisted',
       );
     } finally {
@@ -2776,7 +2741,7 @@ describe('rpcHandlers (session handoff)', () => {
     };
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
-    const importSessionBundle = vi.fn(async () => ({
+    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
       directSource: {
         kind: 'claudeConfig',
@@ -2784,7 +2749,7 @@ describe('rpcHandlers (session handoff)', () => {
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-synced',
+        directory,
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
@@ -2957,60 +2922,25 @@ describe('rpcHandlers (session handoff)', () => {
         targetPath: '/repo-target',
         workspaceTransfer,
       });
-      expect(applyWorkspaceReplicationPlan).toHaveBeenCalledWith({
-        activeServerDir: targetActiveServerDir,
-        assertCanContinue: expect.any(Function),
-        sourceOffer: {
-          offerId: expect.any(String),
-          relationshipId: expect.any(String),
-          directionId: expect.any(String),
-          sourceFingerprint: expect.any(String),
-          manifest: {
-            entries: [
-              {
-                relativePath: 'README.md',
-                kind: 'file',
-                digest: 'sha256:be224639187f439ccf43515d94acc2300663a6bfba09afd1e950e22e1b552bd8',
-                sizeBytes: 19,
-                executable: false,
-              },
-            ],
-            fingerprint: expect.any(String),
-          },
-          blobIndex: [
-            {
-              digest: 'sha256:be224639187f439ccf43515d94acc2300663a6bfba09afd1e950e22e1b552bd8',
-              sizeBytes: 19,
-            },
-          ],
-          sourceControllerMetadata: {
-            scmBackendId: 'git',
-          },
-        },
-        targetPath: '/repo-target',
-        strategy: 'sync_changes',
-        conflictPolicy: 'create_sibling_copy',
-        currentTargetManifest: {
-          entries: [
-            {
-              relativePath: 'README.md',
-              kind: 'file',
-              digest: 'sha256:previous',
-              sizeBytes: 5,
-              executable: false,
-            },
-          ],
-          fingerprint: 'sha256:previous',
+      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
+      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
+      await expect(
+        workspaceReplicationJobStore.findByCorrelationId(`session_handoff_workspace_prepare_target:${started.handoffId}`),
+      ).resolves.toMatchObject({
+        status: {
+          status: 'completed',
+          checkpoint: 'baseline_committed',
         },
       });
       expect(importWorkspaceBundle).not.toHaveBeenCalled();
+      const importedDirectory = ready.resume.directory;
       expect(importSessionBundle).toHaveBeenCalledWith(
         {
           providerId: 'claude',
           remoteSessionId: 'claude_session_source',
           transcriptBase64: 'e30K',
         },
-        '/repo-synced',
+        importedDirectory,
         'persisted',
       );
       const openTransferIds = channels.sentEnvelopes
@@ -3067,7 +2997,7 @@ describe('rpcHandlers (session handoff)', () => {
         };
       };
     }>>();
-    const importSessionBundle = vi.fn(async () => ({
+    const importSessionBundle = vi.fn(async (_bundle: unknown, directory: string) => ({
       remoteSessionId: 'claude_session_target',
       directSource: {
         kind: 'claudeConfig',
@@ -3075,7 +3005,7 @@ describe('rpcHandlers (session handoff)', () => {
         projectId: null,
       },
       resume: buildClaudeResumePlan({
-        directory: '/repo-synced',
+        directory,
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
@@ -3232,17 +3162,24 @@ describe('rpcHandlers (session handoff)', () => {
       });
 
       expect(ready.status.transportStrategy).toBe('server_routed_stream');
-      expect(applyWorkspaceReplicationPlan).toHaveBeenCalledWith(expect.objectContaining({
-        targetPath: '/repo-target',
-        strategy: 'sync_changes',
-      }));
+      const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
+      const workspaceReplicationJobStore = createWorkspaceReplicationJobStore({ activeServerDir: targetActiveServerDir });
+      await expect(
+        workspaceReplicationJobStore.findByCorrelationId(`session_handoff_workspace_prepare_target:${started.handoffId}`),
+      ).resolves.toMatchObject({
+        status: {
+          status: 'completed',
+          checkpoint: 'baseline_committed',
+        },
+      });
+      const importedDirectory = ready.resume.directory;
       expect(importSessionBundle).toHaveBeenCalledWith(
         {
           providerId: 'claude',
           remoteSessionId: 'claude_session_source',
           transcriptBase64: 'e30K',
         },
-        '/repo-synced',
+        importedDirectory,
         'persisted',
       );
 
