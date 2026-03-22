@@ -22,6 +22,16 @@ function assertCallable(value: unknown, label: string): (...args: unknown[]) => 
     return value as (...args: unknown[]) => unknown;
 }
 
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    try {
+        return await run();
+    } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    }
+}
+
 function setupMonacoGlobals() {
     (globalThis as any).window = (globalThis as any).window ?? {};
     (globalThis as any).document = (globalThis as any).document ?? {};
@@ -39,17 +49,19 @@ function setupMonacoGlobals() {
 
 vi.mock('react-native', async () => {
     const React = await import('react');
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     const View = React.forwardRef((props: any, ref: any) => {
         React.useImperativeHandle(ref, () => ({}), []);
         return React.createElement('View', props, props.children);
     });
-    return {
+    return createReactNativeWebMock({
         View,
-    };
+    });
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 divider: '#000',
@@ -57,8 +69,8 @@ vi.mock('react-native-unistyles', () => ({
                 surfaceHighest: '#fff',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
@@ -73,168 +85,150 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 import { MonacoEditorSurface } from './MonacoEditorSurface.web';
+import { renderScreen } from '@/dev/testkit';
+
 
 describe('MonacoEditorSurface (web)', () => {
     it('boots Monaco even when initially not ready', async () => {
         setupMonacoGlobals();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(MonacoEditorSurface, {
+        await renderScreen(React.createElement(MonacoEditorSurface, {
                     resetKey: '1',
                     value: 'hello',
                     language: 'markdown',
                     onChange: vi.fn(),
                     wrapLines: true,
                     showLineNumbers: true,
-                }),
-            );
-            await Promise.resolve();
-        });
+                }));
 
         expect(createModelSpy).toHaveBeenCalledTimes(1);
         expect(createEditorSpy).toHaveBeenCalledTimes(1);
     });
 
     it('debounces onChange when changeDebounceMs is set', async () => {
-        vi.useFakeTimers();
+        await withFakeTimers(async () => {
+            let currentValue = 'start';
+            let changeHandler: null | ((..._args: any[]) => void) = null;
+            let blurHandler: null | ((..._args: any[]) => void) = null;
 
-        let currentValue = 'start';
-        let changeHandler: null | ((..._args: any[]) => void) = null;
-        let blurHandler: null | ((..._args: any[]) => void) = null;
+            (globalThis as any).window = (globalThis as any).window ?? {};
+            (globalThis as any).document = (globalThis as any).document ?? {};
 
-        (globalThis as any).window = (globalThis as any).window ?? {};
-        (globalThis as any).document = (globalThis as any).document ?? {};
+            (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+                if (typeof onOk === 'function') onOk();
+            };
+            (globalThis as any).window.monaco = {
+                editor: {
+                    createModel: () => ({
+                        getValue: () => currentValue,
+                        setValue: () => {},
+                        dispose: () => {},
+                    }),
+                    create: () => ({
+                        onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                            changeHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
+                            blurHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        updateOptions: () => {},
+                        dispose: () => {},
+                    }),
+                },
+            };
 
-        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
-            if (typeof onOk === 'function') onOk();
-        };
-        (globalThis as any).window.monaco = {
-            editor: {
-                createModel: () => ({
-                    getValue: () => currentValue,
-                    setValue: () => {},
-                    dispose: () => {},
-                }),
-                create: () => ({
-                    onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
-                        changeHandler = handler;
-                        return { dispose: () => {} };
-                    },
-                    onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
-                        blurHandler = handler;
-                        return { dispose: () => {} };
-                    },
-                    updateOptions: () => {},
-                    dispose: () => {},
-                }),
-            },
-        };
+            const onChange = vi.fn();
 
-        const onChange = vi.fn();
+            await renderScreen(React.createElement(MonacoEditorSurface, {
+                        resetKey: '1',
+                        value: currentValue,
+                        language: 'markdown',
+                        onChange,
+                        changeDebounceMs: 50,
+                    }));
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(MonacoEditorSurface, {
-                    resetKey: '1',
-                    value: currentValue,
-                    language: 'markdown',
-                    onChange,
-                    changeDebounceMs: 50,
-                }),
-            );
-            await Promise.resolve();
+            const triggerChange = assertCallable(changeHandler, 'change handler');
+
+            currentValue = 'a';
+            triggerChange({});
+            currentValue = 'ab';
+            triggerChange({});
+            currentValue = 'abc';
+            triggerChange({});
+
+            expect(onChange).toHaveBeenCalledTimes(0);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(50);
+            });
+
+            expect(onChange).toHaveBeenCalledTimes(1);
+            expect(onChange).toHaveBeenLastCalledWith('abc');
         });
-
-        const triggerChange = assertCallable(changeHandler, 'change handler');
-
-        currentValue = 'a';
-        triggerChange({});
-        currentValue = 'ab';
-        triggerChange({});
-        currentValue = 'abc';
-        triggerChange({});
-
-        expect(onChange).toHaveBeenCalledTimes(0);
-
-        await act(async () => {
-            vi.advanceTimersByTime(49);
-        });
-        expect(onChange).toHaveBeenCalledTimes(0);
-
-        await act(async () => {
-            vi.advanceTimersByTime(1);
-        });
-
-        expect(onChange).toHaveBeenCalledTimes(1);
-        expect(onChange).toHaveBeenLastCalledWith('abc');
-
-        vi.useRealTimers();
     });
 
     it('flushes pending debounced change on blur', async () => {
-        vi.useFakeTimers();
+        await withFakeTimers(async () => {
+            let currentValue = 'start';
+            let changeHandler: null | ((..._args: any[]) => void) = null;
+            let blurHandler: null | ((..._args: any[]) => void) = null;
 
-        let currentValue = 'start';
-        let changeHandler: null | ((..._args: any[]) => void) = null;
-        let blurHandler: null | ((..._args: any[]) => void) = null;
+            (globalThis as any).window = (globalThis as any).window ?? {};
+            (globalThis as any).document = (globalThis as any).document ?? {};
 
-        (globalThis as any).window = (globalThis as any).window ?? {};
-        (globalThis as any).document = (globalThis as any).document ?? {};
+            (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+                if (typeof onOk === 'function') onOk();
+            };
+            (globalThis as any).window.monaco = {
+                editor: {
+                    createModel: () => ({
+                        getValue: () => currentValue,
+                        setValue: () => {},
+                        dispose: () => {},
+                    }),
+                    create: () => ({
+                        onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                            changeHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
+                            blurHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        updateOptions: () => {},
+                        dispose: () => {},
+                    }),
+                },
+            };
 
-        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
-            if (typeof onOk === 'function') onOk();
-        };
-        (globalThis as any).window.monaco = {
-            editor: {
-                createModel: () => ({
-                    getValue: () => currentValue,
-                    setValue: () => {},
-                    dispose: () => {},
-                }),
-                create: () => ({
-                    onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
-                        changeHandler = handler;
-                        return { dispose: () => {} };
-                    },
-                    onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
-                        blurHandler = handler;
-                        return { dispose: () => {} };
-                    },
-                    updateOptions: () => {},
-                    dispose: () => {},
-                }),
-            },
-        };
+            const onChange = vi.fn();
 
-        const onChange = vi.fn();
+            await renderScreen(React.createElement(MonacoEditorSurface, {
+                        resetKey: '1',
+                        value: currentValue,
+                        language: 'markdown',
+                        onChange,
+                        changeDebounceMs: 50,
+                    }));
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(MonacoEditorSurface, {
-                    resetKey: '1',
-                    value: currentValue,
-                    language: 'markdown',
-                    onChange,
-                    changeDebounceMs: 50,
-                }),
-            );
-            await Promise.resolve();
+            const triggerChange = assertCallable(changeHandler, 'change handler');
+            const triggerBlur = assertCallable(blurHandler, 'blur handler');
+
+            currentValue = 'blur-me';
+            triggerChange({});
+
+            expect(onChange).toHaveBeenCalledTimes(0);
+
+            await act(async () => {
+                triggerBlur({});
+                await Promise.resolve();
+            });
+
+            expect(onChange).toHaveBeenCalledTimes(1);
+            expect(onChange).toHaveBeenLastCalledWith('blur-me');
         });
-
-        const triggerChange = assertCallable(changeHandler, 'change handler');
-        const triggerBlur = assertCallable(blurHandler, 'blur handler');
-
-        currentValue = 'blur-me';
-        triggerChange({});
-
-        expect(onChange).toHaveBeenCalledTimes(0);
-
-        triggerBlur({});
-        expect(onChange).toHaveBeenCalledTimes(1);
-        expect(onChange).toHaveBeenLastCalledWith('blur-me');
-
-        vi.useRealTimers();
     });
 
     it('exposes a stable imperative handle for flush/getValue', async () => {
@@ -270,19 +264,14 @@ describe('MonacoEditorSurface (web)', () => {
 
         const onChange = vi.fn();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(MonacoEditorSurface, {
+        await renderScreen(React.createElement(MonacoEditorSurface, {
                     ref,
                     resetKey: '1',
                     value: currentValue,
                     language: 'markdown',
                     onChange,
                     changeDebounceMs: 50,
-                }),
-            );
-            await Promise.resolve();
-        });
+                }));
 
         expect(ref.current).toBeTruthy();
         expect(typeof ref.current.getValue).toBe('function');
@@ -327,18 +316,13 @@ describe('MonacoEditorSurface (web)', () => {
         const onChange = vi.fn();
         let tree: renderer.ReactTestRenderer;
 
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(MonacoEditorSurface, {
+        tree = (await renderScreen(React.createElement(MonacoEditorSurface, {
                     resetKey: '1',
                     value: 'hello',
                     language: 'markdown',
                     onChange,
                     readOnly: true,
-                }),
-            );
-            await Promise.resolve();
-        });
+                }))).tree;
 
         updateOptionsSpy.mockClear();
 
@@ -398,18 +382,13 @@ describe('MonacoEditorSurface (web)', () => {
         const onChange = vi.fn();
         let tree: renderer.ReactTestRenderer;
 
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(MonacoEditorSurface, {
+        tree = (await renderScreen(React.createElement(MonacoEditorSurface, {
                     resetKey: '1',
                     value: 'hello',
                     language: 'markdown',
                     onChange,
                     readOnly: true,
-                }),
-            );
-            await Promise.resolve();
-        });
+                }))).tree;
 
         await act(async () => {
             tree!.update(

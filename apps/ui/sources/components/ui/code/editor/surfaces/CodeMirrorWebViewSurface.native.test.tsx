@@ -7,10 +7,17 @@ import { describe, expect, it, vi } from 'vitest';
 const postMessageSpy = vi.fn();
 let lastWebViewProps: any = null;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    PixelRatio: { getFontScale: () => 1 },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            PixelRatio: {
+                getFontScale: () => 1,
+            },
+        }
+    );
+});
 
 vi.mock('react-native-webview', () => ({
     WebView: React.forwardRef((props: any, ref: any) => {
@@ -24,8 +31,9 @@ vi.mock('react-native-webview', () => ({
     }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: true,
             colors: {
@@ -34,14 +42,16 @@ vi.mock('react-native-unistyles', () => ({
                 divider: '#222',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
 
 import { CodeMirrorWebViewSurface } from './CodeMirrorWebViewSurface.native';
+import { renderScreen } from '@/dev/testkit';
+
 
 function emitEnvelope(envelope: any) {
     if (!lastWebViewProps?.onMessage) throw new Error('WebView onMessage missing');
@@ -89,18 +99,14 @@ describe('CodeMirrorWebViewSurface (native)', () => {
 
         const ref = React.createRef<any>();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(CodeMirrorWebViewSurface, {
+        await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
                     ref,
                     resetKey: '1',
                     value: 'hello',
                     language: 'markdown',
                     onChange: vi.fn(),
                     changeDebounceMs: 10,
-                }),
-            );
-        });
+                }));
 
         expect(ref.current).toBeTruthy();
         expect(typeof ref.current.getValue).toBe('function');
@@ -133,17 +139,13 @@ describe('CodeMirrorWebViewSurface (native)', () => {
 
         let tree: renderer.ReactTestRenderer;
 
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(CodeMirrorWebViewSurface, {
+        tree = (await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
                     resetKey: '1',
                     value: 'hello',
                     language: 'markdown',
                     onChange: vi.fn(),
                     readOnly: false,
-                }),
-            );
-        });
+                }))).tree;
 
         emitEnvelope({ v: 1, type: 'ready', payload: { ok: true } });
         postMessageSpy.mockClear();

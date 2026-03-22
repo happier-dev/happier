@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,9 +40,12 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { text: '#111' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: { colors: { text: '#111' } },
+    });
+});
 
 describe('CodeBlockView (native)', () => {
     it('renders SimpleSyntaxHighlighter when within budget and enabled', async () => {
@@ -56,9 +61,7 @@ describe('CodeBlockView (native)', () => {
         const { CodeBlockView } = await import('./CodeBlockView');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }));
-        });
+        tree = (await renderScreen(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }))).tree;
 
         expect(simpleSpy).toHaveBeenCalledTimes(1);
         expect(tree.root.findAllByType('SimpleSyntaxHighlighter' as any).length).toBe(1);
@@ -77,9 +80,7 @@ describe('CodeBlockView (native)', () => {
         const { CodeBlockView } = await import('./CodeBlockView');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }));
-        });
+        tree = (await renderScreen(React.createElement(CodeBlockView, { code: 'const x = 1;', language: 'typescript' }))).tree;
 
         expect(simpleSpy).toHaveBeenCalledTimes(0);
         const textNodes = tree.root.findAllByType('Text' as any);

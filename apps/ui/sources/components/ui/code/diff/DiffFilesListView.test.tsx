@@ -1,36 +1,58 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffViewerSpy = vi.fn();
+let flashListMockState: { props: any | null } | null = null;
+
+function getFlashListProps() {
+    expect(flashListMockState?.props).toBeTruthy();
+    return flashListMockState!.props;
+}
 
 vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: (props: any) => React.createElement('FlashList', props),
-}));
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    FlatList: (props: any) => React.createElement('FlatList', props),
-    Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({ colors: { divider: '#ddd', surfaceHigh: '#fff', surface: '#fff', accent: { indigo: '#00f' }, success: '#0f0', warning: '#f00', text: '#111', textSecondary: '#666', surfaceHighest: '#fff', textLink: '#00f', warningCritical: '#f00' } }),
+    FlashList: (props: any) => {
+        flashListMockState = flashListMockState ?? { props: null };
+        flashListMockState.props = props;
+        return React.createElement('FlashList', props);
     },
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            FlatList: (props: any) => React.createElement('FlatList', props),
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.web ?? value?.default ?? null,
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800 }),
+        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: { colors: { divider: '#ddd', surfaceHigh: '#fff', surface: '#fff', accent: { indigo: '#00f' }, success: '#0f0', warning: '#f00', text: '#111', textSecondary: '#666', surfaceHighest: '#fff', textLink: '#00f', warningCritical: '#f00' } },
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider', () => ({
     PierreScrollRootVirtualizerProvider: (props: any) => React.createElement(React.Fragment, null, props.children),
@@ -50,6 +72,7 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
 describe('DiffFilesListView', () => {
     it('renders a virtualized file list when requested', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
+        flashListMockState = null;
 
         const files: any[] = [
             {
@@ -64,10 +87,7 @@ describe('DiffFilesListView', () => {
             },
         ];
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
                     files={files}
                     expandedKeys={new Set()}
                     onToggleExpanded={() => {}}
@@ -76,20 +96,16 @@ describe('DiffFilesListView', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     virtualizeFileList
-                />,
-            );
-        });
+                />);
 
-        expect(tree.root.findAllByType('FlashList' as any)).toHaveLength(1);
+        expect(getFlashListProps()).toBeTruthy();
     });
 
 	    it('configures FlashList with stable virtualization defaults', async () => {
 	        const { DiffFilesListView } = await import('./DiffFilesListView');
+	        flashListMockState = null;
 
-	        let tree!: renderer.ReactTestRenderer;
-	        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+	        await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/a.ts',
@@ -104,30 +120,26 @@ describe('DiffFilesListView', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     virtualizeFileList
-                />,
-            );
-	        });
+                />);
 
-	        const list = tree.root.findByType('FlashList' as any);
-	        expect(typeof list.props.drawDistance).toBe('number');
-	        expect(Number.isFinite(list.props.drawDistance)).toBe(true);
-	        expect(list.props.drawDistance).toBeGreaterThan(0);
-	        expect(list.props.drawDistance).toBe(1600);
-	        expect(typeof list.props.overrideItemLayout).toBe('function');
-	        expect(typeof list.props.getItemType).toBe('function');
+	        const listProps = getFlashListProps();
+	        expect(typeof listProps.drawDistance).toBe('number');
+	        expect(Number.isFinite(listProps.drawDistance)).toBe(true);
+	        expect(listProps.drawDistance).toBeGreaterThan(0);
+	        expect(listProps.drawDistance).toBe(1600);
+	        expect(typeof listProps.overrideItemLayout).toBe('function');
+	        expect(typeof listProps.getItemType).toBe('function');
 	    });
 
     it('forwards scroll handlers to the underlying list when virtualized', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
+        flashListMockState = null;
 
         const onScroll = vi.fn();
         const onLayout = vi.fn();
         const onContentSizeChange = vi.fn();
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-	            tree = renderer.create(
-	                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
 	                    files={[{
 	                        key: 'k1',
 	                        filePath: 'src/a.ts',
@@ -145,23 +157,19 @@ describe('DiffFilesListView', () => {
                     onScroll={onScroll}
                     onLayout={onLayout}
                     onContentSizeChange={onContentSizeChange}
-                />,
-            );
-        });
+                />);
 
-        const list = tree.root.findByType('FlashList' as any);
-        expect(list.props.onScroll).toBe(onScroll);
-        expect(list.props.onLayout).toBe(onLayout);
-        expect(list.props.onContentSizeChange).toBe(onContentSizeChange);
+        const listProps = getFlashListProps();
+        expect(listProps.onScroll).toBe(onScroll);
+        expect(listProps.onLayout).toBe(onLayout);
+        expect(listProps.onContentSizeChange).toBe(onContentSizeChange);
     });
 
     it('passes a flat style object to FlashList when virtualized', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
+        flashListMockState = null;
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/a.ts',
@@ -176,13 +184,11 @@ describe('DiffFilesListView', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     virtualizeFileList
-                />
-            );
-        });
+                />);
 
-        const list = tree.root.findByType('FlashList' as any);
-        expect(Array.isArray(list.props.style)).toBe(false);
-        expect(typeof list.props.style).toBe('object');
+        const listProps = getFlashListProps();
+        expect(Array.isArray(listProps.style)).toBe(false);
+        expect(typeof listProps.style).toBe('object');
     });
 
     it('enables virtualization when the diff exceeds the byte threshold', async () => {
@@ -203,9 +209,7 @@ describe('DiffFilesListView', () => {
             },
         ];
 
-        await act(async () => {
-            renderer.create(
-                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
                     files={files}
                     expandedKeys={new Set(['k1'])}
                     onToggleExpanded={() => {}}
@@ -213,9 +217,7 @@ describe('DiffFilesListView', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
-        });
+                />);
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualized: true }));
     });
@@ -226,9 +228,7 @@ describe('DiffFilesListView', () => {
         diffViewerSpy.mockClear();
         const renderInlineUnifiedDiff = vi.fn(() => React.createElement('CustomInlineDiff'));
 
-        await act(async () => {
-            renderer.create(
-                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/a.ts',
@@ -246,9 +246,7 @@ describe('DiffFilesListView', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     renderInlineUnifiedDiff={renderInlineUnifiedDiff}
-                />,
-            );
-        });
+                />);
 
         expect(renderInlineUnifiedDiff).toHaveBeenCalledTimes(1);
         expect(diffViewerSpy).toHaveBeenCalledTimes(0);
@@ -260,9 +258,7 @@ describe('DiffFilesListView', () => {
         diffViewerSpy.mockClear();
         const renderInlineUnifiedDiff = vi.fn(() => React.createElement('CustomInlineDiff'));
 
-        await act(async () => {
-            renderer.create(
-                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/empty.ts',
@@ -280,9 +276,7 @@ describe('DiffFilesListView', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     renderInlineUnifiedDiff={renderInlineUnifiedDiff}
-                />,
-            );
-        });
+                />);
 
         expect(renderInlineUnifiedDiff).toHaveBeenCalledTimes(1);
         expect(diffViewerSpy).toHaveBeenCalledTimes(0);
@@ -291,10 +285,7 @@ describe('DiffFilesListView', () => {
     it('uses renderFileRow override when provided', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+        const screen = await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/a.ts',
@@ -309,11 +300,9 @@ describe('DiffFilesListView', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     renderFileRow={({ file }: any) => React.createElement('CustomRow', { testID: `custom-row:${file.key}` })}
-                />,
-            );
-        });
+                />);
 
-        expect(tree.root.findAllByProps({ testID: 'custom-row:k1' })).toHaveLength(1);
+        expect(screen.findByTestId('custom-row:k1')).toBeTruthy();
     });
 
     it('forces unified presentation for new files to avoid empty split columns', async () => {
@@ -321,9 +310,7 @@ describe('DiffFilesListView', () => {
 
         diffViewerSpy.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                <DiffFilesListView
+        await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/new.ts',
@@ -340,9 +327,7 @@ describe('DiffFilesListView', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
-        });
+                />);
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ presentationStyleOverride: 'unified' }));
     });
@@ -353,10 +338,7 @@ describe('DiffFilesListView', () => {
         const onOpenFile = vi.fn();
         const onOpenFilePinned = vi.fn();
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffFilesListView
+        const screen = await renderScreen(<DiffFilesListView
                     files={[{
                         key: 'k1',
                         filePath: 'src/a.ts',
@@ -375,14 +357,9 @@ describe('DiffFilesListView', () => {
                     showPrefix={true}
                     onOpenFile={onOpenFile}
                     onOpenFilePinned={onOpenFilePinned}
-                />,
-            );
-        });
+                />);
 
-        const openButton = tree.root.findByProps({ testID: 'diff-files-open:k1' });
-        await act(async () => {
-            openButton.props.onPress?.();
-        });
+        screen.pressByTestId('diff-files-open:k1');
 
         expect(onOpenFile).toHaveBeenCalledWith('src/a.ts');
         expect(onOpenFilePinned).toHaveBeenCalledTimes(0);
@@ -411,10 +388,7 @@ describe('DiffFilesListView', () => {
                 { key: 'k1', filePath: 'src/a.ts', added: 1, removed: 0, unifiedDiff: 'a\n', kind: null },
             ];
 
-            let tree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(
-                    <DiffFilesListView
+            const screen = await renderScreen(<DiffFilesListView
                         files={files}
                         expandedKeys={new Set()}
                         onToggleExpanded={() => {}}
@@ -423,11 +397,9 @@ describe('DiffFilesListView', () => {
                         showLineNumbers={true}
                         showPrefix={true}
                         virtualizeFileList
-                    />,
-                );
-            });
+                    />);
 
-            expect(tree.root.findAllByType('FlashList' as any)).toHaveLength(1);
+            expect(screen.findAllByType('FlashList' as any)).toHaveLength(1);
             expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
 
             const errorMessage = 'index out of bounds, not enough layouts';
@@ -443,8 +415,8 @@ describe('DiffFilesListView', () => {
                 (handler as EventListener)(fakeEvent);
             });
 
-            expect(tree.root.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
-            expect(tree.root.findAllByType('FlashList' as any)).toHaveLength(0);
+            expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
+            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
         } finally {
             globalWindowContainer.window = prevWindow;
         }

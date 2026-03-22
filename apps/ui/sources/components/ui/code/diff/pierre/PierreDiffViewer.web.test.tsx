@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,20 +20,27 @@ function resetSettingValues() {
 
 resetSettingValues();
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (Object.prototype.hasOwnProperty.call(settingValues, key)) {
             return (settingValues as any)[key];
         }
         return null;
     },
-}));
+});
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('./pierreThemeRegistry.web', () => ({
     ensureHappierPierreThemesRegistered: () => {},
@@ -89,9 +98,8 @@ describe('PierreDiffViewer (web)', () => {
         ].join('\n');
 
         let tree: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <div style={{ maxHeight: 320 }}>
+        await renderer.act(async () => {
+            tree = (await renderScreen(<div style={{ maxHeight: 320 }}>
                     <PierreDiffViewer
                         mode="unified"
                         filePath="src/a.ts"
@@ -101,8 +109,7 @@ describe('PierreDiffViewer (web)', () => {
                         showPrefix={true}
                         virtualized={true}
                     />
-                </div>,
-            );
+                </div>)).tree;
         });
 
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -114,9 +121,8 @@ describe('PierreDiffViewer (web)', () => {
         fileDiffSpy.mockClear();
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="text"
                     filePath="src/demo.ts"
                     oldText="export const a = 1;\n"
@@ -125,8 +131,7 @@ describe('PierreDiffViewer (web)', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -140,9 +145,8 @@ describe('PierreDiffViewer (web)', () => {
 
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="text"
                     filePath="src/demo.ts"
                     oldText="export const a = 1;\n"
@@ -151,8 +155,7 @@ describe('PierreDiffViewer (web)', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -165,9 +168,8 @@ describe('PierreDiffViewer (web)', () => {
 
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="text"
                     filePath="src/demo.ts"
                     oldText="export const a = 1;\n"
@@ -177,8 +179,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     presentationStyleOverride="unified"
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -189,9 +190,8 @@ describe('PierreDiffViewer (web)', () => {
         fileDiffSpy.mockClear();
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="text"
                     filePath="src/demo.ts"
                     oldText="export const a = 1;\n"
@@ -200,8 +200,7 @@ describe('PierreDiffViewer (web)', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         const fileDiff = fileDiffSpy.mock.calls[0]?.[0]?.fileDiff;
@@ -216,17 +215,15 @@ describe('PierreDiffViewer (web)', () => {
             .concat(['-a', '+b', ' c', '-d', '+e'])
             .join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={hugePatch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -237,9 +234,8 @@ describe('PierreDiffViewer (web)', () => {
         fileDiffSpy.mockClear();
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="text"
                     filePath=".env.production"
                     oldText="FOO=1\n"
@@ -248,8 +244,7 @@ describe('PierreDiffViewer (web)', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         const fileDiff = fileDiffSpy.mock.calls[0]?.[0]?.fileDiff;
@@ -270,17 +265,15 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath={null}
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         const fileDiff = fileDiffSpy.mock.calls[0]?.[0]?.fileDiff;
@@ -294,9 +287,8 @@ describe('PierreDiffViewer (web)', () => {
         const { VirtualizerContext } = await import('@pierre/diffs/react');
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <VirtualizerContext.Provider value={{} as any}>
+        await renderer.act(async () => {
+            await renderScreen(<VirtualizerContext.Provider value={{} as any}>
                     <PierreDiffViewer
                         mode="unified"
                         filePath="src/a.ts"
@@ -314,8 +306,7 @@ describe('PierreDiffViewer (web)', () => {
                         showPrefix={true}
                         virtualized={true}
                     />
-                </VirtualizerContext.Provider>,
-            );
+                </VirtualizerContext.Provider>);
         });
 
         expect(virtualizerSpy).toHaveBeenCalledTimes(0);
@@ -337,9 +328,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -347,14 +337,13 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     onPressLine={onPressLine as any}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
         expect(typeof options?.onLineClick).toBe('function');
 
-        renderer.act(() => {
+        await renderer.act(async () => {
             options.onLineClick({
                 type: 'diff-line',
                 annotationSide: 'additions',
@@ -378,9 +367,8 @@ describe('PierreDiffViewer (web)', () => {
 
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={[
@@ -396,8 +384,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     onPressAddComment={() => {}}
-                />,
-            );
+                />);
         });
 
         const call = fileDiffSpy.mock.calls[0]?.[0];
@@ -420,9 +407,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -430,8 +416,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     onPressAddComment={onPressAddComment as any}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -439,7 +424,7 @@ describe('PierreDiffViewer (web)', () => {
 
         // If Pierre reports `annotationSide` incorrectly for number clicks, we still want to map
         // based on the lineType to ensure the comment targets the right CodeLine.
-        renderer.act(() => {
+        await renderer.act(async () => {
             options.onLineNumberClick({
                 type: 'diff-line',
                 annotationSide: 'additions',
@@ -475,9 +460,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -485,8 +469,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     onPressAddComment={onPressAddComment as any}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -494,7 +477,7 @@ describe('PierreDiffViewer (web)', () => {
 
         // For split diffs, Pierre can report an unreliable annotationSide on context rows.
         // Ensure we still resolve to the context CodeLine when lineType indicates context.
-        renderer.act(() => {
+        await renderer.act(async () => {
             options.onLineNumberClick({
                 type: 'diff-line',
                 annotationSide: 'additions',
@@ -533,9 +516,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -543,8 +525,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     onPressAddComment={onPressAddComment as any}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -556,7 +537,7 @@ describe('PierreDiffViewer (web)', () => {
 
         // For context rows in split diffs, Pierre can report `annotationSide` incorrectly.
         // Ensure we still map the click based on the *actual* side being clicked (here: additions).
-        renderer.act(() => {
+        await renderer.act(async () => {
             options.onLineNumberClick({
                 type: 'diff-line',
                 annotationSide: 'deletions',
@@ -593,9 +574,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -603,8 +583,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     renderAfterLine={renderAfterLine as any}
-                />,
-            );
+                />);
         });
 
         const lineAnnotations = fileDiffSpy.mock.calls[0]?.[0]?.lineAnnotations;
@@ -634,9 +613,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -644,8 +622,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     selectedLineIds={new Set(['a:5'])}
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -668,9 +645,8 @@ describe('PierreDiffViewer (web)', () => {
         ].join('\n');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            tree = (await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -678,14 +654,13 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     selectedLineIds={new Set(['a:5'])}
-                />,
-            );
+                />)).tree;
         });
 
         const firstOptions = fileDiffSpy.mock.calls[fileDiffSpy.mock.calls.length - 1]?.[0]?.options;
         expect(String(firstOptions?.unsafeCSS ?? '')).toContain("[data-line-type='change-addition'][data-line='1']");
 
-        renderer.act(() => {
+        await renderer.act(async () => {
             tree.update(
                 <PierreDiffViewer
                     mode="unified"
@@ -719,9 +694,8 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/a.ts"
                     unifiedDiff={patch}
@@ -729,8 +703,7 @@ describe('PierreDiffViewer (web)', () => {
                     showLineNumbers={true}
                     showPrefix={true}
                     highlightLineId="a:5"
-                />,
-            );
+                />);
         });
 
         const options = fileDiffSpy.mock.calls[0]?.[0]?.options;
@@ -742,17 +715,15 @@ describe('PierreDiffViewer (web)', () => {
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
         let tree: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            tree = (await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/empty.bin"
                     unifiedDiff=""
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />)).tree;
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(0);
@@ -766,17 +737,15 @@ describe('PierreDiffViewer (web)', () => {
         const patch = 'Binary files a/src/image.png and b/src/image.png differ';
 
         let tree: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            tree = (await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="src/image.png"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />)).tree;
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(0);
@@ -804,17 +773,15 @@ describe('PierreDiffViewer (web)', () => {
         let tree: renderer.ReactTestRenderer;
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
-            renderer.act(() => {
-                tree = renderer.create(
-                    <PierreDiffViewer
+            await renderer.act(async () => {
+                tree = (await renderScreen(<PierreDiffViewer
                         mode="unified"
                         filePath="src/a.ts"
                         unifiedDiff={patch}
                         wrapLines={true}
                         showLineNumbers={true}
                         showPrefix={true}
-                    />,
-                );
+                    />)).tree;
             });
         } finally {
             consoleErrorSpy.mockRestore();
@@ -848,17 +815,15 @@ describe('PierreDiffViewer (web)', () => {
         ].join('\n');
 
         let tree: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            tree = (await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="a.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />)).tree;
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);
@@ -887,17 +852,15 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="b.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);
@@ -926,17 +889,15 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="/b.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);
@@ -966,17 +927,15 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="a.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);
@@ -1002,17 +961,15 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="b.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);
@@ -1041,17 +998,15 @@ describe('PierreDiffViewer (web)', () => {
             '',
         ].join('\n');
 
-        renderer.act(() => {
-            renderer.create(
-                <PierreDiffViewer
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
                     mode="unified"
                     filePath="a.ts"
                     unifiedDiff={patch}
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
+                />);
         });
 
         expect(fileDiffSpy).toHaveBeenCalledTimes(1);

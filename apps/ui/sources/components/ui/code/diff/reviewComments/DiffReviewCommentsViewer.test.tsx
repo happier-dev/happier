@@ -1,19 +1,28 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: {
-        OS: 'ios',
-        select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        }
+    );
+});
 
 vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
     DiffViewer: (props: any) => React.createElement('DiffViewer', props),
@@ -27,13 +36,16 @@ vi.mock('@/components/sessions/reviews/comments/useCodeLinesReviewComments', () 
     useCodeLinesReviewComments: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'wrapLinesInDiffs') return true;
         if (key === 'showLineNumbers') return true;
         return null;
     },
-}));
+});
+});
 
 describe('DiffReviewCommentsViewer', () => {
     it('keeps non-virtual rendering for small diffs when review comments are enabled', async () => {
@@ -41,16 +53,12 @@ describe('DiffReviewCommentsViewer', () => {
         const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffReviewCommentsViewer
+        tree = (await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
                     unifiedDiff={'a\nb\n'}
                     reviewCommentsEnabled={true}
                     reviewCommentDrafts={[]}
-                />,
-            );
-        });
+                />)).tree;
 
         const view = tree.root.findByType('DiffViewer' as any);
         expect(view.props.virtualized).toBe(false);
@@ -61,16 +69,12 @@ describe('DiffReviewCommentsViewer', () => {
         const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffReviewCommentsViewer
+        tree = (await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
                     unifiedDiff={'a'.repeat(2_000)}
                     reviewCommentsEnabled={true}
                     reviewCommentDrafts={[]}
-                />,
-            );
-        });
+                />)).tree;
 
         const view = tree.root.findByType('DiffViewer' as any);
         expect(view.props.virtualized).toBe(true);
@@ -81,9 +85,7 @@ describe('DiffReviewCommentsViewer', () => {
         const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <DiffReviewCommentsViewer
+        tree = (await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
                     unifiedDiff={'a\nb\n'}
                     reviewCommentsEnabled={true}
@@ -91,9 +93,7 @@ describe('DiffReviewCommentsViewer', () => {
                     wrapLines={false}
                     showLineNumbers={true}
                     showPrefix={true}
-                />,
-            );
-        });
+                />)).tree;
 
         const view = tree.root.findByType('DiffViewer' as any);
         expect(view.props.wrapLines).toBe(false);

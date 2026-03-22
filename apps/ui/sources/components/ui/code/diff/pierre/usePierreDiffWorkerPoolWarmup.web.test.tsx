@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,12 +12,15 @@ let killSwitchEnabled = true;
 let runtimeSupported = true;
 const PREWARM_MARKER = '__HAPPIER_PIERRE_DIFF_WORKER_PREWARMED__';
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'filesDiffRendererMode') return rendererMode;
         return undefined;
     },
-}));
+});
+});
 
 vi.mock('./pierreWorkerPool.web', () => ({
     getPierreDiffWorkerPool: (params: any) => poolSpy(params),
@@ -42,9 +47,7 @@ describe('usePierreDiffWorkerPoolWarmup (web)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Harness />);
-        });
+        await renderScreen(<Harness />);
 
         await act(async () => {
             vi.runAllTimers();
@@ -68,9 +71,7 @@ describe('usePierreDiffWorkerPoolWarmup (web)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Harness />);
-        });
+        await renderScreen(<Harness />);
 
         await act(async () => {
             vi.runAllTimers();
