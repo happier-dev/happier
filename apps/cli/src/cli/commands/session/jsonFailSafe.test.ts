@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const { mockAxiosGet } = vi.hoisted(() => ({
   mockAxiosGet: vi.fn(),
@@ -23,8 +24,7 @@ describe('happier session --json fail-safe', () => {
 
     const { handleSessionCommand } = await import('./handleSessionCommand');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -39,14 +39,14 @@ describe('happier session --json fail-safe', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_list');
       expect(parsed.error?.code).toBe('server_unreachable');
       expect(process.exitCode).toBe(1);
     } finally {
-      logSpy.mockRestore();
+      output.restore();
       process.exitCode = prevExitCode;
     }
   });
@@ -54,40 +54,38 @@ describe('happier session --json fail-safe', () => {
   it('keeps the legacy planner envelope kind for unauthenticated plan starts', async () => {
     const { handleSessionCommand } = await import('./handleSessionCommand');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['plan', 'start', 'sess_1', '--backends', 'codex', '--instructions', 'Plan.', '--json'], {
         readCredentialsFn: async () => null,
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_plan_start');
       expect(parsed.error?.code).toBe('not_authenticated');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 
   it('keeps the legacy delegate envelope kind for unauthenticated delegate starts', async () => {
     const { handleSessionCommand } = await import('./handleSessionCommand');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['delegate', 'start', 'sess_1', '--backends', 'codex', '--instructions', 'Delegate.', '--json'], {
         readCredentialsFn: async () => null,
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_delegate_start');
       expect(parsed.error?.code).toBe('not_authenticated');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });
