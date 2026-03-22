@@ -21,7 +21,7 @@ const storage = isWebRuntime
     ? null
     : (storageScope ? new MMKV({ id: scopedStorageId('dynamic-session-mode-probe-cache', storageScope) }) : new MMKV());
 const PERSIST_KEY = 'dynamic-session-mode-probe-cache-v1';
-const PERSIST_VERSION = 1;
+const PERSIST_VERSION = 2;
 const PERSIST_MAX_ENTRIES = 200;
 const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 
@@ -214,4 +214,3 @@ export async function runDynamicSessionModeProbeDedupe(
     inflight.set(key, p);
     return await p;
 }
-

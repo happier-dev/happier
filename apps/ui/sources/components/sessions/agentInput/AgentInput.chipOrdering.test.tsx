@@ -157,8 +157,8 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/components/model/ModelPickerOverlay', () => ({
-    ModelPickerOverlay: () => null,
+vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
+    OptionPickerOverlay: () => null,
 }));
 
 vi.mock('@/modal', async () => {
@@ -166,12 +166,12 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
 }));
 
-vi.mock('@/sync/acp/configOptionsControl', () => ({
-    computeAcpConfigOptionControls: () => null,
+vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
+    computeSessionConfigOptionControls: () => null,
 }));
 
 describe('AgentInput (chip ordering)', () => {

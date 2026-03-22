@@ -123,7 +123,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     showCommitComposer={false}
                 />)).tree;
 
-        expect(() => tree.root.findByType('FlatList' as any)).not.toThrow();
+        expect(() => tree.findByType('FlatList' as any)).not.toThrow();
     });
 
     it('does not render selection summary above the changes list (keeps it near commit composer)', async () => {
@@ -176,7 +176,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     showCommitComposer={false}
                 />)).tree;
 
-        expect(() => tree.root.findByType('ScmChangesSelectionHeaderRow' as any)).toThrow();
+        expect(() => tree.findByType('ScmChangesSelectionHeaderRow' as any)).toThrow();
     });
 
     it('filters directory-like SCM entries from the repository changed files list', async () => {
@@ -237,7 +237,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     showCommitComposer={false}
                 />)).tree;
 
-        const flatList = tree.root.findByType('FlatList' as any);
+        const flatList = tree.findByType('FlatList' as any);
         expect(Array.isArray(flatList.props.data)).toBe(true);
         expect(flatList.props.data).toHaveLength(1);
         expect(flatList.props.data[0].fullPath).toBe('src/file-0.ts');

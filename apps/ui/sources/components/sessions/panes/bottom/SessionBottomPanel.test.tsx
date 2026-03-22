@@ -79,8 +79,8 @@ describe('SessionBottomPanel', () => {
                     <SessionBottomPanel sessionId="s1" scopeId="session:s1" />
                 </SessionScreenTestIdsProvider>)).tree;
 
-        expect(tree!.root.findAllByProps({ testID: 'session-bottom-panel-root' })).toHaveLength(0);
-        expect(tree!.root.findAllByProps({ testID: 'session-bottompanel-surface-terminal' })).toHaveLength(0);
+        expect(tree!.findAllByTestId('session-bottom-panel-root')).toHaveLength(0);
+        expect(tree!.findAllByTestId('session-bottompanel-surface-terminal')).toHaveLength(0);
         expect(terminalPaneSpy.mock.calls[0]?.[0]?.testIdPrefix).toBeNull();
     });
 });

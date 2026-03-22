@@ -147,15 +147,15 @@ describe('SessionRightPanel (terminal tab)', () => {
     it('shows the terminal tab only when the feature is enabled', async () => {
         terminalFeatureEnabled = false;
         const initial = await renderPanel();
-        expect(initial.tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
+        expect(initial.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
 
         terminalFeatureEnabled = true;
         embeddedTerminalDockLocation = 'bottom';
         const dockedElsewhere = await renderPanel();
-        expect(dockedElsewhere.tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
+        expect(dockedElsewhere.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
 
         embeddedTerminalDockLocation = 'sidebar';
         const enabled = await renderPanel();
-        expect(enabled.tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
+        expect(enabled.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
     });
 });

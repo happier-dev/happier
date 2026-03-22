@@ -140,8 +140,8 @@ function mockCommonDeps() {
         useHasMeaningfulScmStatus: () => false,
     }));
 
-    vi.doMock('@/components/model/ModelPickerOverlay', () => ({
-        ModelPickerOverlay: () => null,
+    vi.doMock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
+        OptionPickerOverlay: () => null,
     }));
 
     vi.doMock('@/modal', async () => {

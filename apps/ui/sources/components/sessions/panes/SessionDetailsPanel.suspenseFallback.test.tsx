@@ -105,7 +105,7 @@ describe('SessionDetailsPanel (suspense fallback)', () => {
         tree = (await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
         // When the active tab suspends, we should still render a visible loading indicator.
-        const textNodes = tree!.root.findAllByType('Text' as any);
+        const textNodes = tree!.findAllByType('Text' as any);
         const hasLoading = textNodes.some((n) => String(n.props.children).includes('common.loading'));
         expect(hasLoading).toBe(true);
     });

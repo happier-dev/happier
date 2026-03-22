@@ -221,16 +221,16 @@ vi.mock('@/components/profiles/profileDisplay', () => ({
     getProfileDisplayName: () => 'Profile',
 }));
 
-vi.mock('@/components/model/ModelPickerOverlay', () => ({
-    ModelPickerOverlay: () => null,
+vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
+    OptionPickerOverlay: () => null,
 }));
 
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
 }));
 
-vi.mock('@/sync/acp/configOptionsControl', () => ({
-    computeAcpConfigOptionControls: () => [],
+vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
+    computeSessionConfigOptionControls: () => [],
 }));
 
 vi.mock('@/components/ui/theme/haptics', () => ({

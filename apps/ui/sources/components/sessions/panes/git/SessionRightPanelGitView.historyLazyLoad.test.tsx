@@ -197,7 +197,7 @@ describe('SessionRightPanelGitView (history lazy load)', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
 
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
+        expect(tree.findAllByType('CommitTab' as any)).toHaveLength(1);
         expect(loadCommitHistoryMock).toHaveBeenCalledTimes(1);
         expect(loadCommitHistoryMock.mock.calls[0]?.[0]).toEqual({ reset: true });
 
@@ -206,7 +206,7 @@ describe('SessionRightPanelGitView (history lazy load)', () => {
             tree.update(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1:2" />);
         });
 
-        expect(tree.root.findAllByType('HistoryTab' as any)).toHaveLength(1);
+        expect(tree.findAllByType('HistoryTab' as any)).toHaveLength(1);
         expect(loadCommitHistoryMock).toHaveBeenCalledTimes(1);
     });
 });

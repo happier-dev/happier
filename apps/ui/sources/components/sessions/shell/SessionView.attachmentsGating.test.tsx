@@ -334,7 +334,7 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
   shouldRenderChatTimelineForSession: () => true,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
   supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/ops/sessionSwitch', () => ({
@@ -355,7 +355,7 @@ describe('SessionView attachments gating', () => {
           <SessionView id="s1" />
         </AppPaneProvider>)).tree;
 
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = tree.findByType('AgentInput' as any);
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
   });
 });
