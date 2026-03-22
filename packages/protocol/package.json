@@ -62,7 +62,7 @@
   ],
   "scripts": {
     "build": "node scripts/generate-embedded-feature-policies.mjs && tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts",
     "pretest": "yarn -s build",
     "pretypecheck": "node scripts/generate-embedded-feature-policies.mjs",
     "postinstall:real": "yarn -s build",

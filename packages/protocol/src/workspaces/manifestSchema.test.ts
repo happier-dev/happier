@@ -1,18 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+const protocol = await import('../index.js');
+
 describe('workspace manifest schemas', () => {
   it('exports canonical manifest schemas from the protocol root', async () => {
-    const protocol = await import('../index.js');
-
     expect(protocol).toHaveProperty('WorkspaceManifestEntryKindSchema');
     expect(protocol).toHaveProperty('WorkspaceManifestEntrySchema');
     expect(protocol).toHaveProperty('WorkspaceManifestFingerprintSchema');
     expect(protocol).toHaveProperty('WorkspaceManifestSchema');
-  }, 15000);
+  });
 
   it('accepts canonical directory, file, and symlink manifest entries with an optional manifest fingerprint', async () => {
-    const protocol = await import('../index.js');
     const entrySchema = protocol.WorkspaceManifestEntrySchema as z.ZodTypeAny;
     const manifestSchema = protocol.WorkspaceManifestSchema as z.ZodTypeAny;
 
@@ -48,7 +47,6 @@ describe('workspace manifest schemas', () => {
   });
 
   it('rejects malformed manifest fingerprints and cross-kind entry payloads', async () => {
-    const protocol = await import('../index.js');
     const entrySchema = protocol.WorkspaceManifestEntrySchema as z.ZodTypeAny;
     const manifestSchema = protocol.WorkspaceManifestSchema as z.ZodTypeAny;
 
@@ -67,7 +65,6 @@ describe('workspace manifest schemas', () => {
   });
 
   it('rejects Windows-style upward traversal segments in manifest paths', async () => {
-    const protocol = await import('../index.js');
     const entrySchema = protocol.WorkspaceManifestEntrySchema as z.ZodTypeAny;
 
     const escaped = entrySchema.safeParse({
@@ -82,7 +79,6 @@ describe('workspace manifest schemas', () => {
   });
 
   it('rejects Windows absolute paths in manifest entries', async () => {
-    const protocol = await import('../index.js');
     const entrySchema = protocol.WorkspaceManifestEntrySchema as z.ZodTypeAny;
 
     expect(entrySchema.safeParse({

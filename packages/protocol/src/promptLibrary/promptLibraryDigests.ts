@@ -1,15 +1,17 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { PromptBundleBodyV1 } from './promptBundleSchemas.js';
 
+function computeSha256Digest(value: string): string {
+  return `sha256:${bytesToHex(sha256(utf8ToBytes(value)))}`;
+}
+
 export function computePromptDocDigestV1(markdown: string): string {
-  const hash = createHash('sha256');
-  hash.update(markdown, 'utf8');
-  return `sha256:${hash.digest('hex')}`;
+  return computeSha256Digest(markdown);
 }
 
 export function computePromptBundleDigestV1(bundleBody: PromptBundleBodyV1): string {
-  const hash = createHash('sha256');
   const normalizedEntries = [...bundleBody.entries]
     .map((entry) => ({
       path: entry.path,
@@ -19,9 +21,8 @@ export function computePromptBundleDigestV1(bundleBody: PromptBundleBodyV1): str
     }))
     .sort((left, right) => left.path.localeCompare(right.path));
 
-  hash.update(JSON.stringify({
+  return computeSha256Digest(JSON.stringify({
     v: bundleBody.v,
     entries: normalizedEntries,
   }));
-  return `sha256:${hash.digest('hex')}`;
 }
