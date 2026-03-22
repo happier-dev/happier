@@ -91,6 +91,7 @@ describe('buildAccountSettingsSnapshot', () => {
                 ...settingsDefaults.notificationsSettingsV1,
                 pushEnabled: false,
                 ready: false,
+                readyIncludeMessageText: false,
                 permissionRequest: false,
                 userActionRequest: false,
                 foregroundBehavior: 'silent',
@@ -107,6 +108,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__preferredLanguage).toBe('fr');
         expect(snapshot.properties.acct_setting__notificationsSettingsV1__pushEnabled).toBe(false);
         expect(snapshot.properties.acct_setting__notificationsSettingsV1__ready).toBe(false);
+        expect(snapshot.properties.acct_setting__notificationsSettingsV1__readyIncludeMessageText).toBe(false);
         expect(snapshot.properties.acct_setting__notificationsSettingsV1__permissionRequest).toBe(false);
         expect(snapshot.properties.acct_setting__notificationsSettingsV1__userActionRequest).toBe(false);
         expect(snapshot.properties.acct_setting__notificationsSettingsV1__foregroundBehavior).toBe('silent');
@@ -116,4 +118,3 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__sessionHandoffDefaultsV1__directTargetMode).toBe('convert_to_persisted');
     });
 });
-

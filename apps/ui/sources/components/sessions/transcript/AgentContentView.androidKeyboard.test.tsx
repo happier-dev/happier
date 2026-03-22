@@ -1,16 +1,22 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: { ...rn.Platform, OS: 'android', select: (v: any) => v.android ?? v.native ?? v.default },
-        View: (props: any) => React.createElement('View', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'android',
+                                select: (v: any) => v.android ?? v.native ?? v.default,
+                            },
+                            View: (props: any) => React.createElement('View', props, props.children),
+                        }
+    );
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -47,17 +53,15 @@ describe('AgentContentView (android keyboard)', () => {
         const { AgentContentView } = await import('./AgentContentView.native');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AgentContentView
+        tree = (await renderScreen(<AgentContentView
                     content={<React.Fragment>content</React.Fragment>}
                     input={<React.Fragment>input</React.Fragment>}
                     placeholder={<React.Fragment>placeholder</React.Fragment>}
-                />,
-            );
-        });
+                />)).tree;
 
-        expect(tree!.root.findAllByType('AnimatedView' as any).length).toBeGreaterThan(0);
-        expect(tree!.root.findAllByType('AnimatedScrollView' as any).length).toBe(1);
+        const animatedViews = tree!.findAllByType('AnimatedView' as any);
+        expect(animatedViews.length).toBeGreaterThan(0);
+        expect(animatedViews[0]?.props.pointerEvents).toBe('box-none');
+        expect(tree!.findAllByType('AnimatedScrollView' as any).length).toBe(1);
     });
 });

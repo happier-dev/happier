@@ -1,10 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { storage } from '@/sync/domains/state/storageStore';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -112,18 +114,12 @@ describe('useServerScopedMachineOptions', () => {
             }));
         });
 
-        await act(async () => {
-            renderer.create(
-                <Probe
+        await renderScreen(<Probe
                     allowedServerIds={['server-a', 'server-b']}
                     activeServerId="server-a"
                     activeMachines={[activeMachine]}
                     onGroups={(groups) => captured.push(groups)}
-                />,
-            );
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                />);
 
         const latest = captured.at(-1) ?? [];
         const activeGroup = latest.find((group) => group.serverId === 'server-a');
@@ -155,18 +151,12 @@ describe('useServerScopedMachineOptions', () => {
             }));
         });
 
-        await act(async () => {
-            renderer.create(
-                <Probe
+        await renderScreen(<Probe
                     allowedServerIds={['server-a', 'server-b']}
                     activeServerId="server-a"
                     activeMachines={[createMachine('machine-a')]}
                     onGroups={(groups) => captured.push(groups)}
-                />,
-            );
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                />);
 
         const latest = captured.at(-1) ?? [];
         const remoteGroup = latest.find((group) => group.serverId === 'server-b');
@@ -199,17 +189,12 @@ describe('useServerScopedMachineOptions', () => {
             }));
         });
 
-        await act(async () => {
-            renderer.create(
-                <Probe
+        await renderScreen(<Probe
                     allowedServerIds={['server-a', 'server-b']}
                     activeServerId="server-a"
                     activeMachines={[activeRevoked]}
                     onGroups={(groups) => captured.push(groups)}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
 
         const latest = captured.at(-1) ?? [];
         const activeGroup = latest.find((group) => group.serverId === 'server-a');

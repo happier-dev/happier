@@ -1,5 +1,11 @@
 {
   "v": 1,
+  "coverageExpectation": {
+    "providerLaneScope": "acp-only",
+    "defaultRuntimePath": "appServer",
+    "appServerCoverage": "capability-contract",
+    "appServerCapabilitySurfaces": ["modes", "models", "speed", "rollback"]
+  },
   "tiers": {
     "smoke": ["execute_trace_ok", "acp_probe_capabilities"],
     "extended": [

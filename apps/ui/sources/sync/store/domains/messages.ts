@@ -1,11 +1,12 @@
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { isMutableTool } from '@/components/tools/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
+import { readStreamSegmentMetaV1 } from '../../reducer/helpers/streamSegmentMeta';
 import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
+import { isToolPotentiallyMutableForScm } from '@/sync/domains/tools/toolMutationClassification';
 
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
@@ -47,6 +48,11 @@ export type SessionMessages = {
      *   selectors keyed on stable primitives (ids/version counters).
      */
     reducerState: ReducerState;
+    /**
+     * `reducerState` is mutated in-place for performance.
+     * Use this version counter to subscribe to reducer-only changes.
+     */
+    reducerVersion?: number;
     latestThinkingMessageId: string | null;
     latestThinkingMessageActivityAtMs: number | null;
     messagesVersion: number;
@@ -72,6 +78,35 @@ type MessagesDomainDependencies = {
     sessions: Record<string, Session>;
     sessionPending: Record<string, SessionPending>;
 };
+
+function resolveCommittedTranscriptDraftBase(params: Readonly<{
+    sessionMessages: SessionMessages;
+    localId: string;
+    segmentKind: 'assistant' | 'thinking';
+}>): Readonly<{ text: string; updatedAtMs: number | null }> {
+    const committedMessageId = params.sessionMessages.reducerState.localIds.get(params.localId) ?? null;
+    const isThinking = params.segmentKind === 'thinking';
+    const directMatch = committedMessageId ? params.sessionMessages.messagesById[committedMessageId] : null;
+    if (directMatch?.kind === 'agent-text' && Boolean(directMatch.isThinking) === isThinking && typeof directMatch.text === 'string') {
+        return {
+            text: directMatch.text,
+            updatedAtMs: readStreamSegmentMetaV1(directMatch.meta)?.updatedAtMs ?? null,
+        };
+    }
+
+    for (const message of Object.values(params.sessionMessages.messagesById)) {
+        if (message?.kind !== 'agent-text') continue;
+        if (message.localId !== params.localId) continue;
+        if (Boolean(message.isThinking) !== isThinking) continue;
+        if (typeof message.text !== 'string') continue;
+        return {
+            text: message.text,
+            updatedAtMs: readStreamSegmentMetaV1(message.meta)?.updatedAtMs ?? null,
+        };
+    }
+
+    return { text: '', updatedAtMs: null };
+}
 
 function mergeSortedMessageIdsOldestFirst(params: Readonly<{
     existingSortedIds: readonly string[];
@@ -310,6 +345,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             messagesById,
             messagesMap: messagesById,
             reducerState: existing.reducerState,
+            reducerVersion: (existing.reducerVersion ?? 0) + 1,
             latestThinkingMessageId,
             latestThinkingMessageActivityAtMs,
             messagesVersion: existing.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
@@ -327,6 +363,7 @@ function createEmptySessionMessages(): SessionMessages {
         messagesMap: messagesById,
         draftsByLocalId: {},
         reducerState: createReducer(),
+        reducerVersion: 0,
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
         messagesVersion: 0,
@@ -357,7 +394,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             if (!toolCallMessage || toolCallMessage.kind !== 'tool-call') {
                 return true;
             }
-            return toolCallMessage.tool?.name ? isMutableTool(toolCallMessage.tool?.name) : true;
+            return toolCallMessage.tool?.name ? isToolPotentiallyMutableForScm(toolCallMessage.tool?.name) : true;
         },
         applyMessages: (sessionId: string, messages: NormalizedMessage[]) => {
             let changed = new Set<string>();
@@ -522,7 +559,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 const draftsByLocalId = existingSession.draftsByLocalId;
                 let didClearTranscriptDraft = false;
                 for (const message of processedMessages) {
-                    const localId = 'localId' in message && typeof message.localId === 'string' ? message.localId : null;
+                    const localId = 'localId' in message && typeof message.localId === 'string'
+                        ? message.localId.trim()
+                        : null;
                     if (!localId || draftsByLocalId[localId] === undefined) continue;
                     delete draftsByLocalId[localId];
                     didClearTranscriptDraft = true;
@@ -587,6 +626,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messagesMap: messagesById,
                             draftsByLocalId,
                             reducerState: existingSession.reducerState, // Explicitly include the mutated reducer state
+                            reducerVersion: (existingSession.reducerVersion ?? 0) + 1,
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             messagesVersion: existingSession.messagesVersion + ((processedMessages.length > 0 || didClearTranscriptDraft) ? 1 : 0),
@@ -617,7 +657,21 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 const existingSession = coerceSessionMessages(state.sessionMessages[sessionId]);
                 const draftsByLocalId = existingSession.draftsByLocalId;
                 const prev = draftsByLocalId[localId];
-                const prevText = prev && typeof prev.text === 'string' ? prev.text : '';
+                const committedBase = resolveCommittedTranscriptDraftBase({
+                    sessionMessages: existingSession,
+                    localId,
+                    segmentKind,
+                });
+                if (committedBase.updatedAtMs !== null && committedBase.updatedAtMs >= createdAtMs) {
+                    return state;
+                }
+                const prevText =
+                    prev
+                    && prev.segmentKind === segmentKind
+                    && prev.sidechainId === sidechainId
+                    && typeof prev.text === 'string'
+                        ? prev.text
+                        : committedBase.text;
                 draftsByLocalId[localId] = {
                     text: prevText + deltaText,
                     segmentKind,
@@ -692,6 +746,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         ...state.sessionMessages,
                         [sessionId]: {
                             reducerState,
+                            reducerVersion: agentState ? 1 : 0,
                             messageIdsOldestFirst,
                             messagesById,
                             messagesMap: messagesById,
@@ -733,6 +788,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messagesMap: messagesById,
                         draftsByLocalId: {},
                         reducerState: createReducer(),
+                        reducerVersion: 0,
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,
                         messagesVersion: 0,

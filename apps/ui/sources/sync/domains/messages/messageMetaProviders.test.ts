@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
-import { getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
+import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import { getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 import { addProviderMessageMetaExtras } from '@/sync/domains/messages/messageMetaProviders';
 
-vi.mock('@/agents/providers/_registry/providerSettingsRegistry', () => ({
+vi.mock('@/agents/providers/registry/providerSettingsRegistry', () => ({
     getProviderSettingsPlugin: vi.fn(),
 }));
 
@@ -27,8 +27,7 @@ function buildPlugin(
         providerId: 'claude',
         title: 'Fake plugin',
         icon: { ionName: 'bug-outline', color: '#000' },
-        settingsShape: {},
-        settingsDefaults: {},
+        settings: {},
         uiSections: [],
         buildOutgoingMessageMetaExtras,
     };

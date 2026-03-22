@@ -1,7 +1,9 @@
-import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
+export { type ProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import type { ProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
-export function resolveOpenCodeCliCommand(
+export function resolveOpenCodeCliLaunchSpec(
   processEnv: NodeJS.ProcessEnv = process.env,
-): string {
-  return requireProviderCliCommand('opencode', { processEnv });
+): ProviderCliLaunchSpec {
+  return requireProviderCliLaunchSpec('opencode', { processEnv });
 }

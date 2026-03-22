@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { getTrackingAnonymousUserId } from '@/track';
+import { getTrackingAnonymousUserId, subscribeTrackingAnonymousUserId } from '@/track';
 import { tracking } from '@/track/tracking';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
@@ -18,11 +18,20 @@ export function SettingsAnalyticsRuntime() {
     const localSettings = useLocalSettings();
     const selection = useEffectiveServerSelection();
     const mainSelectionSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: true });
+    const anonymousUserId = React.useSyncExternalStore(
+        subscribeTrackingAnonymousUserId,
+        getTrackingAnonymousUserId,
+        getTrackingAnonymousUserId,
+    );
     const previousAccountPropertiesRef = React.useRef<Record<string, string | number | boolean | null> | null>(null);
     const previousLocalPropertiesRef = React.useRef<Record<string, string | number | boolean | null> | null>(null);
 
     React.useEffect(() => {
-        const anonymousUserId = getTrackingAnonymousUserId();
+        previousAccountPropertiesRef.current = null;
+        previousLocalPropertiesRef.current = null;
+    }, [anonymousUserId]);
+
+    React.useEffect(() => {
         if (!tracking || !anonymousUserId) return;
 
         const accountSnapshot = buildAccountSettingsSnapshot(settings);
@@ -57,7 +66,7 @@ export function SettingsAnalyticsRuntime() {
         if (didEmitAnalyticsUpdate) {
             flushTrackingClient(tracking);
         }
-    }, [localSettings, mainSelectionSnapshot, settings]);
+    }, [anonymousUserId, localSettings, mainSelectionSnapshot, settings]);
 
     return null;
 }

@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,9 +53,7 @@ describe('useRegisterSessionPaneDriver (module prefetch)', () => {
             return React.createElement('Probe');
         };
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
         expect(rightPanelModuleLoaded).not.toHaveBeenCalled();
         expect(detailsPanelModuleLoaded).not.toHaveBeenCalled();

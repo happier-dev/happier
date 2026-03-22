@@ -1,41 +1,36 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { McpServerBindingV1, McpServerCatalogEntryV1 } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn<(params: unknown) => Promise<string | null>>(async () => '/repo/from-browser'));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'web',
-        select: <T,>(options: { default?: T; web?: T; ios?: T; android?: T }) => options.web ?? options.default ?? options.ios ?? options.android,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            View: 'View',
+                                                            Pressable: 'Pressable',
+                                                            Platform: {
+                                                                OS: 'web',
+                                                                select: <T,>(options: { default?: T; web?: T; ios?: T; android?: T }) => options.web ?? options.default ?? options.ios ?? options.android,
+                                                            },
+                                                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => typeof factory === 'function'
-            ? factory({
-                colors: {
-                    textSecondary: '#666',
-                    accent: { indigo: '#60f', purple: '#90f', blue: '#00f' },
-                    success: '#0f0',
-                    status: { error: '#f00' },
-                    input: { background: '#fff', text: '#111', placeholder: '#888' },
-                },
-            })
-            : factory,
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#666',
@@ -45,15 +40,16 @@ vi.mock('react-native-unistyles', () => ({
                 input: { background: '#fff', text: '#111', placeholder: '#888' },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string, vars?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, vars?: Record<string, unknown>) => {
         if (!vars) return key;
         return `${key}:${JSON.stringify(vars)}`;
-    },
-}));
+    } });
+});
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -83,11 +79,10 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: (params: unknown) => openMachinePathBrowserModalMock(params),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (action: (...args: readonly unknown[]) => Promise<unknown>) => [false, action],
@@ -117,15 +112,11 @@ describe('McpServerTestPanel', () => {
         const bindings: McpServerBindingV1[] = [];
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <McpServerTestPanel
+        tree = (await renderScreen(<McpServerTestPanel
                     server={server}
                     bindings={bindings}
                     machines={[{ id: 'machine-1', serverId: 'server-1', metadata: { displayName: 'Machine 1', host: 'machine-1.local' } } as any]}
-                />,
-            );
-        });
+                />)).tree;
 
         const input = tree.root.findAll((node) => node.props?.testID === 'mcp.server.test.directory.input')[0];
         await act(async () => {

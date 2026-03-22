@@ -1,6 +1,7 @@
 import { createGeminiBackend } from '@/backends/gemini/acp/backend';
 import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
+import { createSimpleExecutionRunBackendFactory } from '@/backends/shared/createSimpleExecutionRunBackendFactory';
 
-export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
-  return createGeminiBackend({ cwd: opts.cwd, env: opts.isolation?.env, permissionHandler: opts.permissionHandler }).backend;
-};
+export const executionRunBackendFactory: ExecutionRunBackendFactory = createSimpleExecutionRunBackendFactory(
+  (opts) => createGeminiBackend(opts as any).backend,
+);

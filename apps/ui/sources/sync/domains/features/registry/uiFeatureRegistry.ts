@@ -13,6 +13,10 @@ export type UiFeatureDefinition = Readonly<{
             color: string;
         }>;
     }>;
+    analytics?: Readonly<{
+        trackPreference?: boolean;
+        trackEffective?: boolean;
+    }>;
 }>;
 
 export const UI_FEATURE_REGISTRY = {
@@ -100,6 +104,24 @@ export const UI_FEATURE_REGISTRY = {
     'sharing.pendingQueueV2': {
         settingsToggle: undefined,
     },
+    sessions: {
+        settingsToggle: undefined,
+    },
+    'sessions.handoff': {
+        settingsToggle: undefined,
+    },
+    machines: {
+        settingsToggle: undefined,
+    },
+    'machines.transfer': {
+        settingsToggle: undefined,
+    },
+    'machines.transfer.directPeer': {
+        settingsToggle: undefined,
+    },
+    'machines.transfer.serverRouted': {
+        settingsToggle: undefined,
+    },
     'social.friends': {
         settingsToggle: {
             showInSettings: true,
@@ -109,6 +131,31 @@ export const UI_FEATURE_REGISTRY = {
             titleKey: 'settingsFeatures.expFriends',
             subtitleKey: 'settingsFeatures.expFriendsSubtitle',
             icon: { ioniconName: 'people-outline', color: '#007AFF' },
+        },
+    },
+    'inbox.global': {
+        settingsToggle: undefined,
+    },
+    'actions.approvals': {
+        settingsToggle: undefined,
+    },
+    'prompts.library': {
+        settingsToggle: undefined,
+    },
+    'prompts.assets.external': {
+        settingsToggle: undefined,
+    },
+    'prompts.skills.registries': {
+        settingsToggle: undefined,
+    },
+    'sessions.direct': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expSessionsDirect',
+            subtitleKey: 'settingsFeatures.expSessionsDirectSubtitle',
+            icon: { ioniconName: 'albums-outline', color: '#34C759' },
         },
     },
     'auth.recovery.providerReset': {
@@ -207,6 +254,19 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'search-outline', color: '#34C759' },
         },
     },
+    'terminal.embeddedPty': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expEmbeddedTerminal',
+            subtitleKey: 'settingsFeatures.expEmbeddedTerminalSubtitle',
+            icon: { ioniconName: 'terminal-outline', color: '#AF52DE' },
+        },
+    },
+    'mcp.servers': {
+        settingsToggle: undefined,
+    },
     'files.editor': {
         settingsToggle: {
             showInSettings: true,
@@ -215,16 +275,6 @@ export const UI_FEATURE_REGISTRY = {
             titleKey: 'settingsFeatures.expFilesEditor',
             subtitleKey: 'settingsFeatures.expFilesEditorSubtitle',
             icon: { ioniconName: 'create-outline', color: '#FF9500' },
-        },
-    },
-    'session.typeSelector': {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: true,
-            titleKey: 'settingsFeatures.expSessionType',
-            subtitleKey: 'settingsFeatures.expSessionTypeSubtitle',
-            icon: { ioniconName: 'layers-outline', color: '#AF52DE' },
         },
     },
     'zen.navigation': {
@@ -247,14 +297,24 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'analytics-outline', color: '#007AFF' },
         },
     },
-    'codex.resume.mcp': {
-        settingsToggle: undefined,
-    },
-    'codex.resume.acp': {
-        settingsToggle: undefined,
-    },
 } satisfies Readonly<Record<FeatureId, UiFeatureDefinition>>;
 
 export function getUiFeatureDefinition(featureId: FeatureId): UiFeatureDefinition {
     return UI_FEATURE_REGISTRY[featureId];
+}
+
+export function shouldTrackUiFeaturePreference(featureId: FeatureId): boolean {
+    const definition = getUiFeatureDefinition(featureId);
+    if (typeof definition.analytics?.trackPreference === 'boolean') {
+        return definition.analytics.trackPreference;
+    }
+    return Boolean(definition.settingsToggle);
+}
+
+export function shouldTrackUiFeatureEffective(featureId: FeatureId): boolean {
+    const definition = getUiFeatureDefinition(featureId);
+    if (typeof definition.analytics?.trackEffective === 'boolean') {
+        return definition.analytics.trackEffective;
+    }
+    return true;
 }

@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createCodexMcpMessageHandler,
   forwardCodexErrorToUi,
   forwardCodexStatusToUi,
 } from './mcpMessageHandler';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('forwardCodexStatusToUi', () => {
   it('writes to terminal buffer and session events', () => {
@@ -159,14 +163,10 @@ describe('createCodexMcpMessageHandler', () => {
   });
 
   it('streams agent_message text through transcript-vNext instead of creating standalone Codex rows', () => {
-    const prevDraftFlush = process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS;
-    const prevCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
-    const prevMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
-    process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS = '0';
-    process.env.HAPPIER_STREAM_CHECKPOINT_MS = '1000000';
-    process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = '1000000';
+    vi.stubEnv('HAPPIER_STREAM_DRAFT_FLUSH_MS', '0');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
 
-    try {
       let thinking = false;
       let currentTaskId: string | null = null;
       const session = {
@@ -222,22 +222,13 @@ describe('createCodexMcpMessageHandler', () => {
         }),
       );
       expect(session.sendCodexMessage).not.toHaveBeenCalled();
-    } finally {
-      process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS = prevDraftFlush;
-      process.env.HAPPIER_STREAM_CHECKPOINT_MS = prevCheckpointMs;
-      process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = prevMinChars;
-    }
   });
 
   it('streams agent_reasoning deltas as ACP thinking messages (not tool calls)', () => {
-    const prevDraftFlush = process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS;
-    const prevCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
-    const prevMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
-    process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS = '0';
-    process.env.HAPPIER_STREAM_CHECKPOINT_MS = '1000000';
-    process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = '1000000';
+    vi.stubEnv('HAPPIER_STREAM_DRAFT_FLUSH_MS', '0');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
+    vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
 
-    try {
       let thinking = false;
       let currentTaskId: string | null = null;
       const keepAlive = vi.fn();
@@ -295,10 +286,5 @@ describe('createCodexMcpMessageHandler', () => {
         }),
       );
       expect(session.sendCodexMessage).not.toHaveBeenCalled();
-    } finally {
-      process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS = prevDraftFlush;
-      process.env.HAPPIER_STREAM_CHECKPOINT_MS = prevCheckpointMs;
-      process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = prevMinChars;
-    }
   });
 });

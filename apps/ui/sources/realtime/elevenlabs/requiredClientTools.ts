@@ -1,6 +1,8 @@
-import { actionSpecToElevenLabsClientToolParameters, listVoiceToolActionSpecs, type JsonSchemaObject } from '@happier-dev/protocol';
-
-import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { actionSpecToElevenLabsClientToolParameters, describeActionForVoiceTool, type JsonSchemaObject } from '@happier-dev/protocol';
+import {
+    resolveDisabledVoiceActionIdsFromState,
+    resolveEnabledVoiceToolActionSpecsFromState,
+} from '@/voice/tools/resolveDisabledVoiceActionIds';
 
 export type ElevenLabsRequiredClientToolSpec = Readonly<{
     name: string;
@@ -9,28 +11,16 @@ export type ElevenLabsRequiredClientToolSpec = Readonly<{
 }>;
 
 export function resolveElevenLabsRequiredClientTools(state: any): ElevenLabsRequiredClientToolSpec[] {
-    const shareDeviceInventory = (state as any)?.settings?.voice?.privacy?.shareDeviceInventory !== false;
-    const inventoryActionIds = new Set<string>([
-        'workspaces.list_recent',
-        'paths.list_recent',
-        'machines.list',
-        'servers.list',
-    ]);
-    return listVoiceToolActionSpecs()
-        .filter((spec) => {
-            const name = spec.bindings?.voiceClientToolName;
-            if (typeof name !== 'string' || name.trim().length === 0) return false;
-            if (!shareDeviceInventory && inventoryActionIds.has(spec.id)) return false;
-            // ElevenLabs required client tools must respect per-surface disablement so
-            // "voice-only" setups never provision tools the user has turned off.
-            return isActionEnabledInState(state as any, spec.id, { surface: 'voice_tool' });
-        })
+    const enabledSpecs = resolveEnabledVoiceToolActionSpecsFromState(state as any);
+    const disabledActionIds = resolveDisabledVoiceActionIdsFromState(state as any);
+    const availableActionIds = enabledSpecs.map((spec) => spec.id);
+    return enabledSpecs
         .map((spec) => {
             const name = String(spec.bindings?.voiceClientToolName ?? '').trim();
-            const parameters = actionSpecToElevenLabsClientToolParameters(spec as any);
+            const parameters = actionSpecToElevenLabsClientToolParameters(spec as any, { disabledActionIds, availableActionIds });
             return {
                 name,
-                description: (spec.description ?? spec.title ?? name).trim(),
+                description: describeActionForVoiceTool(spec as any).trim(),
                 parameters,
             };
         });

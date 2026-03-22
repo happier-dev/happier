@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, link, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,18 +40,11 @@ export async function writeSecureMcpRuntimeConfigFile(params: Readonly<{
       await writeFile(tempPath, json, { mode: PRIVATE_FILE_MODE, flag: 'wx' });
       await bestEffortChmod(tempPath, PRIVATE_FILE_MODE);
 
-      try {
-        // `link` is atomic and fails if the destination already exists.
-        await link(tempPath, finalPath);
-        await unlink(tempPath).catch(() => {});
-        await bestEffortChmod(finalPath, PRIVATE_FILE_MODE);
-        return finalPath;
-      } catch (err) {
-        await unlink(tempPath).catch(() => {});
-        if (isErrnoException(err) && err.code === 'EEXIST') continue;
-        throw err;
-      }
+      await rename(tempPath, finalPath);
+      await bestEffortChmod(finalPath, PRIVATE_FILE_MODE);
+      return finalPath;
     } catch (err) {
+      await unlink(tempPath).catch(() => {});
       if (isErrnoException(err) && err.code === 'EEXIST') continue;
       throw err;
     }

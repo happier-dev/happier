@@ -1,6 +1,11 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,11 +17,12 @@ let machineRpcTargetAvailable = true;
 let SessionRepositoryTreeBrowserView: typeof import('./SessionRepositoryTreeBrowserView').SessionRepositoryTreeBrowserView;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                Platform: { OS: 'web' },
+                                            }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -49,52 +55,29 @@ vi.mock('@/hooks/ui/useWebFileDropZone', () => ({
     }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                textLink: '#08f',
-            },
-            dark: false,
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                        textLink: '#08f',
-                    },
-                    dark: false,
-                })
-                : value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) },
-    useSession: () => ({ active: true, metadata: { machineId: 'm1' } }),
-    useSessionRepositoryTreeExpandedPaths: () => [],
-    useSessionProjectScmSnapshot: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+        useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
+        useSessionRepositoryTreeExpandedPaths: () => [],
+        useSessionProjectScmSnapshot: () => null,
+    });
+});
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({
@@ -113,9 +96,12 @@ vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { invalidateFromUser: () => {} },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), prompt: vi.fn(async () => null), confirm: vi.fn(async () => false), show: vi.fn(() => 'm1') },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalModuleMock = createModalModuleMock();
+    modalModuleMock.spies.show.mockImplementation(() => 'm1');
+    return modalModuleMock.module;
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),
@@ -131,11 +117,15 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
 }));
 
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
-    RepositoryTreeList: (props: any) => React.createElement('RepositoryTreeList', props),
+    RepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'repository-tree-list' }),
 }));
 
 vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('ChangedFilesTreeList'),
+}));
+
+vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
+    WebDropTargetView: (props: any) => React.createElement('View', props),
 }));
 
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
@@ -158,7 +148,7 @@ vi.mock('@/utils/files/webDroppedEntries', () => ({
 }));
 
 vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
-    RepositoryTreeDropOverlay: (props: any) => React.createElement('RepositoryTreeDropOverlay', props),
+    RepositoryTreeDropOverlay: (props: any) => React.createElement('View', { ...props, testID: 'repository-tree-drop-overlay' }),
 }));
 
 describe('SessionRepositoryTreeBrowserView (drag overlay)', () => {
@@ -173,47 +163,48 @@ describe('SessionRepositoryTreeBrowserView (drag overlay)', () => {
         readWebDroppedEntriesSpy.mockClear();
     });
 
-    it('surfaces the hovered upload destination in the drop overlay', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
-        });
+    afterEach(() => {
+        standardCleanup();
+    });
 
-        const repositoryTree = tree.root.findByType('RepositoryTreeList' as any);
+    async function renderRepositoryTreeBrowserView() {
+        return renderScreen(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
+    }
+
+    it('surfaces the hovered upload destination in the drop overlay', async () => {
+        const screen = await renderRepositoryTreeBrowserView();
+
+        const repositoryTree = screen.findByTestId('repository-tree-list');
+        expect(repositoryTree).toBeTruthy();
         await act(async () => {
-            repositoryTree.props.onWebDropTargetChange?.({
+            repositoryTree?.props.onWebDropTargetChange?.({
                 destinationDir: 'src/components',
                 hoverPath: 'src/components',
                 autoExpandDirectoryPath: null,
             });
         });
 
-        const overlay = tree.root.findByType('RepositoryTreeDropOverlay' as any);
-        expect(overlay.props.destinationLabel).toBe('src/components');
+        const overlay = screen.findByTestId('repository-tree-drop-overlay');
+        expect(overlay?.props.destinationLabel).toBe('src/components');
     });
 
     it('shows drop overlay and starts uploads when files are dropped', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
-        });
+        const screen = await renderRepositoryTreeBrowserView();
 
-        const dropZone = tree.root.findByProps({ testID: 'repository-tree-drop-zone' });
+        const dropZone = screen.findByTestId('repository-tree-drop-zone');
+        expect(dropZone).toBeTruthy();
 
         await act(async () => {
-            dropZone.props.onDragEnter({ dataTransfer: { types: ['Files'] } });
+            dropZone?.props.onDragEnter({ dataTransfer: { types: ['Files'] } });
         });
 
-        const overlay = tree.root.findByType('RepositoryTreeDropOverlay' as any);
-        expect(overlay.props.visible).toBe(true);
-
-        await act(async () => {
-            dropZone.props.onDrop({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
-        });
+        const overlay = screen.findByTestId('repository-tree-drop-overlay');
+        expect(overlay?.props.visible).toBe(true);
 
         await act(async () => {
-            await Promise.resolve();
+            dropZone?.props.onDrop({ preventDefault: () => {}, dataTransfer: { types: ['Files'] } });
         });
+        await flushHookEffects();
 
         expect(readWebDroppedEntriesSpy).toHaveBeenCalledTimes(1);
         expect(startUploadsSpy).toHaveBeenCalledWith({
@@ -223,23 +214,21 @@ describe('SessionRepositoryTreeBrowserView (drag overlay)', () => {
     });
 
     it('keeps the hovered row destination when root dragover originates from a tree row descendant', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
-        });
+        const screen = await renderRepositoryTreeBrowserView();
 
-        const repositoryTree = tree.root.findByType('RepositoryTreeList' as any);
+        const repositoryTree = screen.findByTestId('repository-tree-list');
+        expect(repositoryTree).toBeTruthy();
         await act(async () => {
-            repositoryTree.props.onWebDropTargetChange?.({
+            repositoryTree?.props.onWebDropTargetChange?.({
                 destinationDir: 'download-me',
                 hoverPath: 'download-me',
                 autoExpandDirectoryPath: 'download-me',
             });
         });
 
-        const dropZone = tree.root.findByProps({ testID: 'repository-tree-drop-zone' });
+        const dropZone = screen.findByTestId('repository-tree-drop-zone');
         await act(async () => {
-            dropZone.props.onDragOver({
+            dropZone?.props.onDragOver({
                 dataTransfer: { types: ['Files'] },
                 preventDefault: vi.fn(),
                 currentTarget: {},
@@ -249,7 +238,7 @@ describe('SessionRepositoryTreeBrowserView (drag overlay)', () => {
             });
         });
 
-        const overlay = tree.root.findByType('RepositoryTreeDropOverlay' as any);
-        expect(overlay.props.destinationLabel).toBe('download-me');
+        const overlay = screen.findByTestId('repository-tree-drop-overlay');
+        expect(overlay?.props.destinationLabel).toBe('download-me');
     });
 });

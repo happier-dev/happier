@@ -981,14 +981,18 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
   const forceAuth = resolveAuthForceFlag({ flags, kv });
 
   if (json) {
-    // Keep JSON mode non-interactive and stable by using the existing stack command output.
-    // (We intentionally don't run the guided login flow in JSON mode.)
-    const createArgs = ['new', name, '--no-copy-auth', '--server', serverComponent, '--json'];
-    const created = await runCapture(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), ...createArgs], { cwd: rootDir, env: process.env }).catch((e) => {
-      throw new Error(
-        `[stack] create-dev-auth-seed: failed to create auth seed stack "${name}": ${e instanceof Error ? e.message : String(e)}`
-      );
-    });
+    // Keep JSON mode non-interactive and stable by reusing an existing seed stack instead of
+    // recreating it, which would overwrite its pinned repo/worktree selection.
+    let createdPayload = { ok: true, stackName: name, reused: true };
+    if (!stackExistsSync(name)) {
+      const createArgs = ['new', name, '--no-copy-auth', '--server', serverComponent, '--json'];
+      const created = await runCapture(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), ...createArgs], { cwd: rootDir, env: process.env }).catch((e) => {
+        throw new Error(
+          `[stack] create-dev-auth-seed: failed to create auth seed stack "${name}": ${e instanceof Error ? e.message : String(e)}`
+        );
+      });
+      createdPayload = created.trim() ? JSON.parse(created.trim()) : { ok: true, stackName: name };
+    }
 
     printResult({
       json,
@@ -996,7 +1000,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
         ok: true,
         seedStack: name,
         serverComponent,
-        created: created.trim() ? JSON.parse(created.trim()) : { ok: true },
+        created: createdPayload,
         next: {
           login: `hstack stack auth ${name} login`,
           setEnv: `# add to ${getHomeEnvLocalPath()}:\nHAPPIER_STACK_AUTH_SEED_FROM=${name}\nHAPPIER_STACK_AUTO_AUTH_SEED=1`,

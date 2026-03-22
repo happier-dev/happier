@@ -1,114 +1,70 @@
 ---
 title: Kilo (experimental)
-description: Configure Kilo Code in Happier (ACP), including install, auth, resume, tool support, and permission behavior.
+description: Configure Kilo in Happier, including install, machine-local login, and current limitations.
 ---
 
-This page documents how Happier integrates with **Kilo Code** as an **ACP-backed provider**.
+Happier supports **Kilo** as a local CLI-backed provider.
 
-## What Happier runs
+## Requirements
 
-Happier spawns the local Kilo Code CLI (`kilo` / `kilocode`) and talks to it via **ACP** (`kilo acp` / `kilocode acp`).
+- Kilo CLI installed locally
+- binary available on `PATH` (or set `HAPPIER_KILO_PATH`)
 
-That means:
-- Kilo runs **on your machine** (Happier does not proxy your code to a hosted agent).
-- Kilo uses **your normal Kilo configuration**, including models/providers you’ve configured in Kilo.
+## Install Kilo
 
-## Install Kilo Code
-
-Install Kilo Code on your machine, then restart Happier:
+Install Kilo on your machine, then restart Happier:
 
 ```bash
 npm install -g @kilocode/cli@latest
-kilocode --version
+kilo --version
 ```
 
 If you use hstack, you can install Kilo with the providers installer:
 
 ```bash
 hstack providers install kilo
-kilocode --version
+kilo --version
 ```
 
-See Kilo’s CLI docs for the latest install and usage details:
+## Local authentication in Happier
 
-- https://kilo.ai/docs/cli
+Kilo supports launching its native login flow from:
 
-## Authenticate (API key vs “already logged in”)
+- **Settings → AI provider settings → Kilo**
 
-Happier does not require an API key if Kilo is already authenticated on your machine.
+From there you can:
 
-- If you have an API key workflow, set it up in Kilo (or via environment variables supported by Kilo).
-- If you use an interactive login/subscription flow, log into Kilo once, then Happier can reuse that local auth state.
+- open Kilo and start its `/connect` flow directly inside Happier
+- use **Check now** to re-run auth detection on the selected machine
 
-Kilo’s auth commands live under:
+Auth-status detection for Kilo is currently conservative. Happier can open the login flow, but may still show **Unknown** if Kilo does not expose a safe non-interactive local auth signal.
 
-```bash
-kilocode auth --help
-```
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
 
 ## Enable Kilo in Happier (experimental)
 
 Kilo is behind Happier’s experimental providers rollout.
 
 In the app:
+
 1. **Settings**
 2. **AI provider settings**
 3. **Kilo (experimental)**
 
-## Features supported in Happier
+## Notes
 
-### Tool calls (ACP)
-
-In real ACP runs, Kilo consistently surfaces a core tool set that Happier fully traces + normalizes:
-
-- **Execute** → canonicalized to **Bash**
-- **Read**
-- **Edit / Write**
-- **Search** → canonicalized to **CodeSearch** (including “glob-like” patterns)
-- **Task** (sub-agent / child task)
-- **MCP tool calls** (for example Happier’s `change_title`)
-
-Happier records Kilo’s original tool name as `_happier.rawToolName` and also assigns a `_happier.canonicalToolName` so downstream rendering and schema validation are stable.
-
-### Resume / session attach
-
-If Kilo’s ACP implementation reports session load support, Happier stores a `kiloSessionId` in session metadata and can resume the Kilo session on a later attach.
-
-### Kilo CLI features that still apply
-
-Because Happier runs the real Kilo CLI, Kilo’s own “project-level” features still matter, including:
-
-- Kilo configuration files (for example `~/.kilocode/config.json`)
-- Skills and project conventions (for example `.kilocode/skills/`)
-- Custom commands (for example `.kilocode/commands/`)
-
-Refer to Kilo’s CLI docs for the canonical list:
-
-- https://kilo.ai/docs/cli
-
-## Permissions and safety behavior
-
-Happier exposes a provider-agnostic permission mode (`default`, `read-only`, `safe-yolo`, `yolo`, `plan`) in the UI.
-
-However, **Kilo’s ACP implementation does not currently emit ACP `permission-request` events reliably** in our end-to-end traces. As a result:
-
-- Happier’s per-tool “approve/deny” UI prompts are **limited** for Kilo.
-- Kilo’s **own** permission / auto-approval system (configured in Kilo) is the primary mechanism that controls what Kilo will do without interactive confirmation.
-
-Kilo documents auto-approval settings and interactive vs autonomous behavior in:
-
-- https://kilo.ai/docs/cli
-
-If you want stricter enforcement today, prefer configuring Kilo’s own permissions/auto-approval settings, and treat Happier’s permission picker for Kilo as “best effort”.
+- Kilo runs locally on your machine through the real Kilo CLI.
+- Session capabilities such as resume, models, modes, and permissions remain capability-driven and can evolve with the installed runtime.
+- When in doubt, treat Kilo’s own CLI configuration as the source of truth for provider-native behavior.
 
 ## Troubleshooting
 
 ### “Kilo not found”
 
-- Confirm Kilo is installed: `kilocode --version` (or `kilo --version`)
+- Confirm Kilo is installed: `kilo --version`
 - Restart Happier after installing.
-- If Kilo isn’t on PATH, set `HAPPIER_KILO_PATH` to the absolute path of the `kilocode` (or `kilo`) binary.
+- If Kilo isn’t on PATH, set `HAPPIER_KILO_PATH` to the absolute path of the `kilo` binary.
 
 ### “Not authenticated”
 
-Authenticate in Kilo using its normal flow (see `kilo auth --help` or `kilocode auth --help`), then retry from Happier.
+Use the Kilo provider settings page in Happier or run Kilo’s normal local login flow in your terminal, then use **Check now**.

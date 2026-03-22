@@ -1,6 +1,10 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,19 +14,28 @@ const canGoBackMock = vi.fn(() => false);
 
 let onSuccessCallback: (() => void) | null = null;
 
-const roundButtonHandlers: Record<string, () => void> = {};
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({
-        back: backMock,
-        canGoBack: canGoBackMock,
-        replace: replaceMock,
-    }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            back: backMock,
+            replace: replaceMock,
+        },
+        params: {},
+        pathname: '/terminal/connect',
+    });
+    (
+        routerMock.state.router as typeof routerMock.state.router & {
+            canGoBack?: () => boolean;
+        }
+    ).canGoBack = canGoBackMock;
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: (opts: { onSuccess?: () => void }) => {
@@ -61,10 +74,18 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => promise,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: Record<string, unknown>) => options.web ?? options.default ?? options.ios ?? options.android,
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -79,12 +100,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: { testID?: string; onPress?: () => void }) => {
-        if (props?.testID && typeof props.onPress === 'function') {
-            roundButtonHandlers[props.testID] = props.onPress;
-        }
-        return null;
-    },
+    RoundButton: (props: { testID?: string; onPress?: () => void }) => React.createElement('RoundButton', props),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -100,15 +116,15 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 describe('TerminalConnectScreen safe navigation', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
-        vi.resetModules();
         backMock.mockClear();
         replaceMock.mockClear();
         canGoBackMock.mockClear();
         onSuccessCallback = null;
-        for (const key of Object.keys(roundButtonHandlers)) {
-            delete roundButtonHandlers[key];
-        }
         (globalThis as any).window = {
             location: {
                 hash: '#key=abc123&server=https%3A%2F%2Fcompany.example.test',
@@ -122,13 +138,12 @@ describe('TerminalConnectScreen safe navigation', () => {
     it('falls back to replace(/terminal) when router cannot go back (success)', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
+        await renderScreen(<Screen />);
 
         expect(typeof onSuccessCallback).toBe('function');
-        onSuccessCallback?.();
+        await act(async () => {
+            onSuccessCallback?.();
+        });
 
         expect(backMock).not.toHaveBeenCalled();
         expect(replaceMock).toHaveBeenCalledWith('/terminal');
@@ -137,16 +152,14 @@ describe('TerminalConnectScreen safe navigation', () => {
     it('falls back to replace(/terminal) when router cannot go back (reject)', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
+        const screen = await renderScreen(<Screen />);
 
-        expect(typeof roundButtonHandlers['terminal-connect-reject']).toBe('function');
-        roundButtonHandlers['terminal-connect-reject']?.();
+        expect(screen.findByTestId('terminal-connect-reject')).not.toBeNull();
+        await act(async () => {
+            screen.pressByTestId('terminal-connect-reject');
+        });
 
         expect(backMock).not.toHaveBeenCalled();
         expect(replaceMock).toHaveBeenCalledWith('/terminal');
     });
 });
-

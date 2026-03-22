@@ -73,7 +73,7 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
     machines: ReadonlyArray<Machine>;
     peerSessions?: ReadonlyArray<SessionMachineTargetPeer>;
 }>): { machineId: string; basePath: string } | null {
-    const basePath = normalizeNonEmptyString(input.sessionPath) ?? normalizeNonEmptyString(input.projectPath);
+    const basePath = normalizeNonEmptyString(input.projectPath) ?? normalizeNonEmptyString(input.sessionPath);
     if (!basePath) return null;
 
     const machineById = new Set(input.machines.map((machine) => machine.id));

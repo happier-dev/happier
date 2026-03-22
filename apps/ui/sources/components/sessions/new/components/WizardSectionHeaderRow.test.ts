@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { WizardSectionHeaderRow } from './WizardSectionHeaderRow';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,13 +12,11 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 describe('WizardSectionHeaderRow', () => {
-    it('renders the optional action immediately after the title and invokes its handler', () => {
+    it('renders the optional action immediately after the title and invokes its handler', async () => {
         const onPress = vi.fn();
 
         let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(WizardSectionHeaderRow, {
+        tree = (await renderScreen(React.createElement(WizardSectionHeaderRow, {
                     iconName: 'desktop-outline',
                     title: 'Select Machine',
                     action: {
@@ -24,9 +24,7 @@ describe('WizardSectionHeaderRow', () => {
                         iconName: 'refresh-outline',
                         onPress,
                     },
-                }),
-            );
-        });
+                }))).tree;
 
         const rootView = tree?.root.findByType('View');
         const children = React.Children.toArray(rootView?.props.children).filter(React.isValidElement);

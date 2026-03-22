@@ -74,6 +74,24 @@ export function derivePendingRequestFlagsFromAgentState(agentState: AgentState |
     };
 }
 
+function derivePendingRequestFlags(params: Readonly<{
+    agentState: AgentState | null | undefined;
+    pendingPermissionRequestCount?: number;
+    pendingUserActionRequestCount?: number;
+}>): {
+    hasPendingPermissionRequests: boolean;
+    hasPendingUserActionRequests: boolean;
+} {
+    if (typeof params.pendingPermissionRequestCount === 'number' || typeof params.pendingUserActionRequestCount === 'number') {
+        return {
+            hasPendingPermissionRequests: (params.pendingPermissionRequestCount ?? 0) > 0,
+            hasPendingUserActionRequests: (params.pendingUserActionRequestCount ?? 0) > 0,
+        };
+    }
+
+    return derivePendingRequestFlagsFromAgentState(params.agentState);
+}
+
 export function buildSessionListRenderableMetadata(metadata: Metadata | null | undefined): SessionListRenderableMetadata | null {
     if (!metadata) return null;
     const directSessionV1 = (() : DirectSessionRenderableMetadata | null => {
@@ -101,7 +119,11 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
 }
 
 export function buildSessionListRenderableFromSession(session: Session): SessionListRenderableSession {
-    const pending = derivePendingRequestFlagsFromAgentState(session.agentState);
+    const pending = derivePendingRequestFlags({
+        agentState: session.agentState,
+        pendingPermissionRequestCount: session.pendingPermissionRequestCount,
+        pendingUserActionRequestCount: session.pendingUserActionRequestCount,
+    });
     return {
         id: session.id,
         seq: session.seq,

@@ -1,4 +1,4 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { defineSettingDefinitions } from '@happier-dev/protocol';
 
 import { DEFAULT_ELEVENLABS_VOICE_ID } from '@/realtime/elevenlabs/defaults';
 import { VoiceSettingsSchema, voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -177,5 +177,3 @@ export const ACCOUNT_VOICE_SETTING_DEFINITIONS = defineSettingDefinitions({
         },
     },
 });
-
-export const ACCOUNT_VOICE_SETTING_ARTIFACTS = buildSettingArtifacts(ACCOUNT_VOICE_SETTING_DEFINITIONS);

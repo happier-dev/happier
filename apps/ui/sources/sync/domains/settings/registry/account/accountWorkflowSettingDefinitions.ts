@@ -8,16 +8,10 @@ import {
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-const SessionHandoffDefaultsV1Schema = z.object({
-    v: z.literal(1).default(1),
-    workspaceTransferEnabled: z.boolean().default(false),
-    conflictPolicy: z.enum(['create_sibling_copy', 'replace_existing']).default('create_sibling_copy'),
-    includeIgnoredMode: z.enum(['exclude', 'include_selected']).default('exclude'),
-    ignoredIncludeGlobs: z.array(z.string()).default([]),
-    directTargetMode: z.enum(['keep_direct', 'convert_to_persisted']).default('keep_direct'),
-});
-
-const DEFAULT_SESSION_HANDOFF_DEFAULTS_V1 = SessionHandoffDefaultsV1Schema.parse({});
+import {
+    DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
+    SessionHandoffDefaultsV1Schema,
+} from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 
 export const ACCOUNT_WORKFLOW_SETTING_DEFINITIONS = defineSettingDefinitions({
     preferredLanguage: {

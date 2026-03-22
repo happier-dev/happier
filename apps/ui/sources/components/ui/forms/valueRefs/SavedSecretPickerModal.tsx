@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { CustomModalInjectedProps } from '@/modal';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SecretsList } from '@/components/secrets/SecretsList';
-import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -35,17 +34,14 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
-    secrets: SavedSecret[];
-    onChangeSecrets: (next: SavedSecret[]) => void;
     selectedId: string | null;
     onSelectId: (id: string | null) => void;
 }>;
 
 export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
-    const { theme } = useUnistyles();
+    useUnistyles();
     const styles = stylesheet;
     const [liveSecrets, setLiveSecrets] = useSettingMutable('secrets');
-    void theme;
 
     return (
         <View style={styles.container}>

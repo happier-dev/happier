@@ -1,14 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
+import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 
 function runGit(args, cwd) {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
+}
+
+function buildDaemonDistGuardEnv(overrides = {}) {
+  return {
+    ...process.env,
+    HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+    HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+    ...overrides,
+  };
+}
+
+async function reserveLoopbackServerUrls() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string', 'expected loopback listener to expose a numeric port');
+  const port = address.port;
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  return {
+    internalServerUrl: `http://127.0.0.1:${port}`,
+    publicServerUrl: `http://localhost:${port}`,
+  };
 }
 
 function overrideProcessReleaseNameForTest(nextName) {
@@ -31,9 +63,6 @@ function overrideProcessReleaseNameForTest(nextName) {
 }
 
 async function writeStubHappyCli({ cliDir }) {
-  await mkdir(join(cliDir, 'bin'), { recursive: true });
-  await mkdir(join(cliDir, 'dist'), { recursive: true });
-
   // Dist entrypoint exists, but package.json intentionally has no build script.
   // startLocalDaemonWithAuth should launch the daemon via dist (not via bin/happier.mjs).
   const distScript = `
@@ -85,12 +114,14 @@ if (sub === 'status') {
 
 process.exit(0);
 `;
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
-  // If the implementation accidentally invokes bin/happier.mjs instead of dist/index.mjs, fail loudly.
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), 'process.exit(42);\n', 'utf-8');
-  return join(cliDir, 'bin', 'happier.mjs');
+  const monoRoot = join(cliDir, '..', '..');
+  const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    packageJsonContent: '{}\n',
+    distIndexScript: distScript.trimStart(),
+    // If the implementation accidentally invokes bin/happier.mjs instead of dist/index.mjs, fail loudly.
+    binHappierScript: 'process.exit(42);\n',
+  });
+  return join(cliBinDir, 'happier.mjs');
 }
 
 async function writeRuntimeSnapshotHappyCli({ snapshotDir }) {
@@ -321,6 +352,7 @@ async function readDaemonPid(statePath) {
 test('startLocalDaemonWithAuth does not require a second CLI build when dist/index.mjs already exists', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-dist-guard-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliDir = join(tmp, 'apps', 'cli');
     const cliBin = await writeStubHappyCli({ cliDir });
     await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
@@ -335,17 +367,16 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 
-    const env = {
-      ...process.env,
+    const env = buildDaemonDistGuardEnv({
       HAPPIER_STACK_CLI_BUILD: '1',
-    };
+    });
 
     // If startLocalDaemonWithAuth tries to rebuild, this will fail because package.json has no build script.
     await startLocalDaemonWithAuth({
       cliBin,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
       env,
@@ -355,7 +386,7 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
 
     await stopLocalDaemon({
       cliBin,
-      internalServerUrl: 'http://127.0.0.1:4101',
+      internalServerUrl,
       cliHomeDir,
     });
 
@@ -368,6 +399,7 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
 test('startLocalDaemonWithAuth rejects incomplete dist when index imports missing chunks', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-dist-incomplete-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliDir = join(tmp, 'apps', 'cli');
     const cliBin = await writeStubHappyCli({ cliDir });
 
@@ -390,18 +422,17 @@ test('startLocalDaemonWithAuth rejects incomplete dist when index imports missin
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 
-    const env = {
-      ...process.env,
+    const env = buildDaemonDistGuardEnv({
       HAPPIER_STACK_CLI_BUILD: '0',
-    };
+    });
 
     await assert.rejects(
       () =>
         startLocalDaemonWithAuth({
           cliBin,
           cliHomeDir,
-          internalServerUrl: 'http://127.0.0.1:4101',
-          publicServerUrl: 'http://localhost:4101',
+          internalServerUrl,
+          publicServerUrl,
           isShuttingDown: () => false,
           forceRestart: true,
           env,
@@ -418,6 +449,7 @@ test('startLocalDaemonWithAuth rejects incomplete dist when index imports missin
 test('startLocalDaemonWithAuth accepts a runtime snapshot cli executable without requiring dist/index.mjs', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-cli-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const snapshotDir = join(tmp, 'runtime', 'builds', 'snap-auth');
     const cliBin = await writeRuntimeSnapshotHappyCli({ snapshotDir });
 
@@ -429,21 +461,20 @@ test('startLocalDaemonWithAuth accepts a runtime snapshot cli executable without
     await startLocalDaemonWithAuth({
       cliBin,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
-      env: {
-        ...process.env,
+      env: buildDaemonDistGuardEnv({
         HAPPIER_STACK_CLI_BUILD: '0',
-      },
+      }),
       stackName: 'dev',
       cliIdentity: 'default',
     });
 
     await stopLocalDaemon({
       cliBin,
-      internalServerUrl: 'http://127.0.0.1:4101',
+      internalServerUrl,
       cliHomeDir,
     });
 
@@ -456,6 +487,7 @@ test('startLocalDaemonWithAuth accepts a runtime snapshot cli executable without
 test('startLocalDaemonWithAuth prefers a runtime snapshot node entrypoint over the bundled binary when available', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-node-entrypoint-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const snapshotDir = join(tmp, 'runtime', 'builds', 'snap-auth');
     const { cliBin, cliNodeEntrypoint } = await writeRuntimeSnapshotHappyCliWithNodeEntrypoint({ snapshotDir });
 
@@ -468,14 +500,13 @@ test('startLocalDaemonWithAuth prefers a runtime snapshot node entrypoint over t
       cliBin,
       cliNodeEntrypoint,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
-      env: {
-        ...process.env,
+      env: buildDaemonDistGuardEnv({
         HAPPIER_STACK_CLI_BUILD: '0',
-      },
+      }),
       stackName: 'dev',
       cliIdentity: 'default',
     });
@@ -483,7 +514,7 @@ test('startLocalDaemonWithAuth prefers a runtime snapshot node entrypoint over t
     await stopLocalDaemon({
       cliBin,
       cliNodeEntrypoint,
-      internalServerUrl: 'http://127.0.0.1:4101',
+      internalServerUrl,
       cliHomeDir,
     });
 
@@ -497,6 +528,7 @@ test('startLocalDaemonWithAuth still prefers a runtime snapshot node entrypoint 
   const restoreProcessReleaseName = overrideProcessReleaseNameForTest('bun');
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-bun-node-entrypoint-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const snapshotDir = join(tmp, 'runtime', 'builds', 'snap-auth');
     const { cliBin, cliNodeEntrypoint } = await writeRuntimeSnapshotHappyCliWithNodeEntrypoint({ snapshotDir });
 
@@ -509,14 +541,13 @@ test('startLocalDaemonWithAuth still prefers a runtime snapshot node entrypoint 
       cliBin,
       cliNodeEntrypoint,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
-      env: {
-        ...process.env,
+      env: buildDaemonDistGuardEnv({
         HAPPIER_STACK_CLI_BUILD: '0',
-      },
+      }),
       stackName: 'dev',
       cliIdentity: 'default',
     });
@@ -524,7 +555,7 @@ test('startLocalDaemonWithAuth still prefers a runtime snapshot node entrypoint 
     await stopLocalDaemon({
       cliBin,
       cliNodeEntrypoint,
-      internalServerUrl: 'http://127.0.0.1:4101',
+      internalServerUrl,
       cliHomeDir,
     });
 
@@ -538,6 +569,7 @@ test('startLocalDaemonWithAuth still prefers a runtime snapshot node entrypoint 
 test('startLocalDaemonWithAuth runs runtime snapshot JS commands through node when no separate node entrypoint exists', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-js-command-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const snapshotDir = join(tmp, 'runtime', 'builds', 'snap-auth');
     const { cliBin, cliCommand } = await writeRuntimeSnapshotHappyCliJsCommand({ snapshotDir });
 
@@ -550,14 +582,13 @@ test('startLocalDaemonWithAuth runs runtime snapshot JS commands through node wh
       cliBin,
       cliCommand,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
-      env: {
-        ...process.env,
+      env: buildDaemonDistGuardEnv({
         HAPPIER_STACK_CLI_BUILD: '0',
-      },
+      }),
       stackName: 'dev',
       cliIdentity: 'default',
     });
@@ -565,7 +596,7 @@ test('startLocalDaemonWithAuth runs runtime snapshot JS commands through node wh
     await stopLocalDaemon({
       cliBin,
       cliCommand,
-      internalServerUrl: 'http://127.0.0.1:4101',
+      internalServerUrl,
       cliHomeDir,
     });
 
@@ -578,6 +609,7 @@ test('startLocalDaemonWithAuth runs runtime snapshot JS commands through node wh
 test('startLocalDaemonWithAuth rejects missing runtime snapshot command paths before spawning', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-missing-command-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliHomeDir = join(tmp, 'stack', 'cli');
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
@@ -589,14 +621,13 @@ test('startLocalDaemonWithAuth rejects missing runtime snapshot command paths be
         cliNodeEntrypoint: join(tmp, 'runtime', 'builds', 'snap-auth', 'cli', 'package-dist', 'index.mjs'),
         cliCommand: join(tmp, 'runtime', 'builds', 'snap-auth', 'cli', 'happier'),
         cliHomeDir,
-        internalServerUrl: 'http://127.0.0.1:4101',
-        publicServerUrl: 'http://localhost:4101',
+        internalServerUrl,
+        publicServerUrl,
         isShuttingDown: () => false,
         forceRestart: true,
-        env: {
-          ...process.env,
+        env: buildDaemonDistGuardEnv({
           HAPPIER_STACK_CLI_BUILD: '0',
-        },
+        }),
         stackName: 'dev',
         cliIdentity: 'default',
       }),
@@ -610,6 +641,7 @@ test('startLocalDaemonWithAuth rejects missing runtime snapshot command paths be
 test('startLocalDaemonWithAuth restarts PATH-resolved runtime commands instead of treating the command name as a dist path', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-path-runtime-command-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliHomeDir = join(tmp, 'stack', 'cli');
     const binDir = join(tmp, 'bin');
     const { cliCommand } = await writePathResolvedRuntimeCommand({ binDir });
@@ -619,18 +651,17 @@ test('startLocalDaemonWithAuth restarts PATH-resolved runtime commands instead o
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
     const statePath = join(cliHomeDir, 'daemon.state.json');
 
-    const env = {
-      ...process.env,
+    const env = buildDaemonDistGuardEnv({
       HAPPIER_STACK_CLI_BUILD: '0',
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    };
+    });
 
     await startLocalDaemonWithAuth({
       cliBin: join(tmp, 'runtime', 'cli', 'happier'),
       cliCommand,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
       env,
@@ -643,8 +674,8 @@ test('startLocalDaemonWithAuth restarts PATH-resolved runtime commands instead o
       cliBin: join(tmp, 'runtime', 'cli', 'happier'),
       cliCommand,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4101',
-      publicServerUrl: 'http://localhost:4101',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
       env,
@@ -660,7 +691,7 @@ test('startLocalDaemonWithAuth restarts PATH-resolved runtime commands instead o
     await stopLocalDaemon({
       cliBin: join(tmp, 'runtime', 'cli', 'happier'),
       cliCommand,
-      internalServerUrl: 'http://127.0.0.1:4101',
+      internalServerUrl,
       cliHomeDir,
       env,
     });
@@ -672,6 +703,7 @@ test('startLocalDaemonWithAuth restarts PATH-resolved runtime commands instead o
 test('startLocalDaemonWithAuth kills the daemon from daemon.state.json when daemon stop is a no-op', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-state-fallback-'));
   try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliHomeDir = join(tmp, 'stack', 'cli');
     const binDir = join(tmp, 'bin');
     const { cliCommand } = await writePathResolvedRuntimeCommand({ binDir, stopMode: 'noop' });
@@ -681,18 +713,17 @@ test('startLocalDaemonWithAuth kills the daemon from daemon.state.json when daem
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
     const statePath = join(cliHomeDir, 'daemon.state.json');
 
-    const env = {
-      ...process.env,
+    const env = buildDaemonDistGuardEnv({
       HAPPIER_STACK_CLI_BUILD: '0',
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    };
+    });
 
     await startLocalDaemonWithAuth({
       cliBin: join(tmp, 'runtime', 'cli', 'happier'),
       cliCommand,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4102',
-      publicServerUrl: 'http://localhost:4102',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
       env,
@@ -705,8 +736,8 @@ test('startLocalDaemonWithAuth kills the daemon from daemon.state.json when daem
       cliBin: join(tmp, 'runtime', 'cli', 'happier'),
       cliCommand,
       cliHomeDir,
-      internalServerUrl: 'http://127.0.0.1:4102',
-      publicServerUrl: 'http://localhost:4102',
+      internalServerUrl,
+      publicServerUrl,
       isShuttingDown: () => false,
       forceRestart: true,
       env,
@@ -722,7 +753,7 @@ test('startLocalDaemonWithAuth kills the daemon from daemon.state.json when daem
     await stopLocalDaemon({
       cliBin: join(tmp, 'runtime', 'cli', 'happier'),
       cliCommand,
-      internalServerUrl: 'http://127.0.0.1:4102',
+      internalServerUrl,
       cliHomeDir,
       env,
     });

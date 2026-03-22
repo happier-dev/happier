@@ -4,9 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKey, type AcpCatalogSettingsV1, type BackendTargetRefV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
@@ -38,18 +39,30 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   const { theme } = useUnistyles();
   const showLabels = props.showLabels !== false;
   const enabledAgentIds = useEnabledAgentIds();
+  const acpCatalogSettings = useSetting('acpCatalogSettingsV1') as AcpCatalogSettingsV1 | undefined;
+  const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey') as Record<string, boolean> | undefined;
   const machines = useAllMachines();
   const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
   const [openMenu, setOpenMenu] = React.useState<null | 'backend' | 'model'>(null);
 
-  const backendId = normalizeNonEmptyString(props.value?.backendId) ?? '';
   const modelId = normalizeNonEmptyString(props.value?.modelId) ?? 'default';
+  const backendEntries = React.useMemo(() => {
+    return getResolvedBackendCatalogEntries({
+      enabledAgentIds,
+      acpCatalogSettingsV1: acpCatalogSettings ?? { v: 2, backends: [] },
+      backendEnabledByTargetKey,
+    });
+  }, [acpCatalogSettings, backendEnabledByTargetKey, enabledAgentIds]);
+  const selectedBackendEntry = React.useMemo(() => {
+    const target = props.value?.backendTarget;
+    if (!target) return null;
+    const targetKey = buildBackendTargetKey(target);
+    return backendEntries.find((entry) => entry.targetKey === targetKey) ?? null;
+  }, [backendEntries, props.value?.backendTarget]);
 
-  const selectedAgentIdForModelOptions = React.useMemo(() => {
-    const raw = normalizeNonEmptyString(backendId);
-    if (!raw) return DEFAULT_AGENT_ID;
-    return isAgentId(raw as any) ? (raw as any) : DEFAULT_AGENT_ID;
-  }, [backendId]);
+  const selectedBackendTargetForModelOptions = React.useMemo<BackendTargetRefV1>(() => {
+    return selectedBackendEntry?.target ?? { kind: 'builtInAgent', agentId: DEFAULT_AGENT_ID };
+  }, [selectedBackendEntry]);
 
   const preflightMachineId = React.useMemo(() => {
     return resolvePreferredMachineId({
@@ -59,25 +72,38 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   }, [machines, recentMachinePaths]);
 
   const preflightModels = useNewSessionPreflightModelsState({
-    agentType: (selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID) as any,
+    backendTarget: selectedBackendTargetForModelOptions,
     selectedMachineId: preflightMachineId,
     capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
   });
 
-  const agentMenuItems = React.useMemo(() => {
-    return [
-      ...getAgentDropdownMenuItems({
+  const backendMenuItems = React.useMemo(() => {
+    const builtInItems = new Map(
+      getAgentDropdownMenuItems({
         agentIds: enabledAgentIds as any,
         iconColor: theme.colors.textSecondary,
-      }),
-      {
-        id: '__custom__',
-        title: t('settingsSession.replayResume.summaryRunner.customTitle'),
-        subtitle: t('settingsSession.replayResume.summaryRunner.customBackendIdSubtitle'),
-        icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
-      },
-    ];
-  }, [enabledAgentIds, theme.colors.textSecondary]);
+      }).map((item) => [item.id, item]),
+    );
+
+    return backendEntries.map((entry) => {
+      if (entry.family === 'builtInAgent' && entry.builtInAgentId) {
+        const item = builtInItems.get(entry.builtInAgentId);
+        if (item) {
+          return {
+            ...item,
+            id: entry.targetKey,
+          };
+        }
+      }
+
+      return {
+        id: entry.targetKey,
+        title: entry.title,
+        subtitle: entry.subtitle ?? undefined,
+        icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />,
+      };
+    });
+  }, [backendEntries, enabledAgentIds, theme.colors.textSecondary]);
 
   const selectableModelMenuItems = React.useMemo(() => {
     return getModelDropdownMenuItems({
@@ -103,10 +129,8 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   }, [selectableModelMenuItems, theme.colors.textSecondary]);
 
   const selectedBackendLabel = React.useMemo(() => {
-    if (!backendId) return t('settingsSession.replayResume.summaryRunner.notSet');
-    if (isAgentId(backendId as any)) return t(getAgentCore(backendId as any).displayNameKey);
-    return backendId;
-  }, [backendId]);
+    return selectedBackendEntry?.title ?? t('settingsSession.replayResume.summaryRunner.notSet');
+  }, [selectedBackendEntry]);
 
   const selectedModelLabel = React.useMemo(() => {
     const trimmed = modelId.trim();
@@ -129,7 +153,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
         variant="selectable"
         search={true}
         searchPlaceholder={t('settingsSession.replayResume.summaryRunner.searchBackendsPlaceholder')}
-        selectedId={backendId || ''}
+        selectedId={selectedBackendEntry?.targetKey ?? ''}
         showCategoryTitles={false}
         matchTriggerWidth={true}
         connectToTrigger={true}
@@ -141,34 +165,26 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
           detailFormatter: () => selectedBackendLabel,
           itemProps: { testID: props.backendTestID },
         }}
-        items={agentMenuItems as any}
+        items={backendMenuItems as any}
         onSelect={(id) => {
-          if (id === '__custom__') {
-            setOpenMenu(null);
-            fireAndForget((async () => {
-              const raw = await Modal.prompt(
-                t('settingsSession.replayResume.summaryRunner.backendTitle'),
-                t('settingsSession.replayResume.summaryRunner.backendPlaceholder'),
-                { placeholder: backendId || DEFAULT_AGENT_ID },
-              );
-              if (raw === null) return;
-              const nextBackendId = String(raw).trim();
-              if (!nextBackendId) {
-                props.onChange(null);
-                return;
-              }
-              props.onChange({ v: 1, backendId: nextBackendId, modelId: 'default', permissionMode: 'no_tools' } as any);
-            })(), { tag: 'LlmTaskRunnerConfigV1BackendModelPicker.prompt.backendId' });
-            return;
-          }
-
-          const nextBackendId = String(id ?? '').trim();
-          if (!nextBackendId) {
+          const targetKey = String(id ?? '').trim();
+          if (!targetKey) {
             props.onChange(null);
             setOpenMenu(null);
             return;
           }
-          props.onChange({ v: 1, backendId: nextBackendId, modelId: 'default', permissionMode: 'no_tools' } as any);
+          const nextBackendEntry = backendEntries.find((entry) => entry.targetKey === targetKey) ?? null;
+          if (!nextBackendEntry) {
+            props.onChange(null);
+            setOpenMenu(null);
+            return;
+          }
+          props.onChange({
+            v: 1,
+            backendTarget: nextBackendEntry.target,
+            modelId: 'default',
+            permissionMode: 'no_tools',
+          } as any);
           setOpenMenu(null);
         }}
       />
@@ -198,7 +214,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
         }}
         items={modelMenuItems as any}
         onSelect={(id) => {
-          if (!backendId) {
+          if (!selectedBackendEntry) {
             props.onChange(null);
             setOpenMenu(null);
             return;
@@ -220,7 +236,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
               const nextModelId = String(raw).trim();
               props.onChange({
                 v: 1,
-                backendId,
+                backendTarget: selectedBackendEntry.target,
                 modelId: nextModelId || 'default',
                 permissionMode: 'no_tools',
               } as any);
@@ -230,7 +246,12 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
 
           const nextModelId = String(id ?? '').trim();
           if (!nextModelId) return;
-          props.onChange({ v: 1, backendId, modelId: nextModelId, permissionMode: 'no_tools' } as any);
+          props.onChange({
+            v: 1,
+            backendTarget: selectedBackendEntry.target,
+            modelId: nextModelId,
+            permissionMode: 'no_tools',
+          } as any);
           setOpenMenu(null);
         }}
       />

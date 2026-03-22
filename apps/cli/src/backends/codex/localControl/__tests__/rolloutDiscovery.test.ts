@@ -177,6 +177,36 @@ describe('codex local-control rollout discovery', () => {
 
             expect(discovered?.filePath).toBe(filePath);
             expect(discovered?.sessionMeta.id).toBe(resumeId);
+            expect(discovered?.sessionMeta.cwd).toBe('/x');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves cwd in the resume-id fast path when session_meta is missing', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'codex-sessions-fast-no-meta-'));
+        try {
+            const dir = join(root, '2026', '02', '04');
+            await mkdir(dir, { recursive: true });
+
+            const resumeId = '019c17f4-cb9c-7512-b441-80d453fb5a53';
+            const filePath = join(dir, `rollout-2026-02-04T00-00-00-${resumeId}.jsonl`);
+            await writeFile(filePath, `${JSON.stringify({ type: 'noop', payload: {} })}\n`);
+
+            const mtime = new Date('2026-02-04T12:00:06.000Z');
+            await utimes(filePath, mtime, mtime);
+
+            const discovered = await discoverCodexRolloutFileOnce({
+                sessionsRootDir: root,
+                startedAtMs: Date.parse('2026-02-04T12:00:05.000Z'),
+                cwd: '/x',
+                resumeId,
+                scanLimit: 50,
+            });
+
+            expect(discovered?.filePath).toBe(filePath);
+            expect(discovered?.sessionMeta.id).toBe(resumeId);
+            expect(discovered?.sessionMeta.cwd).toBe('/x');
         } finally {
             await rm(root, { recursive: true, force: true });
         }

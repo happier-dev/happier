@@ -1,26 +1,27 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  logSessionShareAccess,
-  logPublicShareAccess,
-  getIpAddress,
-  getUserAgent,
-} from "./accessLogger";
-import { db } from "@/storage/db";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/storage/db", () => ({
-  db: {
-    sessionShareAccessLog: {
-      create: vi.fn(),
-    },
-    publicShareAccessLog: {
-      create: vi.fn(),
-    },
-  },
-}));
+import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
+
+const dbMocks = createDbMocks({
+    sessionShareAccessLog: ["create"],
+    publicShareAccessLog: ["create"],
+} as const);
+
+installDbModuleMock({ db: dbMocks.db });
+
+let logSessionShareAccess: typeof import("./accessLogger").logSessionShareAccess;
+let logPublicShareAccess: typeof import("./accessLogger").logPublicShareAccess;
+let getIpAddress: typeof import("./accessLogger").getIpAddress;
+let getUserAgent: typeof import("./accessLogger").getUserAgent;
+
+beforeAll(async () => {
+    ({ logSessionShareAccess, logPublicShareAccess, getIpAddress, getUserAgent } = await import("./accessLogger"));
+});
 
 describe("accessLogger", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    dbMocks.reset();
   });
 
   describe("logSessionShareAccess", () => {
@@ -32,7 +33,7 @@ describe("accessLogger", () => {
         "Mozilla/5.0",
       );
 
-      expect(db.sessionShareAccessLog.create).toHaveBeenCalledWith({
+      expect(dbMocks.db.sessionShareAccessLog.create).toHaveBeenCalledWith({
         data: {
           sessionShareId: "share-1",
           userId: "user-1",
@@ -45,7 +46,7 @@ describe("accessLogger", () => {
     it("should log access without IP and user agent", async () => {
       await logSessionShareAccess("share-1", "user-1");
 
-      expect(db.sessionShareAccessLog.create).toHaveBeenCalledWith({
+      expect(dbMocks.db.sessionShareAccessLog.create).toHaveBeenCalledWith({
         data: {
           sessionShareId: "share-1",
           userId: "user-1",
@@ -65,7 +66,7 @@ describe("accessLogger", () => {
         "Mozilla/5.0",
       );
 
-      expect(db.publicShareAccessLog.create).toHaveBeenCalledWith({
+      expect(dbMocks.db.publicShareAccessLog.create).toHaveBeenCalledWith({
         data: {
           publicShareId: "public-1",
           userId: "user-1",
@@ -78,7 +79,7 @@ describe("accessLogger", () => {
     it("should log anonymous access", async () => {
       await logPublicShareAccess("public-1", null);
 
-      expect(db.publicShareAccessLog.create).toHaveBeenCalledWith({
+      expect(dbMocks.db.publicShareAccessLog.create).toHaveBeenCalledWith({
         data: {
           publicShareId: "public-1",
           userId: null,
@@ -91,7 +92,7 @@ describe("accessLogger", () => {
     it("should log access with consent (IP and UA present)", async () => {
       await logPublicShareAccess("public-1", null, "10.0.0.1", "Chrome/100.0");
 
-      expect(db.publicShareAccessLog.create).toHaveBeenCalledWith({
+      expect(dbMocks.db.publicShareAccessLog.create).toHaveBeenCalledWith({
         data: {
           publicShareId: "public-1",
           userId: null,

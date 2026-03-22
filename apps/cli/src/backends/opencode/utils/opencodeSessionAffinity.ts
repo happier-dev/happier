@@ -1,55 +1,28 @@
 import type { Metadata } from '@/api/types';
 import {
-  normalizeOpenCodeServerBaseUrlExplicit,
-  readOpenCodeExplicitServerBaseUrl,
+  readOpenCodeSessionAffinityFromMetadata,
+  readOpenCodeSessionRuntimeHandleFromMetadata,
+  type OpenCodeSessionAffinity,
+  type OpenCodeSessionRuntimeHandle,
 } from '@happier-dev/agents';
 
-type OpenCodeBackendMode = 'server' | 'acp';
+type OpenCodeBackendMode = OpenCodeSessionAffinity['backendMode'];
 
-export type OpenCodeSessionAffinity = Readonly<{
-  backendMode: OpenCodeBackendMode | null;
-  serverBaseUrl: string | null;
-  serverBaseUrlExplicit: boolean;
-}>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function readOpenCodeSessionAffinityFromMetadata(metadata: unknown): OpenCodeSessionAffinity {
-  if (!isRecord(metadata)) {
-    return {
-      backendMode: null,
-      serverBaseUrl: null,
-      serverBaseUrlExplicit: false,
-    };
-  }
-
-  const backendModeRaw = typeof metadata.opencodeBackendMode === 'string'
-    ? String(metadata.opencodeBackendMode).trim()
-    : '';
-  const backendMode = backendModeRaw === 'server' ? 'server' : backendModeRaw === 'acp' ? 'acp' : null;
-  const serverBaseUrlExplicit = normalizeOpenCodeServerBaseUrlExplicit(metadata.opencodeServerBaseUrlExplicit);
-  const serverBaseUrl = readOpenCodeExplicitServerBaseUrl(
-    metadata.opencodeServerBaseUrl,
-    metadata.opencodeServerBaseUrlExplicit,
-  );
-
-  return {
-    backendMode,
-    serverBaseUrl,
-    serverBaseUrlExplicit,
-  };
-}
+export {
+  readOpenCodeSessionAffinityFromMetadata,
+  readOpenCodeSessionRuntimeHandleFromMetadata,
+};
+export type { OpenCodeSessionAffinity, OpenCodeSessionRuntimeHandle };
 
 export function buildOpenCodeSessionEnvironmentVariables(params: Readonly<{
   backendMode: OpenCodeBackendMode | null;
   serverBaseUrl?: string | null;
+  serverBaseUrlExplicit?: boolean;
 }>): Record<string, string> {
   return {
     ...(params.backendMode ? { HAPPIER_OPENCODE_BACKEND_MODE: params.backendMode } : {}),
     ...(params.serverBaseUrl ? { HAPPIER_OPENCODE_SERVER_URL: params.serverBaseUrl } : {}),
-    ...(params.serverBaseUrl ? { HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1' } : {}),
+    ...(params.serverBaseUrl && params.serverBaseUrlExplicit ? { HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1' } : {}),
   };
 }
 

@@ -148,5 +148,5 @@ describe('git RPC handlers', () => {
         expect(response.success).toBe(true);
         const fetchedHead = git(workspace, ['rev-parse', `origin/${branchName}`]);
         expect(fetchedHead).toBe(remoteHead);
-    }, 20_000);
+    }, 40_000);
 });

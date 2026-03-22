@@ -1,17 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
 
+import { createDbMocks, installDbModuleMock } from '../../api/testkit/dbMocks';
+
 const findMany = vi.fn();
 const deleteMany = vi.fn();
 
-vi.mock('@/storage/db', () => ({
-    db: {
-        globalLock: {
-            findMany,
-            deleteMany,
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    globalLock: ["findMany", "deleteMany"],
+} as const);
+
+dbMocks.db.globalLock.findMany.mockImplementation((...args: any[]) => findMany(...args));
+dbMocks.db.globalLock.deleteMany.mockImplementation((...args: any[]) => deleteMany(...args));
+
+installDbModuleMock({ db: dbMocks.db });
 
 function createPolicy(): RetentionPolicy {
     return {

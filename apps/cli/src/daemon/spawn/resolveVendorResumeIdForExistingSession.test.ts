@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { resolveVendorResumeIdForExistingSession } from './resolveVendorResumeIdForExistingSession';
 

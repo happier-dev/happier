@@ -3,7 +3,7 @@ import fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 describe('waitForTranscriptEncryptedMessageByLocalId', () => {
   let app: FastifyInstance | null = null;
@@ -188,5 +188,40 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
       updatedAt: 222,
       content: { t: 'plain' },
     });
+  });
+
+  it('returns null when the v2 localId route omits timestamps instead of inventing local clock values', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+
+    app = fastify({ logger: false });
+    app.get('/v2/sessions/:sid/messages/by-local-id/:localId', async (_req, reply) => {
+      return reply.code(200).send({
+        message: {
+          id: 'm1',
+          seq: 1,
+          localId: 'l1',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+        },
+      });
+    });
+    await app.ready();
+
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'http://adapter.test' });
+
+    const result = await waitForTranscriptEncryptedMessageByLocalId({
+      token: 'token',
+      sessionId: 'sid',
+      localId: 'l1',
+      maxWaitMs: 200,
+      pollIntervalMs: 10,
+      errorBackoffBaseMs: 10,
+      errorBackoffMaxMs: 10,
+      onError: () => {},
+    });
+
+    expect(result).toBeNull();
   });
 });

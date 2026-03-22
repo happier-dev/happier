@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDirSync } from '@/testkit/fs/tempDir';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 
 import { createGeminiBackend } from './backend';
 
@@ -13,43 +16,48 @@ type AcpBackendLike = {
   };
 };
 
-function withTempHome<T>(fn: (homeDir: string) => T): T {
-  const prevHome = process.env.HOME;
-  const dir = mkdtempSync(join(tmpdir(), 'happier-gemini-home-'));
-  process.env.HOME = dir;
-  try {
-    return fn(dir);
-  } finally {
-    process.env.HOME = prevHome;
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-function withFakeGeminiCli<T>(fn: (geminiPath: string) => T): T {
-  const prevGeminiPath = process.env.HAPPIER_GEMINI_PATH;
-  const dir = mkdtempSync(join(tmpdir(), 'happier-gemini-bin-'));
-  const geminiPath = join(dir, 'gemini');
-  writeFileSync(geminiPath, '#!/bin/sh\nexit 0\n', 'utf8');
-  chmodSync(geminiPath, 0o755);
-  process.env.HAPPIER_GEMINI_PATH = geminiPath;
-
-  try {
-    return fn(geminiPath);
-  } finally {
-    if (prevGeminiPath === undefined) delete process.env.HAPPIER_GEMINI_PATH;
-    else process.env.HAPPIER_GEMINI_PATH = prevGeminiPath;
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
 describe('createGeminiBackend auth method', () => {
-  it('defaults to oauth-personal when no API key is present', () => {
-    withTempHome(() => withFakeGeminiCli(() => {
-      const prevGeminiKey = process.env.GEMINI_API_KEY;
-      const prevGoogleKey = process.env.GOOGLE_API_KEY;
-      delete process.env.GEMINI_API_KEY;
-      delete process.env.GOOGLE_API_KEY;
-      try {
+  const envKeys = [
+    'HOME',
+    'HAPPIER_GEMINI_PATH',
+    'GEMINI_API_KEY',
+    'GOOGLE_API_KEY',
+    'GEMINI_MODEL',
+    'GEMINI_CLI_HOME',
+  ] as const;
+  let envScope = createEnvKeyScope(envKeys);
+
+  afterEach(() => {
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
+  });
+
+  function withTempHome<T>(fn: (homeDir: string) => Promise<T> | T): Promise<T> | T {
+    return withTempDirSync('happier-gemini-home-', (homeDir) => {
+      envScope.patch({ HOME: homeDir });
+      return fn(homeDir);
+    });
+  }
+
+  function withFakeGeminiCli<T>(fn: (geminiPath: string) => Promise<T> | T): Promise<T> | T {
+    return withTempDirSync('happier-gemini-bin-', (dir) => {
+      const geminiPath = writeExecutableShimSync({
+        dir,
+        fileName: 'gemini',
+        contents: '#!/bin/sh\nexit 0\n',
+      });
+      envScope.patch({ HAPPIER_GEMINI_PATH: geminiPath });
+      return fn(geminiPath);
+    });
+  }
+
+  it('defaults to oauth-personal when no API key is present', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() => {
+        envScope.patch({
+          GEMINI_API_KEY: undefined,
+          GOOGLE_API_KEY: undefined,
+        });
         const result = createGeminiBackend({
           cwd: '/tmp',
           env: {},
@@ -58,21 +66,17 @@ describe('createGeminiBackend auth method', () => {
 
         const backend = result.backend as unknown as AcpBackendLike;
         expect(backend.options.authMethodId).toBe('oauth-personal');
-      } finally {
-        if (prevGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
-        else process.env.GEMINI_API_KEY = prevGeminiKey;
-        if (prevGoogleKey === undefined) delete process.env.GOOGLE_API_KEY;
-        else process.env.GOOGLE_API_KEY = prevGoogleKey;
-      }
-    }));
+      }),
+    );
   });
 
-  it('uses gemini-api-key when GEMINI_API_KEY is present', () => {
-    withTempHome(() => withFakeGeminiCli(() => {
-      const prevGeminiKey = process.env.GEMINI_API_KEY;
-      const prevGoogleKey = process.env.GOOGLE_API_KEY;
-      process.env.GEMINI_API_KEY = 'AIzaFakeKey';
-      try {
+  it('uses gemini-api-key when GEMINI_API_KEY is present', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() => {
+        envScope.patch({
+          GEMINI_API_KEY: 'AIzaFakeKey',
+          GOOGLE_API_KEY: undefined,
+        });
         const result = createGeminiBackend({
           cwd: '/tmp',
           env: {},
@@ -81,17 +85,136 @@ describe('createGeminiBackend auth method', () => {
 
         const backend = result.backend as unknown as AcpBackendLike;
         expect(backend.options.authMethodId).toBe('gemini-api-key');
-      } finally {
-        if (prevGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
-        else process.env.GEMINI_API_KEY = prevGeminiKey;
-        if (prevGoogleKey === undefined) delete process.env.GOOGLE_API_KEY;
-        else process.env.GOOGLE_API_KEY = prevGoogleKey;
-      }
-    }));
+      }),
+    );
+  });
+
+  it('uses the scoped GEMINI_API_KEY from options.env instead of host process env', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() => {
+        envScope.patch({
+          GEMINI_API_KEY: undefined,
+          GOOGLE_API_KEY: undefined,
+        });
+        const result = createGeminiBackend({
+          cwd: '/tmp',
+          env: {
+            GEMINI_API_KEY: 'AIzaScopedKey',
+          },
+          model: null,
+        });
+
+        const backend = result.backend as unknown as AcpBackendLike;
+        expect(backend.options.authMethodId).toBe('gemini-api-key');
+      }),
+    );
+  });
+
+  it('uses the scoped GEMINI_MODEL env from options.env instead of host process env', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() => {
+        envScope.patch({
+          GEMINI_API_KEY: undefined,
+          GOOGLE_API_KEY: undefined,
+          GEMINI_MODEL: 'host-model',
+        } as any);
+        const result = createGeminiBackend({
+          cwd: '/tmp',
+          env: {
+            GEMINI_MODEL: 'scoped-model',
+          },
+        });
+
+        const backend = result.backend as unknown as AcpBackendLike;
+        expect(result.model).toBe('scoped-model');
+        expect(result.modelSource).toBe('env-var');
+        expect(backend.options.env?.GEMINI_MODEL).toBe('scoped-model');
+      }),
+    );
+  });
+
+  it('reads Gemini local config from the scoped HOME in options.env', async () => {
+    await withTempHome((hostHomeDir) =>
+      withFakeGeminiCli(() =>
+        withTempDirSync('happier-gemini-scoped-home-', (scopedHomeDir) => {
+          mkdirSync(join(hostHomeDir, '.gemini'), { recursive: true });
+          mkdirSync(join(scopedHomeDir, '.gemini'), { recursive: true });
+          writeFileSync(join(hostHomeDir, '.gemini', 'config.json'), JSON.stringify({ model: 'host-home-model' }), 'utf8');
+          writeFileSync(join(scopedHomeDir, '.gemini', 'config.json'), JSON.stringify({ model: 'scoped-home-model' }), 'utf8');
+          envScope.patch({
+            GEMINI_API_KEY: undefined,
+            GOOGLE_API_KEY: undefined,
+            GEMINI_MODEL: undefined,
+          } as any);
+
+          const result = createGeminiBackend({
+            cwd: '/tmp',
+            env: {
+              HOME: scopedHomeDir,
+            },
+          });
+
+          const backend = result.backend as unknown as AcpBackendLike;
+          expect(result.model).toBe('scoped-home-model');
+          expect(result.modelSource).toBe('local-config');
+          expect(backend.options.env?.GEMINI_MODEL).toBe('scoped-home-model');
+        }),
+      ),
+    );
+  });
+
+  it('uses gemini-api-key when GEMINI_API_KEY is present only in scoped backend env', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() => {
+        envScope.patch({
+          GEMINI_API_KEY: undefined,
+          GOOGLE_API_KEY: undefined,
+        });
+        const result = createGeminiBackend({
+          cwd: '/tmp',
+          env: { GEMINI_API_KEY: 'AIzaScopedKey' },
+          model: null,
+        });
+
+        const backend = result.backend as unknown as AcpBackendLike;
+        expect(backend.options.authMethodId).toBe('gemini-api-key');
+      }),
+    );
+  });
+
+  it('resolves the local Gemini model from scoped GEMINI_CLI_HOME', async () => {
+    await withTempHome(() =>
+      withFakeGeminiCli(() =>
+        withTempDirSync('happier-gemini-cli-home-', (cliHomeDir) => {
+          mkdirSync(join(cliHomeDir, '.gemini'), { recursive: true });
+          mkdirSync(join(cliHomeDir, '.config', 'gemini'), { recursive: true });
+          envScope.patch({
+            GEMINI_API_KEY: undefined,
+            GOOGLE_API_KEY: undefined,
+          });
+
+          const scopedModel = 'gemini-2.5-pro-scoped';
+          const hostModel = 'gemini-2.5-pro-host';
+          const hostHomeDir = process.env.HOME as string;
+          mkdirSync(join(hostHomeDir, '.gemini'), { recursive: true });
+          writeFileSync(join(hostHomeDir, '.gemini', 'config.json'), JSON.stringify({ model: hostModel }), 'utf8');
+          writeFileSync(join(cliHomeDir, '.gemini', 'config.json'), JSON.stringify({ model: scopedModel }), 'utf8');
+
+          const result = createGeminiBackend({
+            cwd: '/tmp',
+            env: { GEMINI_CLI_HOME: cliHomeDir },
+            model: undefined,
+          });
+
+          expect(result.model).toBe(scopedModel);
+          expect(result.modelSource).toBe('local-config');
+        }),
+      ),
+    );
   });
 
   it('creates a temporary Gemini CLI home for MCP-backed sessions and cleans it up on dispose', async () => {
-    withTempHome((homeDir) => withFakeGeminiCli(() => {
+    await withTempHome((homeDir) => withFakeGeminiCli(async () => {
       mkdirSync(join(homeDir, '.gemini'), { recursive: true });
 
       const result = createGeminiBackend({
@@ -125,9 +248,8 @@ describe('createGeminiBackend auth method', () => {
       });
       expect(JSON.stringify(settings)).not.toContain('secret');
 
-      return result.backend.dispose().then(() => {
-        expect(() => readFileSync(settingsPath, 'utf8')).toThrow();
-      });
+      await result.backend.dispose();
+      expect(() => readFileSync(settingsPath, 'utf8')).toThrow();
     }));
   });
 

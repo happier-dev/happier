@@ -25,17 +25,27 @@ vi.mock('@/utils/web/radixCjs', () => {
     };
 });
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'android' },
-        useWindowDimensions: () => ({ width: 1000, height: 800 }),
-        StyleSheet: {
-            absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-        },
-        View: (props: any) => React.createElement('View', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'android',
+            },
+            useWindowDimensions: () => ({ width: 1000, height: 800 }),
+            StyleSheet: {
+                absoluteFill: {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        }
+    );
 });
 
 describe('Popover (native sizing retries)', () => {

@@ -122,7 +122,7 @@ describe('remoteMcpStdioBridge', () => {
     const httpServer = await startTestMcpHttpServer();
     const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-bridge-it-'));
     try {
-      const configPath = join(tmp, 'bridge.json');
+      const configPath = join(tmp, 'happier-mcp-remote-bridge.it.json');
       await writeFile(
         configPath,
         JSON.stringify({
@@ -205,7 +205,7 @@ describe('remoteMcpStdioBridge', () => {
   it('removes the config file when startup fails before the remote connect succeeds', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-bridge-it-'));
     try {
-      const configPath = join(tmp, 'bridge.json');
+      const configPath = join(tmp, 'happier-mcp-remote-bridge.it.json');
       await writeFile(
         configPath,
         JSON.stringify({

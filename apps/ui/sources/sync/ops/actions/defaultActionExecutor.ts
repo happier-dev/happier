@@ -17,14 +17,17 @@ import {
   sessionExecutionRunStart,
   sessionExecutionRunStop,
 } from '@/sync/ops/sessionExecutionRuns';
-import { forkSession as forkSessionOp } from '@/sync/ops/sessions';
+import { forkSession as forkSessionOp, rollbackSessionConversation as rollbackSessionConversationOp } from '@/sync/ops/sessions';
+import { completeSessionHandoff as completeSessionHandoffOp } from '@/sync/ops/sessionHandoffs';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { storage } from '@/sync/domains/state/storage';
+import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { openSessionForVoiceTool } from '@/voice/tools/actionImpl/openSession';
 import { spawnSessionForVoiceTool } from '@/voice/tools/actionImpl/spawnSession';
@@ -33,20 +36,42 @@ import { setPrimaryActionSessionId, setTrackedSessionIds } from '@/voice/tools/a
 import { listSessionsForVoiceTool } from '@/voice/tools/actionImpl/sessionList';
 import { getSessionActivityForVoiceTool } from '@/voice/tools/actionImpl/sessionActivity';
 import { getSessionRecentMessagesForVoiceTool } from '@/voice/tools/actionImpl/sessionRecentMessages';
-import { listRecentWorkspacesForVoiceTool } from '@/voice/tools/actionImpl/workspacesListRecent';
 import { listRecentPathsForVoiceTool } from '@/voice/tools/actionImpl/pathsListRecent';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
+import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { sync } from '@/sync/sync';
+import { publishAcpSessionModeOverrideToMetadata } from '@/sync/engine/overrides/acpSessionModeOverridePublish';
 import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
+import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import {
+  isRequestedSessionModeSupported,
+  isSessionModeActionAvailable,
+  normalizeRequestedSessionModeId,
+  resolveSessionModeActionControl,
+  serializeSessionModeActionOptions,
+} from './sessionModeActionSupport';
 
 export function createDefaultActionExecutor(opts?: Readonly<{
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
+  resolveServerNameForSessionId?: (sessionId: string) => string | null;
+  openSession?: (sessionId: string) => void | Promise<void>;
 }>): ReturnType<typeof createActionExecutor> {
+  type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number }>;
+  type AgentsModelsListArgs = Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
+  const resolveSessionMachineId = (sessionId: string, metadata: { machineId?: unknown } | null | undefined): string => {
+    const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? '';
+    if (reachableMachineId) {
+      return reachableMachineId;
+    }
+    return typeof metadata?.machineId === 'string' ? String(metadata.machineId).trim() : '';
+  };
+
   const resolveActionsSettingsSnapshot = () => {
     const stateAny: any = storage.getState();
     const raw = stateAny?.settings?.actionsSettingsV1;
@@ -56,10 +81,33 @@ export function createDefaultActionExecutor(opts?: Readonly<{
 
   const deps: ActionExecutorDeps = {
     isActionEnabled: (actionId: ActionId, ctx) =>
-      isActionEnabledByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
-        surface: ctx.surface ?? null,
-        placement: ctx.placement ?? null,
-      }),
+      {
+        if (
+          !isActionEnabledByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
+            surface: ctx.surface ?? null,
+            placement: ctx.placement ?? null,
+          })
+        ) {
+          return false;
+        }
+        if (actionId !== 'session.mode.set') {
+          if (actionId !== 'session.rollback') {
+            return true;
+          }
+          const sessionId = typeof ctx.defaultSessionId === 'string' ? ctx.defaultSessionId.trim() : '';
+          if (!sessionId) {
+            return false;
+          }
+          const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
+          return canRollbackConversation({ session });
+        }
+        const sessionId = typeof ctx.defaultSessionId === 'string' ? ctx.defaultSessionId.trim() : '';
+        if (!sessionId) {
+          return true;
+        }
+        const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
+        return isSessionModeActionAvailable(session);
+      },
     executionRunStart: sessionExecutionRunStart,
     executionRunList: sessionExecutionRunList,
     executionRunGet: sessionExecutionRunGet,
@@ -68,14 +116,20 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     executionRunAction: sessionExecutionRunAction,
 
     sessionOpen: async ({ sessionId }) =>
-      await openSessionForVoiceTool({ sessionId, resolveServerIdForSessionId: opts?.resolveServerIdForSessionId }),
+      opts?.openSession
+        ? (await opts.openSession(sessionId), { ok: true, status: 'opened', sessionId } as const)
+        : await openSessionForVoiceTool({
+          sessionId,
+          resolveServerIdForSessionId: opts?.resolveServerIdForSessionId,
+          resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
+        }),
 
     sessionFork: async ({ sessionId, serverId }) => {
       const sid = String(sessionId ?? '').trim();
       if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
       const stateAny: any = storage.getState();
       const session = stateAny?.sessions?.[sid] ?? null;
-      const machineId = typeof session?.metadata?.machineId === 'string' ? String(session.metadata.machineId).trim() : '';
+      const machineId = resolveSessionMachineId(sid, session?.metadata ?? null);
 
       const settings = stateAny?.settings ?? null;
       const replaySummaryRunner =
@@ -96,23 +150,76 @@ export function createDefaultActionExecutor(opts?: Readonly<{
 
       const childSessionId = String((result as any).childSessionId ?? '').trim();
       if (childSessionId) {
-        await openSessionForVoiceTool({ sessionId: childSessionId, resolveServerIdForSessionId: opts?.resolveServerIdForSessionId });
+        if (opts?.openSession) {
+          await opts.openSession(childSessionId);
+        } else {
+          await openSessionForVoiceTool({
+            sessionId: childSessionId,
+            resolveServerIdForSessionId: opts?.resolveServerIdForSessionId,
+            resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
+          });
+        }
       }
       return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
     },
 
-    sessionSpawnNew: async ({ tag, workspaceId, agentId, modelId, path, host, initialMessage }) =>
-      await spawnSessionForVoiceTool({ tag, workspaceId, agentId, modelId, path, host, initialMessage }),
+    sessionRollback: async ({ sessionId, serverId, target }) => {
+      const sid = String(sessionId ?? '').trim();
+      if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      return await rollbackSessionConversationOp({
+        sessionId: sid,
+        serverId,
+        target: target ?? { type: 'latest_turn' },
+      });
+    },
+
+    sessionHandoffStart: async ({ sessionId, targetMachineId, targetSessionStorageMode, workspaceTransfer, serverId }) => {
+      const sid = String(sessionId ?? '').trim();
+      const tid = String(targetMachineId ?? '').trim();
+      if (!sid || !tid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+
+      const stateAny: any = storage.getState();
+      const session = stateAny?.sessions?.[sid] ?? null;
+      const metadata = session?.metadata ?? null;
+      const sourceMachineId = resolveSessionMachineId(sid, metadata);
+      const sessionStorageMode = metadata?.directSessionV1 ? 'direct' : 'persisted';
+
+      return await completeSessionHandoffOp({
+        sessionId: sid,
+        sourceMachineId: sourceMachineId || undefined,
+        targetMachineId: tid,
+        sessionStorageMode,
+        ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
+        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+        ...(workspaceTransfer ? {
+          workspaceTransfer: {
+            ...workspaceTransfer,
+            ignoredIncludeGlobs: [...workspaceTransfer.ignoredIncludeGlobs],
+          },
+        } : {}),
+        sourceMetadata: metadata ?? {},
+        serverId,
+      });
+    },
+
+    sessionSpawnNew: async ({ tag, agentId, modelId, path, host, initialMessage }) =>
+      await spawnSessionForVoiceTool({ tag, agentId, modelId, path, host, initialMessage }),
 
     sessionSpawnPicker: async ({ tag, agentId, modelId, initialMessage }) =>
       await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, initialMessage }),
 
-    workspacesListRecent: async ({ limit }) => await listRecentWorkspacesForVoiceTool({ limit }),
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
-    agentsBackendsList: async ({ includeDisabled }) => await listAgentBackendsForVoiceTool({ includeDisabled }),
-    agentsModelsList: async ({ agentId, machineId }) => await listAgentModelsForVoiceTool({ agentId, machineId }),
+    reviewEnginesList: async ({ sessionId, includeDisabled }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled }),
+    agentsBackendsList: async (args) => {
+      const { includeDisabled, limit } = args as AgentsBackendsListArgs;
+      return await listAgentBackendsForVoiceTool({ includeDisabled, limit });
+    },
+    agentsModelsList: async (args) => {
+      const { agentId, machineId, limit, backendTargetKey } = args as AgentsModelsListArgs;
+      return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
+    },
 
     sessionSendMessage: async ({ sessionId, message, serverId }) =>
       await sendSessionMessageWithServerScope({ sessionId, message, serverId }),
@@ -132,6 +239,64 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         payload: request,
       });
     },
+    sessionUserActionAnswer: async ({ sessionId, requestId, answers, decision, reason, updatedPermissions, serverId }) => {
+      const reqId = String(requestId ?? '').trim();
+      if (!reqId) {
+        return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
+      }
+      const normalizedAnswers = Object.fromEntries(
+        (Array.isArray(answers) ? answers : [])
+          .map((entry: any) => ({
+            question: String(entry?.question ?? '').trim(),
+            answer: String(entry?.answer ?? '').trim(),
+          }))
+          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
+          .map((entry) => [entry.question, entry.answer] as const),
+      );
+      if (!decision && Object.keys(normalizedAnswers).length === 0) {
+        return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId };
+      }
+      const approved = decision ? decision === 'approve' : true;
+      return await sessionRpcWithServerScope({
+        sessionId,
+        serverId,
+        method: 'permission',
+        payload: {
+          id: reqId,
+          approved,
+          ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
+          ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
+          ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
+        },
+      });
+    },
+    sessionModeSet: async ({ sessionId, modeId }) => {
+      const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
+      const control = resolveSessionModeActionControl(session);
+      const normalizedModeId = normalizeRequestedSessionModeId(control, modeId);
+      if (!isRequestedSessionModeSupported(control, normalizedModeId)) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
+      await publishAcpSessionModeOverrideToMetadata({
+        sessionId,
+        modeId: normalizedModeId,
+        updatedAt: Date.now(),
+        updateSessionMetadataWithRetry: sync.patchSessionMetadataWithRetry,
+      });
+      return { ok: true, sessionId, modeId: normalizedModeId };
+    },
+    sessionModesList: async ({ sessionId }) => {
+      const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
+      return {
+        items: serializeSessionModeActionOptions(resolveSessionModeActionControl(session)).map((option) => ({
+          id: option.value,
+          label: option.label,
+          ...(typeof option.description === 'string' && option.description.trim().length > 0
+            ? { description: option.description }
+            : {}),
+        })),
+      };
+    },
 
     sessionTargetPrimarySet: async ({ sessionId }) => await setPrimaryActionSessionId({ sessionId }),
     sessionTargetTrackedSet: async ({ sessionIds }) => await setTrackedSessionIds({ sessionIds }),
@@ -141,33 +306,11 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       await getSessionRecentMessagesForVoiceTool({ sessionId, defaultSessionId, limit, cursor, includeUser, includeAssistant, maxCharsPerMessage }),
 
     resetGlobalVoiceAgent: async () => {
-      voiceActivityController.clearSession(VOICE_AGENT_GLOBAL_SESSION_ID);
-      const stateAny: any = storage.getState();
-      const transcriptCfg = stateAny?.settings?.voice?.adapters?.local_conversation?.agent?.transcript ?? null;
-      if (transcriptCfg?.persistenceMode === 'persistent' && typeof stateAny?.applySettingsLocal === 'function') {
-        const currentEpochRaw = Number(transcriptCfg.epoch ?? 0);
-        const currentEpoch = Number.isFinite(currentEpochRaw) && currentEpochRaw >= 0 ? Math.floor(currentEpochRaw) : 0;
-        const nextEpoch = currentEpoch + 1;
-        try {
-          stateAny.applySettingsLocal({
-            voice: {
-              adapters: {
-                local_conversation: {
-                  agent: {
-                    transcript: {
-                      epoch: nextEpoch,
-                    },
-                  },
-                },
-              },
-            },
-          });
-        } catch {
-          // best-effort only
-        }
-      }
-      await voiceSessionManager.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
+      await resetVoiceAgentPersistenceState({
+        stop: async () => await voiceSessionManager.stop(VOICE_AGENT_GLOBAL_SESSION_ID),
+      });
     },
+    teleportVoiceAgentToSessionRoot: async ({ sessionId }) => await teleportVoiceAgentToSessionRoot({ sessionId }),
 
     daemonMemorySearch: async ({ machineId, query, serverId }) =>
       await machineRpcWithServerScope({
@@ -241,12 +384,14 @@ export function createDefaultActionExecutor(opts?: Readonly<{
 
     approvalsUpdate: async ({ artifactId, request }) => {
       const sessionId = typeof request.createdBy.sessionId === 'string' ? String(request.createdBy.sessionId).trim() : '';
+      const serverId = typeof request.serverId === 'string' ? request.serverId.trim() : '';
       const header: ArtifactHeader = {
         v: 1,
         kind: 'approval_request.v1',
         title: request.summary,
         approvalStatus: request.status,
         actionId: request.actionId,
+        ...(serverId ? { serverId } : {}),
         ...(sessionId ? { sessions: [sessionId], sessionId } : {}),
       };
 
@@ -264,12 +409,13 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       return { ok: true, artifactId };
     },
 
-    promptAssetExport: async ({ artifactId, machineId, assetTypeId, scope, directory, targetPath, targetName, installMode }) => {
+    promptAssetExport: async ({ artifactId, machineId, assetTypeId, scope, serverId, directory, targetPath, targetName, installMode }) => {
       const result = await writePromptLibraryArtifactToExternalAsset({
         artifactId,
         machineId,
         assetTypeId,
         scope,
+        serverId,
         workspacePath: directory ?? null,
         targetInput: targetPath ?? targetName ?? '',
         installMode,
@@ -283,12 +429,13 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       return { ok: true, artifactId, exported: true };
     },
 
-    promptRegistryInstall: async ({ machineId, sourceId, itemId, configuredSources, installTarget }) => {
+    promptRegistryInstall: async ({ machineId, sourceId, itemId, configuredSources, serverId, installTarget }) => {
       const result = await installPromptRegistryItem({
         machineId,
         sourceId,
         itemId,
         configuredSources,
+        serverId,
         promptExternalLinks: storage.getState().settings.promptExternalLinksV1,
         ...(installTarget ? { installTarget } : {}),
       });
@@ -304,5 +451,9 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     ...(opts?.resolveServerIdForSessionId ? { resolveServerIdForSessionId: opts.resolveServerIdForSessionId } : {}),
   };
 
-  return createActionExecutor(deps);
+  const executor = createActionExecutor(deps);
+
+  return {
+    execute: async (actionId, input, context) => await executor.execute(actionId, input, context),
+  };
 }

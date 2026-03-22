@@ -32,6 +32,7 @@ Common examples:
 `happier attach` reconnects to a session that is already running.
 
 ```bash
+happier attach
 happier attach <session-id>
 ```
 
@@ -43,6 +44,14 @@ What happens depends on how that session was started:
 - **provider-native attach session**: Happier uses the provider’s own attach flow for that session
 
 `happier attach` reconnects to the existing session. It does not start a new one.
+
+If you run `happier attach` without a session id in a supported terminal, Happier opens an interactive list of active sessions:
+
+- attachable sessions on the current machine are selectable
+- active sessions that are visible but not attachable stay disabled with an explanation
+- remote-capable provider sessions are labeled as remote; press `P` to check reachability before attaching
+
+Stopped sessions are not shown in this picker. Use [`happier resume`](/docs/features/session-resume) for inactive sessions.
 
 ## Requirements
 

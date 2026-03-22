@@ -153,7 +153,7 @@ function AttachmentImagePreviewCurrentImage(props: Readonly<{
         return (
             <View style={styles.centeredState}>
                 <Ionicons name="alert-circle-outline" size={28} color={theme.colors.textSecondary} />
-                <Text style={styles.centeredStateText}>{preview.error || t('common.error')}</Text>
+                <Text style={styles.centeredStateText}>{t('common.error')}</Text>
             </View>
         );
     }

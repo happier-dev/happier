@@ -15,6 +15,10 @@ function normalizeNpxLikeArgs(args: readonly string[]): string[] {
     if (arg === '-y' || arg === '--yes' || arg === '--prefer-offline') {
       continue;
     }
+    if (arg.startsWith('--package=') || arg.startsWith('-p=')) {
+      out.push(arg);
+      continue;
+    }
     if ((arg === '-p' || arg === '--package') && index + 1 < args.length) {
       out.push(arg, args[index + 1]!);
       index += 1;
@@ -31,7 +35,7 @@ function normalizeExecArgs(args: readonly string[]): string[] {
 }
 
 function hasPackageFlag(args: readonly string[]): boolean {
-  return args.some((arg) => arg === '-p' || arg === '--package');
+  return args.some((arg) => arg === '-p' || arg === '--package' || arg.startsWith('--package=') || arg.startsWith('-p='));
 }
 
 export async function normalizePackageRunnerInvocation(params: Readonly<{

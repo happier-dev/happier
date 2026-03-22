@@ -1,15 +1,18 @@
 import * as React from 'react';
 import { View, ActivityIndicator, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useFriendRequests, useSocketStatus } from '@/sync/domains/state/storage';
+import { useSocketStatus } from '@/sync/domains/state/storage';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { usePathname, useRouter } from 'expo-router';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
+import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
+import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
 import { FABWide } from '@/components/ui/buttons/FABWide';
 import { TabBar, TabType } from '@/components/ui/navigation/TabBar';
 import { InboxView } from '@/components/navigation/shell/InboxView';
+import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SettingsViewWrapper } from '@/components/settings/shell/SettingsViewWrapper';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { Header } from '@/components/navigation/Header';
@@ -39,6 +42,11 @@ interface MainViewProps {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
+    },
+    sidebarContainer: {
+        flex: 1,
+        flexBasis: 0,
+        flexGrow: 1,
     },
     phoneContainer: {
         flex: 1,
@@ -154,11 +162,12 @@ const SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID = 'app.ui.sessionGettingStarte
 const TAB_TITLES = {
     sessions: 'tabs.sessions',
     inbox: 'tabs.inbox',
+    friends: 'tabs.friends',
     settings: 'tabs.settings',
 } as const;
 
 // Active tabs (excludes zen which is disabled)
-type ActiveTabType = 'sessions' | 'inbox' | 'settings';
+type ActiveTabType = 'sessions' | 'inbox' | 'friends' | 'settings';
 
 // Header title component with connection status
 const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
@@ -208,7 +217,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
         );
     }
 
-    if (activeTab === 'inbox') {
+    if (activeTab === 'friends') {
         return (
             <Pressable
                 onPress={() => {
@@ -223,6 +232,10 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 <Ionicons name="person-add-outline" size={24} color={theme.colors.header.tint} />
             </Pressable>
         );
+    }
+
+    if (activeTab === 'inbox') {
+        return <View style={styles.headerButton} />;
     }
 
     if (activeTab === 'settings') {
@@ -246,30 +259,37 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 
 export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
-    const sessionListViewData = useVisibleSessionListViewData();
+    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const sessionListViewData = useVisibleSessionListViewData(variant === 'sidebar' ? storageKind : 'all');
     const isTablet = useIsTablet();
     const router = useRouter();
     const pathname = usePathname();
-    const friendRequests = useFriendRequests();
-    const inboxFriendsEnabled = useFriendsEnabled();
+    const friendsEnabled = useFriendsEnabled();
+    const inboxEnabled = useFeatureEnabled('inbox.global') || useFeatureEnabled('actions.approvals');
     const voiceEnabled = useFeatureEnabled('voice');
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state
     const { activeTab, setActiveTab } = useTabState();
 
     React.useEffect(() => {
-        if (inboxFriendsEnabled) return;
-        if (activeTab !== 'inbox') return;
+        if (!inboxEnabled && activeTab === 'inbox') {
+            void setActiveTab('sessions');
+            return;
+        }
+
+        if (friendsEnabled) return;
+        if (activeTab !== 'friends') return;
         void setActiveTab('sessions');
-    }, [activeTab, inboxFriendsEnabled, setActiveTab]);
+    }, [activeTab, friendsEnabled, inboxEnabled, setActiveTab]);
 
     const headerTab: ActiveTabType = React.useMemo(() => {
-        const normalized = (activeTab === 'inbox' || activeTab === 'sessions' || activeTab === 'settings')
+        const normalized = (activeTab === 'inbox' || activeTab === 'friends' || activeTab === 'sessions' || activeTab === 'settings')
             ? activeTab
             : 'sessions';
-        if (!inboxFriendsEnabled && normalized === 'inbox') return 'sessions';
+        if (!inboxEnabled && normalized === 'inbox') return 'sessions';
+        if (!friendsEnabled && normalized === 'friends') return 'sessions';
         return normalized;
-    }, [activeTab, inboxFriendsEnabled]);
+    }, [activeTab, friendsEnabled, inboxEnabled]);
 
     const handleNewSession = React.useCallback(() => {
         router.push('/new');
@@ -283,23 +303,36 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const renderTabContent = React.useCallback(() => {
         switch (activeTab) {
             case 'inbox':
-                return inboxFriendsEnabled ? <InboxView /> : <SessionsListWrapper />;
+                return inboxEnabled ? <InboxView /> : <SessionsListWrapper />;
+            case 'friends':
+                return friendsEnabled ? <FriendsView /> : <SessionsListWrapper />;
             case 'settings':
                 return <SettingsViewWrapper />;
             case 'sessions':
             default:
                 return <SessionsListWrapper />;
         }
-    }, [activeTab, inboxFriendsEnabled]);
+    }, [activeTab, friendsEnabled, inboxEnabled]);
 
     // Sidebar variant
     if (variant === 'sidebar') {
+        const storageChrome = (
+            <SessionsListStorageChrome
+                directSessionsEnabled={directSessionsEnabled}
+                storageKind={storageKind}
+                onSelectStorageKind={setStorageKind}
+            />
+        );
+
         // Loading state
         if (sessionListViewData === null) {
             return (
-                <View style={styles.sidebarContentContainer}>
-                    <View style={styles.tabletLoadingContainer}>
-                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <View style={styles.sidebarContainer}>
+                    {storageChrome}
+                    <View style={styles.sidebarContentContainer}>
+                        <View style={styles.tabletLoadingContainer}>
+                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                        </View>
                     </View>
                 </View>
             );
@@ -309,16 +342,19 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         if (sessionListViewData.length === 0) {
             const suppressSidebarGuidance = isTablet && pathname === '/';
             return (
-                <View style={styles.sidebarContentContainer}>
-                    <View style={styles.emptyStateContainer}>
-                        {suppressSidebarGuidance ? (
-                            <View style={styles.sidebarEmptyHintContainer}>
-                                <Text style={styles.sidebarEmptyHintTitle}>{t('components.emptySessionsTablet.noActiveSessions')}</Text>
-                                <Text style={styles.sidebarEmptyHintSubtitle}>{t('components.emptySessionsTablet.startNewSessionDescription')}</Text>
-                            </View>
-                        ) : (
-                            <SessionGettingStartedGuidance variant="sidebar" />
-                        )}
+                <View style={styles.sidebarContainer}>
+                    {storageChrome}
+                    <View style={styles.sidebarContentContainer}>
+                        <View style={styles.emptyStateContainer}>
+                            {suppressSidebarGuidance ? (
+                                <View style={styles.sidebarEmptyHintContainer}>
+                                    <Text style={styles.sidebarEmptyHintTitle}>{t('components.emptySessionsTablet.noActiveSessions')}</Text>
+                                    <Text style={styles.sidebarEmptyHintSubtitle}>{t('components.emptySessionsTablet.startNewSessionDescription')}</Text>
+                                </View>
+                            ) : (
+                                <SessionGettingStartedGuidance variant="sidebar" />
+                            )}
+                        </View>
                     </View>
                 </View>
             );
@@ -326,8 +362,11 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
         // Sessions list
         return (
-            <View style={styles.sidebarContentContainer}>
-                <SessionsList />
+            <View style={styles.sidebarContainer}>
+                {storageChrome}
+                <View style={styles.sidebarContentContainer}>
+                    <SessionsList storageKind={storageKind} />
+                </View>
             </View>
         );
     }
@@ -367,7 +406,6 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             <TabBar
                 activeTab={activeTab}
                 onTabPress={handleTabPress}
-                inboxBadgeCount={friendRequests.length}
             />
         </>
     );

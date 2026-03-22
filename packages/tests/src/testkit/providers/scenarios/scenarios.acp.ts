@@ -34,25 +34,29 @@ export function makeAcpReadInWorkspaceScenario(params: {
 }): ProviderScenario {
   const filename = params.filename ?? 'e2e-read.txt';
   const filePathRel = filename;
+  const sentinel = `${params.content}_${randomUUID()}`;
   return {
     id: params.id ?? 'read_in_workspace',
     title: params.title ?? 'read: read a known small file in workspace',
     tier: 'extended',
     yolo: true,
     setup: async ({ workspaceDir }) => {
-      await (await import('node:fs/promises')).writeFile(join(workspaceDir, filename), `${params.content}\n`, 'utf8');
+      await (await import('node:fs/promises')).writeFile(join(workspaceDir, filename), `${sentinel}\n`, 'utf8');
     },
     prompt: ({ workspaceDir }) =>
       [
-        'Run exactly one tool call:',
-        `- Use the read tool to read: ${params.useAbsolutePath ? join(workspaceDir, filePathRel) : filePathRel}`,
+        'This is an automated test. You MUST use exactly one tool call.',
+        `- Use the Read tool to read: ${params.useAbsolutePath ? join(workspaceDir, filePathRel) : filePathRel}`,
         ...(params.useExecuteFallbackOnReadFailure
           ? [
               '- If the read tool fails, use the execute tool to run:',
               `  cat "${join(workspaceDir, filePathRel)}"`,
             ]
           : []),
-        '- Then reply DONE.',
+        '',
+        'Then reply with EXACTLY two lines:',
+        '1) the exact first line of that file (the unique READ_SENTINEL... token)',
+        '2) DONE',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
     ...(params.useExecuteFallbackOnReadFailure
@@ -66,7 +70,7 @@ export function makeAcpReadInWorkspaceScenario(params: {
       : {
           requiredFixtureKeys: [k(params.providerId, 'tool-call', 'Read'), k(params.providerId, 'tool-result', 'Read')],
         }),
-    requiredTraceSubstrings: [params.content],
+    requiredTraceSubstrings: [sentinel],
   };
 }
 
@@ -1049,7 +1053,7 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
               })()}" && cat "${outsidePath}"'`,
             ]
           : [
-              'Use the edit tool to write a file OUTSIDE the current working directory:',
+              'Use a file-editing tool to write a file OUTSIDE the current working directory (Patch preferred; Edit is ok):',
               `- Absolute path: ${(() => {
                 if (!outsidePath) {
                   // Fallback for direct builder-unit tests that call prompt without setup.
@@ -1062,6 +1066,12 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
                 return outsidePath;
               })()}`,
               `- Content: ${params.content}`,
+              '',
+              'If the Patch tool is available, apply this exact patch:',
+              '*** Begin Patch',
+              `*** Add File: ${outsidePath ?? '<outside-path>'}`,
+              `+${params.content}`,
+              '*** End Patch',
             ]),
         '',
         allowExecuteFallback

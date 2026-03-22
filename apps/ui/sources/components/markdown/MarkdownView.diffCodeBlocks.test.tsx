@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 declare global {
     // eslint-disable-next-line no-var
@@ -13,18 +15,17 @@ vi.mock('./MermaidRenderer', () => ({
     MermaidRenderer: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const actual = await vi.importActual<any>('@/sync/domains/state/storage');
-    return {
-        ...actual,
-        useSetting: (key: string) => {
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+    useSetting: (key: string) => {
             if (key === 'filesDiffTokenizationMaxBytes') return tokenizationMaxBytes;
             if (key === 'wrapLinesInDiffs') return false;
             if (key === 'showLineNumbersInToolViews') return false;
             if (key === 'filesDiffFileListVirtualizationMinFiles') return 20;
             return null;
         },
-    };
+});
 });
 
 vi.mock('@/components/ui/code/blocks/CodeBlockView', () => ({
@@ -41,8 +42,7 @@ describe('MarkdownView (diff code fences)', () => {
     it('renders ```diff fenced blocks as a diff viewer by default', async () => {
         const { MarkdownView } = await import('./MarkdownView');
 
-        const markdown = [
-            '```diff',
+        const diffContent = [
             'diff --git a/a.ts b/a.ts',
             'index 1111111..2222222 100644',
             '--- a/a.ts',
@@ -50,27 +50,29 @@ describe('MarkdownView (diff code fences)', () => {
             '@@ -1 +1 @@',
             '-const a = 1',
             '+const a = 2',
+        ].join('\n');
+        const markdown = [
+            '```diff',
+            diffContent,
             '```',
         ].join('\n');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<MarkdownView markdown={markdown} />);
-            });
+            const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+            tree = screen.tree;
 
-            expect(tree!.root.findAllByType('DiffFilesListView' as any)).toHaveLength(1);
-            expect(tree!.root.findAllByType('CodeBlockView' as any)).toHaveLength(0);
+            const diffView = screen.findByType('DiffFilesListView' as any);
+            expect(diffView).not.toBeNull();
+            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(0);
 
-            const toggleButtons = tree!.root.findAll((n) => n.props?.testID === 'markdown-code-block-toggle:code');
-            expect(toggleButtons).toHaveLength(1);
+            expect(screen.findByTestId('markdown-code-block-toggle:code')).not.toBeNull();
+            await screen.pressByTestIdAsync('markdown-code-block-toggle:code');
 
-            await act(async () => {
-                toggleButtons[0]!.props.onPress();
-            });
-
-            expect(tree!.root.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(tree!.root.findAllByType('CodeBlockView' as any)).toHaveLength(1);
+            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
+            const codeView = screen.findByType('CodeBlockView' as any);
+            expect(codeView).not.toBeNull();
+            expect(codeView.props.code).toBe(diffContent);
         } finally {
             act(() => {
                 tree?.unmount();
@@ -82,16 +84,17 @@ describe('MarkdownView (diff code fences)', () => {
         const { MarkdownView } = await import('./MarkdownView');
 
         tokenizationMaxBytes = 10;
-        const markdown = ['```diff', 'diff --git a/a.ts b/a.ts', '+const a = 2', '```'].join('\n');
+        const codeContent = ['diff --git a/a.ts b/a.ts', '+const a = 2'].join('\n');
+        const markdown = ['```diff', codeContent, '```'].join('\n');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<MarkdownView markdown={markdown} />);
-            });
+            const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+            tree = screen.tree;
 
-            expect(tree!.root.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(tree!.root.findAllByType('CodeBlockView' as any)).toHaveLength(1);
+            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
+            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(1);
+            expect(screen.findByType('CodeBlockView' as any).props.code).toBe(codeContent);
         } finally {
             tokenizationMaxBytes = 1_000_000;
             act(() => {
@@ -103,16 +106,17 @@ describe('MarkdownView (diff code fences)', () => {
     it('keeps non-diff fenced blocks using CodeBlockView', async () => {
         const { MarkdownView } = await import('./MarkdownView');
 
-        const markdown = ['```ts', 'export const x = 1;', '```'].join('\n');
+        const codeContent = 'export const x = 1;';
+        const markdown = ['```ts', codeContent, '```'].join('\n');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<MarkdownView markdown={markdown} />);
-            });
+            const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+            tree = screen.tree;
 
-            expect(tree!.root.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(tree!.root.findAllByType('CodeBlockView' as any)).toHaveLength(1);
+            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
+            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(1);
+            expect(screen.findByType('CodeBlockView' as any).props.code).toBe(codeContent);
         } finally {
             act(() => {
                 tree?.unmount();
@@ -134,16 +138,15 @@ describe('MarkdownView (diff code fences)', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(React.createElement(MarkdownView as any, { markdown, variant: 'thinking' }));
-            });
+            const screen = await renderScreen(React.createElement(MarkdownView as any, { markdown, variant: 'thinking' }));
+            tree = screen.tree;
 
-            expect(tree!.root.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(tree!.root.findAllByType('CodeBlockView' as any)).toHaveLength(0);
+            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
+            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(0);
 
-            const textNodes = tree!.root.findAll((n) => typeof n.props?.children === 'string');
-            const hasDiffLine = textNodes.some((n) => String(n.props.children).includes('diff --git a/a.ts b/a.ts'));
-            const hasPlusLine = textNodes.some((n) => String(n.props.children).includes('+const a = 2'));
+            const textContent = screen.getTextContent();
+            const hasDiffLine = textContent.includes('diff --git a/a.ts b/a.ts');
+            const hasPlusLine = textContent.includes('+const a = 2');
             expect(hasDiffLine).toBe(true);
             expect(hasPlusLine).toBe(true);
         } finally {

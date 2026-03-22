@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '@/components/tools/renderers/core/_registry';
 import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { TaskLikeSummarySection } from './TaskLikeSummarySection';
+import { SubAgentSummarySection } from './SubAgentSummarySection';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -60,10 +60,30 @@ function coerceTextMessages(messages: readonly Message[]): readonly string[] {
     return out;
 }
 
+function resultHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
+    if (depth > 5 || value == null) return false;
+
+    if (typeof value === 'string') {
+        return value.replaceAll('\\"', '"').toLowerCase().includes('request interrupted');
+    }
+
+    if (Array.isArray(value)) {
+        return value.some((item) => resultHasRequestInterruptedSignal(item, depth + 1));
+    }
+
+    if (typeof value === 'object') {
+        return Object.values(value as Record<string, unknown>).some((item) =>
+            resultHasRequestInterruptedSignal(item, depth + 1),
+        );
+    }
+
+    return false;
+}
+
 export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel, sessionId, messageId }) => {
     if (tool.state === 'running') {
         return (
-            <TaskLikeSummarySection
+            <SubAgentSummarySection
                 tool={tool as any}
                 metadata={null}
                 messages={messages ?? []}
@@ -75,14 +95,32 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
         );
     }
 
-    if (tool.state === 'error' && tool.result) {
-        return (
-            <StructuredResultView
-                tool={{ ...tool, state: 'completed' }}
-                metadata={null}
-                messages={[]}
-            />
-        );
+    if (tool.state === 'error') {
+        // Abort-like errors happen when the outer SubAgentRun call was interrupted (e.g. turn cancel) while the
+        // underlying sidechain is still streaming. Prefer showing the sidechain transcript in this case.
+        if (resultHasRequestInterruptedSignal(tool.result) && (messages?.length ?? 0) > 0) {
+            return (
+                <SubAgentSummarySection
+                    tool={{ ...tool, state: 'running', result: null } as any}
+                    metadata={null}
+                    messages={messages ?? []}
+                    detailLevel={detailLevel}
+                    sessionId={sessionId}
+                    messageId={messageId}
+                    opts={{ hideResultInlineWhenBackgroundRun: false }}
+                />
+            );
+        }
+
+        if (tool.result) {
+            return (
+                <StructuredResultView
+                    tool={{ ...tool, state: 'completed' }}
+                    metadata={null}
+                    messages={[]}
+                />
+            );
+        }
     }
 
     if (tool.state !== 'completed') return null;

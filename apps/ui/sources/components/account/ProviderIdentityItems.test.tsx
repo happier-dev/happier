@@ -1,32 +1,49 @@
 import React from 'react';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const shared = vi.hoisted(() => ({
+    canOpenURL: vi.fn(async () => true),
+    openURL: vi.fn(async () => true),
+    setPendingExternalConnect: vi.fn(async () => true),
+    clearPendingExternalConnect: vi.fn(async () => true),
+}));
+
 vi.mock('react-native-reanimated', () => ({}));
 
-const canOpenURL = vi.fn(async () => true);
-const openURL = vi.fn(async () => true);
-vi.mock('react-native', () => ({
-    Linking: { canOpenURL, openURL },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                Linking: {
+                                    canOpenURL: shared.canOpenURL,
+                                    openURL: shared.openURL,
+                                },
+                            }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { textSecondary: '#888' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-const setPendingExternalConnect = vi.fn(async () => true);
-const clearPendingExternalConnect = vi.fn(async () => true);
+vi.mock('expo-image', () => ({
+    Image: 'Image',
+}));
+
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        setPendingExternalConnect,
-        clearPendingExternalConnect,
+        setPendingExternalConnect: shared.setPendingExternalConnect,
+        clearPendingExternalConnect: shared.clearPendingExternalConnect,
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
@@ -50,13 +67,15 @@ vi.mock('@/sync/domains/state/storageStore', () => {
     return { storage, getStorage: () => storage };
 });
 
-const modalAlert = vi.fn(async () => {});
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlert,
-        confirm: vi.fn(async () => true),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ confirmResult: true }).module;
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/auth/providers/registry', () => ({
     normalizeProviderId: (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null),
@@ -83,26 +102,26 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 describe('ProviderIdentityItems', () => {
     it('clears pending connect state and blocks unsafe connect URLs', async () => {
-        vi.resetModules();
         itemProps = [];
-        modalAlert.mockClear();
-        setPendingExternalConnect.mockClear();
-        clearPendingExternalConnect.mockClear();
-        canOpenURL.mockClear();
-        openURL.mockClear();
+        shared.setPendingExternalConnect.mockClear();
+        shared.clearPendingExternalConnect.mockClear();
+        shared.canOpenURL.mockClear();
+        shared.openURL.mockClear();
 
+        const { Modal } = await import('@/modal');
         const { ProviderIdentityItems } = await import('./ProviderIdentityItems');
+        vi.mocked(Modal.alert).mockReset();
+        vi.mocked(Modal.confirm).mockReset();
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
 
-        await act(async () => {
-            renderer.create(
-                <ProviderIdentityItems
-                    profile={profileDefaults}
-                    credentials={{ token: 't', secret: 's' }}
-                    applyProfile={() => {}}
-                    returnTo="/settings/account"
-                />,
-            );
-        });
+        await renderScreen(
+            <ProviderIdentityItems
+                profile={profileDefaults}
+                credentials={{ token: 't', secret: 's' }}
+                applyProfile={() => {}}
+                returnTo="/settings/account"
+            />,
+        );
 
         const connectItem = itemProps.find((p) => p.title === 'GitHub');
         expect(connectItem).toBeTruthy();
@@ -111,10 +130,10 @@ describe('ProviderIdentityItems', () => {
             await connectItem.onPress();
         });
 
-        expect(setPendingExternalConnect).toHaveBeenCalledWith({ provider: 'github', returnTo: '/settings/account' });
-        expect(clearPendingExternalConnect).toHaveBeenCalled();
-        expect(canOpenURL).not.toHaveBeenCalled();
-        expect(openURL).not.toHaveBeenCalled();
-        expect(modalAlert).toHaveBeenCalled();
+        expect(shared.setPendingExternalConnect).toHaveBeenCalledWith({ provider: 'github', returnTo: '/settings/account' });
+        expect(shared.clearPendingExternalConnect).toHaveBeenCalled();
+        expect(shared.canOpenURL).not.toHaveBeenCalled();
+        expect(shared.openURL).not.toHaveBeenCalled();
+        expect(Modal.alert).toHaveBeenCalled();
     });
 });

@@ -2,6 +2,18 @@ export async function delay(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Like {@link delay}, but calls `.unref()` on the timer so it does not keep
+ * the Node.js event loop alive.  Useful in daemon/shutdown code paths where a
+ * pending timer should not prevent process exit.
+ */
+export function delayUnref(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+    });
+}
+
 export function exponentialBackoffDelay(currentFailureCount: number, minDelay: number, maxDelay: number, maxFailureCount: number) {
     const safeMaxFailureCount = Number.isFinite(maxFailureCount) ? Math.max(maxFailureCount, 1) : 50;
     const clampedFailureCount = Math.min(Math.max(currentFailureCount, 0), safeMaxFailureCount);

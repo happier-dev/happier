@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+
+import { buildGitIdentityEnv } from './core/env_scope.mjs';
+import { createTempFixture } from './core/temp_fixture.mjs';
 import { runCommandCapture } from './stack_script_command_testkit.mjs';
 
 async function runGitOk(args, { cwd, env }) {
@@ -10,24 +12,26 @@ async function runGitOk(args, { cwd, env }) {
   return res;
 }
 
-export async function createStackArchiveFixture(t, { stackName = 'exp-test', worktreeSlug = 'archived-by-stack' } = {}) {
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-archive-'));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
-  });
+export async function createStackArchiveFixture(
+  t,
+  { stackName = 'exp-test', worktreeSlug = 'archived-by-stack', attachStack = true } = {},
+) {
+  const fixture = await createTempFixture(t, { prefix: 'happy-stacks-stack-archive-' });
+  const tmp = fixture.root;
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
   const repoDir = join(workspaceDir, 'main');
   const worktreeDir = join(workspaceDir, 'pr', worktreeSlug);
-  const baseEnv = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('HAPPIER_STACK_'))),
-    GIT_TERMINAL_PROMPT: '0',
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-  };
+  const baseEnv = buildGitIdentityEnv({
+    extraEnv: {
+      GIT_TERMINAL_PROMPT: '0',
+      HAPPIER_STACK_HOME_DIR: homeDir,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    },
+  });
 
   await mkdir(repoDir, { recursive: true });
   await runGitOk(['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
@@ -41,9 +45,11 @@ export async function createStackArchiveFixture(t, { stackName = 'exp-test', wor
   await runGitOk(['worktree', 'add', '-b', `pr/${worktreeSlug}`, worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
 
-  const envPath = join(storageDir, stackName, 'env');
-  await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(envPath, [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_REPO_DIR=${worktreeDir}`, ''].join('\n'), 'utf-8');
+  if (attachStack) {
+    const envPath = join(storageDir, stackName, 'env');
+    await mkdir(dirname(envPath), { recursive: true });
+    await writeFile(envPath, [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_REPO_DIR=${worktreeDir}`, ''].join('\n'), 'utf-8');
+  }
 
   return {
     stackName,

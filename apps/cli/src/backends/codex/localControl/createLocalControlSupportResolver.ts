@@ -1,31 +1,36 @@
 import {
   decideCodexLocalControlSupport,
+  type CodexLocalControlBackend,
   type CodexLocalControlSupportDecision,
 } from './localControlSupport';
 
 type CreateCodexLocalControlSupportResolverParams = Readonly<{
   startedBy: 'daemon' | 'cli';
-  experimentalCodexAcpEnabled: boolean;
+  experimentalCodexAcpEnabled: boolean | (() => boolean);
+  localControlBackend?: CodexLocalControlBackend | null | (() => CodexLocalControlBackend | null);
   hasTtyForLocal?: boolean;
 }>;
 
 export function createCodexLocalControlSupportResolver(
   params: CreateCodexLocalControlSupportResolverParams,
 ): (opts: { includeAcpProbe: boolean }) => Promise<CodexLocalControlSupportDecision> {
-  let localControlSupportCache: CodexLocalControlSupportDecision | null = null;
+  const resolveBoolean = (value: boolean | (() => boolean)): boolean => {
+    return typeof value === 'function' ? Boolean(value()) : Boolean(value);
+  };
+  const resolveBackend = (
+    value: CodexLocalControlBackend | null | undefined | (() => CodexLocalControlBackend | null),
+  ): CodexLocalControlBackend | null => {
+    if (typeof value === 'function') return value() ?? null;
+    return value ?? null;
+  };
 
   return async (_opts: { includeAcpProbe: boolean }): Promise<CodexLocalControlSupportDecision> => {
-    if (localControlSupportCache) return localControlSupportCache;
-
     const decision = decideCodexLocalControlSupport({
       startedBy: params.startedBy,
-      experimentalCodexAcpEnabled: params.experimentalCodexAcpEnabled,
+      experimentalCodexAcpEnabled: resolveBoolean(params.experimentalCodexAcpEnabled),
+      localControlBackend: resolveBackend(params.localControlBackend),
       hasTtyForLocal: params.hasTtyForLocal,
     });
-
-    // No runtime probes; decision is always stable.
-    localControlSupportCache = decision;
-
     return decision;
   };
 }

@@ -74,6 +74,27 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
       {
         path: '/tmp',
         flavor: 'opencode',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'session-1',
+            serverBaseUrl: 'http://127.0.0.1:4096/',
+            serverBaseUrlExplicit: true,
+            providerExtra: {
+              owner: 'opencode',
+              schemaId: 'opencode.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 'session-1',
+                serverBaseUrl: 'http://127.0.0.1:4096/',
+                serverBaseUrlExplicit: true,
+              },
+            },
+          },
+        },
         opencodeSessionId: 'session-1',
         opencodeBackendMode: 'server',
         opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
@@ -82,6 +103,27 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
       {
         path: '/tmp',
         flavor: 'opencode',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'session-2',
+            serverBaseUrl: 'http://127.0.0.1:4096/',
+            serverBaseUrlExplicit: true,
+            providerExtra: {
+              owner: 'opencode',
+              schemaId: 'opencode.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 'session-2',
+                serverBaseUrl: 'http://127.0.0.1:4096/',
+                serverBaseUrlExplicit: true,
+              },
+            },
+          },
+        },
         opencodeSessionId: 'session-2',
         opencodeBackendMode: 'server',
         opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
@@ -117,6 +159,23 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
       {
         path: '/tmp',
         flavor: 'opencode',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'session-1',
+            providerExtra: {
+              owner: 'opencode',
+              schemaId: 'opencode.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 'session-1',
+              },
+            },
+          },
+        },
         opencodeSessionId: 'session-1',
         opencodeBackendMode: 'server',
       } as unknown as Metadata,
@@ -150,6 +209,27 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
         machineId: 'machine-1',
         path: '/repo',
         flavor: 'opencode',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'session-1',
+            serverBaseUrl: 'http://127.0.0.1:4096/',
+            serverBaseUrlExplicit: true,
+            providerExtra: {
+              owner: 'opencode',
+              schemaId: 'opencode.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 'session-1',
+                serverBaseUrl: 'http://127.0.0.1:4096/',
+                serverBaseUrlExplicit: true,
+              },
+            },
+          },
+        },
         opencodeSessionId: 'session-1',
         opencodeBackendMode: 'server',
         opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
@@ -165,6 +245,27 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
             directory: '/repo',
           },
           linkedAtMs: expect.any(Number),
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'opencode',
+            provider: {
+              backendMode: 'server',
+              vendorSessionId: 'session-1',
+              serverBaseUrl: 'http://127.0.0.1:4096/',
+              serverBaseUrlExplicit: true,
+              providerExtra: {
+                owner: 'opencode',
+                schemaId: 'opencode.agentRuntimeDescriptorExtra',
+                v: 1,
+                runtimeHandle: {
+                  backendMode: 'server',
+                  vendorSessionId: 'session-1',
+                  serverBaseUrl: 'http://127.0.0.1:4096/',
+                  serverBaseUrlExplicit: true,
+                },
+              },
+            },
+          },
         },
       } as unknown as Metadata,
     ]);
@@ -202,10 +303,168 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
       {
         path: '/tmp',
         flavor: 'opencode',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'session-1',
+            providerExtra: {
+              owner: 'opencode',
+              schemaId: 'opencode.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 'session-1',
+              },
+            },
+          },
+        },
         opencodeSessionId: 'session-1',
         opencodeBackendMode: 'server',
       } as unknown as Metadata,
     ]);
+  });
+
+  it('clears stale runtime descriptor metadata when publishing a session id without backend mode', async () => {
+    const lastPublished = {
+      sessionId: null as string | null,
+      backendMode: null as 'server' | 'acp' | null,
+      serverBaseUrl: null as string | null,
+      serverBaseUrlExplicit: false,
+    };
+    const updates: Metadata[] = [];
+
+    const apply = (updater: (m: Metadata) => Metadata) => {
+      const base = {
+        path: '/tmp',
+        flavor: 'opencode',
+        opencodeSessionId: 'session-old',
+        opencodeBackendMode: 'server',
+        opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+        opencodeServerBaseUrlExplicit: true,
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 'session-old',
+            serverBaseUrl: 'http://127.0.0.1:4096/',
+            serverBaseUrlExplicit: true,
+            providerExtra: {
+              owner: 'opencode',
+              schemaId: 'opencode.agentRuntimeDescriptorExtra',
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 'session-old',
+                serverBaseUrl: 'http://127.0.0.1:4096/',
+                serverBaseUrlExplicit: true,
+              },
+            },
+          },
+        },
+      } as unknown as Metadata;
+      updates.push(updater(base));
+    };
+
+    await maybeUpdateOpenCodeSessionIdMetadata({
+      getOpenCodeSessionId: () => 'session-next',
+      backendMode: null,
+      serverBaseUrl: null,
+      serverBaseUrlExplicit: false,
+      updateHappySessionMetadata: apply,
+      lastPublished,
+    });
+
+    expect(updates).toEqual([
+      {
+        path: '/tmp',
+        flavor: 'opencode',
+        opencodeSessionId: 'session-next',
+      } as unknown as Metadata,
+    ]);
+  });
+
+  it('clears stale direct-session metadata when transcript storage is no longer direct', async () => {
+    const lastPublished = {
+      sessionId: null as string | null,
+      backendMode: null as 'server' | 'acp' | null,
+      serverBaseUrl: null as string | null,
+      serverBaseUrlExplicit: false,
+    } as Record<string, unknown>;
+    const updates: Metadata[] = [];
+
+    const apply = (updater: (m: Metadata) => Metadata) => {
+      const base = {
+        machineId: 'machine-1',
+        path: '/tmp',
+        flavor: 'opencode',
+        opencodeSessionId: 'session-old',
+        opencodeBackendMode: 'server',
+        directSessionV1: {
+          v: 1,
+          providerId: 'opencode',
+          machineId: 'machine-1',
+          remoteSessionId: 'session-old',
+          source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+          linkedAtMs: 1,
+        },
+      } as unknown as Metadata;
+      updates.push(updater(base));
+    };
+
+    await maybeUpdateOpenCodeSessionIdMetadata({
+      getOpenCodeSessionId: () => 'session-old',
+      backendMode: 'server',
+      serverBaseUrl: 'http://127.0.0.1:4096/',
+      serverBaseUrlExplicit: true,
+      transcriptStorage: 'persisted',
+      updateHappySessionMetadata: apply,
+      lastPublished: lastPublished as any,
+    });
+
+    expect(updates[0]).not.toHaveProperty('directSessionV1');
+  });
+
+  it('does not mark non-explicit server URLs as explicit in direct-session runtime metadata', async () => {
+    const lastPublished = {
+      sessionId: null as string | null,
+      backendMode: null as 'server' | 'acp' | null,
+      serverBaseUrl: null as string | null,
+      serverBaseUrlExplicit: false,
+    } as Record<string, unknown>;
+    const updates: Metadata[] = [];
+
+    const apply = (updater: (m: Metadata) => Metadata) => {
+      updates.push(updater({ machineId: 'machine-1', path: '/tmp', flavor: 'opencode' } as unknown as Metadata));
+    };
+
+    await maybeUpdateOpenCodeSessionIdMetadata({
+      getOpenCodeSessionId: () => 'session-1',
+      backendMode: 'server',
+      serverBaseUrl: 'http://127.0.0.1:4096/',
+      serverBaseUrlExplicit: false,
+      transcriptStorage: 'direct',
+      updateHappySessionMetadata: apply,
+      lastPublished: lastPublished as any,
+    });
+
+    expect(updates[0]?.directSessionV1).toMatchObject({
+      agentRuntimeDescriptorV1: {
+        provider: {
+          backendMode: 'server',
+          vendorSessionId: 'session-1',
+        },
+      },
+    });
+    expect(updates[0]?.directSessionV1).not.toMatchObject({
+      agentRuntimeDescriptorV1: {
+        provider: {
+          serverBaseUrlExplicit: true,
+        },
+      },
+    });
   });
 
   it('does not mark the session id as published when the metadata update fails', async () => {

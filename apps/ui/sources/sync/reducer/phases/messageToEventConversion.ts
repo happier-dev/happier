@@ -112,15 +112,16 @@ export function runMessageToEventConversion({
 
   // Process converted events immediately
   for (const { message, event } of convertedEvents) {
-    const mid = allocateId();
-	    state.messages.set(mid, {
-	      id: mid,
-	      realID: message.id,
-      seq: typeof message.seq === 'number' ? message.seq : null,
-      role: 'agent',
-      createdAt: message.createdAt,
-      event: event,
-      tool: null,
+	    const mid = allocateId();
+		    state.messages.set(mid, {
+		      id: mid,
+		      realID: message.id,
+	      seq: typeof message.seq === 'number' ? message.seq : null,
+	      localId: message.localId ?? null,
+	      role: 'agent',
+	      createdAt: message.createdAt,
+	      event: event,
+	      tool: null,
       text: null,
 	      meta: message.meta,
 	    });

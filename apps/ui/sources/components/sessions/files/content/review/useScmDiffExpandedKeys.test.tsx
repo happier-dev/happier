@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useScmDiffExpandedKeys } from './useScmDiffExpandedKeys';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,10 +22,7 @@ async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () =
         return null;
     }
     let root: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        root = renderer.create(React.createElement(Test));
-        await flushAsync();
-    });
+    root = (await renderScreen(React.createElement(Test))).tree;
     return {
         getCurrent: () => {
             if (!current) throw new Error('Hook did not render');

@@ -4,6 +4,8 @@ import renderer, { act } from 'react-test-renderer';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -138,10 +140,8 @@ describe('featureDecisionRuntime', () => {
             return React.createElement('View');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
+        await renderScreen(React.createElement(Test));
             await flushHookEffects(6);
-        });
 
         expect(fetchMock.mock.calls.some((call) => String(call[0] ?? '').includes('server-a.example.test'))).toBe(true);
         expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
@@ -197,10 +197,8 @@ describe('featureDecisionRuntime', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
+        tree = (await renderScreen(React.createElement(Test))).tree;
             await flushHookEffects(6);
-        });
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
@@ -264,10 +262,8 @@ describe('featureDecisionRuntime', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
+        tree = (await renderScreen(React.createElement(Test))).tree;
             await flushHookEffects(20);
-        });
         expect(fetchMock).toHaveBeenCalledTimes(1);
 
         // Remount within TTL_READY_MS.

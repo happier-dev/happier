@@ -5,14 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
-import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: vi.fn(async () => null),
 }));
 
-import { fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 
 import type { Credentials } from '@/persistence';
 import { resolveExistingSessionAttachContext } from './resolveExistingSessionAttachContext';
@@ -34,20 +34,20 @@ describe('resolveExistingSessionAttachContext', () => {
     vi.clearAllMocks();
   });
 
-  it('returns null (and does not fetch) when sessionId is blank', async () => {
+  it('returns a missing-session-id failure (and does not fetch) when sessionId is blank', async () => {
     const credentials: Credentials = {
       token: 't',
       encryption: { type: 'dataKey', publicKey: new Uint8Array(32).fill(1), machineKey: new Uint8Array(32).fill(2) },
     };
 
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: '   ', agent: 'codex', credentials });
-    expect(out).toBeNull();
+    expect(out).toEqual({ ok: false, reason: 'missingSessionId' });
     expect(vi.mocked(fetchSessionByIdCompat)).not.toHaveBeenCalled();
   });
 
   it('returns a v2 plain attach payload and vendorResumeId for plaintext sessions', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      makeSessionFixtureRow({
+      createSessionRecordFixture({
         id: 'sess_plain',
         encryptionMode: 'plain',
         metadata: JSON.stringify({ flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-plain-1' }),
@@ -56,8 +56,11 @@ describe('resolveExistingSessionAttachContext', () => {
     );
 
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_plain', agent: 'codex', credentials: null });
-    expect(out?.attachPayload).toEqual({ v: 2, encryptionMode: 'plain' });
-    expect(out?.vendorResumeId).toBe('vendor-plain-1');
+    expect(out).toEqual({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: 'vendor-plain-1',
+    });
     expect(vi.mocked(fetchSessionByIdCompat)).toHaveBeenCalledTimes(1);
   });
 
@@ -90,7 +93,7 @@ describe('resolveExistingSessionAttachContext', () => {
     });
 
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      makeSessionFixtureRow({
+      createSessionRecordFixture({
         id: 'sess_e2ee',
         encryptionMode: 'e2ee',
         metadata: metadataCiphertext,
@@ -99,11 +102,17 @@ describe('resolveExistingSessionAttachContext', () => {
     );
 
     const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_e2ee', agent: 'codex', credentials });
-    expect(out?.attachPayload.v).toBe(2);
-    expect(out?.attachPayload.encryptionMode).toBe('e2ee');
-    expect(out?.vendorResumeId).toBe('vendor-e2ee-1');
+    expect(out).toMatchObject({ ok: true });
 
-    if (!out || out.attachPayload.encryptionMode !== 'e2ee') {
+    if (!out || !('ok' in out) || out.ok !== true) {
+      throw new Error('Expected successful attach context');
+    }
+
+    expect(out.attachPayload.v).toBe(2);
+    expect(out.attachPayload.encryptionMode).toBe('e2ee');
+    expect(out.vendorResumeId).toBe('vendor-e2ee-1');
+
+    if (out.attachPayload.encryptionMode !== 'e2ee') {
       throw new Error('Expected e2ee attach payload');
     }
 
@@ -111,5 +120,38 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(Array.from(opened)).toEqual(Array.from(dataKey));
     expect(out.attachPayload.encryptionVariant).toBe('dataKey');
     expect(vi.mocked(fetchSessionByIdCompat)).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a missing-credentials failure when an encrypted session needs a DEK but credentials are unavailable', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_e2ee',
+        encryptionMode: 'e2ee',
+        metadata: 'ciphertext',
+        dataEncryptionKey: 'encrypted-dek',
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_e2ee',
+      agent: 'codex',
+      credentials: null,
+    });
+
+    expect(out).toEqual({ ok: false, reason: 'missingCredentials' });
+  });
+
+  it('returns a fetch-failed reason when session lookup throws', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockRejectedValueOnce(new Error('boom'));
+
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'dataKey', publicKey: new Uint8Array(32).fill(1), machineKey: new Uint8Array(32).fill(2) },
+    };
+
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_throw', agent: 'codex', credentials });
+
+    expect(out).toEqual({ ok: false, reason: 'fetchFailed' });
   });
 });

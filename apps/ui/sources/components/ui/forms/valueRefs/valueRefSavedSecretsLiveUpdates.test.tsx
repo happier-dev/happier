@@ -1,8 +1,10 @@
 import React from 'react';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import renderer, { act, ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,16 +23,18 @@ function resetLiveSecrets() {
     liveSecretListeners.clear();
 }
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -55,62 +59,31 @@ vi.mock('react-native-unistyles', () => ({
                 groupped: { sectionTitle: '#333' },
             },
         },
-    }),
-    StyleSheet: {
-        create: <T,>(factory: (theme: Record<string, unknown>) => T) => factory({
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                textDestructive: '#f00',
-                divider: '#ddd',
-                surface: '#fff',
-                success: '#0f0',
-                accent: {
-                    indigo: '#55f',
-                    purple: '#95f',
-                },
-                button: {
-                    primary: { background: '#00f', tint: '#fff' },
-                    secondary: { tint: '#00f' },
-                },
-                input: {
-                    background: '#fff',
-                    placeholder: '#999',
-                    text: '#000',
-                },
-                groupped: { sectionTitle: '#333' },
-            },
-        }),
-    },
-}));
-
-vi.mock('react-native', () => {
-    const ReactModule = require('react') as typeof React;
-
-    const Pressable = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        ReactModule.createElement('Pressable', props, props.children);
-    const Text = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        ReactModule.createElement('Text', props, props.children);
-    const View = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        ReactModule.createElement('View', props, props.children);
-
-    const TextInput = ReactModule.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
-        if (ref && typeof ref === 'object') {
-            ref.current = { focus: () => {} };
-        }
-        return ReactModule.createElement('TextInput', props);
     });
+});
 
-    return {
-        Platform: {
-            OS: 'ios',
-            select: <T,>(obj: { ios?: T; web?: T; default?: T }) => obj.ios ?? obj.web ?? obj.default,
-        },
-        Pressable,
-        Text,
-        View,
-        TextInput,
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'ios',
+                        select: <T,>(obj: { ios?: T; web?: T; default?: T }) => obj.ios ?? obj.web ?? obj.default,
+                    },
+                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                        React.createElement('Pressable', props, props.children),
+                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                        React.createElement('Text', props, props.children),
+                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                        React.createElement('View', props, props.children),
+                    TextInput: React.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
+                        if (ref && typeof ref === 'object') {
+                            ref.current = { focus: () => {} };
+                        }
+                        return React.createElement('TextInput', props);
+                    }),
+                }
+    );
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -184,22 +157,25 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: vi.fn(),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => {
-    const ReactModule = require('react') as typeof React;
-
-    return {
-        useSettingMutable: (name: string) => {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSettingMutable: ((name: string) => {
             if (name !== 'secrets') {
                 throw new Error(`Unexpected setting key in test: ${name}`);
             }
 
+            const ReactModule = require('react') as typeof React;
             const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
 
             ReactModule.useEffect(() => {
@@ -211,8 +187,8 @@ vi.mock('@/sync/domains/state/storage', () => {
             }, []);
 
             return [liveSecrets, updateLiveSecrets] as const;
-        },
-    };
+        }) as typeof import('@/sync/domains/state/storage').useSettingMutable,
+    });
 });
 
 function findItems(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
@@ -241,17 +217,11 @@ describe('value ref saved secrets live updates', () => {
         const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SavedSecretPickerModal, {
+        tree = (await renderScreen(React.createElement(SavedSecretPickerModal, {
                     onClose: vi.fn(),
-                    secrets: [],
-                    onChangeSecrets: vi.fn(),
                     selectedId: null,
                     onSelectId: vi.fn(),
-                }),
-            );
-        });
+                }))).tree;
 
         expect(tree.root.findAllByType('ItemList')).toHaveLength(1);
         expect(findGroups(tree).length).toBeGreaterThanOrEqual(2);
@@ -277,9 +247,7 @@ describe('value ref saved secrets live updates', () => {
         const { ValueRefEditorModal } = await import('./ValueRefEditorModal');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ValueRefEditorModal, {
+        tree = (await renderScreen(React.createElement(ValueRefEditorModal, {
                     onClose: vi.fn(),
                     kind: 'header',
                     initialKey: 'Authorization',
@@ -287,9 +255,7 @@ describe('value ref saved secrets live updates', () => {
                     secrets: [],
                     onChangeSecrets: vi.fn(),
                     onSubmit: () => true,
-                }),
-            );
-        });
+                }))).tree;
 
         expect(tree.root.findAllByType('ItemList')).toHaveLength(1);
         expect(findGroups(tree).length).toBeGreaterThanOrEqual(2);

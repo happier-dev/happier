@@ -12,6 +12,8 @@ Most third-party “integration” projects fall into two buckets:
 
 To use them with Happier, the only requirement is: **those settings must be visible to the provider CLI process that Happier spawns**.
 
+This matters both for normal provider sessions and for the **Authentication** section inside each provider settings page, because Happier reads the same machine-local provider auth state from the CLI environment, local files, or provider-native status commands.
+
 For user-facing MCP management inside Happier itself, including Happier-managed MCP servers, detected provider-native MCP configs, preview, JSON import, and per-session MCP selection, see:
 
 - [MCP servers](/docs/features/mcp-servers)
@@ -31,6 +33,8 @@ When you start sessions remotely (from the app), there is no interactive shell. 
 - **Settings → Profiles**: create/select a profile and set the env vars there.
 
 Those profile env vars are passed to the provider CLI when the daemon spawns the process.
+
+For the full profile guide, see [Features → Profiles](/docs/features/profiles).
 
 ## Claude Code Router (`claude-code-router`)
 

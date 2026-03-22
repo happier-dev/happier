@@ -2,23 +2,24 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
+import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { loop } from '@/backends/claude/loop';
 import { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import packageJson from '../../../package.json';
-import { Credentials } from '@/persistence';
+import { readSettings, type Credentials } from '@/persistence';
 import { EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import { extractSDKMetadataAsync } from '@/backends/claude/sdk/metadataExtractor';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { parseParticipantMessageMeta } from '@/backends/claude/utils/participantRouting/parseParticipantMessageMeta';
-import { formatClaudeTeamRoutedPrompt } from '@/backends/claude/utils/participantRouting/formatClaudeTeamRoutedPrompt';
+import { resolveClaudeStructuredUserMessageRouting } from '@/backends/claude/utils/structuredMessages/resolveClaudeStructuredUserMessageRouting';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { startHookServer } from '@/backends/claude/utils/startHookServer';
-import { generateHookSettingsFile, cleanupHookSettingsFile } from '@/backends/claude/utils/generateHookSettings';
+import { cleanupHookSettingsFile } from '@/backends/claude/utils/generateHookSettings';
+import { generateHookSettingsFileWithEnsuredRuntime } from '@/backends/claude/utils/generateHookSettingsFileWithEnsuredRuntime';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { projectPath } from '../../projectPath';
 import { resolve } from 'node:path';
@@ -32,30 +33,40 @@ import { applyStartupMetadataUpdateToSession, buildModelOverride, buildPermissio
 import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
+import { readSessionAttachMetadataIdentityPolicyFromEnv } from '@/agent/runtime/readSessionAttachMetadataIdentityPolicyFromEnv';
 import { hashClaudeEnhancedModeForQueue } from '@/backends/claude/remote/modeHash';
 import { applyClaudeRemoteMetaState } from '@/backends/claude/remote/claudeRemoteMetaState';
 import { resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/resolveInitialClaudeRemoteMetaState';
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
-import { resolveAcpSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from '@/backends/claude/localPermissions/localPermissionBridge';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { createClaudeShouldTerminateOnUnhandledRejection } from './claudeUnhandledRejectionPolicy';
-    import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-    import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
-    import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
-        import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
-        import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
-        import { writeStartupOverridesCacheForBackend } from '@/agent/runtime/startup/startupOverridesCache';
-        import { createClaudeStartupSpec, type ClaudeStartupArtifacts } from '@/backends/claude/startup/createClaudeStartupSpec';
+import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
+import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
+import { writeStartupOverridesCacheForBackend } from '@/agent/runtime/startup/startupOverridesCache';
+import { createClaudeStartupSpec, type ClaudeStartupArtifacts } from '@/backends/claude/startup/createClaudeStartupSpec';
+import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import type { PushNotificationClient } from '@/api/pushNotifications';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveInitialClaudeSystemPromptText } from './utils/resolveInitialClaudeSystemPromptText';
+import { shouldStartClaudeSessionCaffeinate } from './sessionCaffeinatePolicy';
+import { ensureManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
+import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
+import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -93,10 +104,11 @@ export interface StartOptions {
 }
 
 export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
+    const accountSettingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
     logger.debug(`[CLAUDE] ===== CLAUDE MODE STARTING =====`);
     logger.debug(`[CLAUDE] This is the Claude agent, NOT Gemini`);
     
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveRequestedSessionDirectory();
     const sessionTag = randomUUID();
 
     // Log environment info at startup
@@ -121,9 +133,19 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         typeof process.env.HAPPIER_SESSION_ATTACH_FILE === 'string' && process.env.HAPPIER_SESSION_ATTACH_FILE.trim().length > 0
             ? process.env.HAPPIER_SESSION_ATTACH_FILE.trim()
             : null;
-    const canFastStartAttach = Boolean(existingSessionId && attachEnvPath && typeof options.permissionMode === 'string');
+    const inferredPermissionMode = inferPermissionIntentFromClaudeArgs(options.claudeArgs);
+    const canFastStartAttach = Boolean(
+        existingSessionId &&
+        attachEnvPath &&
+        (typeof options.permissionMode === 'string' || inferredPermissionMode !== null),
+    );
     const shouldUseFastStart =
         startedBy === 'terminal' && startingMode === 'local' && (!existingSessionId || canFastStartAttach);
+
+    if (typeof process.versions.bun === 'string') {
+        await ensureManagedJavaScriptRuntimeCommand(process.env);
+    }
+
     if (shouldUseFastStart) {
         await runClaudeLocalFastStart(credentials, options);
         return;
@@ -139,6 +161,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         skipMachineRegistration: options.startedBy === 'daemon',
     });
     logger.debug(`Using machineId: ${machineId}`);
+    const attachMetadataIdentityPolicy =
+        existingSessionId
+            ? readSessionAttachMetadataIdentityPolicyFromEnv()
+            : null;
 
     const terminal = buildTerminalMetadataFromRuntimeFlags(options.terminalRuntime ?? null);
     // Resolve initial permission mode for sessions that start in terminal local mode.
@@ -186,7 +212,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Let the daemon track externally started terminal sessions immediately, even if
     // upstream session creation is delayed. A later report with the real session id
     // will reconcile the tracked session record.
-    if (options.startedBy === 'terminal' || options.startedBy === 'daemon') {
+    if (options.startedBy === 'terminal') {
         await reportSessionToDaemonIfRunning({ sessionId: `PID-${process.pid}`, metadata });
     }
 
@@ -213,10 +239,22 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                     const resp = await api.getOrCreateSession({ tag: randomUUID(), metadata, state });
                     if (!resp) throw new Error('Server unavailable');
                     const session = api.sessionSyncClient(resp);
+                    const turnDiffBridge = createClaudeRawMessageTurnDiffBridge({
+                        getSessionId: () => session.sessionId ?? 'unknown',
+                        sendMessage: (message) => {
+                            session.sendClaudeSessionMessage(message);
+                        },
+                    });
                     const scanner = await createSessionScanner({
                         sessionId: null,
                         workingDirectory,
-                        onMessage: (msg) => session.sendClaudeSessionMessage(msg)
+                        onMessage: (msg) => {
+                            const bridged = turnDiffBridge.observe(msg);
+                            if (bridged) {
+                                session.sendClaudeSessionMessage(bridged);
+                                turnDiffBridge.flushAfterForwardIfNeeded();
+                            }
+                        },
                     });
                     if (offlineSessionId) scanner.onNewSession(offlineSessionId);
                     return { session, scanner };
@@ -233,6 +271,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             process.once('SIGTERM', abortOnSignal);
 
             try {
+                            const offlineSystemPromptText = await resolveEffectiveCodingPromptText({
+                                credentials,
+                                settings: options.accountSettings ?? null,
+                                profileId: null,
+                                executionRunsFeatureEnabled: resolveCliFeatureDecision({
+                                    featureId: 'execution.runs',
+                                    env: process.env,
+                                }).state === 'enabled',
+                                providerId: 'claude',
+                            });
                             await claudeLocal({
                                 path: workingDirectory,
                                 sessionId: null,
@@ -240,6 +288,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                                 onThinkingChange: () => {},
                                 abort: abortController.signal,
                                 claudeArgs: options.claudeArgs,
+                                systemPromptText: offlineSystemPromptText,
                             });
                     } finally {
                 process.removeListener('SIGINT', abortOnSignal);
@@ -256,6 +305,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
     // Create realtime session
     const session = api.sessionSyncClient(baseSession);
+    const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
+        credentials,
+        settings: options.accountSettings ?? null,
+        profileId: session.getMetadataSnapshot()?.profileId ?? null,
+        executionRunsFeatureEnabled: resolveCliFeatureDecision({
+            featureId: 'execution.runs',
+            env: process.env,
+        }).state === 'enabled',
+        providerId: 'claude',
+    });
     // Report to daemon immediately so daemon session tracking does not depend on
     // later startup work (metadata snapshot refresh, permission/model seeding, etc.).
     await reportSessionToDaemonIfRunning({ sessionId: baseSession.id, metadata });
@@ -277,7 +336,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 snapshotError ?? undefined,
             );
         } else {
-            applyStartupMetadataUpdateToSession({
+            await applyStartupMetadataUpdateToSession({
                 session,
                 next: metadata,
                 nowMs: Date.now(),
@@ -289,11 +348,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                     modelId: initialModelId,
                     modelUpdatedAt: initialModelUpdatedAt,
                 }),
+                attachMetadataIdentityPolicy,
                 mode: 'attach',
             });
         }
     } else {
-        applyStartupMetadataUpdateToSession({
+        await applyStartupMetadataUpdateToSession({
             session,
             next: metadata,
             nowMs: Date.now(),
@@ -442,7 +502,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.debug(`[START] Hook server started on port ${hookServer.port}`);
 
     // Generate hook settings file for Claude
-        const hookSettingsPath = generateHookSettingsFile(hookServer.port, {
+        const hookSettingsPath = await generateHookSettingsFileWithEnsuredRuntime(hookServer.port, {
             enableLocalPermissionBridge: true,
             permissionHookSecret,
         });
@@ -471,7 +531,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     );
 
     // Start caffeinate to prevent sleep on macOS
-    const caffeinateStarted = startCaffeinate();
+    const caffeinateStarted = shouldStartClaudeSessionCaffeinate(options.startedBy) ? startCaffeinate() : false;
     if (caffeinateStarted) {
         logger.infoDeveloper('Sleep prevention enabled (macOS)');
     }
@@ -489,7 +549,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
         let currentFallbackModel: string | undefined = undefined; // Track current fallback model
         let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
-        let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+        let currentAppendSystemPrompt: string | undefined = resolveInitialClaudeSystemPromptText({
+            existingSessionId,
+            defaultSystemPromptText,
+        }); // Track current append system prompt
         session.onUserMessage((message) => {
         const adoptedModel = adoptModelOverrideFromMetadata({
             currentModelId: currentModel,
@@ -502,7 +565,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             logger.debug(`[loop] Model updated from session metadata: ${adoptedModel.modelId || 'reset to default'}`);
         }
 
-        const resolvedAgentModeOverride = resolveAcpSessionModeOverrideFromMetadataSnapshot({
+        const resolvedAgentModeOverride = resolveSessionModeOverrideFromMetadataSnapshot({
             metadata: session.getMetadataSnapshot(),
         });
         if (resolvedAgentModeOverride && resolvedAgentModeOverride.updatedAt > currentAgentModeUpdatedAt) {
@@ -600,13 +663,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             );
         }
 
-        const participantRouting = parseParticipantMessageMeta(message.meta);
+        const structuredRouting = resolveClaudeStructuredUserMessageRouting({
+            text: message.content.text,
+            meta: message.meta,
+        });
 
         // Push with resolved permission mode, model, system prompts, and tools
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode || 'default',
             agentModeId: currentAgentModeId,
-            replaySeedAllowed: participantRouting ? true : parseSpecialCommand(message.content.text).type === null,
+            replaySeedAllowed: structuredRouting ? true : parseSpecialCommand(message.content.text).type === null,
             localId: message.localId ?? null,
             model: messageModel,
             fallbackModel: messageFallbackModel,
@@ -615,12 +681,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             ...currentClaudeRemoteMetaState,
         };
 
-        const baseQueuedText = participantRouting
-            ? formatClaudeTeamRoutedPrompt({ originalText: message.content.text, recipient: participantRouting.recipient })
-            : message.content.text;
+        const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
 
-        // Participant-routed user messages must be treated as plain text (no special command parsing).
-        if (!participantRouting) {
+        // Structured Happier user messages must be treated as plain text (no special command parsing).
+        if (!structuredRouting) {
             const specialCommand = parseSpecialCommand(message.content.text);
 
             if (specialCommand.type === 'compact') {
@@ -658,27 +722,18 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         try {
             if (session) {
                 if (outcome.archive) {
-                    updateMetadataBestEffort(
-                        session,
-                        (currentMetadata) => ({
-                            ...currentMetadata,
-                            lifecycleState: 'archived',
-                            lifecycleStateSince: Date.now(),
-                            archivedBy: 'cli',
-                            archiveReason: outcome.archiveReason ?? 'User terminated',
-                        }),
-                        '[claude]',
-                        'archive_on_exit',
-                    );
+                    await archiveAndCloseRuntimeSession(session, credentials, outcome.archiveReason);
                 }
 
                 // Cleanup session resources (intervals, callbacks)
                 currentSession?.cleanup();
 
-                // Send session death message
-                session.sendSessionDeath();
-                await session.flush();
-                await session.close();
+                if (!outcome.archive) {
+                    // Send session death message
+                    session.sendSessionDeath();
+                    await session.flush();
+                    await session.close();
+                }
             }
 
             // Stop caffeinate
@@ -711,6 +766,14 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     });
 
     // Create claude loop
+            const resolvedMcp = await resolveRunnerMcpServers({
+                session,
+                credentials,
+                accountSettings,
+                machineId,
+                directory: workingDirectory,
+                sessionMetadata: session.getMetadataSnapshot(),
+            });
             const exitCode = await loop({
                 path: workingDirectory,
                 model: options.model,
@@ -723,6 +786,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 session,
             pushSender: api.push(),
             accountSettings,
+            precomputedMcpBridge: { mcpServers: resolvedMcp.mcpServers, stop: resolvedMcp.happierMcpServer.stop },
             onModeChange: (newMode) => {
                 session.sendSessionEvent({ type: 'switch', mode: newMode });
             updateAgentStateBestEffort(
@@ -750,7 +814,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         },
                     claudeArgs: options.claudeArgs,
                     hookSettingsPath,
-                    jsRuntime: options.jsRuntime
+                    jsRuntime: options.jsRuntime,
+                    defaultSystemPromptText,
                 });
 
     terminationHandlers.dispose();
@@ -793,7 +858,7 @@ function cleanupClaudeSessionBestEffort(session: unknown): void {
 }
 
 async function runClaudeLocalFastStart(credentials: Credentials, options: StartOptions): Promise<void> {
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveRequestedSessionDirectory();
     const sessionTag = randomUUID();
 
     const startedBy: 'terminal' | 'daemon' = options.startedBy ?? 'terminal';
@@ -802,6 +867,10 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
         typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0
             ? options.existingSessionId.trim()
             : undefined;
+    const attachMetadataIdentityPolicy =
+        existingSessionId
+            ? readSessionAttachMetadataIdentityPolicyFromEnv()
+            : null;
 
     const nowMs = () => Date.now();
     const timing = createStartupTiming({ enabled: configuration.startupTimingEnabled, nowMs });
@@ -885,11 +954,11 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
             registerRpcHandlers: ({ artifacts }) => {
                 registerSessionHandlers(artifacts.deferredSession.rpcHandlerManager, workingDirectory);
             },
-            startHookServer: async () => {
-                return await startHookServer(hookServerOptions);
-            },
-                generateHookSettingsFile: (port) => {
-                    return generateHookSettingsFile(port, {
+                startHookServer: async () => {
+                    return await startHookServer(hookServerOptions);
+                },
+                generateHookSettingsFile: async (port) => {
+                    return await generateHookSettingsFileWithEnsuredRuntime(port, {
                         enableLocalPermissionBridge: true,
                         permissionHookSecret,
                     });
@@ -928,7 +997,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 // Let the daemon track externally started terminal sessions immediately, even if
                 // upstream session creation is delayed. A later report with the real session id
                 // will reconcile the tracked session record.
-                await reportSessionToDaemonIfRunning({ sessionId: `PID-${process.pid}`, metadata });
+                if (startedBy === 'terminal') {
+                    await reportSessionToDaemonIfRunning({ sessionId: `PID-${process.pid}`, metadata });
+                }
 
                 if (signal.aborted) return;
 
@@ -1024,13 +1095,27 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     'initial_agent_state',
                 );
 
+                const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
+                    credentials,
+                    settings: options.accountSettings ?? null,
+                    profileId: session.getMetadataSnapshot()?.profileId ?? null,
+                    executionRunsFeatureEnabled: resolveCliFeatureDecision({
+                        featureId: 'execution.runs',
+                        env: process.env,
+                    }).state === 'enabled',
+                    providerId: 'claude',
+                });
+
                 // Forward messages from server to the local queue.
                 let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
                 let currentModel = options.model;
                     let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
                     let currentFallbackModel: string | undefined = undefined;
                     let currentCustomSystemPrompt: string | undefined = undefined;
-                    let currentAppendSystemPrompt: string | undefined = undefined;
+                    let currentAppendSystemPrompt: string | undefined = resolveInitialClaudeSystemPromptText({
+                        existingSessionId,
+                        defaultSystemPromptText,
+                    });
 
                 session.onUserMessage((message) => {
                     const adoptedModel = adoptModelOverrideFromMetadata({
@@ -1111,10 +1196,13 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         );
                     }
 
-                    const participantRouting = parseParticipantMessageMeta(message.meta);
+                    const structuredRouting = resolveClaudeStructuredUserMessageRouting({
+                        text: message.content.text,
+                        meta: message.meta,
+                    });
                     const enhancedMode: EnhancedMode = {
                         permissionMode: messagePermissionMode || 'default',
-                        replaySeedAllowed: participantRouting ? true : parseSpecialCommand(message.content.text).type === null,
+                        replaySeedAllowed: structuredRouting ? true : parseSpecialCommand(message.content.text).type === null,
                         localId: message.localId ?? null,
                         model: messageModel,
                         fallbackModel: messageFallbackModel,
@@ -1122,11 +1210,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         appendSystemPrompt: messageAppendSystemPrompt,
                         ...currentClaudeRemoteMetaState,
                     };
-                    const baseQueuedText = participantRouting
-                        ? formatClaudeTeamRoutedPrompt({ originalText: message.content.text, recipient: participantRouting.recipient })
-                        : message.content.text;
+                    const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
 
-                    if (!participantRouting) {
+                    if (!structuredRouting) {
                         const specialCommand = parseSpecialCommand(message.content.text);
                         if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
                             messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
@@ -1158,6 +1244,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         metadata,
                         state,
                         existingSessionId,
+                        attachMetadataIdentityPolicy,
                             uiLogPrefix: '[claude]',
                             offlineNotify: (message: string) => {
                                 artifacts.deferredSession.sendSessionEvent({ type: 'message', message });
@@ -1202,6 +1289,26 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     throw new Error('Claude startup prerequisites missing');
                 }
 
+                    const localSettings = await readSettings();
+                    const resolvedMcp = await resolveRunnerMcpServers({
+                        session: artifacts.deferredSession as any,
+                        credentials,
+                        accountSettings: options.accountSettings ?? null,
+                        machineId: typeof localSettings.machineId === 'string' && localSettings.machineId.trim() ? localSettings.machineId.trim() : 'unknown',
+                        directory: workingDirectory,
+                        sessionMetadata: artifacts.deferredSession.getMetadataSnapshot?.() ?? null,
+                    });
+                    const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
+                        credentials,
+                        settings: options.accountSettings ?? null,
+                        profileId: artifacts.deferredSession.getMetadataSnapshot?.()?.profileId ?? null,
+                        executionRunsFeatureEnabled: resolveCliFeatureDecision({
+                            featureId: 'execution.runs',
+                            env: process.env,
+                        }).state === 'enabled',
+                        providerId: 'claude',
+                    });
+
                     const exitCode = await loop({
                         path: workingDirectory,
                         model: options.model,
@@ -1244,7 +1351,11 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         claudeArgs: options.claudeArgs,
                         hookSettingsPath,
                         jsRuntime: options.jsRuntime,
+                        defaultSystemPromptText,
                         pushSender: null,
+                        accountSettings: options.accountSettings ?? null,
+                        accountSettingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials),
+                        precomputedMcpBridge: { mcpServers: resolvedMcp.mcpServers, stop: resolvedMcp.happierMcpServer.stop },
                     });
 
                 return exitCode;
@@ -1309,7 +1420,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     });
 
     // Start caffeinate to prevent sleep on macOS
-    startCaffeinate();
+    if (shouldStartClaudeSessionCaffeinate(startedBy)) {
+        startCaffeinate();
+    }
 
     // Run until the vendor loop exits.
     const exitCode = await coordinator.spawnPromise.then(() => coordinator.artifacts.exitCode ?? 0);

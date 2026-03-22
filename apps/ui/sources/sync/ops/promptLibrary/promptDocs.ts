@@ -67,7 +67,13 @@ export async function updatePromptDoc(params: Readonly<{
   };
 
   const bodyRaw = await ensureBody();
-  const parsed = PromptDocBodyV1Schema.safeParse(JSON.parse(bodyRaw));
+  let bodyJson: unknown;
+  try {
+    bodyJson = JSON.parse(bodyRaw);
+  } catch {
+    throw new Error('prompt_doc_invalid_body');
+  }
+  const parsed = PromptDocBodyV1Schema.safeParse(bodyJson);
   if (!parsed.success) throw new Error('prompt_doc_invalid_body');
 
   const now = Date.now();

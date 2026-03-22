@@ -1,17 +1,8 @@
 import { inferAgentIdFromSessionMetadata, resolveAgentIdFromFlavor, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
-
-function tryParseJsonRecord(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
 export function resolveVendorResumeIdForExistingSession(params: Readonly<{
   agent: unknown;

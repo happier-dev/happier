@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildBackendTargetKey } from '@happier-dev/protocol';
+
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 import { applyAccountSettingsCompatibilityMigrations } from './accountSettingsCompatibilityMigrations';
@@ -57,5 +59,67 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
 
         expect(migrated.serverSelectionActiveTargetKind).toBeNull();
         expect(migrated.serverSelectionActiveTargetId).toBeNull();
+    });
+
+    it('skips invalid legacy permission modes while migrating per-agent defaults', () => {
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input: {
+                sessionDefaultPermissionModeByAgent: {
+                    codex: 'bogus-mode',
+                    claude: 'yolo',
+                },
+            },
+            settings: {
+                ...settingsDefaults,
+                sessionDefaultPermissionModeByTargetKey: {},
+            },
+            inputSchemaVersion: 6,
+            supportedSchemaVersion: 6,
+        });
+
+        expect(migrated.sessionDefaultPermissionModeByTargetKey).toEqual({
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'yolo',
+        });
+        expect(migrated.sessionDefaultPermissionModeByTargetKey).not.toHaveProperty(
+            buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' }),
+        );
+    });
+
+    it('migrates legacy backend CLI source preferences into the canonical target-keyed map', () => {
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input: {
+                backendCliSourcePreferenceById: {
+                    codex: 'managed-first',
+                    gemini: 'system-first',
+                    invalid: 'ignored',
+                },
+            },
+            settings: {
+                ...settingsDefaults,
+                backendCliSourcePreferenceByTargetKey: {},
+            },
+            inputSchemaVersion: 6,
+            supportedSchemaVersion: 6,
+        });
+
+        expect(migrated.backendCliSourcePreferenceByTargetKey).toEqual({
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'managed-first',
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: 'system-first',
+        });
+    });
+
+    it('preserves an existing codex backend mode when migrating a pre-v6 payload', () => {
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input: {
+                codexBackendMode: 'mcp',
+            },
+            settings: {
+                ...settingsDefaults,
+            },
+            inputSchemaVersion: 5,
+            supportedSchemaVersion: 6,
+        });
+
+        expect(migrated.codexBackendMode).toBe('mcp');
     });
 });

@@ -1,22 +1,27 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { makeToolCall, findPressableByText } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
 }));
+
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () =>
+    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -43,15 +48,21 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-}));
+    }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const module = createExpoRouterMock().module;
+    return {
+        ...module,
+        Link: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
+            React.createElement(React.Fragment, null, children),
+    };
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
@@ -70,9 +81,10 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () =>
+    (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+        translate: (key) => key,
+    }));
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -103,23 +115,23 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-        useSetting: (key: string) => {
-            if (key === 'toolViewDetailLevelDefault') return 'summary';
-            if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
-            if (key === 'toolViewDetailLevelByToolName') return {};
-            if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-            if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-            if (key === 'toolViewTapAction') return 'expand';
-            if (key === 'showLineNumbersInToolViews') return false;
-            if (key === 'wrapLinesInDiffs') return true;
-            return null;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return 'summary';
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                if (key === 'toolViewTapAction') return 'expand';
+                if (key === 'showLineNumbersInToolViews') return false;
+                if (key === 'wrapLinesInDiffs') return true;
+                return null;
+            },
         },
-    };
-});
+    }));
 
 vi.mock('@/components/tools/renderers/core/_registry', async () => {
     const actual = await vi.importActual<any>('@/components/tools/renderers/fileOps/DiffView');
@@ -129,6 +141,10 @@ vi.mock('@/components/tools/renderers/core/_registry', async () => {
 });
 
 describe('ToolView (diff header actions)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('surfaces the expand-all control in the tool header for multi-file diffs', async () => {
         const { ToolView } = await import('./ToolView');
 
@@ -139,11 +155,8 @@ describe('ToolView (diff header actions)', () => {
             result: null,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null, messages: [] }));
-        });
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null, messages: [] }));
 
-        expect(findPressableByText(tree, 'machineLauncher.showAll')).toBeDefined();
+        expect(findPressableByText(screen.tree, 'machineLauncher.showAll')).toBeDefined();
     });
 });

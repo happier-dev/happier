@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import type { PickedAttachment, AttachmentFilePickerHandle } from '@/components/sessions/attachments/AttachmentFilePicker.types';
-import type { AgentInputAttachment } from '@/components/sessions/agentInput/AgentInput';
+import type { AgentInputAttachment } from '@/components/sessions/agentInput/agentInputContracts';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { randomUUID } from '@/platform/randomUUID';
@@ -31,9 +31,11 @@ function isImageSource(source: AttachmentsUploadFileSource): boolean {
 export function useAttachmentDraftManager(params: Readonly<{
     enabled: boolean;
     maxFileBytes: number;
+    initialDrafts?: readonly AttachmentDraft[];
 }>): Readonly<{
     filePickerRef: React.RefObject<AttachmentFilePickerHandle | null>;
     drafts: readonly AttachmentDraft[];
+    getDraftsSnapshot: () => readonly AttachmentDraft[];
     hasSendableAttachments: boolean;
     agentInputAttachments: readonly AgentInputAttachment[];
     addWebFiles: (files: readonly File[]) => void;
@@ -43,16 +45,24 @@ export function useAttachmentDraftManager(params: Readonly<{
     applyDraftPatch: (id: string, patch: Partial<Omit<AttachmentDraft, 'id' | 'source'>>) => void;
 }> {
     const filePickerRef = React.useRef<AttachmentFilePickerHandle | null>(null);
-    const [drafts, setDrafts] = React.useState<AttachmentDraft[]>([]);
+    const [drafts, setDrafts] = React.useState<AttachmentDraft[]>(() => [...(params.initialDrafts ?? [])]);
+    const draftsRef = React.useRef<AttachmentDraft[]>(params.initialDrafts ? [...params.initialDrafts] : []);
 
     const webPreviewUrlsRef = React.useRef<Map<string, string>>(new Map());
     const [webPreviewUrlsVersion, setWebPreviewUrlsVersion] = React.useState(0);
 
     React.useEffect(() => {
+        draftsRef.current = drafts;
+    }, [drafts]);
+
+    const getDraftsSnapshot = React.useCallback(() => draftsRef.current, []);
+
+    React.useEffect(() => {
         return () => {
             const map = webPreviewUrlsRef.current;
+            const urlApi = globalThis.URL;
             for (const url of map.values()) {
-                try { URL.revokeObjectURL(url); } catch { }
+                try { urlApi?.revokeObjectURL?.(url); } catch { }
             }
             map.clear();
         };
@@ -108,12 +118,13 @@ export function useAttachmentDraftManager(params: Readonly<{
 
     React.useEffect(() => {
         const map = webPreviewUrlsRef.current;
+        const urlApi = globalThis.URL;
         let changed = false;
 
         const activeIds = new Set(drafts.map((d) => d.id));
         for (const [id, url] of map) {
             if (activeIds.has(id)) continue;
-            try { URL.revokeObjectURL(url); } catch { }
+            try { urlApi?.revokeObjectURL?.(url); } catch { }
             map.delete(id);
             changed = true;
         }
@@ -122,9 +133,9 @@ export function useAttachmentDraftManager(params: Readonly<{
             if (draft.source.kind !== 'web') continue;
             if (!isImageSource(draft.source)) continue;
             if (map.has(draft.id)) continue;
-            if (typeof URL?.createObjectURL !== 'function') continue;
+            if (typeof urlApi?.createObjectURL !== 'function') continue;
             try {
-                const url = URL.createObjectURL(draft.source.file);
+                const url = urlApi.createObjectURL(draft.source.file);
                 map.set(draft.id, url);
                 changed = true;
             } catch {
@@ -162,6 +173,7 @@ export function useAttachmentDraftManager(params: Readonly<{
     return {
         filePickerRef,
         drafts,
+        getDraftsSnapshot,
         hasSendableAttachments: drafts.length > 0,
         agentInputAttachments,
         addWebFiles,

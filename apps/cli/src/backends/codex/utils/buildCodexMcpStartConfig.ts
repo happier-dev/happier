@@ -7,9 +7,11 @@ export function buildCodexMcpStartConfig(opts: Readonly<{
   approvalPolicy: NonNullable<CodexSessionConfig['approval-policy']>;
   mcpServers: unknown;
   model?: string | null;
+  cwd?: string | null;
 }>): CodexSessionConfig {
   const model = typeof opts.model === 'string' ? opts.model.trim() : '';
   const baseInstructions = typeof opts.baseInstructions === 'string' ? opts.baseInstructions.trim() : '';
+  const cwd = typeof opts.cwd === 'string' ? opts.cwd.trim() : '';
 
   return {
     prompt: opts.prompt,
@@ -18,5 +20,6 @@ export function buildCodexMcpStartConfig(opts: Readonly<{
     ...(baseInstructions ? { 'base-instructions': baseInstructions } : {}),
     config: { mcp_servers: opts.mcpServers },
     ...(model ? { model } : {}),
+    ...(cwd ? { cwd } : {}),
   };
 }

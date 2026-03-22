@@ -5,8 +5,7 @@ export interface AgentFactoryOptions {
   cwd: string;
 
   /** Environment variables to pass to the agent */
-  env?: Record<string, string>;
+  env?: NodeJS.ProcessEnv;
 }
 
 export type AgentFactory<TBackend extends AgentBackend = AgentBackend> = (opts: AgentFactoryOptions) => TBackend;
-

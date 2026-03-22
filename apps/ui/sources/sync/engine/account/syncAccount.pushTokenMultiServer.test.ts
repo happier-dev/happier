@@ -6,9 +6,16 @@ vi.mock('expo-notifications', () => ({
     getExpoPushTokenAsync: vi.fn(),
 }));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'ios',
+                            },
+                        }
+    );
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { extra: { eas: { projectId: 'test-project' } } } },

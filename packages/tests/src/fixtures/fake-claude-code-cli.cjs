@@ -434,7 +434,7 @@ async function runSdkStreamUntilEof() {
         'subagents,',
         "there's",
         'a',
-        '`mcp__happier__delegate_start`',
+        '`mcp__happier__subagents_delegate_start`',
         'tool',
         '-',
         'we',
@@ -702,6 +702,34 @@ async function runSdkStreamUntilEof() {
 
       emitSdk(assistant);
       emitSdk(toolResult);
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
+    if (scenario === 'voice-actions-send-session-message') {
+      const assistant = createAssistantMessage([
+        {
+          type: 'text',
+          text: [
+            'I can send that.',
+            '',
+            '<voice_actions>',
+            JSON.stringify({
+              actions: [
+                {
+                  t: 'sendSessionMessage',
+                  args: {
+                    message: 'hello from fake voice action',
+                  },
+                },
+              ],
+            }),
+            '</voice_actions>',
+          ].join('\n'),
+        },
+      ]);
+
+      emitSdk(assistant);
       emitSdk(createResultSuccess());
       continue;
     }

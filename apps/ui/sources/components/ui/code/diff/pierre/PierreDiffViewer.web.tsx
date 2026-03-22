@@ -634,8 +634,17 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         />
     );
 
+    const wrapperStyle = props.virtualized
+        ? ({ maxHeight: 'inherit' } as const)
+        : undefined;
+
     return (
-        <div ref={containerRef} data-testid="pierre-diff-viewer" className="happier-pierre-diff-wrapper">
+        <div
+            ref={containerRef}
+            data-testid="pierre-diff-viewer"
+            className="happier-pierre-diff-wrapper"
+            style={wrapperStyle}
+        >
             <WorkerPoolContext.Provider value={pool ?? undefined}>
                 <PierreDiffErrorBoundary key={typeof sanitizedPatch === 'string' ? sanitizedPatch : String(sanitizedPatch)} fallback={fallbackNode}>
                     {body}

@@ -159,4 +159,74 @@ describe('tool normalization fixtures (v1): catalog coverage', () => {
     expect(typeof out?.title).toBe('string');
     expect(out?._raw).toBeDefined();
   });
+
+  it('promotes Happier shell-bridge tool calls to the underlying built-in or MCP tool', () => {
+    const bridgeChangeTitle = normalizeToolCallV2({
+      protocol: 'acp',
+      provider: 'pi',
+      toolName: 'execute',
+      callId: 'run_shell_command-1',
+      rawInput: {
+        command:
+          `happier tools call --source happier --tool change_title --args-json '{"title":"Pi Tools Proof 2026-03-06"}' --json`,
+        happierToolsShellBridge: {
+          kind: 'call',
+          rawCommand:
+            `happier tools call --source happier --tool change_title --args-json '{"title":"Pi Tools Proof 2026-03-06"}' --json`,
+          sessionId: null,
+          directory: null,
+          source: 'happier',
+          tool: 'change_title',
+          argsJson: '{"title":"Pi Tools Proof 2026-03-06"}',
+          args: { title: 'Pi Tools Proof 2026-03-06' },
+          json: true,
+        },
+      },
+    });
+    expect(bridgeChangeTitle.canonicalToolName).toBe('change_title');
+    expect(asRecord(bridgeChangeTitle.input)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
+
+    const changeTitleResult = normalizeToolResultV2({
+      protocol: 'acp',
+      provider: 'pi',
+      rawToolName: 'execute',
+      canonicalToolName: 'change_title',
+      rawOutput: { stdout: 'Successfully changed chat title to: "Pi Tools Proof 2026-03-06"', exit_code: 0 },
+    });
+    expect(asRecord(changeTitleResult)).toMatchObject({ title: 'Pi Tools Proof 2026-03-06' });
+
+    const bridgeCustomMcp = normalizeToolCallV2({
+      protocol: 'acp',
+      provider: 'auggie',
+      toolName: 'execute',
+      callId: 'run_shell_command-2',
+      rawInput: {
+        command:
+          `happier tools call --source qa_marker_stdio_20260306 --tool get_marker --args-json '{}' --json`,
+        happierToolsShellBridge: {
+          kind: 'call',
+          rawCommand:
+            `happier tools call --source qa_marker_stdio_20260306 --tool get_marker --args-json '{}' --json`,
+          sessionId: null,
+          directory: null,
+          source: 'qa_marker_stdio_20260306',
+          tool: 'get_marker',
+          argsJson: '{}',
+          args: {},
+          json: true,
+        },
+      },
+    });
+    expect(bridgeCustomMcp.canonicalToolName).toBe('mcp__qa_marker_stdio_20260306__get_marker');
+    expect(asRecord(bridgeCustomMcp.input)?._mcp).toBeTruthy();
+
+    const customMcpResult = normalizeToolResultV2({
+      protocol: 'acp',
+      provider: 'auggie',
+      rawToolName: 'execute',
+      canonicalToolName: 'mcp__qa_marker_stdio_20260306__get_marker',
+      rawOutput: { stdout: '{"renamed":true,"marker":"qa-marker-stdio-20260306"}', exit_code: 0 },
+    });
+    expect(asRecord(customMcpResult)).toMatchObject({ text: '{"renamed":true,"marker":"qa-marker-stdio-20260306"}' });
+  });
 });

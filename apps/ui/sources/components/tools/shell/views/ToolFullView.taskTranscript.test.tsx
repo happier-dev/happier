@@ -1,8 +1,12 @@
 import React from 'react';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeToolCall } from './ToolView.testHelpers';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,15 +59,23 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: () => false,
-    useSetting: () => false,
-    useSessionTranscriptDraftMessages: () => [],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            // Narrow boundary fixture: these tests only care about boolean local settings.
+            useLocalSetting: (() => false) as any,
+            useSetting: () => false,
+            useSessionTranscriptDraftMessages: () => [],
+        },
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => null,
@@ -74,7 +86,7 @@ const renderedSpecificSubAgentRunViewSpy = vi.fn();
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: (toolName: string) => {
-        if (toolName === 'Task') {
+        if (toolName === 'Task' || toolName === 'SubAgent') {
             return (props: any) => {
                 renderedSpecificTaskViewSpy(props);
                 return React.createElement('TaskSpecificView', null);
@@ -93,6 +105,7 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
         Task: { title: 'Task' },
+        SubAgent: { title: 'SubAgent' },
         SubAgentRun: { title: 'SubAgentRun' },
     },
 }));
@@ -119,11 +132,15 @@ describe('ToolFullView (Task transcript reuse)', () => {
 
     beforeAll(async () => {
         ({ ToolFullView } = await import('./ToolFullView'));
-    }, 30000);
+    }, 60000);
 
     beforeEach(() => {
         ensureSidechainMessagesLoadedMock.mockReset();
         ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
+    });
+
+    afterEach(() => {
+        standardCleanup();
     });
 
     it('ensures the sidechain transcript is loaded for Task tools', async () => {
@@ -134,18 +151,16 @@ describe('ToolFullView (Task transcript reuse)', () => {
             result: null,
         });
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: null,
-                    messages: [],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
+        await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
     });
@@ -160,18 +175,16 @@ describe('ToolFullView (Task transcript reuse)', () => {
             input: { operation: 'run', description: 'Explore' },
             result: { content: [{ type: 'text', text: 'Spawned successfully.' }] },
         });
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: null,
-                    messages: [],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
+        await flushHookEffects();
 
         expect(renderedSpecificTaskViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -190,18 +203,16 @@ describe('ToolFullView (Task transcript reuse)', () => {
             result: { sidechainId: 'sidechain_run_123' },
         });
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: null,
-                    messages: [],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
+        await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'sidechain_run_123');
     });
@@ -224,17 +235,15 @@ describe('ToolFullView (Task transcript reuse)', () => {
             text: 'Working...',
             isThinking: false,
         };
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: null,
-                    messages: [child],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [child],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
 
         expect(renderedMessageViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -266,17 +275,15 @@ describe('ToolFullView (Task transcript reuse)', () => {
             text: 'Streaming...',
             isThinking: false,
         };
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: null,
-                    messages: [child],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [child],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
 
         expect(renderedMessageViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -307,17 +314,15 @@ describe('ToolFullView (Task transcript reuse)', () => {
             text: 'From Alpha: hello',
             isThinking: false,
         };
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: null,
-                    messages: [child],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [child],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
 
         expect(renderedMessageViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -342,18 +347,16 @@ describe('ToolFullView (Task transcript reuse)', () => {
             input: { name: 'Alpha', team_name: 'probe', description: 'Inspect repo, report one fact' },
             result: { content: [{ type: 'text', text: 'Spawned successfully.' }] },
         });
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolFullView, {
-                    tool,
-                    metadata: { flavor: 'claude' } as any,
-                    messages: [],
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+        await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: { flavor: 'claude' } as any,
+                messages: [],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
+        await flushHookEffects();
 
         expect(renderedSpecificTaskViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({

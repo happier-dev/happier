@@ -6,7 +6,7 @@ import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 import { readCredentials, readSettings } from '@/persistence';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -91,11 +91,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   }
 
   if (daemonSubcommand === 'start') {
-    const child = spawnHappyCLI(['daemon', 'start-sync'], {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    });
+    const child = await spawnDetachedDaemonStartSync();
     child.unref();
 
     let started = false;
@@ -121,6 +117,10 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
     } else {
       console.error('Failed to start daemon');
+      const latestDaemonLog = await getLatestDaemonLog().catch(() => null);
+      if (latestDaemonLog?.path) {
+        console.error(`Latest daemon log: ${latestDaemonLog.path}`);
+      }
       process.exit(1);
     }
     process.exit(0);

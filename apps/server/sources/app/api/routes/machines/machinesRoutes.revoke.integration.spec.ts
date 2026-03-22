@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
 
 const markAccountChanged = vi.fn(async () => 456);
@@ -42,34 +43,24 @@ const existingMachine = {
     revokedAt: null as Date | null,
 };
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        machine: {
-            findFirst: vi.fn(async () => existingMachine),
-        },
-    },
+const dbMocks = createDbMocks({
+    machine: ["findFirst"],
+} as const);
+const txDbMocks = createDbMocks({
+    machine: ["findFirst", "update"],
+    accessKey: ["deleteMany"],
+    automationAssignment: ["deleteMany"],
+} as const);
+
+installDbModuleMock(() => ({
+    db: dbMocks.db,
     isPrismaErrorCode: () => false,
 }));
 
-const txMachineUpdate = vi.fn(async (args: any) => ({
-    ...existingMachine,
-    ...args.data,
-    updatedAt: new Date(),
-}));
-const txAccessKeyDeleteMany = vi.fn(async () => ({ count: 2 }));
-const txAutomationAssignmentDeleteMany = vi.fn(async () => ({ count: 1 }));
-
 const harness = createInTxHarness(() => ({
-    machine: {
-        findFirst: vi.fn(async () => existingMachine),
-        update: txMachineUpdate,
-    },
-    accessKey: {
-        deleteMany: txAccessKeyDeleteMany,
-    },
-    automationAssignment: {
-        deleteMany: txAutomationAssignmentDeleteMany,
-    },
+    machine: txDbMocks.db.machine,
+    accessKey: txDbMocks.db.accessKey,
+    automationAssignment: txDbMocks.db.automationAssignment,
 }));
 
 vi.mock("@/storage/inTx", () => ({
@@ -80,27 +71,36 @@ vi.mock("@/storage/inTx", () => ({
 describe("machinesRoutes (revoke machine)", () => {
     it("marks a machine revoked and deletes its access keys", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
+        dbMocks.reset();
+        txDbMocks.reset();
+        dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        txDbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        txDbMocks.db.machine.update.mockImplementation(async (args: any) => ({
+            ...existingMachine,
+            ...args.data,
+            updatedAt: new Date(),
+        }));
+        txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 2 });
+        txDbMocks.db.automationAssignment.deleteMany.mockResolvedValue({ count: 1 });
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines/:id/revoke",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
 
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines/:id/revoke");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-
-        const response = await handler(
+        const { response, reply } = await route.invoke(
             {
                 userId: "u1",
                 params: { id: "m1" },
             },
-            reply,
         );
 
-        expect(txAccessKeyDeleteMany).toHaveBeenCalledWith(expect.objectContaining({
+        expect(txDbMocks.db.accessKey.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ accountId: "u1", machineId: "m1" }),
         }));
-        expect(txAutomationAssignmentDeleteMany).toHaveBeenCalledWith(expect.objectContaining({
+        expect(txDbMocks.db.automationAssignment.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ machineId: "m1" }),
         }));
         expect(markAccountChanged).toHaveBeenCalledWith(

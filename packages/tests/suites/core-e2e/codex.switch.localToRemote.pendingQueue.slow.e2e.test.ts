@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -10,32 +11,75 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createSessionWithCiphertexts, fetchMessagesSince, fetchSessionV2 } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
-import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
+import {
+  readFakeCodexAppServerRequestLog,
+  writeFakeCodexAppServerScript,
+} from '../../src/testkit/codexAppServerRemoteHarness';
 
 const run = createRunDirs({ runLabel: 'core' });
+type RemoteBackend = 'acp' | 'appServer';
+const requireFromRepoRoot = createRequire(import.meta.url);
 
-describe('core e2e: Codex local→remote switch drains pending UI message', () => {
+type DecryptedSessionMetadata = Readonly<{ codexSessionId?: string }>;
+type DecryptedAgentState = Readonly<{ controlledByUser?: boolean }>;
+type DecryptedUserTextMessage = Readonly<{
+  role?: string;
+  content?: Readonly<{ type?: string; text?: string }>;
+}>;
+type DecryptedAcpAgentMessage = Readonly<{
+  role?: string;
+  content?: Readonly<{
+    type?: string;
+    provider?: string;
+    data?: Readonly<{ type?: string; message?: string }>;
+  }>;
+}>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readMetadata(value: unknown): DecryptedSessionMetadata | null {
+  return isRecord(value) ? value : null;
+}
+
+function readAgentState(value: unknown): DecryptedAgentState | null {
+  return isRecord(value) ? value : null;
+}
+
+function readUserTextMessage(value: unknown): DecryptedUserTextMessage | null {
+  return isRecord(value) ? value as DecryptedUserTextMessage : null;
+}
+
+function readAcpAgentMessage(value: unknown): DecryptedAcpAgentMessage | null {
+  return isRecord(value) ? value as DecryptedAcpAgentMessage : null;
+}
+
+async function runLocalToRemotePendingSwitchScenario(params: Readonly<{
+  remoteBackend: RemoteBackend;
+}>): Promise<void> {
+  const testName = params.remoteBackend === 'appServer'
+    ? 'codex-switch-local-to-remote-pending-app-server'
+    : 'codex-switch-local-to-remote-pending';
+  const testDir = run.testDir(testName);
+  const startedAt = new Date().toISOString();
+
   let server: StartedServer | null = null;
+  let proc: SpawnedProcess | null = null;
+  let ui: ReturnType<typeof createUserScopedSocketCollector> | null = null;
 
-  afterEach(async () => {
-    await server?.stop();
-    server = null;
-  });
-
-  it('switches to remote after a pending message is enqueued, then runs that message via Codex ACP', async () => {
-    const testDir = run.testDir('codex-switch-local-to-remote-pending');
-    const startedAt = new Date().toISOString();
-
+  try {
     // This scenario validates local→remote switch + pending-queue delivery, not DB portability.
     // Keep sqlite for deterministic metadata propagation across environments.
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
@@ -56,10 +100,11 @@ describe('core e2e: Codex local→remote switch drains pending UI message', () =
       {
         path: workspaceDir,
         host: 'e2e',
-        name: 'codex-switch-local-to-remote-pending',
+        name: testName,
         createdAt: Date.now(),
         permissionMode: 'default',
         permissionModeUpdatedAt: 1000,
+        ...(params.remoteBackend === 'appServer' ? { codexBackendMode: 'appServer' } : {}),
       },
       secret,
     );
@@ -67,7 +112,7 @@ describe('core e2e: Codex local→remote switch drains pending UI message', () =
     const { sessionId } = await createSessionWithCiphertexts({
       baseUrl: serverBaseUrl,
       token: auth.token,
-      tag: `e2e-codex-switch-local-to-remote-pending-${randomUUID()}`,
+      tag: `e2e-${testName}-${randomUUID()}`,
       metadataCiphertextBase64,
       agentStateCiphertextBase64: null,
     });
@@ -110,18 +155,24 @@ setInterval(() => {}, 1000);
 
     expect(existsSync(rolloutPath)).toBe(false);
 
-    const sdkEntry = resolve(repoRootDir(), 'apps/cli/node_modules/@agentclientprotocol/sdk/dist/acp.js');
+    const sdkEntry = requireFromRepoRoot.resolve('@agentclientprotocol/sdk/dist/acp.js', {
+      paths: [resolve(repoRootDir(), 'apps/cli')],
+    });
     const acpStubProviderPath = resolve(
       repoRootDir(),
       'packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs',
     );
+    const requestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
+    const fakeAppServerPath = params.remoteBackend === 'appServer'
+      ? await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath })
+      : null;
 
     writeTestManifestForServer({
       testDir,
       server,
       startedAt,
       runId: run.runId,
-      testName: 'codex-switch-local-to-remote-pending',
+      testName,
       sessionIds: [sessionId],
       env: {},
     });
@@ -140,16 +191,20 @@ setInterval(() => {}, 1000);
       HAPPIER_CODEX_TUI_BIN: fakeCodexPath,
       HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
       HAPPIER_E2E_CODEX_SESSION_ID: codexSessionId,
-      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-      HAPPIER_CODEX_ACP_NPX_MODE: 'never',
-      HAPPIER_CODEX_ACP_BIN: acpStubProviderPath,
-      HAPPIER_E2E_ACP_SDK_ENTRY: sdkEntry,
+      ...(params.remoteBackend === 'acp'
+        ? {
+            HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
+            HAPPIER_CODEX_ACP_BIN: acpStubProviderPath,
+            HAPPIER_E2E_ACP_SDK_ENTRY: sdkEntry,
+          }
+        : {
+            HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServerPath ?? '',
+            HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
+          }),
       PATH: `${fakeBinDir}${delimiter}${process.env.PATH ?? ''}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
-
-    const proc: SpawnedProcess = spawnLoggedProcess({
+    proc = spawnLoggedProcess({
       command: yarnCommand(),
       args: [
         '-s',
@@ -170,76 +225,75 @@ setInterval(() => {}, 1000);
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
 
-    const ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
+    ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
     ui.connect();
 
-    try {
-      await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
+    await waitFor(() => ui?.isConnected() === true, { timeoutMs: 20_000 });
 
-      // Wait for local-control to come up and publish the Codex session id + controlledByUser.
-      await waitFor(async () => {
-        const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-        const metadata = decryptLegacyBase64(snap.metadata, secret) as any;
-        if (!metadata || typeof metadata !== 'object') return false;
-        if (metadata.codexSessionId !== codexSessionId) return false;
-        const agentState = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
-        return agentState && typeof agentState === 'object' && agentState.controlledByUser === true;
-      }, { timeoutMs: 60_000 });
+    // Wait for local-control to come up and publish the Codex session id + controlledByUser.
+    await waitFor(async () => {
+      const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      const metadata = readMetadata(decryptLegacyBase64Normalized(snap.metadata, secret));
+      if (!metadata) return false;
+      if (metadata.codexSessionId !== codexSessionId) return false;
+      const agentState = snap.agentState ? readAgentState(decryptLegacyBase64Normalized(snap.agentState, secret)) : null;
+      return agentState?.controlledByUser === true;
+    }, { timeoutMs: 60_000 });
 
-      const baseline = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      const startAfterSeq = baseline.seq ?? 0;
+    const baseline = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+    const startAfterSeq = baseline.seq ?? 0;
 
-      const marker = `LOCAL_TO_REMOTE_${randomUUID()}`;
-      const pendingLocalId = `msg-${randomUUID()}`;
-      const userText = `ACP_STUB_USAGE_UPDATE=${marker}`;
-      const ciphertext = encryptLegacyBase64(
-        {
-          role: 'user',
-          content: { type: 'text', text: userText },
-          localId: pendingLocalId,
-          meta: { source: 'ui', sentFrom: 'e2e' },
-        },
-        secret,
-      );
-      const enqueue = await enqueuePendingQueueV2({
-        baseUrl: serverBaseUrl,
-        token: auth.token,
-        sessionId,
+    const marker = `LOCAL_TO_REMOTE_${randomUUID()}`;
+    const pendingLocalId = `msg-${randomUUID()}`;
+    const userText = params.remoteBackend === 'acp'
+      ? `ACP_STUB_USAGE_UPDATE=${marker}`
+      : `APP_SERVER_SWITCH_PENDING=${marker}`;
+    const ciphertext = encryptLegacyBase64(
+      {
+        role: 'user',
+        content: { type: 'text', text: userText },
         localId: pendingLocalId,
-        ciphertext,
-        timeoutMs: 20_000,
-      });
-      expect(enqueue.status).toBe(200);
+        meta: { source: 'ui', sentFrom: 'e2e' },
+      },
+      secret,
+    );
+    const enqueue = await enqueuePendingQueueV2({
+      baseUrl: serverBaseUrl,
+      token: auth.token,
+      sessionId,
+      localId: pendingLocalId,
+      ciphertext,
+      timeoutMs: 20_000,
+    });
+    expect(enqueue.status).toBe(200);
 
-      await waitFor(async () => {
-        const pending = await listPendingQueueV2({ baseUrl: serverBaseUrl, token: auth.token, sessionId, timeoutMs: 20_000 });
-        return (
-          pending.status === 200 &&
-          Array.isArray(pending.data?.pending) &&
-          pending.data.pending.some((row) => row.localId === pendingLocalId && row.status === 'queued')
-        );
-      }, { timeoutMs: 20_000 });
+    await waitFor(async () => {
+      const pending = await listPendingQueueV2({ baseUrl: serverBaseUrl, token: auth.token, sessionId, timeoutMs: 20_000 });
+      return (
+        pending.status === 200 &&
+        Array.isArray(pending.data?.pending) &&
+        pending.data.pending.some((row) => row.localId === pendingLocalId && row.status === 'queued')
+      );
+    }, { timeoutMs: 20_000 });
 
-      // UI requests remote-control after pending enqueue for local sessions.
-      await expect(requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 25_000 })).resolves.toBe(true);
+    await expect(requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 25_000 })).resolves.toBe(true);
 
-      await waitFor(async () => {
-        const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-        const agentState = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
-        return agentState && typeof agentState === 'object' && agentState.controlledByUser === false;
-      }, { timeoutMs: 60_000 });
+    await waitFor(async () => {
+      const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      const agentState = snap.agentState ? readAgentState(decryptLegacyBase64Normalized(snap.agentState, secret)) : null;
+      return agentState?.controlledByUser === false;
+    }, { timeoutMs: 60_000 });
 
-      // Pending row should be materialized and removed from the server queue once remote mode starts.
-      await waitFor(async () => {
-        const pending = await listPendingQueueV2({ baseUrl: serverBaseUrl, token: auth.token, sessionId, timeoutMs: 20_000 });
-        return (
-          pending.status === 200 &&
-          Array.isArray(pending.data?.pending) &&
-          pending.data.pending.every((row) => row.localId !== pendingLocalId)
-        );
-      }, { timeoutMs: 60_000 });
+    await waitFor(async () => {
+      const pending = await listPendingQueueV2({ baseUrl: serverBaseUrl, token: auth.token, sessionId, timeoutMs: 20_000 });
+      return (
+        pending.status === 200 &&
+        Array.isArray(pending.data?.pending) &&
+        pending.data.pending.every((row) => row.localId !== pendingLocalId || row.status !== 'queued')
+      );
+    }, { timeoutMs: 60_000 });
 
-      // Remote mode should run the pending message via Codex ACP.
+    if (params.remoteBackend === 'acp') {
       await waitFor(async () => {
         const rows = await fetchMessagesSince({
           baseUrl: serverBaseUrl,
@@ -251,25 +305,23 @@ setInterval(() => {}, 1000);
         let sawUser = false;
         let sawAgent = false;
         for (const row of rows) {
-          const decrypted = decryptLegacyBase64(row.content.c, secret) as any;
-          if (!decrypted || typeof decrypted !== 'object') continue;
+          const userOrAgentMessage = decryptLegacyBase64Normalized(row.content.c, secret);
+          const userMessage = readUserTextMessage(userOrAgentMessage);
+          const agentMessage = readAcpAgentMessage(userOrAgentMessage);
 
-          if (row.localId === pendingLocalId && decrypted.role === 'user') {
-            const content = decrypted.content;
-            if (content && typeof content === 'object' && content.type === 'text' && content.text === userText) {
+          if (row.localId === pendingLocalId && userMessage?.role === 'user') {
+            const content = userMessage.content;
+            if (content?.type === 'text' && content.text === userText) {
               sawUser = true;
             }
           }
 
-          if (decrypted.role !== 'agent') continue;
-          const content = decrypted.content;
-          if (!content || typeof content !== 'object') continue;
-          if (content.type !== 'acp') continue;
-          if (content.provider !== 'codex') continue;
+          if (agentMessage?.role !== 'agent') continue;
+          const content = agentMessage.content;
+          if (content?.type !== 'acp' || content.provider !== 'codex') continue;
           const data = content.data;
-          if (!data || typeof data !== 'object') continue;
-          if (data.type !== 'message') continue;
-          const message = (data as any).message;
+          if (data?.type !== 'message') continue;
+          const message = data.message;
           if (typeof message === 'string' && message.includes(`ACP_STUB_USAGE_UPDATE_DONE ${marker}`)) {
             sawAgent = true;
           }
@@ -277,10 +329,51 @@ setInterval(() => {}, 1000);
 
         return sawUser && sawAgent;
       }, { timeoutMs: 90_000 });
-    } finally {
-      ui.close();
-      await proc.stop();
-      await stopDaemonFromHomeDir(cliHome).catch(() => {});
+      return;
     }
+
+    await waitFor(async () => {
+      const rows = await fetchMessagesSince({
+        baseUrl: serverBaseUrl,
+        token: auth.token,
+        sessionId,
+        afterSeq: startAfterSeq,
+      });
+      const localRow = rows.find((row) => row.localId === pendingLocalId) ?? null;
+      if (!localRow) return false;
+      const userRecord = decryptLegacyBase64Normalized(localRow.content.c, secret) as Record<string, unknown> | null;
+      const content = userRecord?.content as Record<string, unknown> | undefined;
+      if (!(userRecord?.role === 'user' && content?.type === 'text' && content.text === userText)) return false;
+      const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      return typeof snap.seq === 'number' && snap.seq > startAfterSeq;
+    }, { timeoutMs: 45_000, context: 'local to remote app-server transcript materializes queued prompt' });
+
+    const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
+    expect(requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: 'thread/resume', params: expect.objectContaining({ threadId: codexSessionId }) }),
+      expect.objectContaining({
+        method: 'turn/start',
+        params: expect.objectContaining({
+          threadId: codexSessionId,
+          input: expect.arrayContaining([expect.objectContaining({ type: 'text', text: userText })]),
+        }),
+      }),
+    ]));
+  } finally {
+    ui?.close();
+    await proc?.stop();
+    const cliHome = resolve(join(testDir, 'cli-home'));
+    await stopDaemonFromHomeDir(cliHome).catch(() => {});
+    await server?.stop();
+  }
+}
+
+describe('core e2e: Codex local→remote switch drains pending UI message', () => {
+  it('switches to remote after a pending message is enqueued, then runs that message via Codex ACP', async () => {
+    await runLocalToRemotePendingSwitchScenario({ remoteBackend: 'acp' });
+  }, 240_000);
+
+  it('switches to app-server remote after a pending message is enqueued, then drains that message through the app-server runtime', async () => {
+    await runLocalToRemotePendingSwitchScenario({ remoteBackend: 'appServer' });
   }, 240_000);
 });

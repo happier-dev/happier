@@ -9,14 +9,22 @@ import { FloatingOverlay } from './FloatingOverlay';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('ScrollView', props, props.children),
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -25,34 +33,8 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#666',
             },
         },
-    }),
-    StyleSheet: {
-        create: (
-            factory: (
-                theme: {
-                    colors: {
-                        surface: string;
-                        modal: { border: string };
-                        shadow: { color: string; opacity: number };
-                        textSecondary: string;
-                    };
-                },
-                runtime: Record<string, unknown>,
-            ) => unknown,
-        ) =>
-            factory(
-                {
-                    colors: {
-                        surface: '#fff',
-                        modal: { border: 'rgba(0,0,0,0.1)' },
-                        shadow: { color: 'rgba(0,0,0,0.2)', opacity: 0.2 },
-                        textSecondary: '#666',
-                    },
-                },
-                {},
-            ),
-    },
-}));
+    });
+});
 
 vi.mock('react-native-reanimated', () => {
     const AnimatedView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>

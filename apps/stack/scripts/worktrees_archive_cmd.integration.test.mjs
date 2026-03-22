@@ -1,102 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const scriptsDir = dirname(fileURLToPath(import.meta.url));
-const rootDir = dirname(scriptsDir);
+import { runCommandCapture, runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
+import { createStackArchiveFixture } from './testkit/stack_archive_command_testkit.mjs';
 
-function runCmd(cmd, args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const cleanEnv = {};
-    for (const [k, v] of Object.entries(env ?? {})) {
-      if (v == null) continue;
-      cleanEnv[k] = String(v);
-    }
-    const proc = spawn(cmd, args, { cwd, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('close', (code, signal) => {
-      if (code != null) {
-        resolve({ code, stdout, stderr });
-        return;
-      }
-      const signalText = signal ? ` (signal: ${signal})` : '';
-      resolve({ code: 1, stdout, stderr: `${stderr}Process exited without code${signalText}\n` });
-    });
-  });
-}
-
-function runNode(args, { cwd, env }) {
-  return runCmd(process.execPath, args, { cwd, env });
-}
+const rootDir = fileURLToPath(new URL('..', import.meta.url));
 
 async function runOk(cmd, args, { cwd, env }) {
-  const res = await runCmd(cmd, args, { cwd, env });
+  const res = await runCommandCapture(cmd, args, { cwd, env });
   assert.equal(res.code, 0, `expected exit 0 for ${cmd} ${args.join(' ')}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   return res;
 }
 
-function createBaseEnv({ homeDir, storageDir, workspaceDir }) {
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPIER_STACK_'))),
-    GIT_TERMINAL_PROMPT: '0',
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-  };
-}
-
-async function initMainRepo({ repoDir, baseEnv }) {
-  await mkdir(repoDir, { recursive: true });
-  await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir, env: baseEnv });
-  await writeFile(join(repoDir, 'README.md'), 'hello\n', 'utf-8');
-  await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
-}
-
-async function addWorktree({ repoDir, worktreeDir, branch, baseEnv }) {
-  await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', branch, worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
-}
-
-async function createArchiveFixture(t, prefix) {
-  const tmp = await mkdtemp(join(tmpdir(), prefix));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
-  });
-
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-  const baseEnv = createBaseEnv({ homeDir, storageDir, workspaceDir });
-  const repoDir = join(workspaceDir, 'main');
-
-  await initMainRepo({ repoDir, baseEnv });
-
-  return {
-    baseEnv,
-    homeDir,
-    repoDir,
-    storageDir,
-    tmp,
-    workspaceDir,
-  };
-}
-
 test('hstack wt archive detaches and moves a git worktree (preserving uncommitted changes)', async (t) => {
-  const { baseEnv, repoDir, workspaceDir } = await createArchiveFixture(t, 'happy-stacks-wt-archive-');
-
-  const worktreeDir = join(workspaceDir, 'pr', 'test-archive');
-  await addWorktree({ repoDir, worktreeDir, branch: 'pr/test-archive', baseEnv });
+  const { baseEnv, repoDir, workspaceDir, worktreeDir } = await createStackArchiveFixture(t, {
+    worktreeSlug: 'test-archive',
+    attachStack: false,
+  });
 
   await writeFile(join(worktreeDir, 'staged.txt'), 'staged\n', 'utf-8');
   await runOk('git', ['add', 'staged.txt'], { cwd: worktreeDir, env: baseEnv });
@@ -109,9 +32,8 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   assert.ok(beforeStatus.stdout.includes('?? untracked.txt'), `expected untracked file in status\n${beforeStatus.stdout}`);
 
   const date = '2000-01-02';
-  // Simulate a minimal PATH environment like launchd/SwiftBar shells.
   const nodeEnv = { ...baseEnv, PATH: '' };
-  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/test-archive', `--date=${date}`, '--json'], {
+  const res = await runNodeCapture([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/test-archive', `--date=${date}`, '--json'], {
     cwd: rootDir,
     env: nodeEnv,
   });
@@ -138,32 +60,27 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   const list = await runOk('git', ['worktree', 'list', '--porcelain'], { cwd: repoDir, env: baseEnv });
   assert.ok(!list.stdout.includes(worktreeDir), `expected source repo worktree entry pruned\n${list.stdout}`);
 
-  const branchExists = await runCmd('git', ['show-ref', '--verify', 'refs/heads/pr/test-archive'], { cwd: repoDir, env: baseEnv });
+  const branchExists = await runCommandCapture('git', ['show-ref', '--verify', 'refs/heads/pr/test-archive'], { cwd: repoDir, env: baseEnv });
   assert.notEqual(branchExists.code, 0, 'expected source repo branch deleted');
 });
 
 test('hstack wt archive refuses to break stacks unless --detach-stacks is provided', async (t) => {
-  const { baseEnv, repoDir, storageDir, workspaceDir } = await createArchiveFixture(t, 'happy-stacks-wt-archive-stacks-');
-
-  const worktreeDir = join(workspaceDir, 'pr', 'linked-to-stack');
-  await addWorktree({ repoDir, worktreeDir, branch: 'pr/linked-to-stack', baseEnv });
-  await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
-
-  const stackName = 'exp-test';
+  const { baseEnv, storageDir, workspaceDir, worktreeDir, stackName } = await createStackArchiveFixture(t, {
+    stackName: 'exp-test',
+    worktreeSlug: 'linked-to-stack',
+  });
   const envPath = join(storageDir, stackName, 'env');
-  await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(envPath, [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_REPO_DIR=${worktreeDir}`, ''].join('\n'), 'utf-8');
 
   const date = '2000-01-03';
   const nodeEnv = { ...baseEnv, PATH: '' };
 
-  const denied = await runNode(
+  const denied = await runNodeCapture(
     [join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/linked-to-stack', `--date=${date}`],
     { cwd: rootDir, env: nodeEnv }
   );
   assert.notEqual(denied.code, 0, `expected archive to refuse without --detach-stacks\nstdout:\n${denied.stdout}\nstderr:\n${denied.stderr}`);
 
-  const ok = await runNode(
+  const ok = await runNodeCapture(
     [
       join(rootDir, 'scripts', 'worktrees.mjs'),
       'archive',
@@ -185,16 +102,14 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
 });
 
 test('hstack wt archive can archive a broken git worktree (missing .git/worktrees entry)', async (t) => {
-  const { baseEnv, repoDir, workspaceDir } = await createArchiveFixture(t, 'happy-stacks-wt-archive-broken-');
+  const { baseEnv, workspaceDir, worktreeDir } = await createStackArchiveFixture(t, {
+    worktreeSlug: 'broken-worktree',
+    attachStack: false,
+  });
 
-  const worktreeDir = join(workspaceDir, 'pr', 'broken-worktree');
-  await addWorktree({ repoDir, worktreeDir, branch: 'pr/broken-worktree', baseEnv });
-
-  // Create uncommitted changes (no staging; the index will be deleted when we break the worktree).
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
   await writeFile(join(worktreeDir, 'README.md'), 'hello\nchanged\n', 'utf-8');
 
-  // Simulate a corrupted linked worktree by removing its gitdir entry from the source repo.
   const gitFile = await readFile(join(worktreeDir, '.git'), 'utf-8');
   const gitdirLine = gitFile
     .split('\n')
@@ -209,7 +124,7 @@ test('hstack wt archive can archive a broken git worktree (missing .git/worktree
 
   const date = '2000-01-05';
   const nodeEnv = { ...baseEnv, PATH: '' };
-  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/broken-worktree', `--date=${date}`, '--json'], {
+  const res = await runNodeCapture([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/broken-worktree', `--date=${date}`, '--json'], {
     cwd: rootDir,
     env: nodeEnv,
   });

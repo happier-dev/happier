@@ -2,18 +2,18 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { MultiPaneHost } from './MultiPaneHost';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (overlayDetails)', () => {
-    it('renders a scrim for overlay details, exposes a resizer, and closes on scrim press', () => {
+    it('renders a scrim for overlay details, exposes a resizer, and closes on scrim press', async () => {
         vi.useFakeTimers();
         const onCloseDetails = vi.fn();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHost
+        tree = (await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={<Details />}
@@ -24,17 +24,15 @@ describe('MultiPaneHost (overlayDetails)', () => {
                     onCloseDetails={onCloseDetails}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />
-            );
-        });
+                />)).tree;
 
-        const overlay = tree!.root.findByProps({ testID: 'multi-pane-details-overlay' });
+        const overlay = tree!.findByProps({ testID: 'multi-pane-details-overlay' });
         expect(overlay).toBeTruthy();
 
         const overlayWrapper = overlay.parent;
         expect(readZIndex(overlayWrapper?.props?.style)).toBeGreaterThan(0);
 
-        const scrim = tree!.root.findByProps({ testID: 'multi-pane-details-scrim' });
+        const scrim = tree!.findByProps({ testID: 'multi-pane-details-scrim' });
         act(() => {
             scrim.props.onPress();
         });

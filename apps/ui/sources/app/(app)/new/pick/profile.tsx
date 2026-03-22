@@ -7,11 +7,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { Modal } from '@/modal';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { machinePreviewEnv } from '@/sync/ops';
-import { getProfileEnvironmentVariables } from '@/sync/domains/settings/settings';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
@@ -21,12 +20,15 @@ import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 export default React.memo(function ProfilePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
+        dataId?: string;
         selectedId?: string;
         machineId?: string;
         profileId?: string | string[];
@@ -40,22 +42,27 @@ export default React.memo(function ProfilePickerScreen() {
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
+    const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
     const machineId = typeof params.machineId === 'string' ? params.machineId : undefined;
     const profileId = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const secretRequirementResultId = typeof params.secretRequirementResultId === 'string' ? params.secretRequirementResultId : '';
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const setParamsOnPreviousAndClose = React.useCallback((next: { profileId: string; secretId?: string; secretSessionOnlyId?: string }) => {
-        const state = navigation.getState();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            navigation.dispatch({
-                type: 'SET_PARAMS',
-                payload: { params: next },
-                source: previousRoute.key,
-            } as never);
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation,
+            router,
+            routeParams: next,
+            replaceParams: {
+                ...(dataId ? { dataId } : {}),
+                ...(machineId ? { machineId } : {}),
+                ...(spawnServerId ? { spawnServerId } : {}),
+                ...next,
+            },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-        router.back();
-    }, [navigation, router]);
+    }, [dataId, machineId, navigation, router, spawnServerId]);
 
     // When the secret requirement screen is used (native), it returns a temp id via params.
     // We handle it here and then return to the previous route with the correct selection.

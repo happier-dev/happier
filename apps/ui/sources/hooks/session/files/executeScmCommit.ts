@@ -41,9 +41,7 @@ export async function executeScmCommit(input: {
                 });
                 const includePatches = isAtomicCommitStrategy(input.scmCommitStrategy)
                     && input.commitSelectionPatches.length > 0;
-                const requestScope = includePatches && input.commitSelectionPaths.length === 0
-                    ? undefined
-                    : scope;
+                const requestScope = includePatches ? undefined : scope;
                 const response = await sessionScmCommitCreate(input.sessionId, {
                     message: input.commitMessage,
                     ...(requestScope ? { scope: requestScope } : {}),

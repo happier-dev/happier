@@ -1,12 +1,15 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -21,15 +24,19 @@ vi.mock('react-native-svg', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: { ...rn.Platform, OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
-        View: (props: any) => React.createElement('View', props, props.children),
-        Image: (props: any) => React.createElement('Image', props, props.children),
-        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: (values: any) => values?.ios ?? values?.default ?? null,
+                                    },
+                                    View: (props: any) => React.createElement('View', props, props.children),
+                                    Image: (props: any) => React.createElement('Image', props, props.children),
+                                    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, props.children),
+                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                }
+    );
 });
 
 describe('FileBinaryState (svg previews)', () => {
@@ -50,10 +57,8 @@ describe('FileBinaryState (svg previews)', () => {
         } as any;
 
         let tree!: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(<FileBinaryState theme={theme} filePath="icon.svg" imagePreviewUri={uri} />);
-        });
+        tree = (await renderScreen(<FileBinaryState theme={theme} filePath="icon.svg" imagePreviewUri={uri} />)).tree;
 
-        expect(tree.root.findAllByType('SvgXml' as any).length).toBe(1);
+        expect(tree.findAllByType('SvgXml' as any).length).toBe(1);
     });
 });

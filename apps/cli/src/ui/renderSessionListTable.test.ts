@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
+import type { CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { renderSessionListTable } from './renderSessionListTable';
 
 describe('renderSessionListTable', () => {

@@ -34,6 +34,10 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
         : '';
     const hasEmbeddedBundle = embeddedBundle.length > 0;
 
+    // NOTE: Keep the CDN ESM fallback.
+    // This has come up in reviews before, but it's intentional: when the embedded bundle is unavailable
+    // (e.g. bundle generation issues, certain dev/test environments), we prefer the editor to remain
+    // usable best-effort rather than hard-failing.
     const cdnModuleImports = hasEmbeddedBundle
         ? ''
         : `[
@@ -241,6 +245,8 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       let view = null;
       let changeTimer = null;
       let applyingRemote = false;
+      let currentLanguage = null;
+      let currentReadOnly = false;
 
       async function boot() {
         const embedded = ${hasEmbeddedBundle ? 'true' : 'false'};
@@ -405,6 +411,16 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           return new EditorView({ state, parent: root });
         }
 
+        function recreateView(doc, language, readOnly) {
+          if (view) {
+            view.destroy();
+            view = null;
+          }
+          view = createView(doc, language, readOnly);
+          currentLanguage = language;
+          currentReadOnly = readOnly;
+        }
+
         function setDoc(nextDoc) {
           if (!view) return;
           applyingRemote = true;
@@ -417,23 +433,31 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           }
         }
 
-        function onEnvelope(envelope) {
+      function onEnvelope(envelope) {
           if (!envelope || envelope.v !== 1 || typeof envelope.type !== 'string') return;
           if (envelope.type === 'init') {
             const payload = envelope.payload || {};
             const doc = typeof payload.doc === 'string' ? payload.doc : '';
             const language = payload.language ?? null;
             const readOnly = payload.readOnly === true;
-            if (view) {
+            if (view && currentLanguage === language && currentReadOnly === readOnly) {
               setDoc(doc);
               return;
             }
-            view = createView(doc, language, readOnly);
+            recreateView(doc, language, readOnly);
             return;
           }
           if (envelope.type === 'setDoc') {
             const payload = envelope.payload || {};
             setDoc(typeof payload.doc === 'string' ? payload.doc : '');
+          }
+          if (envelope.type === 'requestDoc') {
+            const payload = envelope.payload || {};
+            const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+            const doc = view ? view.state.doc.toString() : '';
+            try {
+              sendEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc } });
+            } catch (e) {}
           }
         }
 

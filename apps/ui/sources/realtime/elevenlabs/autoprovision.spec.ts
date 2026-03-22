@@ -1,9 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { listVoiceToolActionSpecs } from '@happier-dev/protocol';
+import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
+vi.mock('@happier-dev/agents', () => ({
+  buildElevenLabsVoiceAgentPrompt: vi.fn(
+    () => 'Claude Code prompt with {{initialConversationContext}} and {{sessionId}}',
+  ),
+}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
+    getState: vi.fn(() => ({ settings: {} })),
+  },
+});
+});
+vi.mock('@/voice/tools/resolveDisabledVoiceActionIds', () => ({
+  resolveDisabledVoiceActionIdsFromState: vi.fn(() => []),
+}));
+
+const REQUIRED_CLIENT_TOOL_SPECS = [
+  {
+    name: 'startReview',
+    description: 'Start a review for the active session.',
+    parameters: {
+      type: 'object',
+      description: 'Parameters',
+      properties: {
+        sessionId: { type: 'string', description: 'Session id' },
+        engineIds: {
+          type: 'array',
+          description: 'Review engines',
+          items: { type: 'string', description: 'Engine id' },
+        },
+      },
+      required: ['sessionId'],
+    },
+  },
+  {
+    name: 'spawnSessionPicker',
+    description: 'Open the session picker.',
+    parameters: {
+      type: 'object',
+      description: 'Parameters',
+      properties: {
+        sessionId: { type: 'string', description: 'Session id' },
+      },
+      required: ['sessionId'],
+    },
+  },
+] as const;
+
+vi.mock('./requiredClientTools', () => ({
+  resolveElevenLabsRequiredClientTools: vi.fn(() => REQUIRED_CLIENT_TOOL_SPECS),
+}));
 
 describe('ElevenLabs BYO autoprov', () => {
   const originalFetch = globalThis.fetch;
@@ -30,27 +82,23 @@ describe('ElevenLabs BYO autoprov', () => {
     } as unknown as Response;
   }
 
+  function okVoices(voices: unknown[] = []): Response {
+    return okJson({ voices });
+  }
+
   beforeEach(() => {
     vi.resetModules();
+    resetRuntimeFetch();
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
   });
 
   afterEach(() => {
+    resetRuntimeFetch();
     globalThis.fetch = originalFetch;
   });
 
-  function listRequiredToolSpecs(): Array<{ name: string; description: string }> {
-    return listVoiceToolActionSpecs().flatMap((spec) => {
-      const nameRaw = spec.bindings?.voiceClientToolName;
-      const name = typeof nameRaw === 'string' ? nameRaw.trim() : '';
-      if (!name) return [];
-      const description = String(spec.description ?? spec.title ?? name).trim();
-      return [{ name, description }];
-    });
-  }
-
   it('creates an agent using existing client tools when available', async () => {
-		    const requiredToolSpecs = listRequiredToolSpecs();
+    const requiredToolSpecs = REQUIRED_CLIENT_TOOL_SPECS;
         const requiredToolNames = requiredToolSpecs.map((s) => s.name);
 
     fetchMock()
@@ -65,22 +113,24 @@ describe('ElevenLabs BYO autoprov', () => {
               parameters: { type: 'object', description: 'Parameters', properties: {} },
               expects_response: true,
               execution_mode: 'immediate',
-              response_timeout_secs: name === 'spawnSessionPicker' ? 300 : 60,
+              response_timeout_secs: name === 'spawnSessionPicker' ? 120 : 60,
             },
           })),
         }),
       )
+      .mockResolvedValueOnce(okVoices())
       .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
 
     const { createHappierElevenLabsAgent } = await import('./autoprovision');
     const result = await createHappierElevenLabsAgent({ apiKey: 'xi_test' });
     expect(result.agentId).toBe('agent_1');
 
-    expect(fetchMock()).toHaveBeenCalledTimes(2);
+    expect(fetchMock()).toHaveBeenCalledTimes(3);
     expect(fetchMock().mock.calls[0]?.[0]).toContain('/v1/convai/tools');
-    expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/convai/agents/create');
+    expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/voices');
+    expect(fetchMock().mock.calls[2]?.[0]).toContain('/v1/convai/agents/create');
 
-    const body = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
+    const body = JSON.parse(fetchMock().mock.calls[2]?.[1]?.body);
     expect(body.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((name) => `tool_${name}`));
     expect(body.conversation_config.tts?.voice_id).toBe('EST9Ui6982FZPSi7gCHi');
     expect(body.conversation_config.agent.prompt.prompt).toContain('{{initialConversationContext}}');
@@ -89,7 +139,7 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('patches existing client tool schemas when they contain unsupported fields', async () => {
-    const requiredToolSpecs = listRequiredToolSpecs();
+    const requiredToolSpecs = REQUIRED_CLIENT_TOOL_SPECS;
     const requiredToolNames = requiredToolSpecs.map((s) => s.name);
 
     fetchMock()
@@ -105,7 +155,7 @@ describe('ElevenLabs BYO autoprov', () => {
               parameters: { type: 'object', properties: {}, additionalProperties: true },
               expects_response: true,
               execution_mode: 'immediate',
-              response_timeout_secs: name === 'spawnSessionPicker' ? 300 : 60,
+              response_timeout_secs: name === 'spawnSessionPicker' ? 120 : 60,
             },
           })),
         }),
@@ -114,6 +164,9 @@ describe('ElevenLabs BYO autoprov', () => {
       .mockImplementation(async (url: string, init?: any) => {
         if (String(url).includes('/v1/convai/tools/') && init?.method === 'PATCH') {
           return okJson({ ok: true });
+        }
+        if (String(url).includes('/v1/voices')) {
+          return okVoices();
         }
         if (String(url).includes('/v1/convai/agents/create')) {
           return okJson({ agent_id: 'agent_1' });
@@ -140,22 +193,24 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('creates missing client tools before creating the agent', async () => {
-		    const requiredToolNames = listRequiredToolSpecs().map((s) => s.name);
+    const requiredToolNames = REQUIRED_CLIENT_TOOL_SPECS.map((s) => s.name);
 
     fetchMock().mockResolvedValueOnce(okJson({ tools: [] }));
     for (const name of requiredToolNames) {
       fetchMock().mockResolvedValueOnce(okJson({ id: `tool_${name}` }));
     }
+    fetchMock().mockResolvedValueOnce(okVoices());
     fetchMock().mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
 
     const { createHappierElevenLabsAgent } = await import('./autoprovision');
     const result = await createHappierElevenLabsAgent({ apiKey: 'xi_test' });
     expect(result.agentId).toBe('agent_1');
 
-    expect(fetchMock()).toHaveBeenCalledTimes(requiredToolNames.length + 2);
+    expect(fetchMock()).toHaveBeenCalledTimes(requiredToolNames.length + 3);
     expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/convai/tools');
     expect(fetchMock().mock.calls[2]?.[0]).toContain('/v1/convai/tools');
-    expect(fetchMock().mock.calls[requiredToolNames.length + 1]?.[0]).toContain('/v1/convai/agents/create');
+    expect(fetchMock().mock.calls[requiredToolNames.length + 1]?.[0]).toContain('/v1/voices');
+    expect(fetchMock().mock.calls[requiredToolNames.length + 2]?.[0]).toContain('/v1/convai/agents/create');
 
     const toolCreateBody = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
     expect(toolCreateBody.tool_config).toMatchObject({
@@ -180,11 +235,11 @@ describe('ElevenLabs BYO autoprov', () => {
 
     const spawnPicker = toolCreateBodies.find((b) => b?.tool_config?.name === 'spawnSessionPicker');
     expect(spawnPicker).toBeTruthy();
-    expect(Number(spawnPicker?.tool_config?.response_timeout_secs ?? 0)).toBeGreaterThan(60);
+    expect(Number(spawnPicker?.tool_config?.response_timeout_secs ?? 0)).toBe(120);
   });
 
   it('updates an existing agent to the latest template', async () => {
-		    const requiredToolSpecs = listRequiredToolSpecs();
+    const requiredToolSpecs = REQUIRED_CLIENT_TOOL_SPECS;
         const requiredToolNames = requiredToolSpecs.map((s) => s.name);
 
     fetchMock()
@@ -199,25 +254,27 @@ describe('ElevenLabs BYO autoprov', () => {
               parameters: { type: 'object', description: 'Parameters', properties: {} },
               expects_response: true,
               execution_mode: 'immediate',
-              response_timeout_secs: name === 'spawnSessionPicker' ? 300 : 60,
+              response_timeout_secs: name === 'spawnSessionPicker' ? 120 : 60,
             },
           })),
         }),
       )
+      .mockResolvedValueOnce(okVoices())
       .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
 
     const { updateHappierElevenLabsAgent } = await import('./autoprovision');
     await updateHappierElevenLabsAgent({ apiKey: 'xi_test', agentId: 'agent_1' });
 
-    expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/convai/agents/agent_1');
-    expect(fetchMock().mock.calls[1]?.[1]?.method).toBe('PATCH');
-    const body = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
+    expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/voices');
+    expect(fetchMock().mock.calls[2]?.[0]).toContain('/v1/convai/agents/agent_1');
+    expect(fetchMock().mock.calls[2]?.[1]?.method).toBe('PATCH');
+    const body = JSON.parse(fetchMock().mock.calls[2]?.[1]?.body);
     expect(body.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((name) => `tool_${name}`));
     expect(body.conversation_config.tts?.voice_id).toBe('EST9Ui6982FZPSi7gCHi');
   });
 
   it('uses provided tts configuration when creating an agent', async () => {
-		    const requiredToolSpecs = listRequiredToolSpecs();
+    const requiredToolSpecs = REQUIRED_CLIENT_TOOL_SPECS;
         const requiredToolNames = requiredToolSpecs.map((s) => s.name);
 
     fetchMock()
@@ -232,11 +289,12 @@ describe('ElevenLabs BYO autoprov', () => {
               parameters: { type: 'object', description: 'Parameters', properties: {} },
               expects_response: true,
               execution_mode: 'immediate',
-              response_timeout_secs: name === 'spawnSessionPicker' ? 300 : 60,
+              response_timeout_secs: name === 'spawnSessionPicker' ? 120 : 60,
             },
           })),
         }),
       )
+      .mockResolvedValueOnce(okVoices())
       .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
 
     const { createHappierElevenLabsAgent } = await import('./autoprovision');
@@ -249,7 +307,8 @@ describe('ElevenLabs BYO autoprov', () => {
       },
     } as any);
 
-    const body = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
+    const body = JSON.parse(fetchMock().mock.calls[2]?.[1]?.body);
+    expect(body.conversation_config?.turn?.turn_timeout).toBe(-1);
     expect(body.conversation_config.tts?.voice_id).toBe('voice_custom');
     expect(body.conversation_config.tts?.model_id).toBe('eleven_turbo_v2_5');
     expect(body.conversation_config.tts?.voice_settings?.stability).toBe(0.45);
@@ -296,7 +355,7 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('fails when create agent response is missing agent_id', async () => {
-		    const requiredToolSpecs = listRequiredToolSpecs();
+    const requiredToolSpecs = REQUIRED_CLIENT_TOOL_SPECS;
         const requiredToolNames = requiredToolSpecs.map((s) => s.name);
 
     fetchMock()
@@ -311,11 +370,12 @@ describe('ElevenLabs BYO autoprov', () => {
               parameters: { type: 'object', description: 'Parameters', properties: {} },
               expects_response: true,
               execution_mode: 'immediate',
-              response_timeout_secs: name === 'spawnSessionPicker' ? 300 : 60,
+              response_timeout_secs: name === 'spawnSessionPicker' ? 120 : 60,
             },
           })),
         }),
       )
+      .mockResolvedValueOnce(okVoices())
       .mockResolvedValueOnce(okJson({ agent_id: '' }));
 
     const { createHappierElevenLabsAgent } = await import('./autoprovision');
@@ -325,7 +385,7 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('surfaces update failure with sanitized ElevenLabs error', async () => {
-		    const requiredToolSpecs = listRequiredToolSpecs();
+    const requiredToolSpecs = REQUIRED_CLIENT_TOOL_SPECS;
         const requiredToolNames = requiredToolSpecs.map((s) => s.name);
 
     fetchMock()
@@ -340,11 +400,12 @@ describe('ElevenLabs BYO autoprov', () => {
               parameters: { type: 'object', description: 'Parameters', properties: {} },
               expects_response: true,
               execution_mode: 'immediate',
-              response_timeout_secs: name === 'spawnSessionPicker' ? 300 : 60,
+              response_timeout_secs: name === 'spawnSessionPicker' ? 120 : 60,
             },
           })),
         }),
       )
+      .mockResolvedValueOnce(okVoices())
       .mockResolvedValueOnce(errorResponse(502, 'backend unavailable'));
 
     const { updateHappierElevenLabsAgent } = await import('./autoprovision');

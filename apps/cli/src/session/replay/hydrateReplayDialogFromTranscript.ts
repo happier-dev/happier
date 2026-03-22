@@ -1,7 +1,7 @@
 import type { Credentials } from '@/persistence';
 
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 
 import { fetchEncryptedTranscriptMessages } from './fetchEncryptedTranscriptMessages';
 import { decryptTranscriptReplaySlice } from './decryptTranscriptReplaySlice';

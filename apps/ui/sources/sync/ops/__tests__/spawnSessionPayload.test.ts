@@ -72,6 +72,44 @@ describe('buildSpawnHappySessionRpcParams', () => {
         });
     });
 
+    it('includes agent mode when provided', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentModeId: 'plan',
+        } satisfies SpawnSessionOptions);
+
+        expect(params).toMatchObject({
+            agentModeId: 'plan',
+        });
+    });
+
+    it('includes session config option overrides when provided', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 123,
+                overrides: {
+                    speed: { updatedAt: 123, value: 'fast' },
+                },
+            },
+        } satisfies SpawnSessionOptions);
+
+        expect(params).toMatchObject({
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 123,
+                overrides: {
+                    speed: { updatedAt: 123, value: 'fast' },
+                },
+            },
+        });
+    });
+
     it('omits model override when updatedAt is present but modelId is missing', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'm1',
@@ -166,5 +204,40 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect(params).toMatchObject({
             transcriptStorage: 'persisted',
         });
+    });
+
+    it('omits removed workspace linkage identifiers from the machine spawn request', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            workspaceId: 'ws_payments',
+            workspaceLocationId: 'loc_local',
+            workspaceCheckoutId: 'checkout_feature_auth',
+        } as any as SpawnSessionOptions);
+
+        expect(params).not.toHaveProperty('workspaceId');
+        expect(params).not.toHaveProperty('workspaceLocationId');
+        expect(params).not.toHaveProperty('workspaceCheckoutId');
+    });
+
+    it('includes agent mode fields without workspace linkage in the machine spawn request', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentModeId: 'plan',
+            agentModeUpdatedAt: 321,
+            codexBackendMode: 'appServer',
+        } satisfies SpawnSessionOptions);
+
+        expect(params).toMatchObject({
+            agentModeId: 'plan',
+            agentModeUpdatedAt: 321,
+            codexBackendMode: 'appServer',
+        });
+        expect(params).not.toHaveProperty('workspaceId');
+        expect(params).not.toHaveProperty('workspaceLocationId');
+        expect(params).not.toHaveProperty('workspaceCheckoutId');
     });
 });

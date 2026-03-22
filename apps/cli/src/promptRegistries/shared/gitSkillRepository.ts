@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 function runGit(args: readonly string[], cwd?: string): string {
   return execFileSync('git', args, {
@@ -18,7 +19,7 @@ function runGit(args: readonly string[], cwd?: string): string {
 
 function normalizeRepositoryUrl(repositoryUrl: string): string {
   if (/^[a-z]+:\/\//i.test(repositoryUrl)) return repositoryUrl;
-  return existsSync(repositoryUrl) ? `file://${resolve(repositoryUrl)}` : repositoryUrl;
+  return existsSync(repositoryUrl) ? pathToFileURL(resolve(repositoryUrl)).href : repositoryUrl;
 }
 
 function isResolvedPathInsideRoot(rootPath: string, candidatePath: string): boolean {
@@ -57,10 +58,14 @@ export function collectPromptRegistrySkillDirectories(rootDirectory: string): st
 
 export function resolvePromptRegistrySourceRoot(cloneDirectory: string, subdirectory: string | null): string {
   if (!subdirectory) return cloneDirectory;
-  const resolvedCloneDirectory = resolve(cloneDirectory);
-  const resolved = resolve(resolvedCloneDirectory, subdirectory);
-  if (!isResolvedPathInsideRoot(resolvedCloneDirectory, resolved)) {
+  const resolvedCloneDirectory = realpathSync(resolve(cloneDirectory));
+  const candidatePath = resolve(resolvedCloneDirectory, subdirectory);
+  if (!isResolvedPathInsideRoot(resolvedCloneDirectory, candidatePath)) {
     throw new Error('registry subdirectory must stay within the cloned repository');
   }
-  return resolved;
+  const resolvedCandidatePath = existsSync(candidatePath) ? realpathSync(candidatePath) : candidatePath;
+  if (!isResolvedPathInsideRoot(resolvedCloneDirectory, resolvedCandidatePath)) {
+    throw new Error('registry subdirectory must stay within the cloned repository');
+  }
+  return resolvedCandidatePath;
 }

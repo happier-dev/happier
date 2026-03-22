@@ -1,49 +1,34 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+
+import {
+    findFirstHostNodeByTestId,
+    findHostNodesByTestId,
+    findPopoverContentView,
+    flattenTestStyle as flattenStyle,
+    withPopoverWebGlobals,
+} from '@/dev/testkit/harness/popoverHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function flushMicrotasks(times: number) {
-    return new Promise<void>((resolve) => {
-        let remaining = times;
-        const step = () => {
-            remaining -= 1;
-            if (remaining <= 0) return resolve();
-            queueMicrotask(step);
-        };
-        queueMicrotask(step);
-    });
-}
 
 const INITIAL_POSITIONING_TICKS = 3;
 const RETRY_POSITIONING_TICKS = 6;
 const POST_LAYOUT_TICKS = 2;
 
 async function flushInitialPositioning() {
-    await flushMicrotasks(INITIAL_POSITIONING_TICKS);
+    await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS });
 }
 
 async function flushRetryPositioning() {
-    await flushMicrotasks(RETRY_POSITIONING_TICKS);
+    await flushHookEffects({ cycles: 1, turns: RETRY_POSITIONING_TICKS });
 }
 
 async function flushPostLayoutTicks() {
-    await flushMicrotasks(POST_LAYOUT_TICKS);
-}
-
-function flattenStyle(style: any): Record<string, any> {
-    if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce((acc, item) => ({ ...acc, ...flattenStyle(item) }), {});
-    }
-    return style;
-}
-
-function nearestView(instance: any) {
-    let node = instance?.parent;
-    while (node && node.type !== 'View') node = node.parent;
-    return node;
+    await flushHookEffects({ cycles: 1, turns: POST_LAYOUT_TICKS });
 }
 
 vi.mock('@/utils/web/radixCjs', () => {
@@ -64,35 +49,28 @@ vi.mock('@/utils/web/reactDomCjs', () => ({
     }),
 }));
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'web' },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         useWindowDimensions: () => ({ width: 1000, height: 800 }),
         StyleSheet: {
             absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
         },
         View: (props: any) => React.createElement('View', props, props.children),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    };
+    });
 });
 
 describe('Popover (web)', () => {
+    let restorePopoverWebGlobals: (() => void) | null = null;
+
     beforeEach(() => {
-        // Minimal window stubs for node test environment.
-        vi.stubGlobal('window', {
-            addEventListener: vi.fn(),
-            removeEventListener: vi.fn(),
-            setTimeout: globalThis.setTimeout.bind(globalThis),
-            clearTimeout: globalThis.clearTimeout.bind(globalThis),
-        });
-        vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
-            cb();
-            return 0;
-        });
+        restorePopoverWebGlobals = withPopoverWebGlobals();
     });
 
     afterEach(() => {
+        restorePopoverWebGlobals?.();
+        restorePopoverWebGlobals = null;
         vi.unstubAllGlobals();
     });
 
@@ -101,10 +79,7 @@ describe('Popover (web)', () => {
 
         const anchorRef = { current: null } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
+        const screen = await renderScreen(React.createElement(
                     Popover,
                     {
                         open: true,
@@ -113,23 +88,23 @@ describe('Popover (web)', () => {
                         onRequestClose: () => {},
                         children: () => React.createElement('PopoverChild'),
                     },
-                ),
-            );
-        });
+                ));
 
-        const pressables = tree?.root.findAllByType('Pressable' as any) ?? [];
+        const pressables = screen.findAllByType('Pressable' as any);
         const backdrop = pressables.find((p: any) => flattenStyle(p.props.style).top === 0);
         expect(backdrop).toBeTruthy();
         expect(flattenStyle(backdrop?.props.style).position).toBe('fixed');
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const content = nearestView(child);
+        const content = findPopoverContentView(screen);
         expect(content).toBeTruthy();
 
         const backdropZ = flattenStyle(backdrop?.props.style).zIndex;
         const contentZ = flattenStyle(content?.props.style).zIndex;
         expect(typeof backdropZ).toBe('number');
         expect(typeof contentZ).toBe('number');
+        if (typeof backdropZ !== 'number' || typeof contentZ !== 'number') {
+            throw new Error('Expected numeric z-index values for backdrop and content');
+        }
         expect(contentZ).toBeGreaterThan(backdropZ);
     });
 
@@ -138,10 +113,7 @@ describe('Popover (web)', () => {
 
         const anchorRef = { current: null } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
+        const screen = await renderScreen(React.createElement(
                     Popover,
                     {
                         open: true,
@@ -150,11 +122,31 @@ describe('Popover (web)', () => {
                         onRequestClose: () => {},
                         children: () => React.createElement('PopoverChild'),
                     },
-                ),
-            );
-        });
+                ));
 
-        expect(tree?.root.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
+        expect(screen.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
+    });
+
+    it('does not fall back to document.body when a boundary portal target is requested but not ready yet', async () => {
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = { current: null } as any;
+        const boundaryRef = { current: null } as any;
+
+        const screen = await renderScreen(React.createElement(
+                    Popover,
+                    {
+                        open: true,
+                        anchorRef,
+                        boundaryRef,
+                        portal: { web: { target: 'boundary' } },
+                        onRequestClose: () => {},
+                        children: () => React.createElement('PopoverChild'),
+                    },
+                ));
+
+        expect(screen.findAllByType('Portal' as any)).toHaveLength(0);
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
     });
 
     it('can close when clicking the anchor when closeOnAnchorPress is enabled', async () => {
@@ -183,18 +175,14 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(Popover, {
+        await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     closeOnAnchorPress: true,
                     onRequestClose,
                     backdrop: false,
                     children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+                }));
 
         await act(async () => {});
 
@@ -210,10 +198,7 @@ describe('Popover (web)', () => {
         const anchorRef = { current: null } as any;
         const modalTarget = {} as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
+        const screen = await renderScreen(React.createElement(
                     ModalPortalTargetProvider,
                     {
                         target: modalTarget,
@@ -225,11 +210,9 @@ describe('Popover (web)', () => {
                             children: () => React.createElement('PopoverChild'),
                         }),
                     },
-                ),
-            );
-        });
+                ));
 
-        const portal = tree?.root.findAllByType('Portal' as any)?.[0];
+        const portal = screen.findAllByType('Portal' as any)?.[0];
         expect(portal).toBeTruthy();
         expect((portal as any)?.props?.target).toBe(modalTarget);
     });
@@ -241,9 +224,7 @@ describe('Popover (web)', () => {
         const anchorRef = { current: null } as any;
         const modalTarget = {} as any;
 
-        act(() => {
-            renderer.create(
-                React.createElement(
+        await renderScreen(React.createElement(
                     ModalPortalTargetProvider,
                     {
                         target: modalTarget,
@@ -255,9 +236,7 @@ describe('Popover (web)', () => {
                             children: () => React.createElement('PopoverChild'),
                         }),
                     },
-                ),
-            );
-        });
+                ));
 
         const add = (globalThis as any).window?.addEventListener as any;
         const calls = add?.mock?.calls ?? [];
@@ -277,10 +256,7 @@ describe('Popover (web)', () => {
         const { PopoverBoundaryProvider } = await import('@/components/ui/popover');
 
         const anchorRef = { current: null } as any;
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
+        const screen = await renderScreen(React.createElement(
                     PopoverBoundaryProvider,
                     {
                         boundaryRef,
@@ -292,11 +268,9 @@ describe('Popover (web)', () => {
                             children: () => React.createElement('PopoverChild'),
                         }),
                     },
-                ),
-            );
-        });
+                ));
 
-        const portal = tree?.root.findAllByType('Portal' as any)?.[0];
+        const portal = screen.findAllByType('Portal' as any)?.[0];
         expect(portal).toBeTruthy();
         expect((portal as any)?.props?.target).toBe(boundaryTarget);
     });
@@ -335,32 +309,29 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        const screen = await renderScreen(React.createElement(
+            PopoverBoundaryProvider,
+            {
+                boundaryRef,
+                children: React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    boundaryRef,
+                    portal: { web: { target: 'boundary' } },
+                    placement: 'bottom',
+                    gap: 0,
+                    maxHeightCap: 320,
+                    onRequestClose: () => {},
+                    children: () => React.createElement('PopoverChild'),
+                }),
+            },
+        ));
+
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(
-                    PopoverBoundaryProvider,
-                    {
-                        boundaryRef,
-                        children: React.createElement(Popover, {
-                            open: true,
-                            anchorRef,
-                            boundaryRef,
-                            portal: { web: { target: 'boundary' } },
-                            placement: 'bottom',
-                            gap: 0,
-                            maxHeightCap: 320,
-                            onRequestClose: () => {},
-                            children: () => React.createElement('PopoverChild'),
-                        }),
-                    },
-                ),
-            );
             await flushRetryPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const content = nearestView(child);
+        const content = findPopoverContentView(screen);
         expect(content).toBeTruthy();
 
         const style = flattenStyle(content?.props?.style);
@@ -375,21 +346,15 @@ describe('Popover (web)', () => {
 
         const anchorRef = { current: null } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     portal: { web: true },
                     onRequestClose: () => {},
                     children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+                }));
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const content = nearestView(child);
+        const content = findPopoverContentView(screen);
         expect(content).toBeTruthy();
 
         const stopPropagation = vi.fn();
@@ -431,33 +396,31 @@ describe('Popover (web)', () => {
 
         const renders: Array<{ maxHeight: number }> = [];
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
-                    PopoverBoundaryProvider,
-                    {
-                        boundaryRef,
-                        children: React.createElement(Popover, {
-                            open: true,
-                            anchorRef,
-                            boundaryRef: null,
-                            portal: { web: true },
-                            placement: 'top',
-                            maxHeightCap: 400,
-                            onRequestClose: () => {},
-                            children: (renderProps: any) => {
-                                renders.push({ maxHeight: renderProps.maxHeight });
-                                return React.createElement('PopoverChild');
-                            },
-                        }),
+        const screen = await renderScreen(React.createElement(
+            PopoverBoundaryProvider,
+            {
+                boundaryRef,
+                children: React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    boundaryRef: null,
+                    portal: { web: true },
+                    placement: 'top',
+                    maxHeightCap: 400,
+                    onRequestClose: () => {},
+                    children: (renderProps: any) => {
+                        renders.push({ maxHeight: renderProps.maxHeight });
+                        return React.createElement('PopoverChild');
                     },
-                ),
-            );
+                }),
+            },
+        ));
+
+        await act(async () => {
             await flushRetryPositioning();
         });
 
-        expect(tree).toBeTruthy();
+        expect(screen).toBeTruthy();
         // With boundaryRef=null, it should ignore the boundary provider and use viewport fallback.
         // Available top is 650 - 0 - 8 = 642, capped by maxHeightCap=400.
         expect(renders.at(-1)?.maxHeight).toBe(400);
@@ -479,37 +442,34 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            portal: { web: true },
+            placement: 'top',
+            gap: 8,
+            maxHeightCap: 400,
+            onRequestClose: () => {},
+            children: () => React.createElement('PopoverChild'),
+        }));
+
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    portal: { web: true },
-                    placement: 'top',
-                    gap: 8,
-                    maxHeightCap: 400,
-                    onRequestClose: () => {},
-                    children: () => React.createElement('PopoverChild'),
-                }),
-            );
             await flushRetryPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        expect(child).toBeTruthy();
-
-        const contentView = tree?.root.findAllByType('View' as any).find((v: any) => typeof v.props.onLayout === 'function');
+        const contentView = findPopoverContentView(screen);
         expect(contentView).toBeTruthy();
+
+        const layoutNode = screen.findAllByType('View' as any).find((v: any) => typeof v.props.onLayout === 'function');
+        expect(layoutNode).toBeTruthy();
 
         // Simulate measuring the popover content.
         await act(async () => {
-            contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 520, height: 200 } } });
+            layoutNode?.props?.onLayout?.({ nativeEvent: { layout: { width: 520, height: 200 } } });
             await flushPostLayoutTicks();
         });
 
-        const updatedChild = tree?.root.findByType('PopoverChild' as any);
-        const updatedContent = updatedChild ? nearestView(updatedChild) : undefined;
+        const updatedContent = findPopoverContentView(screen);
         expect(updatedContent).toBeTruthy();
 
         const style = flattenStyle(updatedContent?.props?.style);
@@ -553,35 +513,32 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
+        const screen = await renderScreen(React.createElement(
+            PopoverBoundaryProvider,
+            {
+                boundaryRef,
+                children: React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    boundaryRef,
+                    portal: { web: { target: 'boundary' } },
+                    placement: 'top',
+                    gap: 8,
+                    maxHeightCap: 400,
+                    onRequestClose: () => {},
+                    children: () => React.createElement('PopoverChild'),
+                }),
+            },
+        ));
+
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(
-                    PopoverBoundaryProvider,
-                    {
-                        boundaryRef,
-                        children: React.createElement(Popover, {
-                            open: true,
-                            anchorRef,
-                            boundaryRef,
-                            portal: { web: { target: 'boundary' } },
-                            placement: 'top',
-                            gap: 8,
-                            maxHeightCap: 400,
-                            onRequestClose: () => {},
-                            children: () => React.createElement('PopoverChild'),
-                        }),
-                    },
-                ),
-            );
             await flushRetryPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(contentView).toBeTruthy();
 
-        const layoutNode = tree?.root.findAllByType('View' as any).find((v: any) => typeof v.props.onLayout === 'function');
+        const layoutNode = screen.findAllByType('View' as any).find((v: any) => typeof v.props.onLayout === 'function');
         expect(layoutNode).toBeTruthy();
 
         await act(async () => {
@@ -589,8 +546,7 @@ describe('Popover (web)', () => {
             await flushPostLayoutTicks();
         });
 
-        const updatedChild = tree?.root.findByType('PopoverChild' as any);
-        const updatedContent = updatedChild ? nearestView(updatedChild) : undefined;
+        const updatedContent = findPopoverContentView(screen);
         expect(updatedContent).toBeTruthy();
 
         const style = flattenStyle(updatedContent?.props?.style);
@@ -606,20 +562,14 @@ describe('Popover (web)', () => {
 
         const anchorRef = { current: null } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     backdrop: false,
                     children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+                }));
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const content = nearestView(child);
+        const content = findPopoverContentView(screen);
         expect(content).toBeTruthy();
         expect(content?.props?.onWheel).toBeUndefined();
         expect(content?.props?.onTouchMove).toBeUndefined();
@@ -636,30 +586,23 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     placement: 'bottom',
                     portal: { web: true },
                     backdrop: false,
                     children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+                }));
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const childAfter = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfter = nearestView(childAfter);
+        const contentViewAfter = findPopoverContentView(screen);
         // Still hidden until content layout is known (prevents clamp jiggle for top/bottom portals).
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
 
@@ -667,8 +610,7 @@ describe('Popover (web)', () => {
             contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
         });
 
-        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterLayout = nearestView(childAfterLayout);
+        const contentViewAfterLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
@@ -681,38 +623,30 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     placement: 'bottom',
                     portal: { web: true },
                     backdrop: false,
                     children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+                }));
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const childAfter = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfter = nearestView(childAfter);
+        const contentViewAfter = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
         });
 
-        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterLayout = nearestView(childAfterLayout);
+        const contentViewAfterLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
@@ -728,38 +662,30 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     placement: 'bottom',
                     portal: { web: true },
                     backdrop: false,
                     children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+                }));
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const childAfter = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfter = nearestView(childAfter);
+        const contentViewAfter = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
         });
 
-        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterLayout = nearestView(childAfterLayout);
+        const contentViewAfterLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
@@ -779,38 +705,30 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    placement: 'bottom',
-                    portal: { web: true },
-                    backdrop: false,
-                    children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'bottom',
+            portal: { web: true },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             await flushRetryPositioning();
         });
 
-        const childAfter = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfter = nearestView(childAfter);
+        const contentViewAfter = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
         });
 
-        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterLayout = nearestView(childAfterLayout);
+        const contentViewAfterLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
@@ -825,46 +743,38 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    placement: 'left',
-                    portal: {
-                        web: true,
-                        matchAnchorWidth: false,
-                        anchorAlignVertical: 'center',
-                    },
-                    backdrop: false,
-                    children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'left',
+            portal: {
+                web: true,
+                matchAnchorWidth: false,
+                anchorAlignVertical: 'center',
+            },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 0 } } });
         });
 
-        const childAfterFirstLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterFirstLayout = nearestView(childAfterFirstLayout);
+        const contentViewAfterFirstLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 120 } } });
         });
 
-        const childAfter = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfter = nearestView(childAfter);
+        const contentViewAfter = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
     });
 
@@ -879,42 +789,34 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    placement: 'bottom',
-                    portal: { web: true },
-                    backdrop: false,
-                    children: () => React.createElement('PopoverChild'),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'bottom',
+            portal: { web: true },
+            backdrop: false,
+            children: () => React.createElement('PopoverChild'),
+        }));
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
+        const contentView = findPopoverContentView(screen);
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 0 } } });
         });
 
-        const childAfterFirstLayout = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfterFirstLayout = nearestView(childAfterFirstLayout);
+        const contentViewAfterFirstLayout = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
 
         await act(async () => {
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 140 } } });
         });
 
-        const childAfter = tree?.root.findByType('PopoverChild' as any);
-        const contentViewAfter = nearestView(childAfter);
+        const contentViewAfter = findPopoverContentView(screen);
         expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
     });
 
@@ -923,20 +825,15 @@ describe('Popover (web)', () => {
 
         const anchorRef = { current: null } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    onRequestClose: () => {},
-                    backdrop: { effect: 'blur' },
-                    children: () => React.createElement('PopoverChild'),
-                } as any),
-            );
-        });
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            onRequestClose: () => {},
+            backdrop: { effect: 'blur' },
+            children: () => React.createElement('PopoverChild'),
+        } as any));
 
-        const views = tree?.root.findAllByType('View' as any) ?? [];
+        const views = screen.findAllByType('View' as any);
         expect(views.some((v: any) => v.props?.testID === 'popover-backdrop-effect')).toBe(true);
     });
 
@@ -951,30 +848,24 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
-                    open: true,
-                    anchorRef,
-                    placement: 'bottom',
-                    portal: { web: true },
-                    backdrop: {
-                        effect: 'blur',
-                        blurOnWeb: { px: 3, tintColor: 'rgba(255, 255, 255, 0.18)' },
-                    },
-                    onRequestClose: () => {},
-                    children: () => React.createElement('PopoverChild'),
-                } as any),
-            );
-        });
+        const screen = await renderScreen(React.createElement(Popover, {
+            open: true,
+            anchorRef,
+            placement: 'bottom',
+            portal: { web: true },
+            backdrop: {
+                effect: 'blur',
+                blurOnWeb: { px: 3, tintColor: 'rgba(255, 255, 255, 0.18)' },
+            },
+            onRequestClose: () => {},
+            children: () => React.createElement('PopoverChild'),
+        } as any));
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const effects = tree?.root.findAllByProps({ testID: 'popover-backdrop-effect' } as any) ?? [];
-        const hostEffects = effects.filter((node: any) => typeof node.type === 'string');
+        const hostEffects = findHostNodesByTestId(screen, 'popover-backdrop-effect');
         expect(hostEffects.length).toBe(1);
 
         const style = flattenStyle(hostEffects[0]?.props?.style);
@@ -993,10 +884,7 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     placement: 'bottom',
@@ -1007,18 +895,13 @@ describe('Popover (web)', () => {
                     },
                     onRequestClose: () => {},
                     children: () => React.createElement('PopoverChild'),
-                } as any),
-            );
-        });
+                } as any));
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const effects = tree?.root.findAllByProps({ testID: 'popover-backdrop-effect' } as any) ?? [];
-        // Our RN-web test shim represents `View` as a wrapper component returning a host element,
-        // so `findAllByProps` will match both. Filter to host nodes for stable assertions.
-        const hostEffects = effects.filter((node: any) => typeof node.type === 'string');
+        const hostEffects = findHostNodesByTestId(screen, 'popover-backdrop-effect');
         expect(hostEffects.length).toBe(4);
     });
 
@@ -1033,10 +916,7 @@ describe('Popover (web)', () => {
             },
         } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(Popover, {
+        const screen = await renderScreen(React.createElement(Popover, {
                     open: true,
                     anchorRef,
                     placement: 'bottom',
@@ -1047,19 +927,16 @@ describe('Popover (web)', () => {
                     },
                     onRequestClose: () => {},
                     children: () => React.createElement('PopoverChild'),
-                } as any),
-            );
-        });
+                } as any));
 
         await act(async () => {
             await flushInitialPositioning();
         });
 
-        const overlays = tree?.root.findAllByProps({ testID: 'popover-anchor-overlay' } as any) ?? [];
-        const hostOverlays = overlays.filter((node: any) => typeof node.type === 'string');
-        expect(hostOverlays.length).toBe(1);
+        const hostOverlay = findFirstHostNodeByTestId(screen, 'popover-anchor-overlay');
+        expect(hostOverlay).toBeTruthy();
 
-        const overlayStyle = flattenStyle(hostOverlays[0]?.props?.style);
+        const overlayStyle = flattenStyle(hostOverlay?.props?.style);
         expect(overlayStyle.position).toBe('fixed');
         expect(overlayStyle.left).toBe(120);
         expect(overlayStyle.top).toBe(80);

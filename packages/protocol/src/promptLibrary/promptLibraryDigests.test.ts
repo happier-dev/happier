@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 import { computePromptBundleDigestV1, computePromptDocDigestV1 } from './promptLibraryDigests.js';
@@ -29,5 +30,12 @@ describe('promptLibraryDigests', () => {
     });
 
     expect(left).toBe(right);
+  });
+
+  it('emits a dist module that does not depend on node crypto builtins', async () => {
+    const distPath = new URL('../../dist/promptLibrary/promptLibraryDigests.js', import.meta.url);
+    const distSource = await readFile(distPath, 'utf8');
+
+    expect(distSource).not.toContain('node:crypto');
   });
 });

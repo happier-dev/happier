@@ -127,4 +127,36 @@ describe('startup side effects: daemon session reporting retry', () => {
     // attempt at t=0, 30s, 60s, 90s (then stop).
     expect(calls).toBe(4);
   });
+
+  it('uses a longer default retry window when daemon autostart is enabled for terminal sessions', async () => {
+    const previousAutostart = process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+    process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
+
+    try {
+      let calls = 0;
+      let now = 0;
+
+      await reportSessionToDaemonIfRunning(
+        { sessionId: 'session-5', metadata: metadataStub },
+        {
+          notifyDaemonSessionStartedFn: async () => {
+            calls++;
+            return { error: 'No daemon running, no state file found' };
+          },
+          sleepFn: async (ms) => {
+            now += ms;
+          },
+          nowFn: () => now,
+          retryIntervalMs: 10_000,
+        },
+      );
+
+      // With daemon autostart enabled we should keep retrying past the old 10s terminal window:
+      // attempt at t=0, 10s, 20s, 30s (then stop).
+      expect(calls).toBe(4);
+    } finally {
+      if (previousAutostart === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+      else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = previousAutostart;
+    }
+  });
 });

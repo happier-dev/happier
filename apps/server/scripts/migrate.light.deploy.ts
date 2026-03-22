@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { applyLightDefaultEnv } from '@/flavors/light/env';
+import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
-import { acquirePgliteDirLock } from '@/storage/locks/pgliteLock';
+import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {

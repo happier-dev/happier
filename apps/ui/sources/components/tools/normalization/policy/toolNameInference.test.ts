@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { inferToolNameForRendering } from './toolNameInference';
 
 describe('inferToolNameForRendering', () => {
-    const known = ['read', 'write', 'edit', 'bash', 'execute', 'TodoWrite', 'TodoRead'];
+    const known = ['read', 'write', 'edit', 'bash', 'execute', 'TodoWrite', 'TodoRead', 'WebFetch', 'WebSearch'];
 
     it('keeps original known names even when conflicting hints exist in input', () => {
         const result = inferToolNameForRendering({
@@ -92,5 +92,23 @@ describe('inferToolNameForRendering', () => {
             knownToolKeys: known,
         });
         expect(result).toEqual({ normalizedToolName: 'TodoRead', source: 'original' });
+    });
+
+    it('prefers ACP titles for wrapped web tools over generic ACP kinds', () => {
+        const webFetch = inferToolNameForRendering({
+            toolName: 'read',
+            toolInput: { _acp: { title: 'web_fetch' }, title: 'web_fetch' },
+            toolDescription: null,
+            knownToolKeys: known,
+        });
+        expect(webFetch).toEqual({ normalizedToolName: 'WebFetch', source: 'acpTitle' });
+
+        const webSearch = inferToolNameForRendering({
+            toolName: 'search',
+            toolInput: { _acp: { title: 'web_search' }, title: 'web_search' },
+            toolDescription: null,
+            knownToolKeys: known,
+        });
+        expect(webSearch).toEqual({ normalizedToolName: 'WebSearch', source: 'acpTitle' });
     });
 });

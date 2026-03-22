@@ -1,6 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,11 +23,15 @@ vi.mock('@/components/appShell/panes/AppPaneProvider', () => {
     };
 });
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    View: (props: any) => React.createElement('View', props, props.children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
+                                                        View: (props: any) => React.createElement('View', props, props.children),
+                                                    }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -33,9 +41,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('./SessionRightPanel', () => ({
     SessionRightPanel: () => React.createElement('SessionRightPanel'),
@@ -51,6 +60,7 @@ vi.mock('./bottom/SessionBottomPanel', () => ({
 
 describe('useRegisterSessionPaneDriver (right pane loading)', () => {
     it('renders the right pane eagerly alongside the details and bottom panes', async () => {
+        standardCleanup();
         capturedDriver = null;
         const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
 
@@ -59,43 +69,33 @@ describe('useRegisterSessionPaneDriver (right pane loading)', () => {
             return React.createElement('Probe');
         };
 
-        act(() => {
-            renderer.create(<Probe />);
-        });
+        const probe = await renderScreen(<Probe />);
 
+        expect(probe.findAll((node) => String(node.type) === 'Probe')).toHaveLength(1);
         expect(capturedDriver).toBeTruthy();
-        const rightNode = capturedDriver.renderRightPane();
-        expect(rightNode).toBeTruthy();
         expect(typeof capturedDriver.renderDetailsPane).toBe('function');
         expect(typeof capturedDriver.renderBottomPane).toBe('function');
+
+        const rightNode = capturedDriver.renderRightPane();
         const detailsNode = capturedDriver.renderDetailsPane();
         const bottomNode = capturedDriver.renderBottomPane();
+
+        expect(rightNode).toBeTruthy();
         expect(detailsNode).toBeTruthy();
         expect(bottomNode).toBeTruthy();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(rightNode);
-        });
+        const rightScreen = await renderScreen(rightNode);
+        const detailsScreen = await renderScreen(detailsNode);
+        const bottomScreen = await renderScreen(bottomNode);
 
-        const json = JSON.stringify(tree!.toJSON());
-        expect(json).toContain('SessionRightPanel');
-        expect(json).not.toContain('common.loading');
+        expect(rightScreen.findAll((node) => String(node.type) === 'SessionRightPanel')).toHaveLength(1);
+        expect(detailsScreen.findAll((node) => String(node.type) === 'SessionDetailsPanel')).toHaveLength(1);
+        expect(bottomScreen.findAll((node) => String(node.type) === 'SessionBottomPanel')).toHaveLength(1);
 
-        act(() => {
-            tree = renderer.create(detailsNode);
-        });
+        expect(rightScreen.getTextContent()).not.toContain('common.loading');
+        expect(detailsScreen.getTextContent()).not.toContain('common.loading');
+        expect(bottomScreen.getTextContent()).not.toContain('common.loading');
 
-        const detailsJson = JSON.stringify(tree!.toJSON());
-        expect(detailsJson).toContain('SessionDetailsPanel');
-        expect(detailsJson).not.toContain('common.loading');
-
-        act(() => {
-            tree = renderer.create(bottomNode);
-        });
-
-        const bottomJson = JSON.stringify(tree!.toJSON());
-        expect(bottomJson).toContain('SessionBottomPanel');
-        expect(bottomJson).not.toContain('common.loading');
+        standardCleanup();
     });
 });

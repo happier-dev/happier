@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
-test('expo submit allows local interactive auth when EXPO_TOKEN is missing (dry-run)', () => {
+test('expo submit defaults to non-interactive outside a TTY (dry-run)', () => {
   const out = execFileSync(
     process.execPath,
     [path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'), '--environment', 'preview', '--platform', 'android', '--dry-run'],
@@ -24,7 +24,7 @@ test('expo submit allows local interactive auth when EXPO_TOKEN is missing (dry-
 
   assert.match(out, /\[pipeline\] expo submit: environment=preview platform=android/);
   assert.match(out, /\[dry-run\].*\bnpx\b/);
-  assert.doesNotMatch(out, /\s--non-interactive\b/);
+  assert.match(out, /\s--non-interactive\b/);
 });
 
 test('expo submit allows local interactive setup when PIPELINE_INTERACTIVE=1 (even with EXPO_TOKEN) (dry-run)', () => {

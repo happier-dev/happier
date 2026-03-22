@@ -24,6 +24,7 @@ import {
 } from './plan';
 import { commandExistsInPath } from './commandExistsInPath';
 import { resolveDaemonServiceRuntimeTarget } from './runtimeTarget';
+import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import { resolveLinuxSystemUserPaths } from './resolveLinuxSystemUserPaths';
 
 export type DaemonServiceCliAction =
@@ -366,24 +367,35 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       }
     }
 
+    const installRuntimeTarget = await resolveDaemonServiceInstallRuntimeTarget({
+      currentExecPath: process.execPath,
+      explicitNodePath: process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH ?? '',
+      explicitEntryPath: process.env.HAPPIER_DAEMON_SERVICE_ENTRY_PATH ?? '',
+    });
+    const installRuntime = {
+      ...runtime,
+      nodePath: installRuntimeTarget.nodePath,
+      entryPath: installRuntimeTarget.entryPath,
+    };
+
     const plan = planDaemonServiceInstall({
-      platform: runtime.platform,
+      platform: installRuntime.platform,
       mode,
       systemUser,
-      instanceId: runtime.instanceId,
-      uid: runtime.uid ?? undefined,
-      userHomeDir: runtime.userHomeDir,
-      happierHomeDir: runtime.happierHomeDir,
-      serverUrl: runtime.serverUrl,
-      webappUrl: runtime.webappUrl,
-      publicServerUrl: runtime.publicServerUrl,
-      nodePath: runtime.nodePath,
-      entryPath: runtime.entryPath,
+      instanceId: installRuntime.instanceId,
+      uid: installRuntime.uid ?? undefined,
+      userHomeDir: installRuntime.userHomeDir,
+      happierHomeDir: installRuntime.happierHomeDir,
+      serverUrl: installRuntime.serverUrl,
+      webappUrl: installRuntime.webappUrl,
+      publicServerUrl: installRuntime.publicServerUrl,
+      nodePath: installRuntime.nodePath,
+      entryPath: installRuntime.entryPath,
     });
 
     if (flags.dryRun) {
       if (flags.json) {
-        printJson({ ok: true, platform: runtime.platform, plan });
+        printJson({ ok: true, platform: installRuntime.platform, plan });
         return;
       }
       process.stdout.write(`[dry-run] would write: ${plan.files.map((f) => f.path).join(', ')}\n`);
@@ -392,23 +404,23 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
     }
 
     await installDaemonService({
-      platform: runtime.platform,
-      uid: runtime.uid ?? undefined,
-      userHomeDir: runtime.userHomeDir,
-      happierHomeDir: runtime.happierHomeDir,
+      platform: installRuntime.platform,
+      uid: installRuntime.uid ?? undefined,
+      userHomeDir: installRuntime.userHomeDir,
+      happierHomeDir: installRuntime.happierHomeDir,
       mode,
       systemUser,
-      instanceId: runtime.instanceId,
-      serverUrl: runtime.serverUrl,
-      webappUrl: runtime.webappUrl,
-      publicServerUrl: runtime.publicServerUrl,
-      nodePath: runtime.nodePath,
-      entryPath: runtime.entryPath,
+      instanceId: installRuntime.instanceId,
+      serverUrl: installRuntime.serverUrl,
+      webappUrl: installRuntime.webappUrl,
+      publicServerUrl: installRuntime.publicServerUrl,
+      nodePath: installRuntime.nodePath,
+      entryPath: installRuntime.entryPath,
       runCommands: true,
     });
 
     if (flags.json) {
-      printJson({ ok: true, platform: runtime.platform });
+      printJson({ ok: true, platform: installRuntime.platform });
       return;
     }
     process.stdout.write('Daemon service installed.\n');

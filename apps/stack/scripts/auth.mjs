@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
@@ -306,7 +307,7 @@ async function cmdSeed({ argv, json }) {
 }
 
 async function cmdDevKey({ argv, json }) {
-  const { flags, kv } = parseArgs(argv);
+  const { flags, kv: argKv } = parseArgs(argv);
 
   // parseArgs currently only supports --k=v, but UX/docs commonly use: --k "value".
   // Support both forms here (without changing global parsing semantics).
@@ -328,14 +329,14 @@ async function cmdDevKey({ argv, json }) {
   };
 
   const wantPrint = flags.has('--print');
-  const fmtRaw = (argvKvValue('--format') || (kv.get('--format') ?? '')).trim();
+  const fmtRaw = (argvKvValue('--format') || (argKv.get('--format') ?? '')).trim();
   // UX: the Happy UI restore screen expects the "backup" (XXXXX-...) format.
   //
   // IMPORTANT: the Happy restore screen treats any key containing '-' as "backup format",
   // so printing a base64url key (which may contain '-') is *not reliably pasteable*.
   // Default to backup always unless explicitly overridden.
   const fmt = fmtRaw || 'backup'; // base64url | backup
-  const set = (argvKvValue('--set') || (kv.get('--set') ?? '')).trim();
+  const set = (argvKvValue('--set') || (argKv.get('--set') ?? '')).trim();
   const clear = flags.has('--clear');
 
   if (set) {
@@ -498,7 +499,21 @@ function resolveLightDirsForStack({ env, baseDir }) {
   return { dataDir, filesDir, dbDir };
 }
 
-function resolveDbProviderForLightFromEnv(env) {
+export function buildLightMigrationBaseEnv(processEnv, envIn) {
+  const baseEnv = { ...(processEnv && typeof processEnv === 'object' ? processEnv : {}) };
+  delete baseEnv.DATABASE_URL;
+  delete baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR;
+  delete baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR;
+  delete baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR;
+  delete baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR;
+  delete baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR;
+  delete baseEnv.HAPPY_SERVER_LIGHT_DB_DIR;
+  delete baseEnv.HAPPIER_DB_PROVIDER;
+  delete baseEnv.HAPPY_DB_PROVIDER;
+  return { ...baseEnv, ...(envIn && typeof envIn === 'object' ? envIn : {}) };
+}
+
+export function resolveDbProviderForLightFromEnv(env) {
   const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
   if (raw === 'sqlite') return 'sqlite';
   if (raw === 'pglite') return 'pglite';
@@ -519,7 +534,7 @@ function resolveSqliteDatabaseUrlForLight({ dataDir }) {
 async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet = false }) {
   // IMPORTANT: envIn is often parsed from a stack env file (so it does not include PATH).
   // Start from the current process env so we can spawn Yarn reliably, then overlay stack-specific vars.
-  const env = { ...process.env, ...(envIn && typeof envIn === 'object' ? envIn : {}) };
+  const env = buildLightMigrationBaseEnv(process.env, envIn);
   const { dataDir, filesDir, dbDir } = resolveLightDirsForStack({ env, baseDir });
   env.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
   env.HAPPIER_SERVER_LIGHT_FILES_DIR = filesDir;
@@ -2061,7 +2076,10 @@ async function main() {
   throw new Error(`[auth] unknown command: ${cmd}`);
 }
 
-main().catch((err) => {
-  console.error('[auth] failed:', err);
-  process.exit(1);
-});
+const isMainModule = process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] : false;
+if (isMainModule) {
+  main().catch((err) => {
+    console.error('[auth] failed:', err);
+    process.exit(1);
+  });
+}

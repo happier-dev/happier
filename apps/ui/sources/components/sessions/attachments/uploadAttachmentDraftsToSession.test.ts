@@ -1,26 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const sessionRPCSpy = vi.fn<(sessionId: string, method: string, payload: unknown) => Promise<any>>(async () => ({
-    success: false,
-    error: 'unconfigured',
-}));
+const sessionAttachmentsUploadFileSpy = vi.fn();
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: (sessionId: string, method: string, payload: any) => sessionRPCSpy(sessionId, method, payload),
-    },
+vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
+    sessionAttachmentsUploadFile: (args: unknown) => sessionAttachmentsUploadFileSpy(args),
 }));
 
 describe('uploadAttachmentDraftsToSession', () => {
-    it('updates upload progress on drafts while uploading', async () => {
+    it('updates draft progress and preserves the uploaded attachment result contract', async () => {
         const { uploadAttachmentDraftsToSession } = await import('./uploadAttachmentDraftsToSession');
 
-        sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string, _payload: unknown) => {
-            if (method === 'attachments.configure') return { success: true };
-            if (method === 'attachments.upload.init') return { success: true, uploadId: 'u1', chunkSizeBytes: 2 };
-            if (method === 'attachments.upload.chunk') return { success: true };
-            if (method === 'attachments.upload.finalize') return { success: true, path: 'p1', sizeBytes: 5, sha256: 'h1' };
-            return { success: false, error: `unexpected method ${method}` };
+        sessionAttachmentsUploadFileSpy.mockResolvedValue({
+            success: true,
+            path: '.happier/uploads/messages/m1/12345678-file.png',
+            sizeBytes: 5,
+            sha256: 'h1',
         });
 
         const file = typeof File === 'function'
@@ -40,6 +34,17 @@ describe('uploadAttachmentDraftsToSession', () => {
             patches.push({ id, patch });
         };
 
+        sessionAttachmentsUploadFileSpy.mockImplementation(async ({ onProgress }: any) => {
+            onProgress?.({ uploadedBytes: 2, totalBytes: 5 });
+            onProgress?.({ uploadedBytes: 5, totalBytes: 5 });
+            return {
+                success: true,
+                path: '.happier/uploads/messages/m1/12345678-file.png',
+                sizeBytes: 5,
+                sha256: 'h1',
+            };
+        });
+
         const res = await uploadAttachmentDraftsToSession({
             sessionId: 's1',
             drafts,
@@ -50,19 +55,45 @@ describe('uploadAttachmentDraftsToSession', () => {
                 vcsIgnoreStrategy: 'git_info_exclude',
                 vcsIgnoreWritesEnabled: true,
                 maxFileBytes: 25 * 1024 * 1024,
-                uploadTtlMs: 5 * 60 * 1000,
-                chunkSizeBytes: 256 * 1024,
             },
             applyDraftPatch,
         });
 
-        expect(res.uploaded).toHaveLength(1);
+        expect(sessionAttachmentsUploadFileSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 's1',
+            messageLocalId: 'm1',
+            config: expect.objectContaining({
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+            }),
+        }));
+
+        expect(res).toEqual({
+            messageLocalId: 'm1',
+            uploaded: [
+                {
+                    name: 'file.png',
+                    path: '.happier/uploads/messages/m1/12345678-file.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 5,
+                    sha256: 'h1',
+                },
+            ],
+        });
 
         const progressValues = patches
             .map((p) => p.patch?.uploadProgress ?? null)
             .filter((p): p is { uploadedBytes: number; totalBytes: number } => Boolean(p));
 
-        expect(progressValues.length).toBeGreaterThan(0);
+        expect(progressValues).toContainEqual({ uploadedBytes: 2, totalBytes: 5 });
         expect(progressValues.at(-1)).toMatchObject({ uploadedBytes: 5, totalBytes: 5 });
+        expect(patches.at(-1)?.patch).toMatchObject({
+            status: 'uploaded',
+            uploadedPath: '.happier/uploads/messages/m1/12345678-file.png',
+            uploadedSizeBytes: 5,
+            uploadedMimeType: 'image/png',
+            sha256: 'h1',
+        });
     });
+
 });

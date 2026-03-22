@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
 import { useMountedShouldContinue } from './useMountedShouldContinue';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,10 +20,7 @@ describe('useMountedShouldContinue', () => {
             return null;
         }
 
-        await act(async () => {
-            root = renderer.create(React.createElement(Test));
-            await Promise.resolve();
-        });
+        root = (await renderScreen(React.createElement(Test))).tree;
 
         expect(shouldContinue()).toBe(true);
 

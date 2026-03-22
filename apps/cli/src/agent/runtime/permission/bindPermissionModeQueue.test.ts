@@ -7,7 +7,11 @@ import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/perm
 describe('registerPermissionModeMessageQueueBinding', () => {
   function createHarness() {
     let userMessageHandler: ((message: UserMessage) => void) | null = null;
-    const queueCalls: Array<{ type: 'push' | 'clear'; message: PermissionModeQueuedPrompt; mode: { permissionMode: PermissionMode } }> = [];
+    const queueCalls: Array<{
+      type: 'push' | 'clear';
+      message: PermissionModeQueuedPrompt;
+      mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null };
+    }> = [];
     let currentPermissionMode: PermissionMode | undefined;
     let metadata = { permissionMode: 'default', permissionModeUpdatedAt: 0 } as unknown as Metadata;
 
@@ -102,6 +106,31 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         type: 'clear',
         message: { text: '/clear', localId: 'local-3' },
         mode: { permissionMode: 'default' },
+      },
+    ]);
+  });
+
+  it('reads appendSystemPrompt from prototype-less metadata objects', () => {
+    const harness = createHarness();
+    const meta = Object.assign(Object.create(null) as Record<string, unknown>, {
+      appendSystemPrompt: 'Use the latest project conventions.',
+    });
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'hello world' },
+      localId: 'local-4',
+      meta,
+    } as UserMessage);
+
+    expect(harness.queueCalls).toEqual([
+      {
+        type: 'push',
+        message: { text: 'hello world', localId: 'local-4' },
+        mode: {
+          permissionMode: 'default',
+          appendSystemPrompt: 'Use the latest project conventions.',
+        },
       },
     ]);
   });

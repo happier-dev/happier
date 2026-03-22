@@ -9,6 +9,7 @@ import { closeEmbeddedTerminalOutsideDockLocation, openEmbeddedTerminalInDockLoc
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 
 export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessionId: string; scopeId: string }>) => {
     const { theme } = useUnistyles();
@@ -17,6 +18,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
     const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
     const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
     const dockLocation = (deviceType === 'phone' ? 'sidebar' : dockLocationRaw) as EmbeddedTerminalDockLocation;
+    const testId = useOptionalSessionScreenTestId('session-header-terminal-button');
 
     const scopeState = pane.scopeState;
     const rightTerminalActive = Boolean(scopeState?.right.isOpen) && scopeState?.right.activeTabId === 'terminal';
@@ -68,7 +70,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
 
     return (
         <Pressable
-            testID="session-header-terminal-button"
+            testID={testId}
             onPress={onPress}
             hitSlop={15}
             style={({ pressed }) => ({

@@ -1,34 +1,44 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const rowSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-    FlatList: (props: any) => {
-        const items = Array.isArray(props.data)
-            ? props.data.map((item: any, index: number) =>
-                React.createElement(
-                    React.Fragment,
-                    { key: props.keyExtractor ? props.keyExtractor(item) : String(index) },
-                    props.renderItem ? props.renderItem({ item, index }) : null,
-                )
-            )
-            : null;
-        return React.createElement('FlatList', props, items);
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Platform: {
+                OS: 'web',
+                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            FlatList: (props: any) => {
+                const items = Array.isArray(props.data)
+                    ? props.data.map((item: any, index: number) =>
+                        React.createElement(
+                            React.Fragment,
+                            { key: props.keyExtractor ? props.keyExtractor(item) : String(index) },
+                            props.renderItem ? props.renderItem({ item, index }) : null,
+                        )
+                    )
+                    : null;
+                return React.createElement('FlatList', props, items);
+            },
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { dark: false, colors: {} } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: { dark: false, colors: {} },
+    });
+});
 
 vi.mock('./CodeLineRow', () => ({
     CodeLineRow: (props: any) => {
@@ -115,9 +125,7 @@ describe('CodeLinesView (web)', () => {
         );
 
         let tree1!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree1 = renderer.create(view);
-        });
+        tree1 = (await renderScreen(view)).tree;
         await flushReactAsyncWork();
 
         // Uses Happier themes instead of generic GitHub themes.
@@ -133,9 +141,7 @@ describe('CodeLinesView (web)', () => {
         rowSpy.mockClear();
 
         let tree2!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree2 = renderer.create(view);
-        });
+        tree2 = (await renderScreen(view)).tree;
         await flushReactAsyncWork();
 
         const calls2 = rowSpy.mock.calls.map((c) => c[0]);
@@ -151,9 +157,7 @@ describe('CodeLinesView (web)', () => {
         const { CodeLinesView } = await import('./CodeLinesView.web');
 
         let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
+        tree = (await renderScreen(<CodeLinesView
                     lines={[
                         {
                             id: 'f:1',
@@ -174,9 +178,7 @@ describe('CodeLinesView (web)', () => {
                         maxLines: 10_000,
                         maxLineLength: 10_000,
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
         // The row will be rendered at least once; after async tokenization, it should receive advancedTokens.
         let hasAdvanced = false;

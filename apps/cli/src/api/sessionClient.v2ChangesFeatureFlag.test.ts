@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiSessionClient } from './session/sessionClient';
+import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 // Use vi.hoisted to ensure mock function is available when vi.mock factory runs
 const { mockIo, fetchChanges } = vi.hoisted(() => ({
@@ -35,44 +37,15 @@ describe('ApiSessionClient /v2/changes feature flag', () => {
     it('skips /v2/changes sync when HAPPY_ENABLE_V2_CHANGES is false', async () => {
         process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
 
-        const sessionSocket: any = {
-            connected: true,
-            connect: vi.fn(),
-            on: vi.fn(),
-            off: vi.fn(),
-            disconnect: vi.fn(),
-            close: vi.fn(),
-            emit: vi.fn(),
-        };
+        const sessionSocket = createApiSessionSocketStub({ connected: true });
+        const userSocket = createApiSessionSocketStub({ connected: true });
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket, userSocket });
 
-        const userSocket: any = {
-            connected: true,
-            connect: vi.fn(),
-            on: vi.fn(),
-            off: vi.fn(),
-            disconnect: vi.fn(),
-            close: vi.fn(),
-            emit: vi.fn(),
-        };
+        const client = new ApiSessionClient('fake-token', createMockSession({ metadata: { path: '/tmp' } as any }));
 
-        mockIo
-            .mockImplementationOnce(() => sessionSocket)
-            .mockImplementationOnce(() => userSocket);
-
-        const client = new ApiSessionClient('fake-token', {
-            id: 'test-session-id',
-            seq: 0,
-            metadata: { path: '/tmp' },
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy' as const,
-        } as any);
-
-        const connectHandler = (sessionSocket.on.mock.calls.find((call: any[]) => call[0] === 'connect') ?? [])[1];
+        const connectHandler = sessionSocket.getHandler('connect');
         expect(typeof connectHandler).toBe('function');
-        connectHandler();
+        connectHandler?.();
 
         await new Promise((r) => setTimeout(r, 0));
 

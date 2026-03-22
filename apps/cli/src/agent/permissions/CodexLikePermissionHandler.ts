@@ -20,11 +20,15 @@ import {
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import type { AccountSettings } from '@happier-dev/protocol';
+import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
+import { extractShellCommand } from './permissionToolIdentifier';
+import { resolveAgentRequestKind } from './requestKind';
 
 export type { PermissionResult, PendingRequest };
 
 const ALWAYS_AUTO_APPROVE_TOKENS = ['change_title', 'save_memory', 'think'] as const;
+const AUTO_APPROVE_HAPPIER_SHELL_BRIDGE_TOOLS = new Set<string>(ALWAYS_AUTO_APPROVE_TOKENS);
 export { isDefaultWriteLikeToolName };
 
 export class CodexLikePermissionHandler extends BasePermissionHandler {
@@ -39,6 +43,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     isWriteLikeToolName?: (toolName: string) => boolean;
     pushSender?: PermissionRequestPushSender | null;
     getAccountSettings?: (() => AccountSettings | null) | null;
+    getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
     onAbortRequested?: (() => void | Promise<void>) | null;
     toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
     triggerAbortCallbackOnAbortDecision?: boolean;
@@ -46,6 +51,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     super(params.session, {
       pushSender: params.pushSender ?? null,
       getAccountSettings: params.getAccountSettings ?? null,
+      getAccountSettingsSecretsReadKeys: params.getAccountSettingsSecretsReadKeys ?? null,
       onAbortRequested: params.onAbortRequested,
       toolTrace: params.toolTrace ?? null,
       triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,
@@ -126,7 +132,12 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
   }
 
   private resolveDecisionForToolCall(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
-    const isAlwaysAutoApprove = this.isAlwaysAutoApproveTool(toolName, toolCallId);
+    if (resolveAgentRequestKind(toolName) === 'user_action') {
+      return null;
+    }
+
+    const isAlwaysAutoApprove =
+      this.isAlwaysAutoApproveTool(toolName, toolCallId) || this.isHappierToolsShellBridgeToolCall(toolName, input);
 
     if ((this.currentPermissionMode === 'read-only' || this.currentPermissionMode === 'plan') && !isAlwaysAutoApprove && this.isWriteLikeToolName(toolName)) {
       logger.debug(`${this.getLogPrefix()} Denying tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
@@ -138,9 +149,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return { decision: 'approved_for_session' };
     }
 
-    if (this.shouldAutoApprove(toolName, toolCallId)) {
+    if (this.shouldAutoApprove(toolName, toolCallId, input)) {
       const decision: PermissionResult['decision'] =
-        this.currentPermissionMode === 'yolo' ? 'approved_for_session' : 'approved';
+        this.isFullAutoApproveMode() ? 'approved_for_session' : 'approved';
       logger.debug(`${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
       return { decision };
     }
@@ -166,11 +177,32 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     );
   }
 
-  private shouldAutoApprove(toolName: string, toolCallId: string): boolean {
+  private isHappierToolsShellBridgeToolCall(toolName: string, input: unknown): boolean {
+    const lowerToolName = toolName.toLowerCase();
+    if (lowerToolName !== 'bash' && lowerToolName !== 'execute' && lowerToolName !== 'shell') {
+      return false;
+    }
+
+    const command = extractShellCommand(input);
+    if (!command) return false;
+
+    const parsed = parseHappierToolsShellBridgeCommand(command);
+    if (!parsed) return false;
+    if (parsed.kind === 'list') return true;
+    return parsed.source === 'happier' && AUTO_APPROVE_HAPPIER_SHELL_BRIDGE_TOOLS.has(parsed.tool);
+  }
+
+  private isFullAutoApproveMode(): boolean {
+    return this.currentPermissionMode === 'yolo' || this.currentPermissionMode === 'bypassPermissions';
+  }
+
+  private shouldAutoApprove(toolName: string, toolCallId: string, input: unknown): boolean {
     if (this.isAlwaysAutoApproveTool(toolName, toolCallId)) return true;
+    if (this.isHappierToolsShellBridgeToolCall(toolName, input)) return true;
 
     switch (this.currentPermissionMode) {
       case 'yolo':
+      case 'bypassPermissions':
         return true;
       case 'safe-yolo':
         return !this.isWriteLikeToolName(toolName);
@@ -180,18 +212,37 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
         return !this.isWriteLikeToolName(toolName);
       case 'default':
       case 'acceptEdits':
-      case 'bypassPermissions':
       default:
         return false;
     }
+  }
+
+  getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    this.syncPermissionModeFromMetadataSnapshotIfNewer();
+    return this.resolveDecisionForToolCall(toolCallId, toolName, input);
   }
 
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
     // Metadata updates can arrive mid-turn (e.g. UI toggles "read-only" while a tool request is in flight).
     // Sync on each tool call so the decision reflects the latest persisted intent without requiring a user message.
     this.syncPermissionModeFromMetadataSnapshotIfNewer();
+    logger.debug(`${this.getLogPrefix()} handleToolCall`, {
+      toolCallId,
+      toolName,
+      requestKind: resolveAgentRequestKind(toolName),
+      permissionMode: this.currentPermissionMode,
+    });
 
-    const isAlwaysAutoApprove = this.isAlwaysAutoApproveTool(toolName, toolCallId);
+    if (resolveAgentRequestKind(toolName) === 'user_action') {
+      return new Promise<PermissionResult>((resolve, reject) => {
+        this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
+        this.addPendingRequestToState(toolCallId, toolName, input);
+        logger.debug(`${this.getLogPrefix()} User action request sent for tool: ${toolName} (${toolCallId})`);
+      });
+    }
+
+    const isAlwaysAutoApprove =
+      this.isAlwaysAutoApproveTool(toolName, toolCallId) || this.isHappierToolsShellBridgeToolCall(toolName, input);
 
     if ((this.currentPermissionMode === 'read-only' || this.currentPermissionMode === 'plan') && !isAlwaysAutoApprove && this.isWriteLikeToolName(toolName)) {
       logger.debug(`${this.getLogPrefix()} Denying tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
@@ -206,9 +257,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return { decision: 'approved_for_session' };
     }
 
-    if (this.shouldAutoApprove(toolName, toolCallId)) {
+    if (this.shouldAutoApprove(toolName, toolCallId, input)) {
       const decision: PermissionResult['decision'] =
-        this.currentPermissionMode === 'yolo' ? 'approved_for_session' : 'approved';
+        this.isFullAutoApproveMode() ? 'approved_for_session' : 'approved';
       logger.debug(`${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
       this.recordAutoDecision(toolCallId, toolName, input, decision);
       return { decision };

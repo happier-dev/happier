@@ -18,8 +18,8 @@ describe('scenarioCatalog: kilo_task_subagent_reply', () => {
   it('accepts provider-specific task aliases for call/result fixtures', () => {
     const scenario = scenarioCatalog.kilo_task_subagent_reply(kiloProvider());
     expect(scenario.requiredAnyFixtureKeys).toEqual([
-      ['acp/kilo/tool-call/Task', 'acp/kilo/tool-call/change_title'],
-      ['acp/kilo/tool-result/Task', 'acp/kilo/tool-result/change_title'],
+      ['acp/kilo/tool-call/SubAgent', 'acp/kilo/tool-call/change_title'],
+      ['acp/kilo/tool-result/SubAgent', 'acp/kilo/tool-result/change_title'],
     ]);
     expect(scenario.requiredFixtureKeys).toBeUndefined();
     expect(scenario.postSatisfy).toBeUndefined();

@@ -1,4 +1,3 @@
-import { CodexMcpClient } from './codexMcpClient';
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createCodexPermissionHandler, type CodexRuntimePermissionHandler } from './utils/createCodexPermissionHandler';
 import { DiffProcessor } from './utils/diffProcessor';
@@ -17,7 +16,6 @@ import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
 import { trimIdent } from "@/utils/trimIdent";
 import type { CodexSessionConfig } from './types';
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { delay } from "@/utils/time";
 import { stopCaffeinate } from '@/integrations/caffeinate';
@@ -35,14 +33,19 @@ import { pushMessageToQueueWithSpecialCommands } from '@/agent/runtime/queueSpec
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
 import { publishCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
+import { createCodexAppServerRuntime } from './appServer/runtime';
+import { buildCodexAppServerConfigOverrides } from './appServer/buildCodexAppServerConfigOverrides';
+import { seedCodexAppServerPendingSessionOverrides } from './appServer/seedPendingSessionOverrides';
+import { SessionRollbackRpcParamsSchema } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionModeFromPermissionMode';
 import { publishInFlightSteerCapability } from './utils/publishInFlightSteerCapability';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
 import {
     formatCodexLocalControlLaunchFallbackMessage,
@@ -74,10 +77,15 @@ import { createLocalRemoteModeController } from '@/agent/localControl/createLoca
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
 import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
+import { createSwitchToLocalAbortPromise } from './localControl/createSwitchToLocalAbortPromise';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
+import { requestSwitchToLocal as requestCodexSwitchToLocal } from './localControl/requestSwitchToLocal';
 import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
 import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
+import { createSessionModeOverrideSynchronizer } from '@/agent/runtime/sessionModeOverrideSync';
+import { createSessionConfigOptionOverrideSynchronizer } from '@/agent/runtime/sessionConfigOptionOverrideSync';
 import {
     readStartupOverridesCacheForBackend,
     writeStartupOverridesCacheForBackend,
@@ -86,6 +94,21 @@ import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/p
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
 import type { BackendStartupSpec, StartupContext } from '@/agent/runtime/startup/startupSpec';
+import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { buildCodexAcpPromptForFreshSession } from './utils/buildCodexAcpPromptForFreshSession';
+import { ensureRuntimeInstallablesForLaunch } from '@/installables/runtime/ensureRuntimeInstallablesForLaunch';
+import { requireCatalogEntry } from '@/backends/catalog';
+import {
+    resolveCodexSessionBackendMode,
+    resolveVendorResumeIdFromSessionMetadata,
+    SESSION_CONFIG_OPTIONS_STATE_KEY,
+    SESSION_MODELS_STATE_KEY,
+    SESSION_MODES_STATE_KEY,
+    type CodexBackendMode,
+} from '@happier-dev/agents';
+import type { CodexMcpClient } from './codexMcpClient';
+import { resolveCodexBackendModeForRun } from './utils/resolveCodexBackendModeForRun';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -93,6 +116,7 @@ import type { BackendStartupSpec, StartupContext } from '@/agent/runtime/startup
 export async function runCodex(opts: {
     credentials: Credentials;
     startedBy?: 'daemon' | 'terminal';
+    directory?: string;
     terminalRuntime?: import('@/terminal/runtime/terminalRuntimeFlags').TerminalRuntimeFlags | null;
     permissionMode?: import('@/api/types').PermissionMode;
     permissionModeUpdatedAt?: number;
@@ -104,13 +128,19 @@ export async function runCodex(opts: {
     resume?: string;
     startingMode?: 'local' | 'remote';
     experimentalCodexAcp?: boolean;
+    codexBackendMode?: CodexBackendMode;
     accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 }): Promise<void> {
     // Use shared PermissionMode type for cross-agent compatibility
     type PermissionMode = import('@/api/types').PermissionMode;
+    const requestedDirectory =
+        typeof opts.directory === 'string' && opts.directory.trim().length > 0
+            ? opts.directory.trim()
+            : process.cwd();
     interface EnhancedMode {
         permissionMode: PermissionMode;
         permissionModeUpdatedAt?: number;
+        appendSystemPrompt?: string | null;
         /**
          * Stable id for the originating user message (when provided by the app),
          * used for discard markers and reconciliation on remote↔local switches.
@@ -118,6 +148,23 @@ export async function runCodex(opts: {
         localId?: string | null;
         model?: string;
     }
+
+    type CodexRemoteRuntime = Readonly<{
+        getSessionId: () => string | null;
+        supportsInFlightSteer: () => boolean;
+        isTurnInFlight: () => boolean;
+        beginTurn: () => void;
+        cancel: () => Promise<void>;
+        reset: () => Promise<void>;
+        startOrLoad: (options: { resumeId?: string | null; existingSessionId?: string | null; importHistory?: boolean }) => Promise<unknown>;
+        setSessionMode: (mode: string) => Promise<void>;
+        setSessionModel: (model: string) => Promise<void>;
+        setSessionConfigOption: (key: string, value: string | number | boolean | null) => Promise<void>;
+        steerPrompt: (prompt: string) => Promise<void>;
+        sendPrompt: (prompt: string) => Promise<void>;
+        flushTurn: () => Promise<void>;
+        rollbackConversation: (request: import('@happier-dev/protocol').SessionRollbackRpcParams) => Promise<import('@happier-dev/protocol').SessionRollbackRpcResult>;
+    }>;
 
     //
     // Define session
@@ -194,6 +241,7 @@ export async function runCodex(opts: {
             permissionMode: mode.permissionMode,
             // Intentionally ignore model in the mode hash: Codex cannot reliably switch models mid-session
             // without losing in-memory context.
+            appendSystemPrompt: mode.appendSystemPrompt,
         }),
     );
     const messageBuffer = new MessageBuffer();
@@ -225,12 +273,29 @@ export async function runCodex(opts: {
 
     const hasTtyForLocal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const startedByForLocalControl = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
-    const experimentalCodexAcpEnabled = opts.experimentalCodexAcp ?? isExperimentalCodexAcpEnabled();
-    const localControlEnabled = experimentalCodexAcpEnabled;
+    const codexBackendMode = resolveCodexBackendModeForRun({
+        codexBackendMode: opts.codexBackendMode,
+        experimentalCodexAcp: opts.experimentalCodexAcp,
+        experimentalCodexAcpEnabledByDefault: isExperimentalCodexAcpEnabled(),
+    });
+    const experimentalCodexAcpEnabled = codexBackendMode === 'acp';
+    const localControlBackend = codexBackendMode === 'acp' || codexBackendMode === 'appServer'
+        ? codexBackendMode
+        : null;
+    const localControlEnabled = localControlBackend !== null;
+
+    const localControlState: {
+        experimentalCodexAcpEnabled: boolean;
+        localControlBackend: import('./localControl/localControlSupport').CodexLocalControlBackend | null;
+    } = {
+        experimentalCodexAcpEnabled,
+        localControlBackend,
+    };
 
     const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
         startedBy: startedByForLocalControl,
-        experimentalCodexAcpEnabled,
+        experimentalCodexAcpEnabled: () => localControlState.experimentalCodexAcpEnabled,
+        localControlBackend: () => localControlState.localControlBackend,
         hasTtyForLocal,
     });
 
@@ -251,7 +316,8 @@ export async function runCodex(opts: {
 	        const envOverride = typeof process.env.HAPPIER_CODEX_ACP_BIN === 'string'
 	            ? process.env.HAPPIER_CODEX_ACP_BIN.trim()
 	            : '';
-	        if (envOverride) {
+	        const shouldTreatOverrideAsPath = envOverride.startsWith('.') || envOverride.startsWith('/') || envOverride.includes('\\');
+	        if (envOverride && shouldTreatOverrideAsPath) {
 	            const resolved = resolve(process.cwd(), envOverride);
 	            if (!existsSync(resolved)) {
 	                const reason = `Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN does not exist: ${resolved}`;
@@ -268,6 +334,7 @@ export async function runCodex(opts: {
         explicitStartingMode: opts.startingMode ?? null,
         startedBy: startedByForLocalControl,
         hasTtyForLocal,
+        codexBackendMode,
         experimentalCodexAcpEnabled,
         localControlEnabled,
         mode,
@@ -306,7 +373,7 @@ export async function runCodex(opts: {
             startingModeIntent: 'local',
             startedBy: startedByForLocalControl,
             hasTty: hasTtyForLocal,
-            workspaceDir: process.cwd(),
+            workspaceDir: requestedDirectory,
             nowMs,
             timing,
         };
@@ -326,7 +393,7 @@ export async function runCodex(opts: {
             tasks: [],
             spawnVendor: async ({ artifacts }) => {
                 artifacts.localResult = await codexLocalLauncher<EnhancedMode>({
-                    path: process.cwd(),
+                    path: requestedDirectory,
                     api: null,
                     session: artifacts.deferredSession as unknown as ApiSessionClient,
                     messageQueue,
@@ -373,6 +440,7 @@ export async function runCodex(opts: {
     const { state, metadata } = createSessionMetadata({
         flavor: 'codex',
         machineId,
+        directory: requestedDirectory,
         startedBy: opts.startedBy,
         terminalRuntime: opts.terminalRuntime ?? null,
         permissionMode: initialPermissionMode,
@@ -398,6 +466,16 @@ export async function runCodex(opts: {
         existingSessionId: opts.existingSessionId,
         uiLogPrefix: '[codex]',
         startupMetadataOverrides: createStartupMetadataOverrides(opts),
+        metadataKeysToUnsetOnAttach: codexBackendMode === 'acp'
+            ? undefined
+            : [
+                'acpSessionModesV1',
+                'acpSessionModelsV1',
+                'acpConfigOptionsV1',
+                SESSION_MODES_STATE_KEY,
+                SESSION_MODELS_STATE_KEY,
+                SESSION_CONFIG_OPTIONS_STATE_KEY,
+            ],
         startupSideEffectsOrder: 'persist-first',
         allowOfflineStub: true,
         onSessionSwap: (newSession) => {
@@ -408,35 +486,12 @@ export async function runCodex(opts: {
             }
             void attachDeferredSessionIfNeeded(newSession);
         },
-        onAttachMetadataSnapshotReady: (snapshot, attachSession) => {
+        onAttachMetadataSnapshotReady: (snapshot, _attachSession) => {
             const maybeSnapshot = snapshot as { path?: unknown } | null;
             workspaceDirFromMetadata =
                 typeof maybeSnapshot?.path === 'string' && maybeSnapshot.path.trim().length > 0
                     ? maybeSnapshot.path
                     : null;
-
-            // If we are attaching using the MCP engine, strip any stale ACP session *state* metadata.
-            // This prevents the UI from mis-detecting ACP capabilities based on previous runs.
-            // Note: we intentionally keep user-configured overrides (permissionMode/modelOverride/acpSessionModeOverride).
-            if (!experimentalCodexAcpEnabled) {
-                updateMetadataBestEffort(
-                    attachSession,
-                    (current) => {
-                        const meta = current as any;
-                        if (
-                            meta.acpSessionModesV1 === undefined &&
-                            meta.acpSessionModelsV1 === undefined &&
-                            meta.acpConfigOptionsV1 === undefined
-                        ) {
-                            return current;
-                        }
-                        const { acpSessionModesV1, acpSessionModelsV1, acpConfigOptionsV1, ...rest } = meta;
-                        return rest as any;
-                    },
-                    '[codex]',
-                    'strip_stale_acp_metadata_on_attach',
-                );
-            }
         },
         onAttachMetadataSnapshotMissing: (error) => {
             logger.debug(
@@ -469,8 +524,13 @@ export async function runCodex(opts: {
         );
     }
 
-    // Late-initialized when Codex ACP is enabled; referenced by the user-message binding for in-flight steering.
+    const promptArtifactBodyCache = new Map<string, string | null>();
+    // Late-initialized when a remote Codex runtime is enabled; referenced by the user-message binding for in-flight steering.
     let codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null = null;
+    let codexAppServerRuntime: ReturnType<typeof createCodexAppServerRuntime> | null = null;
+    const getCodexRemoteRuntime = (): CodexRemoteRuntime | null => {
+        return codexAcpRuntime ?? codexAppServerRuntime;
+    };
 
     // Track current overrides to apply per message
     // Use shared PermissionMode type from api/types for cross-agent compatibility
@@ -536,13 +596,16 @@ export async function runCodex(opts: {
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode || 'default',
             permissionModeUpdatedAt: currentPermissionModeUpdatedAt,
+            appendSystemPrompt: message.meta?.hasOwnProperty('appendSystemPrompt')
+                ? (typeof message.meta.appendSystemPrompt === 'string' ? message.meta.appendSystemPrompt : null)
+                : undefined,
             localId: message.localId ?? null,
             model: messageModel,
         };
 
         const text = message.content.text;
         const special = parseSpecialCommand(text);
-        const runtime = codexAcpRuntime;
+        const runtime = getCodexRemoteRuntime();
         if (
             runtime &&
             runtime.supportsInFlightSteer() &&
@@ -589,7 +652,7 @@ export async function runCodex(opts: {
     if (mode === 'local') {
         const localResult = await (localLauncherPromise ??
             codexLocalLauncher<EnhancedMode>({
-                path: workspaceDirFromMetadata ?? process.cwd(),
+                path: workspaceDirFromMetadata ?? requestedDirectory,
                 api,
                 session,
                 messageQueue,
@@ -612,6 +675,12 @@ export async function runCodex(opts: {
             pushSender: api.push(),
             waitingForCommandLabel: 'Codex',
             logPrefix: '[Codex]',
+            sessionTitle: getSessionNotificationTitle(session.getMetadataSnapshot.bind(session)),
+            assistantPreviewText: getLatestAssistantMessagePreview(messageBuffer),
+            accountSettings: opts.accountSettingsContext?.settings ?? null,
+            settingsSecretsReadKeys: opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
+            includeAssistantPreviewText:
+                opts.accountSettingsContext?.settings?.notificationsSettingsV1?.readyIncludeMessageText !== false,
             shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
         });
     };
@@ -651,30 +720,49 @@ export async function runCodex(opts: {
         logger.debug('[Codex] Resume requested via --resume:', storedSessionIdForResume);
     }
 
-    let useCodexAcp = experimentalCodexAcpEnabled;
+    let useCodexAcp = codexBackendMode === 'acp';
+    const useCodexAppServer = codexBackendMode === 'appServer';
+    const remoteResumeBackendLabel = useCodexAppServer ? 'app-server' : 'ACP';
     const resumeRequested = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
+    let codexAcpAutoInstallError: string | null = null;
     if (useCodexAcp) {
+        const ensureRuntimeInstallablesResult = await ensureRuntimeInstallablesForLaunch({
+            installableKeys: requireCatalogEntry('codex').runtimeInstallableKeys ?? [],
+            settings: opts.accountSettingsContext?.settings ?? null,
+            machineId,
+        });
+        if (!ensureRuntimeInstallablesResult.ok) {
+            codexAcpAutoInstallError = ensureRuntimeInstallablesResult.logPath
+                ? `${ensureRuntimeInstallablesResult.errorMessage} (install log: ${ensureRuntimeInstallablesResult.logPath})`
+                : ensureRuntimeInstallablesResult.errorMessage;
+        }
         try {
             const resolved = resolveCodexAcpSpawn();
             const availability = validateCodexAcpSpawnAvailability(resolved);
             if (!availability.ok) throw new Error(availability.errorMessage);
         } catch (e) {
-            const reason = formatErrorForUi(e);
+            const baseReason = formatErrorForUi(e);
+            const reason = codexAcpAutoInstallError
+                ? `${baseReason}; auto-install failed: ${codexAcpAutoInstallError}`
+                : baseReason;
             if (resumeRequested) {
                 throw new Error(
                     `Codex ACP is required to resume sessions, but it cannot start on this machine.\n` +
                     `Reason: ${reason}\n` +
-                    `Fix: install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works.`,
+                    `Fix: install codex-acp via Happier → Machine Details → Installables, add codex-acp to PATH, or disable ACP for this session.`,
                 );
             }
             useCodexAcp = false;
+            // Ensure local-control affordances reflect the resolved remote backend (ACP has failed closed).
+            localControlState.experimentalCodexAcpEnabled = false;
+            localControlState.localControlBackend = null;
             codexAcpFallbackToMcpMessage =
                 codexAcpFallbackToMcpMessage ??
                 `Codex ACP could not start (${reason}). Falling back to MCP for this new session.`;
         }
     }
-    if (!useCodexAcp && resumeRequested) {
-        throw new Error('Codex resume is only supported via ACP. Switch Codex to ACP mode to resume sessions.');
+    if (!useCodexAcp && !useCodexAppServer && resumeRequested) {
+        throw new Error('Codex resume is not available on plain MCP. Use the default app-server backend, or switch Codex to ACP for ACP-based resume.');
     }
 
 	    if (codexAcpFallbackToMcpMessage && codexAcpFallbackToMcpMessage !== initialCodexAcpFallbackToMcpMessage) {
@@ -683,7 +771,7 @@ export async function runCodex(opts: {
 	    }
     const shouldLogAcpDebug = Boolean(process.env.DEBUG) || process.env.HAPPIER_E2E_PROVIDERS === '1';
     if (shouldLogAcpDebug) {
-        logger.debug(`[Codex] Remote engine selected: ${useCodexAcp ? 'acp' : 'mcp'}`);
+        logger.debug(`[Codex] Remote engine selected: ${useCodexAcp ? 'acp' : useCodexAppServer ? 'appServer' : 'mcp'}`);
     }
     let happierMcpServer: { url: string; stop: () => void } | null = null;
     let client: CodexMcpClient | null = null;
@@ -704,10 +792,10 @@ export async function runCodex(opts: {
         try {
             startOrLoadAbortController.abort();
             // Store the current session ID before aborting for potential resume
-            if (useCodexAcp) {
-                const currentAcpSessionId = codexAcpRuntime?.getSessionId();
-                if (currentAcpSessionId) {
-                    storedSessionIdForResume = currentAcpSessionId;
+            if (useCodexAcp || useCodexAppServer) {
+                const currentRemoteSessionId = getCodexRemoteRuntime()?.getSessionId();
+                if (currentRemoteSessionId) {
+                    storedSessionIdForResume = currentRemoteSessionId;
                     storedSessionIdFromLocalControl = false;
                     logger.debug('[CodexACP] Stored session for resume:', storedSessionIdForResume);
                 }
@@ -718,6 +806,12 @@ export async function runCodex(opts: {
                     await abortAcpRuntimeTurnIfNeeded(codexAcpRuntime);
                 } catch (error) {
                     logger.debug('[CodexACP] Failed to cancel in-flight turn on abort (non-fatal)', error);
+                }
+            } else if (useCodexAppServer && codexAppServerRuntime) {
+                try {
+                    await codexAppServerRuntime.cancel();
+                } catch (error) {
+                    logger.debug('[CodexAppServer] Failed to cancel in-flight turn on abort (non-fatal)', error);
                 }
             }
 
@@ -746,7 +840,7 @@ export async function runCodex(opts: {
 
             try {
                 if (outcome.archive) {
-                    await archiveAndCloseSession(session);
+                    await archiveAndCloseRuntimeSession(session, opts.credentials, outcome.archiveReason);
                 }
             } catch (e) {
                 logger.debug('[Codex] Failed to archive session during termination (non-fatal)', e);
@@ -757,7 +851,7 @@ export async function runCodex(opts: {
                     session,
                     reconnectionHandle,
                     client,
-                    codexAcpRuntime,
+                    codexRuntime: getCodexRemoteRuntime(),
                     stopHappierMcpServer: () => happierMcpServer?.stop(),
                     unmountRemoteUi: async () => {
                         if (!remoteTerminalUi) return;
@@ -784,6 +878,21 @@ export async function runCodex(opts: {
 
     // Register abort handler
     session.rpcHandlerManager.registerHandler('abort', handleAbort);
+    session.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_ROLLBACK, async (raw: unknown) => {
+        const parsed = SessionRollbackRpcParamsSchema.safeParse(raw);
+        if (!parsed.success) {
+            return { ok: false, errorCode: 'invalid_request', errorMessage: 'Invalid params' };
+        }
+        const runtime = getCodexRemoteRuntime();
+        if (!runtime || useCodexAcp || !useCodexAppServer) {
+            return {
+                ok: false,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                errorMessage: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+            };
+        }
+        return await runtime.rollbackConversation(parsed.data);
+    });
 
     registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
 
@@ -824,19 +933,18 @@ export async function runCodex(opts: {
     };
 
     const requestSwitchToLocalIfSupported = async (): Promise<boolean> => {
-        const availability = await resolveLocalSwitchAvailability();
-        if (!availability.ok) {
-            const message = formatCodexLocalControlSwitchDeniedMessage(availability.reason);
-            messageBuffer.addMessage(message, 'status');
-            session.sendSessionEvent({
-                type: 'message',
-                message,
-            });
-            return false;
-        }
-
-        await requestSwitchToLocal();
-        return true;
+        return await requestCodexSwitchToLocal({
+            queue: messageQueue,
+            session,
+            resolveLocalSwitchAvailability,
+            requestSwitch: requestSwitchToLocal,
+            formatSwitchDeniedMessage: (reason) => {
+                const message = formatCodexLocalControlSwitchDeniedMessage(reason);
+                messageBuffer.addMessage(message, 'status');
+                return message;
+            },
+            formatError: formatErrorForUi,
+        });
     };
 
     remoteTerminalUi = createCodexRemoteTerminalUi({
@@ -859,6 +967,20 @@ export async function runCodex(opts: {
         messageBuffer.addMessage(message, 'status');
     }
 
+    const localRemoteSwitchController = createLocalRemoteModeController({
+        session,
+        getThinking: () => thinking,
+        resolveLocalSwitchAvailability,
+        requestSwitchToLocalIfSupported,
+        mountRemoteUi: () => remoteTerminalUi!.mount(),
+        unmountRemoteUi: () => remoteTerminalUi!.unmount(),
+        setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi!.setAllowSwitchToLocal(allowed),
+    });
+
+    // Register the remote switch handler before any remote-mode awaits so a session that becomes
+    // externally visible during startup can still fail closed instead of returning "method not available".
+    localRemoteSwitchController.registerRemoteSwitchHandler();
+
     //
     // Start Context 
     //
@@ -871,27 +993,50 @@ export async function runCodex(opts: {
     // session load attempt will throw and we will not silently start a new session.
 
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
-    const directory = workspaceDirFromMetadata ?? process.cwd();
+    const directory = workspaceDirFromMetadata ?? requestedDirectory;
+    let mcpServers: Awaited<ReturnType<typeof resolveRunnerMcpServers>>['mcpServers'] = {};
+    let codexAppServerProcessEnv = process.env;
+    let codexAppServerConfigOverrides: string[] = [];
     const happierBridge = await resolveRunnerMcpServers({
         session,
         credentials: opts.credentials,
-        accountSettings: opts.accountSettingsContext?.settings ?? null,
+        accountSettings,
         machineId,
         directory,
+        sessionMetadata: session.getMetadataSnapshot(),
         commandMode: 'current-process',
     });
     happierMcpServer = happierBridge.happierMcpServer;
-    const mcpServers = happierBridge.mcpServers;
+    mcpServers = happierBridge.mcpServers;
+    if (useCodexAppServer) {
+        codexAppServerConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers);
+    }
+    const resolveFreshSessionSystemPrompt = async (baseOverride?: string | null): Promise<string> =>
+        await resolveEffectiveCodingPromptText({
+            credentials: opts.credentials,
+            settings: opts.accountSettingsContext?.settings ?? null,
+            profileId: session.getMetadataSnapshot()?.profileId ?? null,
+            baseOverride,
+            executionRunsFeatureEnabled: resolveCliFeatureDecision({
+                featureId: 'execution.runs',
+                env: process.env,
+            }).state === 'enabled',
+            providerId: 'codex',
+            cache: promptArtifactBodyCache,
+        });
 
-    const codexMcpServer = await resolveCodexMcpServerSpawn();
-
-        client = useCodexAcp ? null : new CodexMcpClient({ mode: codexMcpServer.mode, command: codexMcpServer.command });
+    if (!useCodexAcp && !useCodexAppServer) {
+        const codexMcpServer = await resolveCodexMcpServerSpawn();
+        const { CodexMcpClient: CodexMcpClientClass } = await import('./codexMcpClient');
+        client = new CodexMcpClientClass({ mode: codexMcpServer.mode, command: codexMcpServer.command });
+    }
 
             // NOTE: Codex resume support varies by build; forks may seed `codex-reply` with a stored session id.
             permissionHandler = createCodexPermissionHandler({
                 session,
                 pushSender: api.push(),
                 getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
+                getAccountSettingsSecretsReadKeys: () => opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
                 onAbortRequested: handleAbort,
                 toolTrace: { protocol: useCodexAcp ? 'acp' : 'codex', provider: 'codex' },
                 triggerAbortCallbackOnAbortDecision: useCodexAcp,
@@ -926,11 +1071,28 @@ export async function runCodex(opts: {
     const lastCodexThreadIdPublished: { value: string | null } = { value: null };
 
     const publishCodexThreadIdToMetadata = () => {
+        const publishedBackendMode: CodexBackendMode = useCodexAcp
+            ? 'acp'
+            : useCodexAppServer
+                ? 'appServer'
+                : 'mcp';
         publishCodexSessionIdMetadata({
             session,
-            getCodexThreadId: () => (client ? client.getSessionId() : (codexAcpRuntime?.getSessionId() ?? null)),
+            getCodexThreadId: () => (client ? client.getSessionId() : (getCodexRemoteRuntime()?.getSessionId() ?? null)),
+            backendMode: publishedBackendMode,
+            transcriptStorage: process.env.HAPPIER_TRANSCRIPT_STORAGE === 'direct' ? 'direct' : 'persisted',
+            codexHome: process.env.CODEX_HOME ?? null,
+            activeServerDir: configuration.activeServerDir,
             lastPublished: lastCodexThreadIdPublished,
         });
+    };
+
+    const readAttachedCodexAppServerThreadId = (): string | null => {
+        const metadata = session.getMetadataSnapshot() as Record<string, unknown> | null;
+        if (resolveCodexSessionBackendMode({ metadata }) !== 'appServer') {
+            return null;
+        }
+        return resolveVendorResumeIdFromSessionMetadata('codex', metadata);
     };
 
     if (useCodexAcp) {
@@ -946,6 +1108,22 @@ export async function runCodex(opts: {
         });
         try {
             publishInFlightSteerCapability({ session, runtime: codexAcpRuntime });
+        } catch (e) {
+            logger.debug('[codex] Failed to publish in-flight steer capability (non-fatal)', e);
+        }
+    } else if (useCodexAppServer) {
+        codexAppServerRuntime = createCodexAppServerRuntime({
+            directory,
+            activeServerDir: configuration.activeServerDir,
+            processEnv: codexAppServerProcessEnv,
+            configOverrides: codexAppServerConfigOverrides,
+            session,
+            onThinkingChange: (value) => { thinking = value; },
+            permissionHandler,
+            getPermissionMode: () => runtimePermissionModeRef.current,
+        });
+        try {
+            publishInFlightSteerCapability({ session, runtime: codexAppServerRuntime });
         } catch (e) {
             logger.debug('[codex] Failed to publish in-flight steer capability (non-fatal)', e);
         }
@@ -988,15 +1166,45 @@ export async function runCodex(opts: {
 	        let wasCreated = false;
 	            let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
 
-	        const codexAcpRuntimeForSync = codexAcpRuntime;
+	        const codexRemoteRuntimeForSync = getCodexRemoteRuntime();
 	        const modelSync =
-	            useCodexAcp && codexAcpRuntimeForSync
+	            codexRemoteRuntimeForSync
 	                ? createModelOverrideSynchronizer({
 	                      session: { getMetadataSnapshot: () => session.getMetadataSnapshot() },
-	                      runtime: { setSessionModel: (modelId) => codexAcpRuntimeForSync.setSessionModel(modelId) },
+	                      runtime: { setSessionModel: (modelId) => codexRemoteRuntimeForSync.setSessionModel(modelId) },
 	                      isStarted: () => wasCreated,
 	                  })
 	                : null;
+	        const sessionModeSync =
+	            codexRemoteRuntimeForSync
+	                ? createSessionModeOverrideSynchronizer({
+	                      session: { getMetadataSnapshot: () => session.getMetadataSnapshot() },
+	                      runtime: { setSessionMode: (modeId) => codexRemoteRuntimeForSync.setSessionMode(modeId) },
+	                      isStarted: () => wasCreated,
+	                  })
+	                : null;
+	        const configOptionSync =
+	            codexRemoteRuntimeForSync
+	                ? createSessionConfigOptionOverrideSynchronizer({
+	                      session: { getMetadataSnapshot: () => session.getMetadataSnapshot() },
+	                      runtime: { setSessionConfigOption: (configId, valueId) => codexRemoteRuntimeForSync.setSessionConfigOption(configId, valueId) },
+	                      isStarted: () => wasCreated,
+	                  })
+	                : null;
+
+            const seedCodexAppServerOverridesBeforeStartOrLoad = async (): Promise<void> => {
+                if (!useCodexAppServer || wasCreated) {
+                    return;
+                }
+                const codexRuntime = getCodexRemoteRuntime();
+                if (!codexRuntime) {
+                    return;
+                }
+                await seedCodexAppServerPendingSessionOverrides({
+                    metadata: session.getMetadataSnapshot(),
+                    runtime: codexRuntime,
+                });
+            };
 
 	        runtimeOverridesSync = await initializeRuntimeOverridesSynchronizer({
 	            explicitPermissionMode: typeof explicitPermissionMode === 'string'
@@ -1051,6 +1259,8 @@ export async function runCodex(opts: {
 
 	        const syncOverridesFromMetadata = (): void => {
 	            runtimeOverridesSync?.syncFromMetadata();
+	            sessionModeSync?.syncFromMetadata();
+	            configOptionSync?.syncFromMetadata();
 	            modelSync?.syncFromMetadata();
 	        };
 	        
@@ -1076,23 +1286,13 @@ export async function runCodex(opts: {
 	            },
 	        });
 
-        const localRemoteSwitchController = createLocalRemoteModeController({
-            session,
-            getThinking: () => thinking,
-            resolveLocalSwitchAvailability,
-            requestSwitchToLocalIfSupported,
-            mountRemoteUi: () => remoteTerminalUi!.mount(),
-            unmountRemoteUi: () => remoteTerminalUi!.unmount(),
-            setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi!.setAllowSwitchToLocal(allowed),
-        });
-
         while (!shouldExit) {
             if (mode === 'local') {
                 await localRemoteSwitchController.publishModeState('local');
                 const localPass = await runCodexLocalModePass<EnhancedMode>({
                     session,
                     messageQueue,
-                    workspaceDir: workspaceDirFromMetadata ?? process.cwd(),
+                    workspaceDir: workspaceDirFromMetadata ?? requestedDirectory,
                     api,
                     permissionMode: currentPermissionMode ?? initialPermissionMode,
                     resumeId: storedSessionIdForResume,
@@ -1115,35 +1315,39 @@ export async function runCodex(opts: {
             requestedSwitchToLocal = false;
             startOrLoadAbortController = new AbortController();
             switchToLocalBarrier = createSwitchToLocalBarrier();
-            const switchToLocalAbort: Promise<never> = switchToLocalBarrier.promise.then(() => {
-                throw makeAbortError('Switched to local');
-            });
-            localRemoteSwitchController.registerRemoteSwitchHandler();
 
             // For strict resume flows, start (or load) the Codex ACP session eagerly. Otherwise, remote mode
             // can remain idle (and even switch back to local) without spawning the Codex backend until the
             // first prompt is processed.
-            if (useCodexAcp && !wasCreated) {
-                const codexAcp = codexAcpRuntime;
-                if (!codexAcp) {
-                    throw new Error('Codex ACP runtime was not initialized');
+            if ((useCodexAcp || useCodexAppServer) && !wasCreated) {
+                const codexRuntime = getCodexRemoteRuntime();
+                if (!codexRuntime) {
+                    throw new Error('Codex remote runtime was not initialized');
                 }
 
                 const resumeId = storedSessionIdForResume?.trim();
                 const isStrictExplicit = Boolean(strictResumeIdForRun && resumeId && resumeId === strictResumeIdForRun);
                 const isStrictLocalControl = storedSessionIdFromLocalControl === true && Boolean(resumeId);
 
-                if (resumeId && (isStrictExplicit || isStrictLocalControl)) {
+                if (resumeId && (useCodexAppServer || isStrictExplicit || isStrictLocalControl)) {
                     messageBuffer.addMessage('Resuming previous context…', 'status');
                     const resumeSignal = startOrLoadAbortController.signal;
-                    const startOrLoadPromise = codexAcp.startOrLoad({
+                    await seedCodexAppServerOverridesBeforeStartOrLoad();
+                    const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                         resumeId,
                         // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
                         importHistory: false,
-                    });
+                    })).then(() => undefined);
                     let resumeAborted = false;
                     try {
-                        await awaitWithAbortSignal(startOrLoadPromise, resumeSignal, switchToLocalAbort);
+                        await awaitWithAbortSignal(
+                            startOrLoadPromise,
+                            resumeSignal,
+                            createSwitchToLocalAbortPromise({
+                                barrier: switchToLocalBarrier.promise,
+                                createAbortError: () => makeAbortError('Switched to local'),
+                            }),
+                        );
                     } catch (e) {
                         if (isAbortError(e) || resumeSignal.aborted) {
                             resumeAborted = true;
@@ -1153,13 +1357,13 @@ export async function runCodex(opts: {
                             const reason = formatErrorForUi(e);
                             const message = isStrictLocalControl
                                 ? `Failed to switch this Codex session from local → remote.\n` +
-                                  `Reason: could not resume the remote Codex ACP session (${resumeId}).\n` +
+                                  `Reason: could not resume the remote Codex ${remoteResumeBackendLabel} session (${resumeId}).\n` +
                                   `Details: ${reason}\n` +
-                                  `Fix: ensure Codex ACP can run reliably on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry switching to remote.\n` +
+                                  `Fix: ensure Codex ${remoteResumeBackendLabel} can run reliably on this machine, then retry switching to remote.\n` +
                                   `Note: Happier refuses to start a new remote Codex session during a local→remote switch, because it would fork the conversation.`
-                                : `Failed to resume this Codex ACP session (${resumeId}).\n` +
+                                : `Failed to resume this Codex ${remoteResumeBackendLabel} session (${resumeId}).\n` +
                                   `Reason: ${reason}\n` +
-                                  `Fix: ensure Codex ACP can run on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry.\n` +
+                                  `Fix: ensure Codex ${remoteResumeBackendLabel} can run on this machine, then retry.\n` +
                                   `Note: Happier refuses to start a new Codex session when --resume was requested.`;
                             messageBuffer.addMessage(message, 'status');
                             session.sendSessionEvent({ type: 'message', message });
@@ -1169,28 +1373,62 @@ export async function runCodex(opts: {
                         }
                     }
 
-                    if (!resumeAborted) {
-                        if (strictResumeIdForRun && resumeId === strictResumeIdForRun) {
-                            strictResumeIdForRun = null;
-                        }
+                        if (!resumeAborted) {
+                            if (strictResumeIdForRun && resumeId === strictResumeIdForRun) {
+                                strictResumeIdForRun = null;
+                            }
                         storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
                             attempted: true,
                             success: true,
                         });
                         storedSessionIdFromLocalControl = false;
 
-                        try {
-                            await syncCodexAcpSessionModeFromPermissionMode({
-                                runtime: codexAcp,
-                                permissionMode: currentPermissionMode ?? initialPermissionMode,
-                                metadata: session.getMetadataSnapshot(),
-                            });
-                        } catch (e) {
-                            logger.debug('[CodexACP] Failed to sync session mode after startOrLoad (non-fatal)', e);
+                        if (useCodexAcp) {
+                            try {
+                                await syncCodexAcpSessionModeFromPermissionMode({
+                                    runtime: codexAcpRuntime!,
+                                    permissionMode: currentPermissionMode ?? initialPermissionMode,
+                                    metadata: session.getMetadataSnapshot(),
+                                });
+                            } catch (e) {
+                                logger.debug('[CodexACP] Failed to sync session mode after startOrLoad (non-fatal)', e);
+                            }
                         }
 
+	                        wasCreated = true;
+	                        first = false;
+	                        await sessionModeSync?.flushPendingAfterStart();
+	                        await configOptionSync?.flushPendingAfterStart();
+	                        await modelSync?.flushPendingAfterStart();
+	                    }
+                } else if (useCodexAppServer) {
+                    const existingAppServerSessionId = readAttachedCodexAppServerThreadId();
+                    if (existingAppServerSessionId) {
+                        const startSignal = startOrLoadAbortController.signal;
+                        await seedCodexAppServerOverridesBeforeStartOrLoad();
+                        const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
+                            existingSessionId: existingAppServerSessionId,
+                        })).then(() => undefined);
+                        try {
+                            await awaitWithAbortSignal(
+                                startOrLoadPromise,
+                                startSignal,
+                                createSwitchToLocalAbortPromise({
+                                    barrier: switchToLocalBarrier.promise,
+                                    createAbortError: () => makeAbortError('Switched to local'),
+                                }),
+                            );
+                        } catch (e) {
+                            if (isAbortError(e) || startSignal.aborted) {
+                                void startOrLoadPromise.catch(() => undefined);
+                                continue;
+                            }
+                            throw e;
+                        }
                         wasCreated = true;
                         first = false;
+                        await sessionModeSync?.flushPendingAfterStart();
+                        await configOptionSync?.flushPendingAfterStart();
                         await modelSync?.flushPendingAfterStart();
                     }
                 }
@@ -1247,7 +1485,7 @@ export async function runCodex(opts: {
                 if (client) {
                     client.clearSession();
                 } else {
-                    await codexAcpRuntime?.reset();
+                    await getCodexRemoteRuntime()?.reset();
                 }
                 wasCreated = false;
 
@@ -1282,15 +1520,17 @@ export async function runCodex(opts: {
                 didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
                 const providerPromptText = replaySeedResolution.text;
 
-                if (useCodexAcp) {
-                    const codexAcp = codexAcpRuntime;
-                    if (!codexAcp) {
-                        throw new Error('Codex ACP runtime was not initialized');
+                if (useCodexAcp || useCodexAppServer) {
+                    const codexRuntime = getCodexRemoteRuntime();
+                    if (!codexRuntime) {
+                        throw new Error('Codex remote runtime was not initialized');
                     }
-                    codexAcp.beginTurn();
+                    codexRuntime.beginTurn();
                     if (shouldLogAcpDebug) {
                         logger.debug('[CodexACP] beginTurn');
                     }
+
+                    let startedFreshSessionForTurn = false;
 
                     if (!wasCreated) {
                         if (shouldLogAcpDebug) {
@@ -1300,13 +1540,21 @@ export async function runCodex(opts: {
                         if (resumeId) {
                             messageBuffer.addMessage('Resuming previous context…', 'status');
                             const resumeSignal = startOrLoadAbortController.signal;
-                            const startOrLoadPromise = codexAcp.startOrLoad({
+                            await seedCodexAppServerOverridesBeforeStartOrLoad();
+                            const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                                 resumeId,
                                 // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
                                 importHistory: false,
-                            });
+                            })).then(() => undefined);
                             try {
-                                await awaitWithAbortSignal(startOrLoadPromise, resumeSignal, switchToLocalAbort);
+                                await awaitWithAbortSignal(
+                                    startOrLoadPromise,
+                                    resumeSignal,
+                                    createSwitchToLocalAbortPromise({
+                                        barrier: switchToLocalBarrier.promise,
+                                        createAbortError: () => makeAbortError('Switched to local'),
+                                    }),
+                                );
                                 if (strictResumeIdForRun && resumeId === strictResumeIdForRun) {
                                     strictResumeIdForRun = null;
                                 }
@@ -1328,13 +1576,13 @@ export async function runCodex(opts: {
                                     const reason = formatErrorForUi(e);
                                     const message = isStrictLocalControl
                                         ? `Failed to switch this Codex session from local → remote.\n` +
-                                          `Reason: could not resume the remote Codex ACP session (${resumeId}).\n` +
+                                          `Reason: could not resume the remote Codex ${remoteResumeBackendLabel} session (${resumeId}).\n` +
                                           `Details: ${reason}\n` +
-                                          `Fix: ensure Codex ACP can run reliably on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry switching to remote.\n` +
+                                          `Fix: ensure Codex ${remoteResumeBackendLabel} can run reliably on this machine, then retry switching to remote.\n` +
                                           `Note: Happier refuses to start a new remote Codex session during a local→remote switch, because it would fork the conversation.`
-                                        : `Failed to resume this Codex ACP session (${resumeId}).\n` +
+                                        : `Failed to resume this Codex ${remoteResumeBackendLabel} session (${resumeId}).\n` +
                                           `Reason: ${reason}\n` +
-                                          `Fix: ensure Codex ACP can run on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry.\n` +
+                                          `Fix: ensure Codex ${remoteResumeBackendLabel} can run on this machine, then retry.\n` +
                                           `Note: Happier refuses to start a new Codex session when --resume was requested.`;
                                     messageBuffer.addMessage(message, 'status');
                                     session.sendSessionEvent({ type: 'message', message });
@@ -1347,9 +1595,17 @@ export async function runCodex(opts: {
                                 messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
                                 session.sendSessionEvent({ type: 'message', message: 'Resume failed; starting a new session.' });
                                 const startSignal = startOrLoadAbortController.signal;
-                                const fallbackPromise = codexAcp.startOrLoad({});
+                                await seedCodexAppServerOverridesBeforeStartOrLoad();
+                                const fallbackPromise = Promise.resolve(codexRuntime.startOrLoad({})).then(() => undefined);
                                 try {
-                                    await awaitWithAbortSignal(fallbackPromise, startSignal, switchToLocalAbort);
+                                    await awaitWithAbortSignal(
+                                        fallbackPromise,
+                                        startSignal,
+                                        createSwitchToLocalAbortPromise({
+                                            barrier: switchToLocalBarrier.promise,
+                                            createAbortError: () => makeAbortError('Switched to local'),
+                                        }),
+                                    );
                                 } catch (fallbackError) {
                                     if (isAbortError(fallbackError) || startSignal.aborted) {
                                         // Ensure any late rejection from the in-flight start attempt is handled.
@@ -1357,6 +1613,7 @@ export async function runCodex(opts: {
                                     }
                                     throw fallbackError;
                                 }
+                                startedFreshSessionForTurn = true;
                                 storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
                                     attempted: true,
                                     success: false,
@@ -1365,9 +1622,17 @@ export async function runCodex(opts: {
                             }
                         } else {
                             const startSignal = startOrLoadAbortController.signal;
-                            const startOrLoadPromise = codexAcp.startOrLoad({});
+                            await seedCodexAppServerOverridesBeforeStartOrLoad();
+                            const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({})).then(() => undefined);
                             try {
-                                await awaitWithAbortSignal(startOrLoadPromise, startSignal, switchToLocalAbort);
+                                await awaitWithAbortSignal(
+                                    startOrLoadPromise,
+                                    startSignal,
+                                    createSwitchToLocalAbortPromise({
+                                        barrier: switchToLocalBarrier.promise,
+                                        createAbortError: () => makeAbortError('Switched to local'),
+                                    }),
+                                );
                             } catch (e) {
                                 if (isAbortError(e) || startSignal.aborted) {
                                     // Ensure any late rejection from the in-flight start attempt is handled.
@@ -1375,37 +1640,57 @@ export async function runCodex(opts: {
                                 }
                                 throw e;
                             }
+                            startedFreshSessionForTurn = true;
                         }
                         if (shouldLogAcpDebug) {
                             logger.debug('[CodexACP] startOrLoad complete');
                         }
-                        try {
-                            await syncCodexAcpSessionModeFromPermissionMode({
-                                runtime: codexAcp,
-                                permissionMode: message.mode.permissionMode,
-                                metadata: session.getMetadataSnapshot(),
-                            });
-                        } catch (e) {
-                            logger.debug('[CodexACP] Failed to sync session mode after startOrLoad (non-fatal)', e);
+                        if (useCodexAcp) {
+                            try {
+                                await syncCodexAcpSessionModeFromPermissionMode({
+                                    runtime: codexAcpRuntime!,
+                                    permissionMode: message.mode.permissionMode,
+                                    metadata: session.getMetadataSnapshot(),
+                                });
+                            } catch (e) {
+                                logger.debug('[CodexACP] Failed to sync session mode after startOrLoad (non-fatal)', e);
+                            }
                         }
-                        wasCreated = true;
-                        first = false;
-                        await modelSync?.flushPendingAfterStart();
-                    }
+	                        wasCreated = true;
+	                        first = false;
+	                        await sessionModeSync?.flushPendingAfterStart();
+	                        await configOptionSync?.flushPendingAfterStart();
+	                        await modelSync?.flushPendingAfterStart();
+	                    }
 
                     if (shouldLogAcpDebug) {
                         logger.debug('[CodexACP] sendPrompt begin');
                     }
-                    try {
-                        await syncCodexAcpSessionModeFromPermissionMode({
-                            runtime: codexAcp,
-                            permissionMode: message.mode.permissionMode,
-                            metadata: session.getMetadataSnapshot(),
-                        });
-                    } catch (e) {
-                        logger.debug('[CodexACP] Failed to sync session mode before prompt (non-fatal)', e);
+                    if (useCodexAcp) {
+                        try {
+                            await syncCodexAcpSessionModeFromPermissionMode({
+                                runtime: codexAcpRuntime!,
+                                permissionMode: message.mode.permissionMode,
+                                metadata: session.getMetadataSnapshot(),
+                            });
+                        } catch (e) {
+                            logger.debug('[CodexACP] Failed to sync session mode before prompt (non-fatal)', e);
+                        }
                     }
-                    await codexAcp.sendPrompt(providerPromptText);
+                    const systemPromptText = startedFreshSessionForTurn
+                        ? await resolveFreshSessionSystemPrompt(
+                            Object.prototype.hasOwnProperty.call(message.mode, 'appendSystemPrompt')
+                                ? (typeof message.mode.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
+                                : undefined,
+                        )
+                        : undefined;
+                    await codexRuntime.sendPrompt(
+                        buildCodexAcpPromptForFreshSession({
+                            prompt: providerPromptText,
+                            startedFreshSession: startedFreshSessionForTurn,
+                            systemPromptText,
+                        }),
+                    );
                     if (shouldLogAcpDebug) {
                         logger.debug('[CodexACP] sendPrompt complete');
                     }
@@ -1426,6 +1711,13 @@ export async function runCodex(opts: {
                     );
 
                     if (!wasCreated) {
+                    const systemPromptText = first
+                        ? await resolveFreshSessionSystemPrompt(
+                            Object.prototype.hasOwnProperty.call(message.mode, 'appendSystemPrompt')
+                                ? (typeof message.mode.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
+                                : undefined,
+                        )
+                        : undefined;
                     const startConfig: CodexSessionConfig = buildCodexMcpStartConfigForMessage({
                         message: providerPromptText,
                         first,
@@ -1433,6 +1725,8 @@ export async function runCodex(opts: {
                         approvalPolicy,
                         mcpServers,
                         mode: message.mode,
+                        systemPromptText,
+                        cwd: directory,
                     });
 
                     const startResponse = await mcpClient.startSession(
@@ -1487,18 +1781,20 @@ export async function runCodex(opts: {
                     messageBuffer.addMessage(messageText, 'status');
                     session.sendSessionEvent({ type: 'message', message: messageText });
                     // For unexpected errors, keep the ACP session id (best-effort) so a subsequent start can attempt resume.
-                    if (useCodexAcp) {
-                        const currentAcpSessionId = codexAcpRuntime?.getSessionId();
-                        if (currentAcpSessionId) {
-                            storedSessionIdForResume = currentAcpSessionId;
+                    if (useCodexAcp || useCodexAppServer) {
+                        const currentRemoteSessionId = getCodexRemoteRuntime()?.getSessionId();
+                        if (currentRemoteSessionId) {
+                            storedSessionIdForResume = currentRemoteSessionId;
                             storedSessionIdFromLocalControl = false;
                             logger.debug('[CodexACP] Stored session after unexpected error:', storedSessionIdForResume);
                         }
                     }
                 }
             } finally {
+                if (useCodexAcp || useCodexAppServer) {
+                    await getCodexRemoteRuntime()?.flushTurn();
+                }
                 if (useCodexAcp) {
-                    codexAcpRuntime?.flushTurn();
                     modelSync?.syncFromMetadata();
                 }
 
@@ -1527,7 +1823,7 @@ export async function runCodex(opts: {
                     if (client) {
                         await client.disconnect();
                     } else {
-                        await codexAcpRuntime?.reset();
+                        await getCodexRemoteRuntime()?.reset();
                     }
                 } catch {
                     // ignore
@@ -1551,7 +1847,7 @@ export async function runCodex(opts: {
             session,
             reconnectionHandle,
             client,
-            codexAcpRuntime,
+            codexRuntime: getCodexRemoteRuntime(),
             stopHappierMcpServer: () => happierMcpServer?.stop(),
             unmountRemoteUi: async () => {
                 await remoteTerminalUi?.unmount();

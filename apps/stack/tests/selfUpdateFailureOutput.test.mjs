@@ -1,56 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
-
-import { createTempDir } from './testkit/tempdir_testkit.mjs';
-
-const stackRoot = fileURLToPath(new URL('..', import.meta.url));
-
-function makeFailingNpmBin(tmp) {
-  const binDir = join(tmp, 'bin');
-  mkdirSync(binDir, { recursive: true });
-  const npmPath = join(binDir, 'npm');
-  writeFileSync(
-    npmPath,
-    `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === 'install') {
-  process.stderr.write('fake install failure\\n');
-  process.exit(42);
-}
-if (args[0] === 'view') {
-  process.stdout.write('9.9.9\\n');
-  process.exit(0);
-}
-process.exit(0);
-`,
-    'utf-8'
-  );
-  chmodSync(npmPath, 0o755);
-  return { binDir };
-}
+import { createSelfUpdateHarness } from './testkit/self_update_testkit.mjs';
 
 test('hstack self update prints a concise failure message without stack trace noise', (t) => {
-  const tmp = createTempDir(t, 'hstack-self-update-fail-');
-  const { binDir } = makeFailingNpmBin(tmp);
-  const res = spawnSync(process.execPath, [join('scripts', 'self.mjs'), 'update', '--json'], {
-    cwd: stackRoot,
-    env: {
-      ...process.env,
-      // scripts/utils/env/env.mjs may prepend dirname(process.execPath) onto PATH if missing, which
-      // can contain a real npm and shadow our fake npm. Include it explicitly (after our fake)
-      // so env bootstrap doesn't reorder the priority.
-      PATH: `${binDir}${delimiter}${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}`,
-      HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
-    },
-    encoding: 'utf-8',
-    timeout: 10000,
+  const harness = createSelfUpdateHarness(t, {
+    prefix: 'hstack-self-update-fail-',
+    installExitCode: 42,
+    installStderr: 'fake install failure\n',
   });
-  if (res.error) throw res.error;
+  const res = harness.runSelfCommand(['update', '--json']);
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /\[self\] failed: npm install exited with status 42/i);
   assert.doesNotMatch(res.stderr, /\n\s*at\s+/i);

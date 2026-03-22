@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { machinePromptRegistriesFetchItem, machinePromptRegistriesInstall } from '@/sync/ops/machinePromptRegistries';
+import { machinePromptRegistriesDownloadItem, machinePromptRegistriesInstall } from '@/sync/ops/machinePromptRegistries';
 
 import { defaultPromptAssetTargetInput } from '@/components/settings/prompts/assets/promptAssetExportDefaults';
 import { createPromptRegistrySkillArtifactFromFetchedItem } from './promptRegistrySkillImports';
@@ -34,6 +34,7 @@ export type PromptRegistryInstallResult = Readonly<
 
 export async function installPromptRegistryItem(args: Readonly<{
   machineId: string;
+  serverId?: string | null;
   configuredSources: readonly PromptRegistryConfiguredSourceV1[];
   sourceId: string;
   itemId: string;
@@ -47,11 +48,11 @@ export async function installPromptRegistryItem(args: Readonly<{
   promptExternalLinks: PromptExternalLinksV1 | null | undefined;
   previewOnly?: boolean;
 }>): Promise<PromptRegistryInstallResult> {
-  const fetched = await machinePromptRegistriesFetchItem(args.machineId, {
+  const fetched = await machinePromptRegistriesDownloadItem(args.machineId, {
     sourceId: args.sourceId,
     itemId: args.itemId,
     configuredSources: [...args.configuredSources],
-  });
+  }, args.serverId ? { serverId: args.serverId } : undefined);
   if (!fetched.ok) {
     return {
       ok: false,
@@ -90,7 +91,7 @@ export async function installPromptRegistryItem(args: Readonly<{
       installMode: args.installTarget.installMode,
     },
     previewOnly: args.previewOnly,
-  });
+  }, args.serverId ? { serverId: args.serverId } : undefined);
 
   if (!committed.ok || !committed.externalRef) {
     return {

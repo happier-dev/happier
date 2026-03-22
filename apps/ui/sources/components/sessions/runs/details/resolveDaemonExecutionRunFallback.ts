@@ -3,6 +3,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { storage } from '@/sync/domains/state/storage';
+import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { t } from '@/text';
 
@@ -19,12 +20,6 @@ export type ExecutionRunDaemonFallback = Readonly<{
 
 function readNonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function resolveSessionMachineId(sessionId: string): string | null {
-    const session = storage.getState().sessions?.[sessionId];
-    const rawMachineId = session?.metadata?.machineId;
-    return typeof rawMachineId === 'string' && rawMachineId.trim().length > 0 ? rawMachineId.trim() : null;
 }
 
 function buildDaemonProcessLine(entry: DaemonExecutionRunEntry | null): string | null {
@@ -78,7 +73,11 @@ export async function resolveDaemonExecutionRunFallback(params: Readonly<{
     runId: string;
     transcriptFallback?: ExecutionRunTranscriptFallback | null;
 }>): Promise<ExecutionRunDaemonFallback | null> {
-    const machineId = resolveSessionMachineId(params.sessionId);
+    const session = storage.getState().sessions?.[params.sessionId];
+    const machineId = readDisplayMachineIdForSession({
+        sessionId: params.sessionId,
+        metadata: session?.metadata ?? null,
+    }) || null;
     if (!machineId) return null;
     const serverId = resolveServerIdForSessionIdFromLocalCache(params.sessionId);
 

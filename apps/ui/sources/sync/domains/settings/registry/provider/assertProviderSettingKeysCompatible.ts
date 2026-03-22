@@ -1,5 +1,5 @@
-import { buildProviderSettingArtifactEntries } from '@/agents/providers/_registry/buildProviderSettingArtifactEntries';
-import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
+import { buildProviderSettingArtifactEntries } from '@/agents/providers/registry/buildProviderSettingArtifactEntries';
+import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
 
 export function assertProviderSettingKeysCompatible(params: {
     coreSettingKeys: readonly string[];

@@ -1,33 +1,46 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    AppState: {
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
+const shared = vi.hoisted(() => ({
+    routerPushSpy: vi.fn(),
+    settingsState: {
+        sessionsRightPaneDefaultOpen: false,
+        uiMultiPanePanelsEnabled: false,
+    } as Record<string, unknown>,
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        router: {
+            push: shared.routerPushSpy,
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -42,11 +55,13 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: 'Switch',
 }));
 
+vi.mock('@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker', () => ({
+    LlmTaskRunnerConfigV1BackendModelPicker: (props: any) =>
+        React.createElement('LlmTaskRunnerConfigV1BackendModelPicker', props),
+}));
+
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) =>
-        typeof props.trigger === 'function'
-            ? React.createElement(React.Fragment, null, props.trigger({ open: false, toggle: () => {} }))
-            : null,
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -60,61 +75,54 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: () => [null, vi.fn()],
-}));
-
-vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => [],
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    getAgentCore: () => ({ displayNameKey: 'agent.name' }),
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeLabelForAgentType: () => 'default',
-    getPermissionModeOptionsForAgentType: () => [],
-}));
-
-vi.mock('./sessionI18n', () => ({
-    getPermissionApplyTimingSubtitleKey: () => 'x',
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSettingMutable: ((key: string) => [
+                key in shared.settingsState ? shared.settingsState[key] : null,
+                (next: unknown) => {
+                    shared.settingsState[key] = next;
+                },
+            ]) as any,
+            useLocalSettingMutable: ((key: string) => [
+                key in shared.settingsState ? shared.settingsState[key] : null,
+                (next: unknown) => {
+                    shared.settingsState[key] = next;
+                },
+            ]) as any,
+        },
+    });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => 'desktop',
+}));
+
 afterEach(() => {
-    routerPushSpy.mockClear();
+    standardCleanup();
+    shared.routerPushSpy.mockClear();
 });
 
 describe('Session settings (Permissions entry)', () => {
-    it('routes to the permissions sub-screen and no longer renders permission controls inline', async () => {
+    it('does not render a permissions entry or inline permission controls on the root session settings screen', async () => {
         const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
-        });
+        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
 
-        const items = tree.root.findAllByType('Item' as any);
-
-        const permissionsLink = items.find((item: any) => item?.props?.title === 'settingsSession.permissions.title');
-        expect(permissionsLink).toBeTruthy();
-
-        expect(items.some((item: any) => item?.props?.title === 'settingsSession.defaultPermissions.applyPermissionChangesTitle')).toBe(false);
-
-        await act(async () => {
-            permissionsLink!.props.onPress();
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/permissions');
+        expect(titles).not.toContain('settings.permissions');
+        expect(titles).not.toContain('settingsSession.defaultPermissions.applyPermissionChangesTitle');
     });
 });

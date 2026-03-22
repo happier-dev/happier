@@ -1,19 +1,27 @@
 import {
   formatNewMessages,
+  formatUserActionRequest,
   formatPermissionRequest,
   formatReadyEvent,
   formatSessionFocus,
   formatSessionFull,
   formatSessionOffline,
   formatSessionOnline,
+  summarizeMessagesForVoiceHuman,
+  summarizeAgentRequestForVoiceHuman,
 } from './contextFormatters';
-import { storage } from '@/sync/domains/state/storage';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import { storage } from '@/sync/domains/state/storage';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { VOICE_CONFIG } from '@/voice/runtime/voiceConfig';
 import { getVoiceContextSinkForSession } from '@/voice/context/getVoiceContextSinkForSession';
+import { resolveEffectiveVoiceTargetState } from '@/voice/context/resolveEffectiveVoiceTargetState';
+import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { useVoiceContextSeenStore } from '@/voice/runtime/voiceContextSeenStore';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveVoiceSessionUpdatePolicy, type VoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
+import type { AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -30,29 +38,23 @@ interface SessionMetadata {
 
 function resolvePolicy(sessionId: string): VoiceSessionUpdatePolicy {
   // NOTE: we deliberately avoid a session-scoped API here; global voice uses explicit target.
-  const store = useVoiceTargetStore.getState();
+  const targetState = resolveEffectiveVoiceTargetState(sessionId);
 
   return resolveVoiceSessionUpdatePolicy({
     sessionId,
     settings: storage.getState().settings,
-    trackedSessionIds: store.trackedSessionIds,
+    trackedSessionIds: targetState.trackedSessionIds,
   });
 }
 
 function getVoiceContextPrefs(sessionId: string) {
-  const settings = storage.getState().settings as any;
-  const privacy = settings?.voice?.privacy ?? {};
-  const level = resolvePolicy(sessionId).level;
-  const allowSummaries = level === 'summaries' || level === 'snippets';
-  const allowSnippets = level === 'snippets';
-  return {
-    voiceShareSessionSummary: privacy.shareSessionSummary && allowSummaries,
-    voiceShareRecentMessages: privacy.shareRecentMessages && allowSnippets,
-    voiceRecentMessagesCount: privacy.recentMessagesCount,
-    voiceShareToolNames: privacy.shareToolNames,
-    voiceShareToolArgs: privacy.shareToolArgs,
-    voiceShareFilePaths: privacy.shareFilePaths,
-  };
+  const settings = storage.getState().settings;
+  const targetState = resolveEffectiveVoiceTargetState(sessionId);
+  return getVoiceContextFormatterPrefs({
+    sessionId,
+    settings,
+    trackedSessionIds: targetState.trackedSessionIds,
+  });
 }
 
 function reportContextualUpdate(sessionId: string, update: string | null | undefined) {
@@ -77,6 +79,38 @@ function reportTextUpdate(sessionId: string, update: string | null | undefined) 
   sink.sendTextMessage(sessionId, update);
 }
 
+function reportInterruptingUpdate(sessionId: string, update: string | null | undefined) {
+  if (!update) return;
+  const sink = getVoiceContextSinkForSession(sessionId);
+  if (!sink) return;
+
+  if (sink.announceAssistantText) {
+    sink.sendContextualUpdate(sessionId, update);
+    return;
+  }
+
+  sink.sendTextMessage(sessionId, update);
+}
+
+function reportAgentRequestUpdate(sessionId: string, update: string | null | undefined) {
+  if (!update) return;
+  const sink = getVoiceContextSinkForSession(sessionId);
+  if (!sink) return;
+
+  if (sink.announceAssistantText) {
+    sink.sendContextualUpdate(sessionId, update);
+    return;
+  }
+
+  sink.sendTextMessage(sessionId, update);
+}
+
+function announceAssistantText(sessionId: string, update: string | null | undefined) {
+  if (!update) return;
+  const sink = getVoiceContextSinkForSession(sessionId);
+  sink?.announceAssistantText?.(sessionId, update);
+}
+
 function reportSession(sessionId: string) {
   const seen = useVoiceContextSeenStore.getState();
   if (seen.hasShownSession(sessionId)) return;
@@ -84,7 +118,7 @@ function reportSession(sessionId: string) {
   if (level !== 'summaries' && level !== 'snippets') return;
   const session = (storage.getState() as any).sessions?.[sessionId];
   if (!session) return;
-  const messages = (storage.getState() as any).sessionMessages?.[sessionId]?.messages ?? [];
+  const messages = readStoredSessionMessages(storage.getState(), sessionId);
   const contextUpdate = formatSessionFull(session, messages, getVoiceContextPrefs(sessionId));
   reportContextualUpdate(sessionId, contextUpdate);
   // Mark as shown only once we've actually emitted the full context.
@@ -95,6 +129,30 @@ function formatNewMessagesActivity(sessionId: string, messages: Message[]): stri
   const count = Array.isArray(messages) ? messages.length : 0;
   const plural = count === 1 ? '' : 's';
   return `New messages in session: ${sessionId}\n\n(${count} new message${plural})`;
+}
+
+function isPrimaryActionSession(sessionId: string): boolean {
+  return resolveEffectiveVoiceTargetState(sessionId).primaryActionSessionId === sessionId;
+}
+
+function filterMessagesForVoiceUpdate(messages: Message[], policy: VoiceSessionUpdatePolicy): Message[] {
+  return (Array.isArray(messages) ? messages : [])
+    .filter((m) => m && typeof m === 'object')
+    .filter((m) => policy.includeUserMessagesInSnippets || m.kind !== 'user-text')
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-policy.snippetsMaxMessages);
+}
+
+function shouldInterruptForAssistantReply(
+  sessionId: string,
+  messages: Message[],
+  policy: VoiceSessionUpdatePolicy,
+  shareRecentMessages: boolean,
+): boolean {
+  if (!shareRecentMessages) return false;
+  if (!isPrimaryActionSession(sessionId)) return false;
+  if (policy.level !== 'summaries' && policy.level !== 'snippets') return false;
+  return summarizeMessagesForVoiceHuman(Array.isArray(messages) ? messages : [], getVoiceContextPrefs(sessionId)) !== null;
 }
 
 export const voiceHooks = {
@@ -126,12 +184,21 @@ export const voiceHooks = {
     reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata));
   },
 
-  onPermissionRequested(sessionId: string, requestId: string, toolName: string, toolArgs: any) {
+  onAgentRequest(sessionId: string, requestId: string, requestKind: AgentRequestKind, toolName: string, toolArgs: any) {
     if (VOICE_CONFIG.DISABLE_PERMISSION_REQUESTS) return;
-    if (storage.getState().settings?.voice?.privacy?.sharePermissionRequests === false) return;
+    if (!readVoicePrivacySettings(storage.getState().settings).sharePermissionRequests) return;
 
     reportSession(sessionId);
-    reportTextUpdate(sessionId, formatPermissionRequest(sessionId, requestId, toolName, toolArgs, getVoiceContextPrefs(sessionId)));
+    announceAssistantText(
+      sessionId,
+      summarizeAgentRequestForVoiceHuman(requestKind, requestId, toolName, toolArgs, getVoiceContextPrefs(sessionId)),
+    );
+    reportAgentRequestUpdate(
+      sessionId,
+      requestKind === 'user_action'
+        ? formatUserActionRequest(sessionId, requestId, toolName, toolArgs, getVoiceContextPrefs(sessionId))
+        : formatPermissionRequest(sessionId, requestId, toolName, toolArgs, getVoiceContextPrefs(sessionId)),
+    );
   },
 
   onMessages(sessionId: string, messages: Message[]) {
@@ -141,7 +208,7 @@ export const voiceHooks = {
     if (level === 'none') return;
 
     // "shareRecentMessages" gates transcript/snippet sharing; activity updates remain allowed.
-    const shareRecentMessages = storage.getState().settings?.voice?.privacy?.shareRecentMessages !== false;
+    const shareRecentMessages = readVoicePrivacySettings(storage.getState().settings).shareRecentMessages;
 
     if (level === 'activity') {
       reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
@@ -149,6 +216,15 @@ export const voiceHooks = {
     }
 
     reportSession(sessionId);
+    if (shouldInterruptForAssistantReply(sessionId, messages, policy, shareRecentMessages)) {
+      const filtered = filterMessagesForVoiceUpdate(messages, policy);
+      if (filtered.length > 0) {
+        announceAssistantText(sessionId, summarizeMessagesForVoiceHuman(filtered, getVoiceContextPrefs(sessionId)));
+        reportInterruptingUpdate(sessionId, formatNewMessages(sessionId, filtered, getVoiceContextPrefs(sessionId)));
+        return;
+      }
+    }
+
     if (level === 'summaries') {
       reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
       return;
@@ -159,11 +235,7 @@ export const voiceHooks = {
       return;
     }
 
-    const filtered = (Array.isArray(messages) ? messages : [])
-      .filter((m) => m && typeof m === 'object')
-      .filter((m) => policy.includeUserMessagesInSnippets || m.kind !== 'user-text')
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .slice(-policy.snippetsMaxMessages);
+    const filtered = filterMessagesForVoiceUpdate(messages, policy);
 
     if (filtered.length === 0) {
       reportContextualUpdate(sessionId, formatNewMessagesActivity(sessionId, messages));
@@ -202,16 +274,19 @@ export const voiceHooks = {
 
     const prompt =
       'THIS IS AN ACTIVE SESSION: \n\n' +
-      formatSessionFull(session, state.sessionMessages?.[normalized]?.messages ?? [], getVoiceContextPrefs(normalized));
+      formatSessionFull(session, readStoredSessionMessages(state, normalized), getVoiceContextPrefs(normalized));
     useVoiceContextSeenStore.getState().markSessionShown(normalized);
     return prompt;
   },
 
-  onReady(sessionId: string) {
+  onReady(sessionId: string, messages?: Message[]) {
     if (VOICE_CONFIG.DISABLE_READY_EVENTS) return;
 
     reportSession(sessionId);
-    reportTextUpdate(sessionId, formatReadyEvent(sessionId));
+    const recentMessages = Array.isArray(messages) && messages.length > 0
+      ? messages
+      : readStoredSessionMessages(storage.getState(), sessionId);
+    reportInterruptingUpdate(sessionId, formatReadyEvent(sessionId, recentMessages, getVoiceContextPrefs(sessionId)));
   },
 
   onVoiceStopped() {

@@ -35,6 +35,10 @@ function printHstackHappierHelp({ json }) {
   });
 }
 
+function stripHstackHappierWrapperFlags(argv) {
+  return argv.filter((arg) => arg !== '--stack-help' && arg !== '--runtime' && arg !== '--source');
+}
+
 function takePrefixFlagValue(args, name) {
   const a0 = String(args[0] ?? '');
   if (a0 === name) {
@@ -211,6 +215,9 @@ async function main() {
   const { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
 
   const cliHomeDir = resolveCliHomeDir();
+  const stackDefaultsPinned =
+    Boolean((process.env.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim()) ||
+    Boolean((process.env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim());
 
   const cliLaunchSpec = runtimeLaunchContext.snapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null;
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli');
@@ -241,7 +248,7 @@ async function main() {
 
   let env = { ...process.env };
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
-  if (!prefixServerSelection.hasExplicitSelection && !env.HAPPIER_SERVER_URL && !env.HAPPIER_WEBAPP_URL) {
+  if (!stackDefaultsPinned && !prefixServerSelection.hasExplicitSelection && !env.HAPPIER_SERVER_URL && !env.HAPPIER_WEBAPP_URL) {
     const settingsDefaults = readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR);
     if (settingsDefaults) {
       if (settingsDefaults.localServerUrl && settingsDefaults.localServerUrl !== settingsDefaults.serverUrl) {
@@ -286,7 +293,7 @@ async function main() {
     });
   }
 
-  const forwardedArgv = argv.filter((a) => a !== '--stack-help');
+  const forwardedArgv = stripHstackHappierWrapperFlags(argv);
   const res =
     resolvedCli.kind === 'runtime'
       ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...forwardedArgv], {

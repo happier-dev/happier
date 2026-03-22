@@ -1,11 +1,16 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { makeToolCall } from './ToolView.testHelpers';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ensureSidechainMessagesLoadedMock = vi.fn();
+const chainTranscriptListSpy = vi.fn();
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -27,32 +32,40 @@ vi.mock('react-native-device-info', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        Pressable: 'Pressable',
-        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
-        Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        View: 'View',
+                                        Text: 'Text',
+                                        ScrollView: 'ScrollView',
+                                        Pressable: 'Pressable',
+                                        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
+                                        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
+                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+                                        useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    }
+    );
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: () => false,
-    useSetting: (key: string) => {
-        if (key === 'permissionPromptSurface') return 'composer';
-        return false;
-    },
-    useSessionTranscriptDraftMessages: () => [],
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'permissionPromptSurface') return 'transcript';
+                if (key === 'toolViewShowDebugByDefault') return false;
+                return false;
+            },
+            useSessionTranscriptDraftMessages: () => [],
+        },
+    }));
+
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: () => null,
@@ -68,6 +81,13 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
     StructuredResultView: () => null,
 }));
 
+vi.mock('@/components/sessions/transcript/ChainTranscriptList', () => ({
+    ChainTranscriptList: (props: any) => {
+        chainTranscriptListSpy(props);
+        return React.createElement('ChainTranscriptList', props, props.footer);
+    },
+}));
+
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => null,
 }));
@@ -77,6 +97,10 @@ vi.mock('../permissions/PermissionFooter', () => ({
 }));
 
 describe('ToolFullView (permission pending)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('renders PermissionFooter so users can approve/deny from the full view', async () => {
         const { ToolFullView } = await import('./ToolFullView');
 
@@ -90,14 +114,11 @@ describe('ToolFullView (permission pending)', () => {
             permission: { id: 'perm1', status: 'pending' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
+        );
 
-        expect(tree!.root.findAllByType('PermissionFooter' as any).length).toBe(1);
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
     });
 
     it('does not render PermissionFooter for tools that have custom permission UIs', async () => {
@@ -113,13 +134,82 @@ describe('ToolFullView (permission pending)', () => {
             permission: { id: 'perm1', status: 'pending' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
-            );
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
+        );
+
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(0);
+    });
+
+    it('renders PermissionFooter when transcript fallback is forced for details-only views', async () => {
+        const { ToolFullView } = await import('./ToolFullView');
+
+        const tool = makeToolCall({
+            name: 'edit',
+            state: 'running',
+            input: {},
+            result: null,
+            completedAt: null,
+            description: 'edit',
+            permission: { id: 'perm1', status: 'pending' },
         });
 
-        expect(tree!.root.findAllByType('PermissionFooter' as any).length).toBe(0);
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                forcePermissionFooterInTranscript: true,
+            }),
+        );
+
+        expect(screen.findAllByType('PermissionFooter' as any)).toHaveLength(1);
+    });
+
+    it('forces transcript permission prompts through the child transcript list when details-only fallback is active', async () => {
+        const { ToolFullView } = await import('./ToolFullView');
+
+        const tool = makeToolCall({
+            name: 'SubAgent',
+            state: 'running',
+            input: {},
+            result: null,
+            completedAt: null,
+            description: 'Subagent',
+        });
+
+        const childToolMessage: Message = {
+            kind: 'tool-call',
+            id: 'child-1',
+            localId: null,
+            createdAt: 2,
+            tool: makeToolCall({
+                id: 'child-tool-1',
+                name: 'Bash',
+                state: 'running',
+                input: { command: 'pwd' },
+                result: null,
+                completedAt: null,
+                description: 'pwd',
+                permission: { id: 'perm-1', kind: 'command', status: 'pending' },
+            }),
+            children: [],
+        };
+
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [childToolMessage],
+                sessionId: 's1',
+                forcePermissionFooterInTranscript: true,
+            }),
+        );
+
+        expect(screen).toBeDefined();
+        expect(chainTranscriptListSpy).toHaveBeenCalledWith(expect.objectContaining({
+            forcePermissionPromptsInTranscript: true,
+        }));
     });
 });

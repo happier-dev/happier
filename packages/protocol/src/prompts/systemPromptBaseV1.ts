@@ -32,11 +32,11 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = trimIdent(`
   - <path> (...)
   [/attachments]
 
-  When present, read the referenced file paths (using the Read tool) before answering. If a file cannot be read, explain the error and ask the user how to proceed.
+  When present, open and analyze the referenced file paths before answering. If a file cannot be opened, explain the error and ask the user how to proceed.
 
   # Linked workspace files
 
   A user may also reference project/workspace files inline using \`@path\` (for example: \`@src/app.ts\` or \`@README.md\`).
 
-  Treat these \`@path\` references as file paths relative to the session/worktree. When you see them, read the referenced files (using the Read tool) before answering.
+  Treat these \`@path\` references as file paths relative to the session/worktree. When you see them, open and analyze the referenced files before answering.
 `);

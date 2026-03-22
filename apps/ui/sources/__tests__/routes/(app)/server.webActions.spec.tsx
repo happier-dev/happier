@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,17 +21,21 @@ const capturedActions = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual: any = await importOriginal();
-    return {
-        ...actual,
-        KeyboardAvoidingView: 'KeyboardAvoidingView',
-        Platform: { ...actual.Platform, OS: 'web' },
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    KeyboardAvoidingView: 'KeyboardAvoidingView',
+                    Platform: {
+                        OS: 'web',
+                    },
+                }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -44,13 +50,13 @@ vi.mock('react-native-unistyles', () => ({
                 deleteAction: '#f00',
             },
         },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('expo-updates', () => ({
     reloadAsync: vi.fn(),
@@ -60,14 +66,14 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('expo-router', () => ({
-    Stack: Object.assign(
-        ({ children }: any) => React.createElement(React.Fragment, null, children),
-        { Screen: ({ children }: any) => React.createElement(React.Fragment, null, children) }
-    ),
-    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+        params: {},
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => null),
@@ -127,9 +133,7 @@ describe('ServerConfigScreen (web row actions)', () => {
         setActiveServerId(company.id, { scope: 'device' });
 
         const Screen = (await import('@/app/(app)/server')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-        });
+        await renderScreen(React.createElement(Screen));
 
         const companyRow = capturedActions.rows.find((row) => row.title === 'Company');
         expect(companyRow).toBeTruthy();

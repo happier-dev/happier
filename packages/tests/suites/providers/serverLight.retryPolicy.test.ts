@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:net';
 
-import { isPortAvailableForListen, shouldRetryServerStart, shouldSkipServerGenerateProviders } from '../../src/testkit/process/serverLight';
+import {
+  isPortAvailableForListen,
+  shouldRetryServerStart,
+  shouldSkipServerGenerateProviders,
+  shouldSkipServerSharedDepsBuild,
+} from '../../src/testkit/process/serverLight';
 
 async function bindPort(server: Server): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -66,5 +71,11 @@ describe('providers: server-light retry policy', () => {
     expect(shouldSkipServerGenerateProviders({})).toBe(false);
     expect(shouldSkipServerGenerateProviders({ HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1' })).toBe(true);
     expect(shouldSkipServerGenerateProviders({ HAPPY_E2E_PROVIDER_SKIP_SERVER_GENERATE: 'yes' })).toBe(true);
+  });
+
+  it('supports explicit shared-deps build skip flags in worker env', () => {
+    expect(shouldSkipServerSharedDepsBuild({})).toBe(false);
+    expect(shouldSkipServerSharedDepsBuild({ HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1' })).toBe(true);
+    expect(shouldSkipServerSharedDepsBuild({ HAPPY_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: 'yes' })).toBe(true);
   });
 });

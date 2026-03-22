@@ -30,6 +30,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     else process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
     if (previousAutostart === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
     else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = previousAutostart;
+    vi.clearAllMocks();
     vi.resetModules();
   });
 
@@ -92,6 +93,188 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
       expect(raw.machineIdByServerId.cloud).toBe('machine-acct-b');
       expect(raw.lastTokenSubByServerId.cloud).toBe('acct-b');
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to server-scoped machine ids when the token payload cannot be decoded', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-machine-id-invalid-token-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+    delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+
+    try {
+      const settingsPath = join(homeDir, 'settings.json');
+      writeFileSync(
+        settingsPath,
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: { cloud: 'machine-server-scoped' },
+            machineIdConfirmedByServerByServerId: { cloud: true },
+            lastTokenSubByServerId: { cloud: 'acct-a' },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const serverDir = join(homeDir, 'servers', 'cloud');
+      mkdirSync(serverDir, { recursive: true });
+      writeFileSync(
+        join(serverDir, 'access.key'),
+        JSON.stringify({ token: 'not-a-jwt', secret: Buffer.from('x').toString('base64') }, null, 2),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { authAndSetupMachineIfNeeded } = await import('./auth');
+      const result = await authAndSetupMachineIfNeeded();
+
+      expect(result.machineId).toBe('machine-server-scoped');
+
+      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
+      expect(raw.lastTokenSubByServerId?.cloud).toBeUndefined();
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rotates the machine id when credentials are freshly issued but the token is opaque', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-machine-id-new-opaque-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+    delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+
+    try {
+      const settingsPath = join(homeDir, 'settings.json');
+      writeFileSync(
+        settingsPath,
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: { cloud: 'machine-before-login' },
+            machineIdConfirmedByServerByServerId: { cloud: true },
+            lastTokenSubByServerId: { cloud: 'acct-a' },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { ensureMachineIdForCredentials } = await import('./auth');
+      const result = await ensureMachineIdForCredentials({
+        token: 'opaque-token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      }, { forceNew: true });
+
+      expect(result.machineId).not.toBe('machine-before-login');
+
+      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      expect(raw.machineIdByServerId.cloud).toBe(result.machineId);
+      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
+      expect(raw.lastTokenSubByServerId?.cloud).toBeUndefined();
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('clears machine confirmation when the account changes without changing the machine id', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-machine-id-confirmation-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+
+    try {
+      const settingsPath = join(homeDir, 'settings.json');
+      writeFileSync(
+        settingsPath,
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: { cloud: 'machine-shared' },
+            machineIdByServerIdByAccountId: {
+              cloud: {
+                'acct-a': 'machine-shared',
+                'acct-b': 'machine-shared',
+              },
+            },
+            machineIdConfirmedByServerByServerId: { cloud: true },
+            lastTokenSubByServerId: { cloud: 'acct-a' },
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      const serverDir = join(homeDir, 'servers', 'cloud');
+      mkdirSync(serverDir, { recursive: true });
+      writeFileSync(
+        join(serverDir, 'access.key'),
+        JSON.stringify({ token: makeJwtWithSub('acct-b'), secret: Buffer.from('x').toString('base64') }, null, 2),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { authAndSetupMachineIfNeeded } = await import('./auth');
+      const result = await authAndSetupMachineIfNeeded();
+
+      expect(result.machineId).toBe('machine-shared');
+
+      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      expect(raw.machineIdConfirmedByServerByServerId.cloud).toBeUndefined();
+      expect(raw.lastTokenSubByServerId.cloud).toBe('acct-b');
+
+      const { logger } = await import('./logger');
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('[AUTH] tokenSub changed for server=cloud machineId=machine-shared'),
+      );
+      expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('acct-a'));
+      expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('acct-b'));
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

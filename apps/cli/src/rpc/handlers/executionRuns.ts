@@ -1,7 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -24,11 +24,12 @@ import {
   isSafePermissionModeForIntent,
   resolveExecutionRunPolicy,
   resolveExecutionRunStartBoundedTimeoutMs,
-} from '@/agent/executionRuns/policy/ExecutionRunPolicy';
+} from '@/agent/executionRuns/policy/executionRunPolicy';
 import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { applyExecutionRunListRequest } from '@/session/services/applyExecutionRunListRequest';
 import { preflightCodeRabbitReviewScope } from '@/agent/reviews/engines/coderabbit/preflightCodeRabbitReviewScope';
 import { readCodeRabbitReviewConfigFromEnv } from '@/agent/reviews/engines/coderabbit/readCodeRabbitReviewConfig';
 import { readCredentials } from '@/persistence';
@@ -58,7 +59,15 @@ export function registerExecutionRunHandlers(
     cwd: string;
     serverUrl?: string;
     parentProvider: ACPProvider;
-    createBackend: (opts: { runId?: string; backendId: string; permissionMode: string; modelId?: string; start?: any }) => AgentBackend;
+    createBackend: (opts: {
+      runId?: string;
+      backendId: string;
+      backendTarget?: BackendTargetRefV1;
+      permissionMode: string;
+      modelId?: string;
+      accountSettings?: Readonly<Record<string, unknown>> | null;
+      start?: any;
+    }) => AgentBackend;
     sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
     streamedTranscriptSession?: Readonly<{
       sendAgentMessageCommitted: (
@@ -208,6 +217,7 @@ export function registerExecutionRunHandlers(
       }
     }
     try {
+      const accountSettings = await ctx.resolveAccountSettings?.() ?? null;
       const startParams: any = { ...(parsed.data as any) };
       if (parsed.data.intent === 'voice_agent' && parsed.data.replay?.kind === 'voice_session.v1') {
         const credentials = await readCredentials().catch(() => null);
@@ -249,6 +259,7 @@ export function registerExecutionRunHandlers(
       // Preserve passthrough fields for intent-specific configuration (e.g. voice_agent model IDs).
       const started = await manager.start({
         sessionId: ctx.sessionId,
+        ...(accountSettings ? { accountSettings } : {}),
         ...startParams,
         ...(() => {
           const boundedTimeoutMs = resolveExecutionRunStartBoundedTimeoutMs({
@@ -287,7 +298,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunListRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
-    return { runs: manager.listPublic() };
+    return { runs: applyExecutionRunListRequest(manager.listPublic(), parsed.data) };
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_GET, async (raw: unknown) => {

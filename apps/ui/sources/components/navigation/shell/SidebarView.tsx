@@ -1,23 +1,21 @@
 import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/domains/state/storage';
 import * as React from 'react';
-import { Platform, View, Pressable, useWindowDimensions } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { MainView } from './MainView';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
-import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { config } from '@/config';
 import { isStackContext } from '@/sync/domains/server/serverContext';
@@ -54,16 +52,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: 24,
         width: 24,
     },
-    titleContainer: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        flexDirection: 'column',
-        alignItems: 'center',
-        overflow: 'visible',
-    },
     titleContainerLeft: {
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
+        minWidth: 0,
         flexDirection: 'column',
         alignItems: 'flex-start',
         marginLeft: 8,
@@ -80,6 +73,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
+    },
+    statusControlWrapper: {
+        alignSelf: 'stretch',
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
     },
     envBadge: {
         marginTop: -4,
@@ -164,8 +166,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     indicatorDot: {
         position: 'absolute',
-        top: 0,
-        right: -2,
+        top: 4,
+        right: 2,
         width: 6,
         height: 6,
         borderRadius: 3,
@@ -218,10 +220,8 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
-    const inboxFriendsEnabled = useFriendsEnabled();
-    const automationsSupport = useAutomationsSupport();
-    const showAutomations = automationsSupport?.enabled !== false;
-
+    const friendsEnabled = useFriendsEnabled();
+    const inboxEnabled = useFeatureEnabled('inbox.global') || useFeatureEnabled('actions.approvals');
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
         const { status } = socketStatus;
@@ -264,17 +264,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         }
     })();
 
-    // Calculate sidebar width and determine title positioning
-    // Uses same formula as SidebarNavigator.tsx:18 for consistency
-    const { width: windowWidth } = useWindowDimensions();
-    const sidebarWidth = typeof props.sidebarWidthPx === 'number' && Number.isFinite(props.sidebarWidthPx)
-        ? props.sidebarWidthPx
-        : Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
-    const showZen = useFeatureEnabled('zen.navigation');
     const voiceEnabled = useFeatureEnabled('voice');
-    // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
-    // Without Zen: 3 icons (108px total), threshold 328px → left-justify below ~340px
-    const shouldLeftJustify = showZen || sidebarWidth < 340;
     const environmentBadge = resolveVisibleAppEnvironmentBadge({
         showEnvironmentBadge,
         appVariant: config.variant,
@@ -292,10 +282,6 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
         router.push('/');
     }, [router]);
 
-    const handleAutomations = React.useCallback(() => {
-        router.push('/automations');
-    }, [router]);
-
     // Title content used in both centered and left-justified modes (DRY)
     const titleContent = (
         <>
@@ -308,10 +294,15 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                 ) : null}
             </View>
             {connectionStatus.text ? (
-                <View style={Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : undefined}>
+                <View
+                    style={[
+                        styles.statusControlWrapper,
+                        Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : null,
+                    ]}
+                >
                     <ConnectionStatusControl
                         variant="sidebar"
-                        alignSelf={shouldLeftJustify ? 'flex-start' : 'center'}
+                        alignSelf="stretch"
                     />
                 </View>
             ) : null}
@@ -337,42 +328,27 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                             style={[styles.logo, { height: 24, width: 24 }]}
                         />
                     </Pressable>
-                    {showAutomations ? (
-                        <Pressable
-                            onPress={handleAutomations}
-                            hitSlop={15}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('automations.openA11y')}
-                            style={styles.iconButton}
-                        >
-                            <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
-                        </Pressable>
-                    ) : null}
-
-                    {/* Left-justified title - in document flow, prevents overlap */}
-                    {shouldLeftJustify && (
-                        <View style={styles.titleContainerLeft}>
-                            {titleContent}
-                        </View>
-                    )}
+                    {/* Title - left-justified next to logo */}
+                    <View style={styles.titleContainerLeft}>
+                        {titleContent}
+                    </View>
 
                     {/* Navigation icons */}
                     <View style={styles.rightContainer}>
-                        {showZen && (
+                        {inboxEnabled && (
                             <Pressable
-                                onPress={() => router.push('/(app)/zen')}
+                                onPress={() => router.push('/(app)/inbox')}
                                 hitSlop={15}
-                                style={styles.iconButton}
+                                testID="sidebar-inbox-button"
+                                style={[styles.iconButton, styles.notificationButton]}
                             >
-                                <Image
-                                    source={require('@/assets/images/brutalist/Brutalism 3.png')}
-                                    contentFit="contain"
-                                    style={[{ width: 32, height: 32 }]}
-                                    tintColor={theme.colors.header.tint}
-                                />
+                                <Octicons name="inbox" size={20} color={theme.colors.header.tint} />
+                                {inboxHasContent && (
+                                    <View style={styles.indicatorDot} />
+                                )}
                             </Pressable>
                         )}
-                        {inboxFriendsEnabled && (
+                        {friendsEnabled && (
                             <Pressable
                                 onPress={() => router.push('/(app)/friends')}
                                 hitSlop={15}
@@ -385,9 +361,6 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                                             {friendRequests.length > 99 ? '99+' : friendRequests.length}
                                         </Text>
                                     </View>
-                                )}
-                                {inboxHasContent && friendRequests.length === 0 && (
-                                    <View style={styles.indicatorDot} />
                                 )}
                             </Pressable>
                         )}
@@ -412,17 +385,6 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         </Pressable>
                     </View>
 
-                    {/* Centered title - absolute positioned over full header */}
-                    {!shouldLeftJustify && (
-                        <View
-                            // On native, this overlay must be `box-none` so it doesn't block the header buttons.
-                            // On web, use CSS-compatible pointer-events values (RN `box-none` isn't valid CSS).
-                            pointerEvents={Platform.OS === 'web' ? undefined : 'box-none'}
-                            style={[styles.titleContainer, Platform.OS === 'web' ? ({ pointerEvents: 'none' } as any) : null]}
-                        >
-                            {titleContent}
-                        </View>
-                    )}
                 </View>
                 {(syncError || socketStatus.status === 'error' || socketStatus.status === 'disconnected') && (
                     <View style={styles.banner}>

@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createSessionActionDraft = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({
       createSessionActionDraft,
     }),
   },
-}));
+});
+});
 
 async function loadSubject() {
   const mod = await import('./executeSessionComposerResolution');

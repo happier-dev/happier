@@ -3,6 +3,8 @@ import axios from 'axios';
 import { encodeBase64, encrypt } from './encryption';
 import { ApiSessionClient } from './session/sessionClient';
 import { writeLastChangesCursor } from '@/persistence';
+import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
@@ -19,36 +21,11 @@ vi.mock('@/persistence', () => ({
 
 vi.mock('axios');
 
-function createMockSocket() {
-    const handlers = new Map<string, Array<(...args: any[]) => void>>();
-    return {
-        connected: false,
-        connect: vi.fn(),
-        on: vi.fn((event: string, cb: (...args: any[]) => void) => {
-            const list = handlers.get(event) ?? [];
-            list.push(cb);
-            handlers.set(event, list);
-        }),
-        off: vi.fn(),
-        disconnect: vi.fn(),
-        close: vi.fn(),
-        emit: vi.fn(),
-        __trigger: (event: string, ...args: any[]) => {
-            for (const cb of handlers.get(event) ?? []) {
-                cb(...args);
-            }
-        },
-    };
-}
-
 describe('ApiSessionClient reconnect transcript catch-up (afterSeq)', () => {
     it('fetches /v1/sessions/:id/messages?afterSeq=... on reconnect when /v2/changes indicates a session change', async () => {
-        const mockSocket = createMockSocket();
-        const mockUserSocket = createMockSocket();
-        mockIo.mockReset();
-        mockIo
-            .mockImplementationOnce(() => mockSocket as any)
-            .mockImplementationOnce(() => mockUserSocket as any);
+        const mockSocket = createApiSessionSocketStub();
+        const mockUserSocket = createApiSessionSocketStub();
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket: mockSocket, userSocket: mockUserSocket });
 
         const encryptionKey = new Uint8Array(32).fill(7);
         const encryptionVariant = 'legacy' as const;
@@ -108,23 +85,14 @@ describe('ApiSessionClient reconnect transcript catch-up (afterSeq)', () => {
             throw new Error(`Unexpected axios.get: ${url}`);
         });
 
-        const client = new ApiSessionClient('fake-token', {
-            id: sessionId,
-            seq: 0,
-            metadata: {
-                path: '/tmp',
-                host: 'localhost',
-                homeDir: '/home/user',
-                happyHomeDir: '/home/user/.happy',
-                happyLibDir: '/home/user/.happy/lib',
-                happyToolsDir: '/home/user/.happy/tools',
-            },
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            encryptionKey,
-            encryptionVariant,
-        } as any);
+        const client = new ApiSessionClient(
+            'fake-token',
+            createMockSession({
+                id: sessionId,
+                encryptionKey,
+                encryptionVariant,
+            }),
+        );
 
         // Avoid snapshot side effects in this unit test.
         (client as any).syncSessionSnapshotFromServer = vi.fn(async () => {});
@@ -136,7 +104,7 @@ describe('ApiSessionClient reconnect transcript catch-up (afterSeq)', () => {
         const onUserMessage = vi.fn();
         client.on('user-message', onUserMessage);
 
-        mockSocket.__trigger('connect');
+        mockSocket.trigger('connect');
         await (client as any).changesSyncInFlight;
 
         expect(onUserMessage).toHaveBeenCalledTimes(1);

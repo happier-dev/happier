@@ -1,6 +1,4 @@
 import {
-  PromptRegistryFetchItemRequestV1Schema,
-  PromptRegistryFetchItemResponseV1,
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1,
   PromptRegistryListAdaptersResponseV1,
@@ -12,8 +10,9 @@ import {
 } from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import type { PromptAssetAdapter } from '@/promptAssets/types';
 import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
-import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
+import { createPromptRegistryAdapterRegistry, type PromptRegistryRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
 
 function invalidRequest(error: string) {
   return { ok: false as const, errorCode: 'invalid_request' as const, error };
@@ -28,13 +27,15 @@ function internalError(error: unknown) {
 
 export function registerMachinePromptRegistriesRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
+  registry?: PromptRegistryRegistry;
+  assetRegistry?: ReadonlyMap<string, PromptAssetAdapter>;
   deps?: Readonly<{
     homedir?: () => string;
     happierHomeDir?: () => string;
   }>;
 }>): void {
-  const registry = createPromptRegistryAdapterRegistry();
-  const assetRegistry = createPromptAssetAdapterRegistry({
+  const registry = params.registry ?? createPromptRegistryAdapterRegistry();
+  const assetRegistry = params.assetRegistry ?? createPromptAssetAdapterRegistry({
     homedir: params.deps?.homedir,
     happierHomeDir: params.deps?.happierHomeDir,
   });
@@ -76,21 +77,6 @@ export function registerMachinePromptRegistriesRpcHandlers(params: Readonly<{
         ok: true,
         items,
       };
-    } catch (error) {
-      return internalError(error);
-    }
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_PROMPT_REGISTRY_FETCH_ITEM, async (raw: unknown): Promise<PromptRegistryFetchItemResponseV1> => {
-    const parsed = PromptRegistryFetchItemRequestV1Schema.safeParse(raw);
-    if (!parsed.success) return invalidRequest('invalid_request');
-
-    try {
-      return await registry.fetchItem({
-        sourceId: parsed.data.sourceId,
-        itemId: parsed.data.itemId,
-        configuredSources: parsed.data.configuredSources,
-      });
     } catch (error) {
       return internalError(error);
     }

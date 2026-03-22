@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const machinePromptRegistriesFetchItemMock = vi.hoisted(() => vi.fn(async () => ({
+const machinePromptRegistriesDownloadItemMock = vi.hoisted(() => vi.fn(async () => ({
   ok: true as const,
   item: {
     sourceId: 'skills_sh:featured',
@@ -51,7 +51,7 @@ const createPromptRegistrySkillArtifactFromFetchedItemMock = vi.hoisted(() => vi
 })));
 
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
-  machinePromptRegistriesFetchItem: machinePromptRegistriesFetchItemMock,
+  machinePromptRegistriesDownloadItem: machinePromptRegistriesDownloadItemMock,
   machinePromptRegistriesInstall: machinePromptRegistriesInstallMock,
 }));
 
@@ -61,7 +61,7 @@ vi.mock('./promptRegistrySkillImports', () => ({
 
 describe('installPromptRegistryItem', () => {
   beforeEach(() => {
-    machinePromptRegistriesFetchItemMock.mockClear();
+    machinePromptRegistriesDownloadItemMock.mockClear();
     machinePromptRegistriesInstallMock.mockClear();
     createPromptRegistrySkillArtifactFromFetchedItemMock.mockClear();
   });
@@ -83,7 +83,7 @@ describe('installPromptRegistryItem', () => {
       routeKind: 'bundle',
       exported: false,
     });
-    expect(machinePromptRegistriesFetchItemMock).toHaveBeenCalledTimes(1);
+    expect(machinePromptRegistriesDownloadItemMock).toHaveBeenCalledTimes(1);
     expect(machinePromptRegistriesInstallMock).not.toHaveBeenCalled();
   });
 
@@ -116,6 +116,43 @@ describe('installPromptRegistryItem', () => {
           installMode: 'symlink',
         }),
       }),
+      undefined,
+    );
+  });
+
+  it('passes server routing through to registry fetch and install RPCs', async () => {
+    const { installPromptRegistryItem } = await import('./installPromptRegistryItem');
+
+    await installPromptRegistryItem({
+      machineId: 'machine-1',
+      sourceId: 'skills_sh:featured',
+      itemId: 'skills_sh:featured:web-design-guidelines',
+      configuredSources: [],
+      installTarget: {
+        assetTypeId: 'agents.skill',
+        scope: 'project',
+        directory: '/tmp/project',
+        targetName: 'web-design-guidelines',
+      },
+      promptExternalLinks: { v: 1, links: [] },
+      serverId: 'server-1',
+    });
+
+    expect(machinePromptRegistriesDownloadItemMock).toHaveBeenCalledWith(
+      'machine-1',
+      expect.objectContaining({
+        sourceId: 'skills_sh:featured',
+        itemId: 'skills_sh:featured:web-design-guidelines',
+      }),
+      { serverId: 'server-1' },
+    );
+    expect(machinePromptRegistriesInstallMock).toHaveBeenCalledWith(
+      'machine-1',
+      expect.objectContaining({
+        sourceId: 'skills_sh:featured',
+        itemId: 'skills_sh:featured:web-design-guidelines',
+      }),
+      { serverId: 'server-1' },
     );
   });
 
@@ -148,6 +185,7 @@ describe('installPromptRegistryItem', () => {
     expect(machinePromptRegistriesInstallMock).toHaveBeenCalledWith(
       'machine-1',
       expect.objectContaining({ previewOnly: true }),
+      undefined,
     );
     expect(result).toEqual({
       ok: false,

@@ -21,12 +21,17 @@ vi.mock('react-native-mmkv', () => {
 });
 
 vi.mock('react-native', async () => {
-    const actual = await vi.importActual<any>('react-native');
-    return {
-        ...actual,
-        Platform: { ...(actual?.Platform ?? {}), OS: 'web' },
-        AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) as any },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            AppState: {
+                                addEventListener: vi.fn(() => ({ remove: vi.fn() })) as any,
+                            },
+                        }
+    );
 });
 
 vi.mock('@/log', () => ({

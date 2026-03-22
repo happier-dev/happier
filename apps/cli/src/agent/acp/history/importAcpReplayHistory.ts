@@ -20,9 +20,9 @@ function normalizeTextForMatch(text: string): string {
   // Strip these so overlap detection compares user-visible text only.
   const withoutInternalSuffixes = (() => {
     const raw = typeof text === 'string' ? text : '';
-    const idx = raw.indexOf(CHANGE_TITLE_INSTRUCTION);
-    if (idx === -1) return raw;
-    return raw.slice(0, idx);
+    const trimmed = raw.trimEnd();
+    if (!trimmed.endsWith(CHANGE_TITLE_INSTRUCTION)) return raw;
+    return trimmed.slice(0, trimmed.length - CHANGE_TITLE_INSTRUCTION.length).trimEnd();
   })();
   return withoutInternalSuffixes.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
 }

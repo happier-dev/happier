@@ -17,12 +17,27 @@ export async function resolveNodeBackedMcpServerCommand(params: Readonly<{
   distEntrypointSegments: readonly string[];
   sourceEntrypointSegments: readonly string[];
   args?: readonly string[];
+  preferSourceEntrypoint?: boolean;
 }>): Promise<ResolvedNodeBackedMcpServerCommand> {
   const command = await requireJavaScriptRuntimeExecutable({
     isBunRuntime: isBun(),
     targetLabel: 'built-in MCP server',
   });
+  const sourceEntrypoint = join(projectPath(), 'src', ...params.sourceEntrypointSegments);
+  const tsxHookPath = resolveTsxImportHookPath();
   const packagedEntrypoint = resolvePackagedRuntimeEntrypoint(join(...params.distEntrypointSegments));
+  const shouldPreferSourceEntrypoint = params.preferSourceEntrypoint === true;
+
+  if (shouldPreferSourceEntrypoint && existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0) {
+    return {
+      command,
+      args: ['--no-warnings', '--no-deprecation', '--import', tsxHookPath, sourceEntrypoint, ...(params.args ?? [])],
+      env: {
+        TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
+      },
+    };
+  }
+
   if (existsSync(packagedEntrypoint)) {
     return {
       command,
@@ -30,8 +45,6 @@ export async function resolveNodeBackedMcpServerCommand(params: Readonly<{
     };
   }
 
-  const sourceEntrypoint = join(projectPath(), 'src', ...params.sourceEntrypointSegments);
-  const tsxHookPath = resolveTsxImportHookPath();
   if (existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0) {
     return {
       command,

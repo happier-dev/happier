@@ -11,53 +11,53 @@ import { describe, expect, it, vi } from 'vitest';
 const startUploadsSpy = vi.fn(async () => ({ ok: true }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+                                                View: ({ testID, children, onLayout: _onLayout, ...props }: any) =>
+                                                    React.createElement('div', { 'data-testid': testID, ...props }, children),
+                                                Pressable: ({ testID, onPress, children, accessibilityLabel, accessibilityRole, hitSlop: _hitSlop, ...props }: any) =>
+                                                    React.createElement(
+                                                        'button',
+                                                        {
+                                                            type: 'button',
+                                                            'data-testid': testID,
+                                                            'aria-label': accessibilityLabel,
+                                                            role: accessibilityRole,
+                                                            onClick: onPress,
+                                                            ...props,
+                                                        },
+                                                        children,
+                                                    ),
+                                                TextInput: ({ testID, onChangeText, children, placeholderTextColor: _placeholderTextColor, ...props }: any) =>
+                                                    React.createElement('input', {
+                                                        'data-testid': testID,
+                                                        onChange: (event: any) => onChangeText?.(event.target.value),
+                                                        ...props,
+                                                    }, children),
+                                            }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
+    Octicons: (props: any) => React.createElement('span', props),
+    Ionicons: (props: any) => React.createElement('span', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
     RepositoryTreeList: () => React.createElement('div'),
@@ -88,7 +88,8 @@ vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeTransferStatus
 }));
 
 vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
-    WebDropTargetView: ({ children, ...props }: any) => React.createElement('div', props, children),
+    WebDropTargetView: ({ children, testID, ...props }: any) =>
+        React.createElement('div', { 'data-testid': testID, ...props }, children),
 }));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
@@ -140,12 +141,15 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
     fileSearchCache: { clearCache: vi.fn() },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) },
-    useSession: () => ({ active: true, metadata: { machineId: 'm1' } }),
-    useSessionRepositoryTreeExpandedPaths: () => [],
-    useSessionProjectScmSnapshot: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+        useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
+        useSessionRepositoryTreeExpandedPaths: () => [],
+        useSessionProjectScmSnapshot: () => null,
+    });
+});
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({
@@ -155,9 +159,11 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { prompt: vi.fn(async () => null), alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalModuleMock = createModalModuleMock();
+    return modalModuleMock.module;
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: vi.fn(async () => ({ success: true })),
@@ -195,10 +201,10 @@ describe('SessionRepositoryTreeBrowserView web folder upload input', () => {
                 );
             });
 
-            const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
-            expect(inputs).toHaveLength(2);
-
-            const fileInput = inputs[0]!;
+            const fileInput = container.querySelector<HTMLInputElement>('[data-testid="repository-tree-upload-input-files"]');
+            if (!fileInput) {
+                throw new Error('Missing repository-tree-upload-input-files');
+            }
             const file = new File(['uploaded from test'], 'upload-source.txt', { type: 'text/plain' });
 
             await act(async () => {
@@ -244,10 +250,10 @@ describe('SessionRepositoryTreeBrowserView web folder upload input', () => {
                 );
             });
 
-            const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
-            expect(inputs).toHaveLength(2);
-
-            const folderInput = inputs[1]!;
+            const folderInput = container.querySelector<HTMLInputElement>('[data-testid="repository-tree-upload-input-folder"]');
+            if (!folderInput) {
+                throw new Error('Missing repository-tree-upload-input-folder');
+            }
             expect(folderInput.hasAttribute('webkitdirectory')).toBe(true);
             expect(folderInput.hasAttribute('directory')).toBe(true);
             expect(folderInput.multiple).toBe(true);

@@ -39,3 +39,37 @@ test('pipeline CLI can run Expo native build in dry-run', async () => {
   assert.match(out, /\[pipeline\] expo native build: mode=cloud platform=android profile=preview-apk/);
   assert.match(out, /\[pipeline\] expo native build \(cloud\): waiting for EAS to schedule builds/);
 });
+
+test('pipeline CLI forwards explicit interactive setting to Expo native build', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'expo-native-build',
+      '--platform',
+      'android',
+      '--profile',
+      'preview-apk',
+      '--out',
+      '/tmp/eas_build.json',
+      '--interactive',
+      'false',
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        EXPO_TOKEN: 'expo-token',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
+  assert.match(out, /--interactive\"?\s+\"?false\b/);
+});

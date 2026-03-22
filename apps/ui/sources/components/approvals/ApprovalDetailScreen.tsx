@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { storage, useArtifact, useMachine, useSession } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { layout } from '@/components/ui/layout/layout';
 import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
@@ -167,7 +168,10 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
 
   const sessionId = parsed?.createdBy.sessionId ?? (typeof artifact?.header?.sessionId === 'string' ? artifact.header.sessionId : '');
   const session = useSession(sessionId || '');
-  const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
+  const machineId = readDisplayMachineIdForSession({
+    sessionId,
+    metadata: session?.metadata ?? null,
+  });
   const machine = useMachine(machineId || '');
   const approvalServerId = React.useMemo(() => {
     if (!parsed) return null;

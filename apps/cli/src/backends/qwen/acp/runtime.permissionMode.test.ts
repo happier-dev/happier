@@ -1,14 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PermissionMode } from '@/api/types';
+import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
+import { createCatalogAcpBackendSpy, createMessageBufferFixture } from '@/testkit/backends/catalogAcpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createQwenAcpRuntime } from './runtime';
-import {
-  createQwenCatalogBackendSpy,
-  createQwenMessageBufferFixture,
-  createQwenPermissionHandlerFixture,
-  createQwenSessionFixture,
-  type QwenRuntimeCreateCall,
-} from './runtime.testkit';
 
 describe('Qwen ACP runtime permission mode wiring', () => {
   afterEach(() => {
@@ -16,15 +13,16 @@ describe('Qwen ACP runtime permission mode wiring', () => {
   });
 
   it('forwards permissionMode to createCatalogAcpBackend and recreates backend after reset', async () => {
-    const createCalls: QwenRuntimeCreateCall[] = [];
-    const createSpy = createQwenCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
     let permissionMode: 'default' | 'safe-yolo' = 'default';
     const runtime = createQwenAcpRuntime({
       directory: '/tmp',
-      session: createQwenSessionFixture(),
-      messageBuffer: createQwenMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createQwenPermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
       getPermissionMode: () => permissionMode,
     });
@@ -43,15 +41,16 @@ describe('Qwen ACP runtime permission mode wiring', () => {
   });
 
   it('normalizes non-string permissionMode values to undefined', async () => {
-    const createCalls: QwenRuntimeCreateCall[] = [];
-    const createSpy = createQwenCatalogBackendSpy(createCalls);
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+    const createSpy = createCatalogAcpBackendSpy(createCalls);
     let permissionMode: unknown = null;
     const runtime = createQwenAcpRuntime({
       directory: '/tmp',
-      session: createQwenSessionFixture(),
-      messageBuffer: createQwenMessageBufferFixture(),
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
-      permissionHandler: createQwenPermissionHandlerFixture(),
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange() {},
       getPermissionMode: () => permissionMode as PermissionMode | null | undefined,
     });

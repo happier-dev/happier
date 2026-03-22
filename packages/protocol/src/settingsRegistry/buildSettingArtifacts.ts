@@ -29,6 +29,9 @@ function parseSettingDefault<TDefinition extends SettingDefinition<ZodTypeAny>>(
   key: string,
   definition: TDefinition,
 ): ZodOutput<TDefinition['schema']> {
+  if (!definition?.schema || typeof (definition.schema as any).safeParse !== 'function') {
+    throw new Error(`Invalid schema for setting "${key}"`);
+  }
   const parsedDefault = definition.schema.safeParse(definition.default);
   if (!parsedDefault.success) {
     throw new Error(`Invalid default for setting "${key}"`);

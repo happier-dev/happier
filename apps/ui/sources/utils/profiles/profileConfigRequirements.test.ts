@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
 
 function makeProfile(reqs: AIBackendProfile['envVarRequirements']): AIBackendProfile {

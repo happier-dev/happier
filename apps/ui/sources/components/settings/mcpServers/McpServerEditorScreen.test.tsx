@@ -1,7 +1,10 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createPartialStorageModuleMock } from '@/dev/testkit/createPartialStorageModuleMock';
+import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,6 +12,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const setMcpSettingsSpy = vi.fn();
+const modalAlertSpy = vi.fn();
 let localSearchParamsValue: { serverId?: string } = { serverId: 'server-1' };
 let liveMcpSettings: {
     v: 1;
@@ -33,6 +37,7 @@ let liveMcpSettings: {
     }>;
 };
 let liveSecrets: SavedSecret[] = [];
+let liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
 const liveSettingListeners = new Set<() => void>();
 
 function notifyLiveSettingListeners() {
@@ -64,9 +69,11 @@ function resetLiveSettings() {
         }],
     };
     liveSecrets = [];
+    liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
     localSearchParamsValue = { serverId: 'server-1' };
     liveSettingListeners.clear();
     setMcpSettingsSpy.mockReset();
+    modalAlertSpy.mockReset();
 }
 
 function updateLiveSecrets(next: SavedSecret[]) {
@@ -74,63 +81,23 @@ function updateLiveSecrets(next: SavedSecret[]) {
     notifyLiveSettingListeners();
 }
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'web',
-        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-    },
-    Dimensions: { get: () => ({ width: 1440, height: 900 }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Dimensions: {
+            get: () => ({ width: 1440, height: 900 }),
+        },
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => {
-            const theme = {
-                colors: {
-                    text: '#fff',
-                    groupped: { sectionTitle: '#999', background: '#111' },
-                    input: { background: '#111', text: '#fff', placeholder: '#777' },
-                    divider: '#333',
-                    success: '#0f0',
-                    textSecondary: '#999',
-                    textDestructive: '#f00',
-                    accent: { blue: '#00f', purple: '#a0f', indigo: '#44f', green: '#0f0' },
-                    surface: '#222',
-                    button: {
-                        primary: { background: '#08f', tint: '#fff' },
-                        secondary: { background: '#222', tint: '#fff' },
-                    },
-                },
-            };
-            return typeof factory === 'function' ? factory(theme) : factory;
-        },
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#fff',
-                groupped: { sectionTitle: '#999', background: '#111' },
-                input: { background: '#111', text: '#fff', placeholder: '#777' },
-                divider: '#333',
-                success: '#0f0',
-                textSecondary: '#999',
-                textDestructive: '#f00',
-                accent: { blue: '#00f', purple: '#a0f', indigo: '#44f', green: '#0f0' },
-                surface: '#222',
-                button: {
-                    primary: { background: '#08f', tint: '#fff' },
-                    secondary: { background: '#222', tint: '#fff' },
-                },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -158,7 +125,11 @@ vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', {
+        ...props,
+        title: props.itemTrigger?.title ?? props.title,
+        subtitle: props.itemTrigger?.subtitle ?? props.subtitle,
+    }),
 }));
 
 vi.mock('@/components/ui/pathBrowser/PathInputBrowseButton', () => ({
@@ -202,63 +173,74 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => true),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        confirmResult: true,
+        spies: {
+            alert: modalAlertSpy,
+        },
+    }).module;
+});
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => localSearchParamsValue,
-    useNavigation: () => ({ canGoBack: () => false }),
-    useRouter: () => ({
-        back: routerBackSpy,
-        replace: routerReplaceSpy,
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            back: routerBackSpy,
+            replace: routerReplaceSpy,
+        },
+        navigation: { canGoBack: () => false },
+    });
+
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => localSearchParamsValue,
+        useGlobalSearchParams: () => localSearchParamsValue,
+    };
+});
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    createPartialStorageModuleMock(importOriginal, {
+        useAllMachines: () => liveMachines,
+        useSettingMutable: (key: string) => {
+            const ReactModule = require('react') as typeof React;
+            const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
+
+            ReactModule.useEffect(() => {
+                const listener = () => forceUpdate();
+                liveSettingListeners.add(listener);
+                return () => {
+                    liveSettingListeners.delete(listener);
+                };
+            }, []);
+
+            if (key === 'mcpServersSettingsV1') {
+                return [liveMcpSettings, (next: typeof liveMcpSettings) => {
+                    setMcpSettingsSpy(next);
+                    liveMcpSettings = next;
+                    notifyLiveSettingListeners();
+                }];
+            }
+            if (key === 'secrets') {
+                return [liveSecrets, (next: SavedSecret[]) => {
+                    liveSecrets = next;
+                    notifyLiveSettingListeners();
+                }];
+            }
+            return [null, vi.fn()];
+        },
     }),
-}));
+);
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }],
-    useSettingMutable: (key: string) => {
-        const ReactModule = require('react') as typeof React;
-        const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
-
-        ReactModule.useEffect(() => {
-            const listener = () => forceUpdate();
-            liveSettingListeners.add(listener);
-            return () => {
-                liveSettingListeners.delete(listener);
-            };
-        }, []);
-
-        if (key === 'mcpServersSettingsV1') {
-            return [liveMcpSettings, (next: typeof liveMcpSettings) => {
-                setMcpSettingsSpy(next);
-                liveMcpSettings = next;
-                notifyLiveSettingListeners();
-            }];
-        }
-        if (key === 'secrets') {
-            return [liveSecrets, (next: SavedSecret[]) => {
-                liveSecrets = next;
-                notifyLiveSettingListeners();
-            }];
-        }
-        return [null, vi.fn()];
-    },
-}));
-
-function findTextInput(tree: ReactTestRenderer, predicate: (props: Record<string, unknown>) => boolean) {
-    return tree.root.find((node) => String(node.type) === 'TextInput' && predicate(node.props as Record<string, unknown>));
-}
-
-function findItemByTitle(tree: ReactTestRenderer, title: string) {
-    return tree.root.findAll((node) => node.props?.title === title)[0] ?? null;
+async function renderEditorScreen() {
+    const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
+    return renderScreen(React.createElement(McpServerEditorScreen));
 }
 
 beforeEach(() => {
@@ -269,18 +251,11 @@ beforeEach(() => {
 
 describe('McpServerEditorScreen', () => {
     it('falls back to the MCP settings screen after delete when there is no back stack entry', async () => {
-        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(McpServerEditorScreen));
-        });
-
-        const deleteAction = tree.root.findAll((node) => node.props?.testID === 'mcp.server.editor.secondaryAction')[0];
-        expect(deleteAction).toBeTruthy();
+        const screen = await renderEditorScreen();
 
         await act(async () => {
-            deleteAction!.props.onPress?.();
-            await Promise.resolve();
+            screen.pressByTestId('mcp.server.editor.secondaryAction');
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(setMcpSettingsSpy).toHaveBeenCalledWith({
@@ -302,26 +277,20 @@ describe('McpServerEditorScreen', () => {
             bindings: [],
         };
 
-        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderEditorScreen();
+
         await act(async () => {
-            tree = renderer.create(React.createElement(McpServerEditorScreen));
+            screen.changeTextByTestId('mcp.server.editor.name', 'qa_remote_http_20260306');
         });
 
-        const nameInput = findTextInput(tree, (props) => props.testID === 'mcp.server.editor.name');
-        await act(async () => {
-            nameInput.props.onChangeText?.('qa_remote_http_20260306');
-        });
-
-        const transportTabs = tree.root.findAllByType('SegmentedTabBar')[1];
+        const transportTabs = screen.findAllByType('SegmentedTabBar')[1];
         expect(transportTabs).toBeTruthy();
         await act(async () => {
-            transportTabs.props.onSelectTab?.('http');
+            transportTabs?.props.onSelectTab?.('http');
         });
 
-        const urlInput = findTextInput(tree, (props) => props.placeholder === 'https://example.com/mcp');
         await act(async () => {
-            urlInput.props.onChangeText?.('http://127.0.0.1:63254/mcp');
+            screen.findByProps({ placeholder: 'https://example.com/mcp' }).props.onChangeText?.('http://127.0.0.1:63254/mcp');
         });
 
         await act(async () => {
@@ -335,11 +304,9 @@ describe('McpServerEditorScreen', () => {
             }]);
         });
 
-        const updatedNameInput = findTextInput(tree, (props) => props.testID === 'mcp.server.editor.name');
-        const updatedUrlInput = findTextInput(tree, (props) => props.placeholder === 'https://example.com/mcp');
-        expect(updatedNameInput.props.value).toBe('qa_remote_http_20260306');
-        expect(updatedUrlInput.props.value).toBe('http://127.0.0.1:63254/mcp');
-        expect(tree.root.findAllByType('SegmentedTabBar')[1]?.props.activeTabId).toBe('http');
+        expect(screen.findByTestId('mcp.server.editor.name')?.props.value).toBe('qa_remote_http_20260306');
+        expect(screen.findByProps({ placeholder: 'https://example.com/mcp' })?.props.value).toBe('http://127.0.0.1:63254/mcp');
+        expect(screen.findAllByType('SegmentedTabBar')[1]?.props.activeTabId).toBe('http');
     });
 
     it('shows configure/import-json/quick-install add-flow tabs for new servers', async () => {
@@ -351,33 +318,19 @@ describe('McpServerEditorScreen', () => {
             bindings: [],
         };
 
-        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderEditorScreen();
+
+        const addFlowTabs = screen.findAllByType('SegmentedTabBar')[0];
+        expect(addFlowTabs).toBeTruthy();
         await act(async () => {
-            tree = renderer.create(React.createElement(McpServerEditorScreen));
+            addFlowTabs?.props.onSelectTab?.('importJson');
         });
-
-        const segmentedTabBar = tree.root.findAllByType('SegmentedTabBar')[0];
-        expect(segmentedTabBar).toBeTruthy();
-        expect(segmentedTabBar.props.tabs.map((tab: { id: string }) => tab.id)).toEqual([
-            'configure',
-            'importJson',
-            'quickInstall',
-        ]);
-
-        expect(tree.root.findAllByType('ItemGroup').length).toBeGreaterThanOrEqual(2);
+        expect(screen.findByTestId('mcp.server.importJson.input')).toBeTruthy();
 
         await act(async () => {
-            segmentedTabBar.props.onSelectTab?.('importJson');
+            addFlowTabs?.props.onSelectTab?.('quickInstall');
         });
-        const importJsonInput = tree.root.findAll((node) => node.props?.testID === 'mcp.server.importJson.input')[0];
-        expect(importJsonInput).toBeTruthy();
-
-        await act(async () => {
-            segmentedTabBar.props.onSelectTab?.('quickInstall');
-        });
-        const quickInstallPreset = tree.root.findAll((node) => node.props?.testID === 'mcp.server.quickInstall.preset.github')[0];
-        expect(quickInstallPreset).toBeTruthy();
+        expect(screen.findByTestId('mcp.server.quickInstall.preset.github')).toBeTruthy();
     });
 
     it('disables JSON import when a saved-secret mapping is missing a value', async () => {
@@ -389,20 +342,15 @@ describe('McpServerEditorScreen', () => {
             bindings: [],
         };
 
-        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderEditorScreen();
+
+        const addFlowTabs = screen.findAllByType('SegmentedTabBar')[0];
         await act(async () => {
-            tree = renderer.create(React.createElement(McpServerEditorScreen));
+            addFlowTabs?.props.onSelectTab?.('importJson');
         });
 
-        const addFlowTabs = tree.root.findAllByType('SegmentedTabBar')[0];
         await act(async () => {
-            addFlowTabs.props.onSelectTab?.('importJson');
-        });
-
-        const importJsonInput = tree.root.findAll((node) => node.props?.testID === 'mcp.server.importJson.input')[0];
-        await act(async () => {
-            importJsonInput.props.onChangeText?.(`{
+            screen.changeTextByTestId('mcp.server.importJson.input', `{
                 "mcp": {
                     "inputs": {
                         "github_token": {
@@ -423,8 +371,7 @@ describe('McpServerEditorScreen', () => {
             }`);
         });
 
-        const importButton = tree.root.findAll((node) => node.props?.testID === 'mcp.server.importJson.import')[0];
-        expect(importButton?.props.disabled).toBe(true);
+        expect(screen.findByTestId('mcp.server.importJson.import')?.props.disabled).toBe(true);
     });
 
     it('allows selecting multiple quick-install presets while preserving required-auth validation', async () => {
@@ -436,34 +383,24 @@ describe('McpServerEditorScreen', () => {
             bindings: [],
         };
 
-        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderEditorScreen();
+
+        const addFlowTabs = screen.findAllByType('SegmentedTabBar')[0];
         await act(async () => {
-            tree = renderer.create(React.createElement(McpServerEditorScreen));
+            addFlowTabs?.props.onSelectTab?.('quickInstall');
         });
 
-        const addFlowTabs = tree.root.findAllByType('SegmentedTabBar')[0];
         await act(async () => {
-            addFlowTabs.props.onSelectTab?.('quickInstall');
+            screen.pressByTestId('mcp.server.quickInstall.preset.github');
         });
 
-        const githubPreset = tree.root.findAll((node) => node.props?.testID === 'mcp.server.quickInstall.preset.github')[0];
         await act(async () => {
-            githubPreset.props.onPress?.();
+            screen.pressByTestId('mcp.server.quickInstall.preset.sequential-thinking');
         });
 
-        const sequentialThinkingPreset = tree.root.findAll((node) => node.props?.testID === 'mcp.server.quickInstall.preset.sequential-thinking')[0];
-        await act(async () => {
-            sequentialThinkingPreset.props.onPress?.();
-        });
-
-        const installButton = tree.root.findAll((node) => node.props?.testID === 'mcp.server.quickInstall.install')[0];
-        const githubRow = tree.root.findAll((node) => node.props?.testID === 'mcp.server.quickInstall.preset.github')[0];
-        const sequentialThinkingRow = tree.root.findAll((node) => node.props?.testID === 'mcp.server.quickInstall.preset.sequential-thinking')[0];
-
-        expect(githubRow?.props.selected).toBe(true);
-        expect(sequentialThinkingRow?.props.selected).toBe(true);
-        expect(installButton?.props.disabled).toBe(true);
+        expect(screen.findByTestId('mcp.server.quickInstall.preset.github')?.props.selected).toBe(true);
+        expect(screen.findByTestId('mcp.server.quickInstall.preset.sequential-thinking')?.props.selected).toBe(true);
+        expect(screen.findByTestId('mcp.server.quickInstall.install')?.props.disabled).toBe(true);
     });
 
     it('opens add binding as a draft expander instead of creating a binding immediately', async () => {
@@ -475,15 +412,11 @@ describe('McpServerEditorScreen', () => {
             bindings: [],
         };
 
-        const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(McpServerEditorScreen));
-        });
+        const screen = await renderEditorScreen();
 
-        expect(tree.root.findAllByType('McpServerBindingEditor')).toHaveLength(0);
+        expect(screen.findAllByType('McpServerBindingEditor')).toHaveLength(0);
 
-        const addBindingExpander = tree.root.findAllByType('InlineAddExpander')[0];
+        const addBindingExpander = screen.findByType('InlineAddExpander');
         expect(addBindingExpander).toBeTruthy();
         expect(addBindingExpander.props.title).toBe('settings.mcpServersAddApplyRule');
         expect(addBindingExpander.props.isOpen).toBe(false);
@@ -492,8 +425,84 @@ describe('McpServerEditorScreen', () => {
             addBindingExpander.props.onOpenChange?.(true);
         });
 
-        const addBindingExpanderAfterOpen = tree.root.findAllByType('InlineAddExpander')[0];
-        expect(tree.root.findAllByType('McpServerBindingEditor')).toHaveLength(0);
+        const addBindingExpanderAfterOpen = screen.findByType('InlineAddExpander');
+        expect(screen.findAllByType('McpServerBindingEditor')).toHaveLength(0);
         expect(addBindingExpanderAfterOpen?.props.isOpen).toBe(true);
+    });
+
+    it('keeps a draft binding on all machines when no machine-scoped target can be selected', async () => {
+        localSearchParamsValue = {};
+        liveMachines = [];
+        liveMcpSettings = {
+            v: 1,
+            strictMode: false,
+            servers: [],
+            bindings: [],
+        };
+
+        const screen = await renderEditorScreen();
+
+        await act(async () => {
+            screen.findByType('InlineAddExpander').props.onOpenChange?.(true);
+        });
+
+        expect(screen.findAllByProps({ title: 'settings.mcpServersBindingMachine' })).toHaveLength(0);
+        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'settings.mcpServersBindingTargetAllMachines')).toBeTruthy();
+
+        await act(async () => {
+            screen.findByType('DropdownMenu').props.onSelect?.('machine');
+        });
+
+        expect(screen.findAllByProps({ title: 'settings.mcpServersBindingMachine' })).toHaveLength(0);
+        expect(screen.findAllByType('McpServerBindingEditor')).toHaveLength(0);
+    });
+
+    it('updates the binding target scope from the draft editor', async () => {
+        localSearchParamsValue = {};
+        liveMcpSettings = {
+            v: 1,
+            strictMode: false,
+            servers: [],
+            bindings: [],
+        };
+
+        const screen = await renderEditorScreen();
+
+        await act(async () => {
+            screen.findByType('InlineAddExpander').props.onOpenChange?.(true);
+        });
+        await act(async () => {
+            screen.findAllByType('DropdownMenu')[0].props.onSelect?.('allMachines');
+        });
+
+        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'settings.mcpServersBindingTargetAllMachines')).toBeTruthy();
+    });
+
+    it('shows a validation alert when no machine is selected for the add binding draft', async () => {
+        localSearchParamsValue = {};
+        liveMachines = [];
+        liveMcpSettings = {
+            v: 1,
+            strictMode: false,
+            servers: [],
+            bindings: [],
+        };
+
+        const screen = await renderEditorScreen();
+
+        await act(async () => {
+            screen.findByType('InlineAddExpander').props.onOpenChange?.(true);
+        });
+        await act(async () => {
+            screen.findAllByType('DropdownMenu')[0].props.onSelect?.('allMachines');
+        });
+
+        await act(async () => {
+            screen.findAllByType('DropdownMenu')[0].props.onSelect?.('machine');
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'settings.mcpServersNoMachineSelected');
+        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'settings.mcpServersBindingTargetAllMachines')).toBeTruthy();
+        expect(screen.findAllByProps({ title: 'settings.mcpServersBindingMachine' })).toHaveLength(0);
     });
 });

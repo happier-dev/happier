@@ -96,6 +96,8 @@ describe('buildHappierReplayPromptFromDialog', () => {
 
     expect(prompt).toContain('Summary:');
     expect(prompt).toContain('SUMMARY_OK');
+    expect(prompt).toContain('The summary below is the authoritative condensed context from earlier transcript history.');
+    expect(prompt).toContain('The recent transcript is only the tail and may omit older important details.');
     expect(prompt).toContain('Recent transcript:');
     expect(prompt).toContain('Assistant: hello');
     expect(prompt).toContain('User: context 1');
@@ -107,7 +109,7 @@ describe('buildHappierReplayPromptFromDialog', () => {
       previousSessionId: 'sess_prev',
       strategy: 'recent_messages',
       recentMessagesCount: 10,
-      maxPromptChars: 340,
+      maxPromptChars: 440,
       dialog: [
         { role: 'User', createdAt: 1, text: 'old-1' },
         { role: 'Assistant', createdAt: 2, text: 'old-2' },

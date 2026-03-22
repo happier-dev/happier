@@ -1,6 +1,8 @@
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import type { CatalogAgentId } from '@/backends/types';
 
+type TmuxSpawnAgentId = CatalogAgentId | 'acp-catalog';
+
 export function buildTmuxWindowEnv(
   daemonEnv: NodeJS.ProcessEnv,
   extraEnv: Record<string, string>,
@@ -29,7 +31,7 @@ export function buildTmuxWindowEnv(
 }
 
 export function buildTmuxSpawnConfig(params: {
-  agent: CatalogAgentId;
+  agent: TmuxSpawnAgentId;
   directory: string;
   extraEnv: Record<string, string>;
   tmuxCommandEnv?: Record<string, string>;

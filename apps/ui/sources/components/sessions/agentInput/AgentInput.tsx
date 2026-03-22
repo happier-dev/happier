@@ -1,10 +1,8 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
-import { Image } from 'expo-image';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
-import { Switch } from '@/components/ui/forms/Switch';
 import { Typography } from '@/constants/Typography';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { getModelOptionsForSession, supportsFreeformModelSelectionForSession, type ModelOption } from '@/sync/domains/models/modelOptions';
@@ -14,25 +12,19 @@ import {
     getPermissionModeBadgeLabelForAgentType,
     getPermissionModeLabelForAgentType,
     getPermissionModeOptionsForSession,
-    getPermissionModeTitleForAgentType,
 } from '@/sync/domains/permissions/permissionModeOptions';
 import { describeEffectivePermissionMode } from '@/sync/domains/permissions/describeEffectivePermissionMode';
+import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { hapticsLight, hapticsError } from '@/components/ui/theme/haptics';
-import { Shaker, ShakeInstance } from '@/components/ui/feedback/Shaker';
+import { type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useActiveWord } from '@/components/autocomplete/useActiveWord';
 import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
-import { AgentInputAutocomplete } from './components/AgentInputAutocomplete';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
-import { Popover } from '@/components/ui/popover';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
-import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
-import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
-import { SourceControlStatusBadge, useHasMeaningfulScmStatus } from '@/components/sessions/sourceControl/status';
-import { ModelPickerOverlay, type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
+import { type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     useSessionMessagesById,
@@ -56,26 +48,41 @@ import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId 
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
-import { ResumeChip, formatResumeChipLabel, RESUME_CHIP_ICON_NAME, RESUME_CHIP_ICON_SIZE } from './ResumeChip';
-import { PathAndResumeRow } from './PathAndResumeRow';
-import { getHasAnyAgentInputActions, shouldShowPathAndResumeRow } from './actionBarLogic';
+import { PathAndResumeRow } from './layout/PathAndResumeRow';
+import { getHasAnyAgentInputActions, shouldShowSecondaryControlRow } from './layout/actionBarLogic';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { computeAgentInputDefaultMaxHeight } from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
-import { buildAgentInputActionMenuActions } from './actionMenuActions';
-import { PermissionModePicker } from './components/PermissionModePicker';
-import { AgentInputChipLabel } from './components/AgentInputChipLabel';
-import { AgentInputChipPickerModal } from './components/AgentInputChipPickerModal';
-import { DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS, resolveChipOptionInteraction, shouldRenderChipForOptions } from './chipOptionInteraction';
+import { type AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
+import { AgentInputEngineDetail } from './components/AgentInputEngineDetail';
+import { AgentInputAttachmentsRow } from './components/AgentInputAttachmentsRow';
+import { AgentInputOverlayLayer } from './components/AgentInputOverlayLayer';
+import { AgentInputPermissionRequests } from './components/AgentInputPermissionRequests';
+import { AgentInputSubmitButton } from './components/AgentInputSubmitButton';
+import {
+    DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
+    resolveChipOptionInteraction,
+    shouldRenderChipForOptions,
+} from './chipOptionInteraction';
+import { resolveSessionModeChipPresentation } from './controls/resolveSessionModeChipPresentation';
+import { useAgentInputActionMenuControls } from './controls/useAgentInputActionMenuControls';
+import { useAgentInputCoreControlHandlers } from './controls/useAgentInputCoreControlHandlers';
+import { useRenderedAgentInputControlRows } from './controls/useRenderedAgentInputControlRows';
+import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
+import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
+import { useAgentInputSelectionOverlayController } from './selection/useAgentInputSelectionOverlayController';
 import { computeSessionModePickerControl } from '@/sync/acp/sessionModeControl';
-import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
+import {
+    computeAcpConfigOptionControls,
+    computeAcpConfigOptionControlsFromOverride,
+    type AcpConfigOption,
+    type AcpConfigOptionValueId,
+} from '@/sync/acp/configOptionsControl';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
-import { attachActionBarMouseDragScroll } from './attachActionBarMouseDragScroll';
-import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
-import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
+import { attachActionBarMouseDragScroll } from './layout/attachActionBarMouseDragScroll';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
 import {
@@ -85,81 +92,14 @@ import {
 } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { buildSessionMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import {
-    AttachmentImagePreviewModal,
-    type AttachmentImagePreviewModalImage,
-} from '@/components/sessions/attachments/preview/AttachmentImagePreviewModal';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type {
+    AgentInputAttachment,
+    AgentInputExtraActionChip,
+} from './agentInputContracts';
+import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
-
-
-export type AgentInputExtraActionChipRenderContext = Readonly<{
-    chipStyle: (pressed: boolean) => any;
-    showLabel: boolean;
-    iconColor: string;
-    textStyle: any;
-    countTextStyle: any;
-    /**
-     * Full-width anchor for agent-input popovers (matches the overall composer width).
-     * Useful for chip-triggered popovers (e.g. "Link file") that should size like the @ suggestions.
-     */
-    popoverAnchorRef: React.RefObject<any>;
-}>;
-
-/**
- * Controls whether a chip's label is displayed in `auto` density mode.
- *
- * - `'always'` – label is always visible (selector chips like agent, machine, permission mode).
- * - `'auto-hide'` – label is hidden in auto mode because the icon is self-explanatory (attach, link file).
- */
-export type ChipLabelPolicy = 'always' | 'auto-hide';
-
-export type AgentInputExtraActionChip = Readonly<{
-    key: string;
-    /**
-     * Determines whether the label should be shown in auto chip density mode.
-     * Defaults to `'always'` when not specified.
-     */
-    labelPolicy?: ChipLabelPolicy;
-    render: (ctx: AgentInputExtraActionChipRenderContext) => React.ReactNode;
-}>;
-
-export type AgentInputAttachmentPreview =
-    | Readonly<{ kind: 'image'; uri: string }>;
-
-export type AgentInputAttachmentUploadProgress = Readonly<{
-    uploadedBytes: number;
-    totalBytes: number;
-}>;
-
-export type AgentInputAttachment = Readonly<{
-    key: string;
-    label: string;
-    status?: 'pending' | 'uploading' | 'uploaded' | 'error';
-    preview?: AgentInputAttachmentPreview;
-    uploadProgress?: AgentInputAttachmentUploadProgress;
-    error?: string;
-    onRemove?: () => void;
-}>;
-
-type ComposerAttachmentImagePreviewItem = Extract<AttachmentImagePreviewModalImage, Readonly<{ kind: 'direct' }>>;
-
-function resolveAttachmentImagePreviewItems(attachments: readonly AgentInputAttachment[]): ComposerAttachmentImagePreviewItem[] {
-    const previews: ComposerAttachmentImagePreviewItem[] = [];
-    for (const attachment of attachments) {
-        const imagePreviewUri =
-            attachment.preview?.kind === 'image' && typeof attachment.preview.uri === 'string' && attachment.preview.uri.trim().length > 0
-                ? attachment.preview.uri
-                : null;
-        if (!imagePreviewUri) continue;
-        previews.push({
-            kind: 'direct',
-            uri: imagePreviewUri,
-            title: attachment.label,
-        });
-    }
-    return previews;
-}
 
 const AGENT_INPUT_TEST_IDS = {
     sessionInput: 'session-composer-input',
@@ -175,6 +115,7 @@ interface AgentInputProps {
     onChangeText: (text: string) => void;
     sessionId?: string;
     onSend: () => void;
+    submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
     onMicPress?: () => void;
     isMicActive?: boolean;
@@ -198,6 +139,9 @@ interface AgentInputProps {
      * Optional: show a probe/loading state + refresh control in the ACP mode picker.
      */
     acpSessionModeOptionsOverrideProbe?: ModelPickerProbeState;
+    acpConfigOptionsOverride?: ReadonlyArray<AcpConfigOption>;
+    acpConfigOptionsOverrideProbe?: ModelPickerProbeState;
+    acpConfigOptionOverridesOverride?: AcpConfigOptionOverridesV1 | null;
     onAcpConfigOptionChange?: (configId: string, valueId: AcpConfigOptionValueId) => void;
     modelMode?: ModelMode;
     onModelModeChange?: (mode: ModelMode) => void;
@@ -235,12 +179,20 @@ interface AgentInputProps {
     agentType?: AgentId;
     agentLabel?: string | null;
     onAgentClick?: () => void;
+    agentPickerTitle?: string;
+    agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
+    agentPickerSelectedOptionId?: string | null;
+    onAgentPickerSelect?: (id: string) => void;
+    agentPickerApplyLabel?: string;
     machineName?: string | null;
     onMachineClick?: () => void;
+    machinePopover?: AgentInputContentPopoverConfig;
     currentPath?: string | null;
     onPathClick?: () => void;
+    pathPopover?: AgentInputContentPopoverConfig;
     resumeSessionId?: string | null;
     onResumeClick?: () => void;
+    resumePopover?: AgentInputContentPopoverConfig;
     resumeIsChecking?: boolean;
     isSendDisabled?: boolean;
     isSending?: boolean;
@@ -249,8 +201,10 @@ interface AgentInputProps {
     inputMaxHeight?: number;
     profileId?: string | null;
     onProfileClick?: () => void;
+    profilePopover?: AgentInputContentPopoverConfig;
     envVarsCount?: number;
     onEnvVarsClick?: () => void;
+    envVarsPopover?: AgentInputContentPopoverConfig;
     contentPaddingHorizontal?: number;
     panelStyle?: ViewStyle;
     maxWidthCap?: number | null;
@@ -262,28 +216,6 @@ interface AgentInputProps {
     userActionRequests?: ReadonlyArray<PendingPermissionRequest>;
     canApprovePermissions?: boolean;
     permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
-}
-
-function truncateWithEllipsis(value: string, maxChars: number) {
-    if (value.length <= maxChars) return value;
-    return `${value.slice(0, maxChars)}…`;
-}
-
-function resolveUploadProgressPercent(progress?: AgentInputAttachmentUploadProgress): number | null {
-    const uploadedBytes = progress?.uploadedBytes;
-    const totalBytes = progress?.totalBytes;
-    if (typeof uploadedBytes !== 'number' || !Number.isFinite(uploadedBytes)) return null;
-    if (typeof totalBytes !== 'number' || !Number.isFinite(totalBytes) || totalBytes <= 0) return null;
-
-    const raw = Math.round((uploadedBytes / totalBytes) * 100);
-    return Math.max(0, Math.min(100, raw));
-}
-
-function parseAcpBooleanValueId(valueId: string): boolean {
-    const normalized = valueId.trim().toLowerCase();
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
-    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
-    return false;
 }
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -305,26 +237,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingBottom: 8,
         paddingHorizontal: 8,
     },
-    permissionRequestsContainer: {
-        paddingTop: 10,
-        gap: 8,
-    },
-    permissionRequestTitle: {
-        color: theme.colors.textSecondary,
-        fontSize: 12,
-        ...Typography.default('semiBold'),
-    },
-    permissionRequestCard: {
-        overflow: 'hidden',
-    },
-    permissionRequestSummary: {
-        paddingHorizontal: 12,
-        paddingTop: 10,
-        paddingBottom: 2,
-        color: theme.colors.text,
-        fontSize: 13,
-        ...Typography.default(),
-    },
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -339,14 +251,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     settingsOverlay: {
         // positioning is handled by `Popover`
     },
-    overlayBackdrop: {
-        position: 'absolute',
-        top: -1000,
-        left: -1000,
-        right: -1000,
-        bottom: -1000,
-        zIndex: 999,
-    },
     overlaySection: {
         paddingVertical: 16,
     },
@@ -359,9 +263,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
     },
     overlayInlineRefreshButton: {
-        position: 'absolute',
-        top: 10,
-        right: 16,
         minWidth: 30,
         height: 30,
         borderRadius: 10,
@@ -376,11 +277,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     overlayInlineRefreshButtonDisabled: {
         opacity: 0.6,
-    },
-    overlayDivider: {
-        height: 1,
-        backgroundColor: theme.colors.divider,
-        marginHorizontal: 16,
     },
     overlayEffectivePolicy: {
         paddingHorizontal: 16,
@@ -635,75 +531,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonIcon: {
         color: theme.colors.button.secondary.tint,
     },
-    attachmentsRow: {
-        paddingHorizontal: 12,
-        paddingTop: 8,
-        paddingBottom: 4,
-    },
-    attachmentChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-    },
-    attachmentChipText: {
-        color: theme.colors.text,
-        fontSize: 12,
-        maxWidth: 180,
-        ...Typography.default(),
-    },
-    attachmentChipMeta: {
-        color: theme.colors.textSecondary,
-        fontSize: 11,
-        ...Typography.default('semiBold'),
-    },
-    attachmentImageTile: {
-        width: 58,
-        height: 58,
-        position: 'relative',
-    },
-    attachmentImageSurface: {
-        width: 52,
-        height: 52,
-        marginTop: 6,
-        marginRight: 6,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-        overflow: 'hidden',
-    },
-    attachmentImage: {
-    },
-    attachmentImageOverlay: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: theme.colors.overlay.scrim,
-    },
-    attachmentImageOverlayText: {
-        color: theme.colors.overlay.text,
-        fontSize: 12,
-        ...Typography.default('semiBold'),
-    },
-    attachmentImageErrorOverlay: {
-        backgroundColor: 'rgba(210, 0, 0, 0.32)',
-    },
-    attachmentImageRemoveButton: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        zIndex: 10,
-    },
     fileDropOverlay: {
         position: 'absolute',
         top: 0,
@@ -748,10 +575,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const keyboardHeight = useKeyboardHeight();
     const voiceEnabled = useFeatureEnabled('voice');
-    const attachmentImagePreviewItems = React.useMemo(
-        () => resolveAttachmentImagePreviewItems(props.attachments ?? []),
-        [props.attachments],
-    );
     const renderIoniconNode = React.useCallback(
         (
             name: React.ComponentProps<typeof Ionicons>['name'],
@@ -848,7 +671,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const sessionModelsState = React.useMemo(() => {
         if (props.modelOptionsOverride) return { hasSessionModelsState: false, availableCount: 0 };
-        const raw = (props.metadata as any)?.acpSessionModelsV1;
+        const raw = readSessionModelsState(props.metadata ?? null);
         const provider = typeof raw?.provider === 'string' ? raw.provider.trim() : '';
         if (!provider || provider !== agentId) return { hasSessionModelsState: false, availableCount: 0 };
         const available = Array.isArray(raw?.availableModels) ? raw.availableModels : [];
@@ -1016,11 +839,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hapticsLight();
     }, [suggestions, inputState, props.autocompletePrefixes]);
 
-    // Settings modal state
-    const [showSettings, setShowSettings] = React.useState(false);
-    const overlayAnchorRef = React.useRef<View>(null);
+    // Action menu popover state
     const composerAnchorRef = React.useRef<View>(null);
-    const settingsAnchorRef = React.useRef<View>(null);
 
     const actionBarFades = useScrollEdgeFades({
         enabledEdges: { left: true, right: true },
@@ -1085,6 +905,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return supportsFreeformModelSelectionForSession(agentId, props.metadata ?? null);
     }, [agentId, props.metadata]);
 
+    const submitCustomModel = React.useCallback((value: string) => {
+        hapticsLight();
+        const normalized = value.trim();
+        if (!normalized) return;
+        props.onModelModeChange?.(normalized);
+    }, [props.onModelModeChange]);
+
     const preflightAcpSessionModeOptions = React.useMemo(() => {
         const raw = props.acpSessionModeOptionsOverride;
         if (!Array.isArray(raw) || raw.length === 0) return null;
@@ -1115,11 +942,438 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const opt = preflightAcpSessionModeOptions?.find((o) => o.id === effectiveId) ?? null;
         return { id: effectiveId, name: opt?.name ?? (effectiveId === 'default' ? t('common.default') : effectiveId) };
     }, [preflightAcpSessionModeOptions, props.acpSessionModeSelectedIdOverride]);
+    const sessionModeOptionsOverrideProbe = props.acpSessionModeOptionsOverrideProbe ?? null;
+    const acpConfigOptionsOverrideProbe = props.acpConfigOptionsOverrideProbe ?? null;
+
+    const sessionModeChipControl = React.useMemo(() => {
+        if (!props.onAcpSessionModeChange) return null;
+        if (sessionModePickerControl) {
+            return {
+                options: sessionModePickerControl.options,
+                selectedId: (
+                    sessionModePickerControl.requestedModeId
+                    ?? sessionModePickerControl.effectiveModeId
+                    ?? 'default'
+                ),
+                label: sessionModePickerControl.effectiveModeName,
+                isPending: sessionModePickerControl.isPending,
+            };
+        }
+        if (preflightAcpSessionModeOptions) {
+            return {
+                options: preflightAcpSessionModeOptions,
+                selectedId: preflightAcpSessionModeEffective.id,
+                label: preflightAcpSessionModeEffective.name,
+                isPending: false,
+            };
+        }
+        return null;
+    }, [
+        preflightAcpSessionModeEffective.id,
+        preflightAcpSessionModeEffective.name,
+        preflightAcpSessionModeOptions,
+        props.onAcpSessionModeChange,
+        sessionModePickerControl,
+    ]);
+
+    const sessionModePickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
+        if (!sessionModeChipControl) return [];
+        const optionsById = new Map(sessionModeChipControl.options.map((option) => [option.id, option]));
+        const uniqueIds = Array.from(
+            new Set([
+                'default',
+                ...sessionModeChipControl.options.map((option) => option.id).filter((id) => id && id !== 'default'),
+            ]),
+        );
+        return uniqueIds.map((id) => ({
+            id,
+            label: optionsById.get(id)?.name ?? (id === 'default' ? t('common.default') : id),
+            subtitle: optionsById.get(id)?.description,
+        }));
+    }, [sessionModeChipControl]);
+
+    const shouldRenderSessionModeChip = React.useMemo(() => {
+        return shouldRenderChipForOptions({
+            optionCount: sessionModePickerOptions.length,
+            showWhenNoOptions: false,
+            showWhenSingleOption: false,
+        });
+    }, [sessionModePickerOptions.length]);
+
+    const sessionModeChipPresentation = React.useMemo(() => {
+        return sessionModeChipControl ? resolveSessionModeChipPresentation(sessionModeChipControl) : null;
+    }, [sessionModeChipControl]);
+
+    const sessionModeChipInteraction = React.useMemo(() => {
+        if (!sessionModeChipControl) return null;
+        const selectableOptionIds = Array.from(new Set(
+            sessionModeChipControl.options
+                .map((option) => option.id?.trim?.() ?? option.id)
+                .filter((id): id is string => typeof id === 'string' && id.length > 0),
+        ));
+        return resolveChipOptionInteraction({
+            currentOptionId: sessionModeChipControl.selectedId,
+            selectableOptionIds,
+            cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
+        });
+    }, [sessionModeChipControl]);
+
+    const sessionModeSectionSummary = React.useMemo<React.ReactNode>(() => {
+        if (sessionModePickerControl) {
+            return sessionModePickerControl.isPending
+                ? t('agentInput.mode.pendingSwitching', {
+                    from: sessionModePickerControl.currentModeName,
+                    to:
+                        sessionModePickerControl.requestedModeName
+                        ?? sessionModePickerControl.requestedModeId
+                        ?? '',
+                })
+                : t('agentInput.mode.currentMode', { name: sessionModePickerControl.currentModeName });
+        }
+        if (preflightAcpSessionModeOptions) {
+            return sessionModeOptionsOverrideProbe?.phase === 'loading'
+                ? t('agentInput.mode.loadingModes')
+                : sessionModeOptionsOverrideProbe?.phase === 'refreshing'
+                    ? t('agentInput.mode.refreshingModes')
+                    : preflightAcpSessionModeEffective.id === 'default'
+                        ? t('agentInput.mode.useDefaultModeHint')
+                        : t('agentInput.mode.startIn', { name: preflightAcpSessionModeEffective.name });
+        }
+        return null;
+    }, [
+        preflightAcpSessionModeEffective.id,
+        preflightAcpSessionModeEffective.name,
+        preflightAcpSessionModeOptions,
+        sessionModeOptionsOverrideProbe?.phase,
+        sessionModePickerControl,
+    ]);
+
+    const sessionModeSectionHeaderAccessory = React.useMemo<React.ReactNode>(() => {
+        if (
+            !preflightAcpSessionModeOptions
+            || !sessionModeOptionsOverrideProbe
+            || (
+                sessionModeOptionsOverrideProbe.phase === 'idle'
+                && typeof sessionModeOptionsOverrideProbe.onRefresh !== 'function'
+            )
+        ) {
+            return null;
+        }
+        if (typeof sessionModeOptionsOverrideProbe.onRefresh === 'function') {
+            return (
+                <Pressable
+                    testID="agent-input-session-mode-refresh"
+                    accessibilityRole="button"
+                    accessibilityLabel={t('agentInput.mode.refreshModesA11y')}
+                    onPress={
+                        sessionModeOptionsOverrideProbe.phase === 'idle'
+                            ? sessionModeOptionsOverrideProbe.onRefresh
+                            : undefined
+                    }
+                    style={({ pressed }) => [
+                        styles.overlayInlineRefreshButton,
+                        pressed ? styles.overlayInlineRefreshButtonPressed : null,
+                        sessionModeOptionsOverrideProbe.phase !== 'idle'
+                            ? styles.overlayInlineRefreshButtonDisabled
+                            : null,
+                    ]}
+                >
+                    {sessionModeOptionsOverrideProbe.phase === 'idle' ? (
+                        renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
+                    ) : (
+                        <ActivityIndicator size="small" />
+                    )}
+                </Pressable>
+            );
+        }
+        return (
+            <View style={styles.overlayInlineRefreshButton}>
+                <ActivityIndicator size="small" />
+            </View>
+        );
+    }, [
+        preflightAcpSessionModeOptions,
+        sessionModeOptionsOverrideProbe,
+        styles.overlayInlineRefreshButton,
+        styles.overlayInlineRefreshButtonDisabled,
+        styles.overlayInlineRefreshButtonPressed,
+        theme.colors.textSecondary,
+    ]);
 
     const acpConfigOptionControls = React.useMemo(() => {
         if (!props.onAcpConfigOptionChange) return null;
+        if (props.acpConfigOptionsOverride) {
+            return computeAcpConfigOptionControlsFromOverride({
+                agentId,
+                configOptions: props.acpConfigOptionsOverride,
+                overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
+            });
+        }
         return computeAcpConfigOptionControls({ agentId, metadata: props.metadata ?? null });
-    }, [agentId, props.metadata, props.onAcpConfigOptionChange]);
+    }, [
+        agentId,
+        props.acpConfigOptionsOverride,
+        props.acpConfigOptionOverridesOverride,
+        props.metadata,
+        props.onAcpConfigOptionChange,
+    ]);
+
+    const selectedModelOptionControls = React.useMemo(() => {
+        if (!props.onAcpConfigOptionChange) return null;
+        const selectedModel = modelOptions.find((option) => option.value === effectiveModelPolicy.effectiveModelId) ?? null;
+        if (!selectedModel?.modelOptions?.length) return null;
+        return computeAcpConfigOptionControlsFromOverride({
+            agentId,
+            configOptions: selectedModel.modelOptions,
+            overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
+        });
+    }, [
+        agentId,
+        effectiveModelPolicy.effectiveModelId,
+        modelOptions,
+        props.acpConfigOptionOverridesOverride,
+        props.onAcpConfigOptionChange,
+    ]);
+
+    const acpConfigSectionHeaderAccessory = React.useMemo<React.ReactNode>(() => {
+        if (
+            !acpConfigOptionsOverrideProbe
+            || (
+                acpConfigOptionsOverrideProbe.phase === 'idle'
+                && typeof acpConfigOptionsOverrideProbe.onRefresh !== 'function'
+            )
+        ) {
+            return null;
+        }
+        if (typeof acpConfigOptionsOverrideProbe.onRefresh === 'function') {
+            return (
+                <Pressable
+                    testID="agent-input-config-options-refresh"
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.refresh')}
+                    onPress={
+                        acpConfigOptionsOverrideProbe.phase === 'idle'
+                            ? acpConfigOptionsOverrideProbe.onRefresh
+                            : undefined
+                    }
+                    style={({ pressed }) => [
+                        styles.overlayInlineRefreshButton,
+                        pressed ? styles.overlayInlineRefreshButtonPressed : null,
+                        acpConfigOptionsOverrideProbe.phase !== 'idle'
+                            ? styles.overlayInlineRefreshButtonDisabled
+                            : null,
+                    ]}
+                >
+                    {acpConfigOptionsOverrideProbe.phase === 'idle' ? (
+                        renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
+                    ) : (
+                        <ActivityIndicator size="small" />
+                    )}
+                </Pressable>
+            );
+        }
+        return (
+            <View style={styles.overlayInlineRefreshButton}>
+                <ActivityIndicator size="small" />
+            </View>
+        );
+    }, [
+        acpConfigOptionsOverrideProbe,
+        renderIoniconNode,
+        styles.overlayInlineRefreshButton,
+        styles.overlayInlineRefreshButtonDisabled,
+        styles.overlayInlineRefreshButtonPressed,
+        theme.colors.textSecondary,
+    ]);
+
+    const hasSettingsSessionModeSection = Boolean(
+        sessionModePickerControl || (preflightAcpSessionModeOptions && props.onAcpSessionModeChange),
+    );
+    const hasSettingsAcpConfigSection = Boolean(acpConfigOptionControls || acpConfigSectionHeaderAccessory);
+    const hasSettingsModelSection = Boolean(props.onModelModeChange);
+
+    const renderResolvedEngineDetail = React.useCallback((surfaceVariant: 'carded' | 'plain' = 'carded') => (
+        <AgentInputEngineDetail
+            modelOptions={modelOptions.map((option) => ({
+                value: option.value,
+                label: option.label,
+                description: option.description,
+                ...(option.modelOptions ? { modelOptions: option.modelOptions } : {}),
+            }))}
+            selectedModelId={effectiveModelPolicy.effectiveModelId}
+            effectiveModelLabel={effectiveModelLabel}
+            modelNotes={effectiveModelPolicy.notes}
+            modelEmptyText={t('agentInput.model.configureInCli')}
+            canEnterCustomModel={canEnterCustomModel}
+            modelProbe={props.modelOptionsOverrideProbe ?? (sessionModelOptionsProbe ?? undefined)}
+            onSelectModel={(value) => {
+                hapticsLight();
+                props.onModelModeChange?.(value);
+            }}
+            onSubmitCustomModel={canEnterCustomModel ? submitCustomModel : undefined}
+            selectedModelOptionControls={selectedModelOptionControls}
+            onSelectModelOptionValue={
+                props.onAcpConfigOptionChange
+                    ? (configId, valueId) => {
+                        hapticsLight();
+                        props.onAcpConfigOptionChange?.(configId, valueId);
+                    }
+                    : undefined
+            }
+            sessionModeOptions={
+                sessionModePickerControl?.options
+                ?? preflightAcpSessionModeOptions
+                ?? undefined
+            }
+            selectedSessionModeId={
+                sessionModePickerControl?.effectiveModeId
+                ?? preflightAcpSessionModeEffective.id
+            }
+            sessionModeSummary={sessionModeSectionSummary}
+            sessionModeHeaderAccessory={sessionModeSectionHeaderAccessory}
+            onSelectSessionMode={
+                props.onAcpSessionModeChange
+                    ? (optionId) => {
+                        hapticsLight();
+                        props.onAcpSessionModeChange?.(optionId);
+                    }
+                    : undefined
+            }
+            configControls={acpConfigOptionControls}
+            configHeaderAccessory={acpConfigSectionHeaderAccessory}
+            onSelectConfigValue={
+                props.onAcpConfigOptionChange
+                    ? (configId, valueId) => {
+                        hapticsLight();
+                        props.onAcpConfigOptionChange?.(configId, valueId);
+                    }
+                    : undefined
+            }
+            sectionOrder={['model', 'mode', 'config']}
+            surfaceVariant={surfaceVariant}
+        />
+    ), [
+        acpConfigOptionControls,
+        acpConfigSectionHeaderAccessory,
+        canEnterCustomModel,
+        effectiveModelLabel,
+        effectiveModelPolicy.effectiveModelId,
+        effectiveModelPolicy.notes,
+        modelOptions,
+        preflightAcpSessionModeEffective.id,
+        preflightAcpSessionModeOptions,
+        props.modelOptionsOverrideProbe,
+        props.onAcpConfigOptionChange,
+        props.onAcpSessionModeChange,
+        props.onModelModeChange,
+        submitCustomModel,
+        selectedModelOptionControls,
+        sessionModePickerControl,
+        sessionModeSectionHeaderAccessory,
+        sessionModeSectionSummary,
+        sessionModelOptionsProbe,
+    ]);
+
+    const hasInternalAgentPickerOptions = Boolean(
+        props.agentType
+        && (props.onModelModeChange || hasSettingsSessionModeSection || hasSettingsAcpConfigSection),
+    );
+
+    const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
+        if (!hasInternalAgentPickerOptions || !props.agentType) return [];
+        return [{
+            id: `engine:${props.agentType}`,
+            label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+            renderDetailContent: () => renderResolvedEngineDetail('carded'),
+        }];
+    }, [
+        hasInternalAgentPickerOptions,
+        props.agentLabel,
+        props.agentType,
+        renderResolvedEngineDetail,
+    ]);
+
+    const agentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
+        if ((props.agentPickerOptions?.length ?? 0) > 0) {
+            return props.agentPickerOptions ?? [];
+        }
+        return internalAgentPickerOptions;
+    }, [internalAgentPickerOptions, props.agentPickerOptions]);
+
+    const effectiveAgentPickerSelectedOptionId = React.useMemo(() => {
+        if (typeof props.agentPickerSelectedOptionId === 'string' && props.agentPickerSelectedOptionId.length > 0) {
+            return props.agentPickerSelectedOptionId;
+        }
+        return agentPickerOptions[0]?.id ?? null;
+    }, [agentPickerOptions, props.agentPickerSelectedOptionId]);
+
+    const hasAgentPickerOptions = agentPickerOptions.length > 0;
+
+    const {
+        overlayAnchorRef,
+        actionMenuAnchorRef,
+        agentChipAnchorRef,
+        permissionChipAnchorRef,
+        machineChipAnchorRef,
+        sessionModeChipAnchorRef,
+        pathChipAnchorRef,
+        resumeChipAnchorRef,
+        profileChipAnchorRef,
+        envVarsChipAnchorRef,
+    } = useAgentInputSelectionAnchors();
+    const [showActionMenu, setShowActionMenu] = React.useState(false);
+    const closeActionMenu = React.useCallback(() => {
+        setShowActionMenu(false);
+    }, []);
+    const {
+        activeSelectionOverlay,
+        activeExtraCollapsedPopoverChip,
+        openSelectionOverlay,
+        toggleSelectionOverlay,
+        closeSelectionOverlay,
+        resetSelectionOverlays,
+    } = useAgentInputSelectionOverlayController({
+        extraActionChips: props.extraActionChips,
+        shouldRenderSessionModeChip,
+        canChangePermission: Boolean(props.onPermissionModeChange),
+        hasMachinePopover: Boolean(props.machinePopover),
+        hasPathPopover: Boolean(props.pathPopover),
+        hasResumePopover: Boolean(props.resumePopover),
+        hasProfilePopover: Boolean(props.profilePopover),
+        hasEnvVarsPopover: Boolean(props.envVarsPopover),
+        hasAgentPickerOptions,
+    });
+    const {
+        showAgentPicker,
+        agentPickerAnchor,
+        closeAgentPicker,
+        showSessionModePicker,
+        sessionModePickerAnchor,
+        closeSessionModePicker,
+        showPermissionPopover,
+        closePermissionPopover,
+        showMachinePopover,
+        machinePopoverAnchor,
+        closeMachinePopover,
+        showPathPopover,
+        pathPopoverAnchor,
+        closePathPopover,
+        showResumePopover,
+        resumePopoverAnchor,
+        closeResumePopover,
+        showProfilePopover,
+        profilePopoverAnchor,
+        closeProfilePopover,
+        showEnvVarsPopover,
+        envVarsPopoverAnchor,
+        closeEnvVarsPopover,
+        activeExtraCollapsedPopoverAnchor,
+        closeActiveExtraCollapsedPopoverChip,
+    } = buildAgentInputSelectionOverlayViewModel({
+        activeSelectionOverlay,
+        activeExtraCollapsedPopoverChip,
+        closeSelectionOverlay,
+    });
 
     const effectivePermissionLabel = React.useMemo(() => {
         return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
@@ -1129,21 +1383,53 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
     }, [agentId, effectivePermissionPolicy.effectiveMode]);
 
-    // Handle settings button press
-    const handleSettingsPress = React.useCallback(() => {
-        hapticsLight();
-        setShowSettings(prev => !prev);
-    }, []);
-
-    // NOTE: settings overlay sizing is handled by `Popover` now (anchor + boundary measurement).
-
     const showPermissionChip = Boolean(props.onPermissionModeChange || props.onPermissionClick);
-    const hasProfile = Boolean(props.onProfileClick);
-    const hasEnvVars = Boolean(props.onEnvVarsClick);
-    const hasAgent = Boolean(props.agentType && props.onAgentClick);
-    const hasMachine = Boolean(props.onMachineClick);
-    const hasPath = Boolean(props.onPathClick);
-    const hasResume = Boolean(props.onResumeClick);
+    const hasProfile = Boolean(props.onProfileClick || props.profilePopover);
+    const hasEnvVars = Boolean(props.onEnvVarsClick || props.envVarsPopover);
+    const {
+        hasAgentSelection: hasAgent,
+        resolvedAgentLabel,
+        handlePermissionPress,
+        handleModePress,
+        handleProfilePress,
+        handleEnvVarsPress,
+        handleAgentPress,
+        handleMachinePress,
+        handlePathPress,
+        handleResumePress,
+    } = useAgentInputCoreControlHandlers({
+        agentType: props.agentType,
+        agentLabel: props.agentLabel,
+        hasAgentPickerOptions,
+        onAgentClick: props.onAgentClick,
+        onPermissionModeChange: props.onPermissionModeChange,
+        onPermissionClick: props.onPermissionClick,
+        sessionModeChipInteraction,
+        onSessionModeChange: props.onAcpSessionModeChange,
+        profilePopover: props.profilePopover,
+        onProfileClick: props.onProfileClick,
+        envVarsPopover: props.envVarsPopover,
+        onEnvVarsClick: props.onEnvVarsClick,
+        machinePopover: props.machinePopover,
+        onMachineClick: props.onMachineClick,
+        pathPopover: props.pathPopover,
+        onPathClick: props.onPathClick,
+        resumePopover: props.resumePopover,
+        onResumeClick: props.onResumeClick,
+        setShowActionMenu,
+        closeSelectionOverlay,
+        toggleSelectionOverlay,
+    });
+    const hasRecipient = React.useMemo(() => {
+        return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
+    }, [props.extraActionChips]);
+    const hasDelivery = React.useMemo(() => {
+        return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'delivery');
+    }, [props.extraActionChips]);
+    const hasExtraActionChips = (props.extraActionChips?.length ?? 0) > 0;
+    const hasMachine = Boolean(props.onMachineClick || props.machinePopover);
+    const hasPath = Boolean(props.onPathClick || props.pathPopover);
+    const hasResume = Boolean(props.onResumeClick || props.resumePopover);
     const hasFiles = Boolean(props.sessionId && props.onFileViewerPress);
     const hasStop = Boolean(props.onAbort && props.showAbortButton);
     const hasAnyActions = getHasAnyAgentInputActions({
@@ -1151,6 +1437,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hasProfile,
         hasEnvVars,
         hasAgent,
+        hasRecipient,
+        hasDelivery,
+        hasExtraActionChips,
         hasMachine,
         hasPath,
         hasResume,
@@ -1160,7 +1449,30 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const actionBarShouldScroll = effectiveActionBarLayout === 'scroll';
     const actionBarIsCollapsed = effectiveActionBarLayout === 'collapsed';
-    const showPathAndResumeRow = shouldShowPathAndResumeRow(effectiveActionBarLayout);
+    const showSecondaryControlsRow = shouldShowSecondaryControlRow(
+        effectiveActionBarLayout,
+        hasMachine || hasPath || hasResume,
+    );
+    const chipStyle = React.useCallback((pressed: boolean) => ([
+        styles.actionChip,
+        !showChipLabels ? styles.actionChipIconOnly : null,
+        pressed ? styles.actionChipPressed : null,
+    ]), [
+        showChipLabels,
+        styles.actionChip,
+        styles.actionChipIconOnly,
+        styles.actionChipPressed,
+    ]);
+    const chipStyleAutoHide = React.useCallback((pressed: boolean) => ([
+        styles.actionChip,
+        !showAutoHideChipLabels ? styles.actionChipIconOnly : null,
+        pressed ? styles.actionChipPressed : null,
+    ]), [
+        showAutoHideChipLabels,
+        styles.actionChip,
+        styles.actionChipIconOnly,
+        styles.actionChipPressed,
+    ]);
 
     const canActionBarScroll = actionBarShouldScroll && actionBarFades.canScrollX;
     const showActionBarFadeLeft = canActionBarScroll && actionBarFades.visibility.left;
@@ -1322,63 +1634,134 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
     }, [props.onAbort]);
 
-    const actionMenuActions = React.useMemo(() => {
-        return buildAgentInputActionMenuActions({
-            actionBarIsCollapsed,
-            hasAnyActions,
-            tint: theme.colors.button.secondary.tint,
-            agentId,
-            profileLabel,
-            profileIcon,
-            envVarsCount: props.envVarsCount,
-            agentType: props.agentType,
-            machineName: props.machineName,
-            currentPath: props.currentPath,
-            resumeSessionId: props.resumeSessionId,
-            sessionId: props.sessionId,
-            onProfileClick: props.onProfileClick,
-            onEnvVarsClick: props.onEnvVarsClick,
-            onAgentClick: props.onAgentClick,
-            onMachineClick: props.onMachineClick,
-            onPathClick: props.onPathClick,
-            onResumeClick: props.onResumeClick,
-            onFileViewerPress: props.onFileViewerPress,
-            canStop: Boolean(props.onAbort && props.showAbortButton),
-            onStop: () => {
-                void handleAbortPress();
-            },
-            dismiss: () => setShowSettings(false),
-            blurInput: () => inputRef.current?.blur(),
-        });
-        }, [
-            actionBarIsCollapsed,
-            hasAnyActions,
-            handleAbortPress,
-            agentId,
-            profileIcon,
-            profileLabel,
-            props.agentType,
-            props.currentPath,
-            props.envVarsCount,
-            props.machineName,
-            props.onResumeClick,
-            props.resumeSessionId,
-            props.onAbort,
-            props.onAgentClick,
-            props.onEnvVarsClick,
-            props.onFileViewerPress,
-            props.onMachineClick,
-            props.onPathClick,
-            props.onProfileClick,
-            props.sessionId,
-            theme.colors.button.secondary.tint,
-        ]);
+    const {
+        handleActionMenuPress,
+        actionMenuActions,
+        hasActionMenuPopoverSections,
+    } = useAgentInputActionMenuControls({
+        showActionMenu,
+        setShowActionMenu,
+        closeSelectionOverlay,
+        openSelectionOverlay,
+        resetSelectionOverlays,
+        inputRef,
+        profilePopover: props.profilePopover,
+        onProfileClick: props.onProfileClick,
+        envVarsPopover: props.envVarsPopover,
+        onEnvVarsClick: props.onEnvVarsClick,
+        machinePopover: props.machinePopover,
+        pathPopover: props.pathPopover,
+        resumePopover: props.resumePopover,
+        hasAgentPickerOptions,
+        onAgentClick: props.onAgentClick,
+        actionBarIsCollapsed,
+        hasAnyActions,
+        tint: theme.colors.button.secondary.tint,
+        agentId,
+        profileLabel,
+        profileIcon,
+        envVarsCount: props.envVarsCount,
+        agentType: props.agentType,
+        machineName: props.machineName,
+        currentPath: props.currentPath,
+        resumeSessionId: props.resumeSessionId,
+        sessionId: props.sessionId,
+        extraActionChips: props.extraActionChips,
+        openCollapsedOptionsPopover: (chipKey) => {
+            if (!chipKey) {
+                closeSelectionOverlay('collapsedExtra');
+                return;
+            }
+            openSelectionOverlay('collapsedExtra', 'actionMenu', chipKey);
+        },
+        sessionModeLabel: sessionModeChipControl?.label ?? null,
+        sessionModeChipInteraction,
+        onSessionModeChange: props.onAcpSessionModeChange,
+        shouldExposeSessionModeAction: actionBarIsCollapsed && shouldRenderSessionModeChip,
+        onMachineClick: handleMachinePress,
+        onPathClick: handlePathPress,
+        onResumeClick: handleResumePress,
+        onFileViewerPress: props.onFileViewerPress,
+        canStop: Boolean(props.onAbort && props.showAbortButton),
+        onStop: () => {
+            void handleAbortPress();
+        },
+        hasProfile,
+        hasEnvVars,
+        hasAgent,
+    });
+    const {
+        controlNodes: renderedActionControlNodes,
+        secondaryLeadingControls: secondaryLeadingControlsForWrap,
+        extraChipAnchorRefsByKey,
+    } = useRenderedAgentInputControlRows({
+        layout: effectiveActionBarLayout,
+        chips: props.extraActionChips,
+        overlayAnchorRef,
+        onToggleExtraChipCollapsedPopover: (chipKey) => {
+            toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
+        },
+        themeTint: theme.colors.button.secondary.tint,
+        showChipLabels,
+        showAutoHideChipLabels,
+        chipStyle,
+        chipStyleAutoHide,
+        textStyle: styles.actionChipText,
+        countTextStyle: styles.actionChipCountText,
+        actionButtonStyle: styles.actionButton,
+        actionButtonPressedStyle: styles.actionButtonPressed,
+        showPermissionChip,
+        permissionChipAnchorRef,
+        permissionChipLabel,
+        onPermissionPress: handlePermissionPress,
+        hasActionMenuPopoverSections,
+        actionMenuAnchorRef,
+        onActionMenuPress: handleActionMenuPress,
+        actionBarIsCollapsed,
+        sessionModeChipControl,
+        shouldRenderSessionModeChip,
+        sessionModeChipAnchorRef,
+        sessionModeChipPresentation,
+        onModePress: handleModePress,
+        hasProfile,
+        profileChipAnchorRef,
+        profileIcon,
+        profileLabel,
+        onProfilePress: handleProfilePress,
+        hasEnvVars,
+        envVarsChipAnchorRef,
+        envVarsCount: props.envVarsCount,
+        onEnvVarsPress: handleEnvVarsPress,
+        hasAgentSelection: hasAgent,
+        agentChipAnchorRef,
+        agentLabel: resolvedAgentLabel,
+        onAgentPress: handleAgentPress,
+        machineChipAnchorRef,
+        onMachinePress: handleMachinePress,
+        machineName: props.machineName,
+        pathChipAnchorRef,
+        onPathPress: handlePathPress,
+        currentPath: props.currentPath,
+        resumeChipAnchorRef,
+        onResumePress: handleResumePress,
+        blurInput: () => inputRef.current?.blur(),
+        resumeSessionId: props.resumeSessionId,
+        resumeIsChecking: props.resumeIsChecking,
+        onAbort: props.onAbort,
+        showAbortButton: props.showAbortButton,
+        isAborting,
+        shakerRef,
+        onAbortPress: handleAbortPress,
+        sessionId: props.sessionId,
+        onFileViewerPress: props.onFileViewerPress,
+        sourceControlCompact: actionBarShouldScroll || !showChipLabels,
+        sourceControlWrapperStyle: styles.actionItemWrapper,
+    });
 
-    // Handle settings selection
-    const handleSettingsSelect = React.useCallback((mode: PermissionMode) => {
+    const handlePermissionSelect = React.useCallback((mode: PermissionMode) => {
         hapticsLight();
         props.onPermissionModeChange?.(mode);
-        // Don't close the settings overlay - let users see the change and potentially switch again
+        // Keep the chip popover open so users can compare permission choices.
     }, [props.onPermissionModeChange]);
 
     // Handle keyboard navigation
@@ -1487,467 +1870,79 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         ? []
                         : [{ maxWidth: layout.maxWidth }])
             ]} ref={overlayAnchorRef}>
-                {/* Autocomplete suggestions overlay */}
-                {suggestions.length > 0 && (
-                    <Popover
-                        open={suggestions.length > 0}
-                        anchorRef={overlayAnchorRef}
-                        placement="top"
-                        gap={8}
-                        maxHeightCap={240}
-                        // Allow the suggestions popover to match the full input width on wide screens.
-                        maxWidthCap={layout.maxWidth}
-                        backdrop={false}
-                        containerStyle={{ paddingHorizontal: screenWidth > 700 ? 0 : 8 }}
-                    >
-                        {({ maxHeight }) => (
-                            <AgentInputAutocomplete
-                                maxHeight={maxHeight}
-                                suggestions={suggestions.map(s => {
-                                    const Component = s.component;
-                                    return <Component key={s.key} />;
-                                })}
-                                selectedIndex={selected}
-                                onSelect={handleSuggestionSelect}
-                                itemHeight={Platform.select({ ios: 42, default: 34 }) ?? 34}
-                            />
-                        )}
-                    </Popover>
-                )}
-
-                {/* Settings overlay */}
-                {showSettings && (
-                    <Popover
-                        open={showSettings}
-                        anchorRef={settingsAnchorRef}
-                        boundaryRef={null}
-                        placement="top"
-                        gap={8}
-                        maxHeightCap={400}
-                        maxWidthCap={layout.maxWidth}
-                        portal={{
-                            web: true,
-                            native: true,
-                            matchAnchorWidth: false,
-                            anchorAlign: 'start',
-                        }}
-                        edgePadding={{
-                            horizontal: Platform.OS === 'web' ? (screenWidth > 700 ? 12 : 16) : 0,
-                            vertical: 12,
-                        }}
-                        onRequestClose={() => setShowSettings(false)}
-                        backdrop={{ style: styles.overlayBackdrop }}
-                    >
-                        {({ maxHeight }) => (
-                            <FloatingOverlay
-                                maxHeight={maxHeight}
-                                keyboardShouldPersistTaps="always"
-                                edgeFades={{ top: true, bottom: true, size: 28 }}
-                                edgeIndicators={true}
-                                initialVisibility={{ bottom: true }}
-                            >
-                                <View testID="agent-input-settings-overlay">
-                                    {/* Action shortcuts (collapsed layout) */}
-                                    {actionMenuActions.length > 0 ? (
-                                        <ActionListSection
-                                            title={t('agentInput.actionMenu.title')}
-                                            actions={actionMenuActions}
-                                        />
-                                    ) : null}
-
-                                        {actionBarIsCollapsed && hasAnyActions ? (
-                                            <View style={styles.overlayDivider} />
-                                        ) : null}
-
-                                        {/* Permission Mode Section */}
-                                        <PermissionModePicker
-                                            title={getPermissionModeTitleForAgentType(agentId)}
-                                            options={permissionModeOptions}
-                                            selected={effectivePermissionPolicy.effectiveMode}
-                                            onSelect={handleSettingsSelect}
-                                            styles={styles}
-                                            effectivePermissionLabel={effectivePermissionLabel}
-                                            effectivePermissionPolicy={effectivePermissionPolicy}
-                                        />
-
-                                    {sessionModePickerControl ? (
-                                        <>
-                                            <View style={styles.overlayDivider} />
-                                            <View style={styles.overlaySection}>
-                                                <Text style={styles.overlaySectionTitle}>
-                                                    {t('agentInput.mode.sectionTitle')}
-                                                </Text>
-
-                                                <Text testID="agent-input-session-mode-summary" style={styles.overlayOptionDescription}>
-                                                    {sessionModePickerControl.isPending
-                                                        ? t('agentInput.mode.pendingSwitching', {
-                                                            from: sessionModePickerControl.currentModeName,
-                                                            to:
-                                                                sessionModePickerControl.requestedModeName
-                                                                ?? sessionModePickerControl.requestedModeId
-                                                                ?? '',
-                                                        })
-                                                        : t('agentInput.mode.currentMode', { name: sessionModePickerControl.currentModeName })}
-                                                </Text>
-
-                                                {sessionModePickerControl.options.map((option) => {
-                                                    const isSelected = sessionModePickerControl.effectiveModeId === option.id;
-                                                    return (
-                                                        <Pressable
-                                                            testID={`agent-input-session-mode-option:${option.id}`}
-                                                            key={option.id}
-                                                            onPress={() => {
-                                                                hapticsLight();
-                                                                props.onAcpSessionModeChange?.(option.id);
-                                                            }}
-                                                            style={({ pressed }) => [
-                                                                styles.overlayOptionRow,
-                                                                pressed ? styles.overlayOptionRowPressed : null,
-                                                            ]}
-                                                        >
-                                                            <View
-                                                                style={[
-                                                                    styles.overlayRadioOuter,
-                                                                    isSelected
-                                                                        ? styles.overlayRadioOuterSelected
-                                                                        : styles.overlayRadioOuterUnselected,
-                                                                ]}
-                                                            >
-                                                                {isSelected && (
-                                                                    <View style={styles.overlayRadioInner} />
-                                                                )}
-                                                            </View>
-                                                            <View style={{ flexShrink: 1 }}>
-                                                                <Text
-                                                                    style={[
-                                                                        styles.overlayOptionLabel,
-                                                                        isSelected
-                                                                            ? styles.overlayOptionLabelSelected
-                                                                            : styles.overlayOptionLabelUnselected,
-                                                                    ]}
-                                                                >
-                                                                    {option.name}
-                                                                </Text>
-                                                                {option.description ? (
-                                                                    <Text style={styles.overlayOptionDescription}>
-                                                                        {option.description}
-                                                                    </Text>
-                                                                ) : null}
-                                                            </View>
-                                                        </Pressable>
-                                                    );
-                                                })}
-                                            </View>
-                                        </>
-                                    ) : preflightAcpSessionModeOptions && props.onAcpSessionModeChange ? (
-                                        <>
-                                            <View style={styles.overlayDivider} />
-                                            <View style={styles.overlaySection}>
-                                                <Text style={styles.overlaySectionTitle}>
-                                                    {t('agentInput.mode.sectionTitle')}
-                                                </Text>
-                                                {props.acpSessionModeOptionsOverrideProbe &&
-                                                (props.acpSessionModeOptionsOverrideProbe!.phase !== 'idle' ||
-                                                    typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function') ? (
-                                                    typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function' ? (
-                                                        <Pressable
-                                                            testID="agent-input-session-mode-refresh"
-                                                            accessibilityRole="button"
-                                                            accessibilityLabel={t('agentInput.mode.refreshModesA11y')}
-                                                            onPress={
-                                                                props.acpSessionModeOptionsOverrideProbe!.phase === 'idle'
-                                                                    ? props.acpSessionModeOptionsOverrideProbe.onRefresh
-                                                                    : undefined
-                                                            }
-                                                            style={({ pressed }) => [
-                                                                styles.overlayInlineRefreshButton,
-                                                                pressed ? styles.overlayInlineRefreshButtonPressed : null,
-                                                                props.acpSessionModeOptionsOverrideProbe!.phase !== 'idle'
-                                                                    ? styles.overlayInlineRefreshButtonDisabled
-                                                                    : null,
-                                                            ]}
-                                                        >
-                                                            {props.acpSessionModeOptionsOverrideProbe!.phase === 'idle' ? (
-                                                                renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
-                                                            ) : (
-                                                                <ActivityIndicator size="small" />
-                                                            )}
-                                                        </Pressable>
-                                                    ) : (
-                                                        <View style={styles.overlayInlineRefreshButton}>
-                                                            <ActivityIndicator size="small" />
-                                                        </View>
-                                                    )
-                                                ) : null}
-
-                                                <Text testID="agent-input-session-mode-summary" style={styles.overlayOptionDescription}>
-                                                    {props.acpSessionModeOptionsOverrideProbe?.phase === 'loading'
-                                                        ? t('agentInput.mode.loadingModes')
-                                                        : props.acpSessionModeOptionsOverrideProbe?.phase === 'refreshing'
-                                                            ? t('agentInput.mode.refreshingModes')
-                                                            : preflightAcpSessionModeEffective.id === 'default'
-                                                                ? t('agentInput.mode.useDefaultModeHint')
-                                                                : t('agentInput.mode.startIn', { name: preflightAcpSessionModeEffective.name })}
-                                                </Text>
-
-                                                {preflightAcpSessionModeOptions.map((option) => {
-                                                    const isSelected = preflightAcpSessionModeEffective.id === option.id;
-                                                    return (
-                                                        <Pressable
-                                                            testID={`agent-input-session-mode-option:${option.id}`}
-                                                            key={option.id}
-                                                            onPress={() => {
-                                                                hapticsLight();
-                                                                props.onAcpSessionModeChange?.(option.id);
-                                                            }}
-                                                            style={({ pressed }) => [
-                                                                styles.overlayOptionRow,
-                                                                pressed ? styles.overlayOptionRowPressed : null,
-                                                            ]}
-                                                        >
-                                                            <View
-                                                                style={[
-                                                                    styles.overlayRadioOuter,
-                                                                    isSelected
-                                                                        ? styles.overlayRadioOuterSelected
-                                                                        : styles.overlayRadioOuterUnselected,
-                                                                ]}
-                                                            >
-                                                                {isSelected && (
-                                                                    <View style={styles.overlayRadioInner} />
-                                                                )}
-                                                            </View>
-                                                            <View style={{ flexShrink: 1 }}>
-                                                                <Text
-                                                                    style={[
-                                                                        styles.overlayOptionLabel,
-                                                                        isSelected
-                                                                            ? styles.overlayOptionLabelSelected
-                                                                            : styles.overlayOptionLabelUnselected,
-                                                                    ]}
-                                                                >
-                                                                    {option.name}
-                                                                </Text>
-                                                                {option.description ? (
-                                                                    <Text style={styles.overlayOptionDescription}>
-                                                                        {option.description}
-                                                                    </Text>
-                                                                ) : null}
-                                                            </View>
-                                                        </Pressable>
-                                                    );
-                                                })}
-                                            </View>
-                                        </>
-                                    ) : null}
-
-                                    {acpConfigOptionControls ? (
-                                        <>
-                                            <View style={styles.overlayDivider} />
-                                            <View style={styles.overlaySection}>
-                                                <Text style={styles.overlaySectionTitle}>
-                                                    {t('agentInput.acp.optionsSectionTitle')}
-                                                </Text>
-
-                                                {acpConfigOptionControls.map((control) => {
-                                                    const option = control.option;
-                                                    const effectiveValue = control.effectiveValue;
-                                                    const isBool =
-                                                        option.type === 'boolean' ||
-                                                        option.type === 'bool' ||
-                                                        option.type === 'toggle';
-
-                                                    const formatValue = (valueId: AcpConfigOptionValueId): string => {
-                                                        return valueId;
-                                                    };
-
-                                                    if (isBool) {
-                                                        const boolValue = parseAcpBooleanValueId(effectiveValue);
-                                                        return (
-                                                            <Pressable
-                                                                key={option.id}
-                                                                onPress={() => {
-                                                                    hapticsLight();
-                                                                    props.onAcpConfigOptionChange?.(option.id, boolValue ? 'false' : 'true');
-                                                                }}
-                                                                style={({ pressed }) => [
-                                                                    styles.overlayOptionRow,
-                                                                    pressed ? styles.overlayOptionRowPressed : null,
-                                                                ]}
-                                                            >
-                                                                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                                                                    <View style={{ flex: 1, flexShrink: 1 }}>
-                                                                        <Text style={styles.overlayOptionLabel}>
-                                                                            {option.name}
-                                                                        </Text>
-                                                                        <Text style={styles.overlayOptionDescription}>
-                                                                            {control.isPending
-                                                                                ? t('agentInput.acp.pendingValue', {
-                                                                                    current: formatValue(option.currentValue),
-                                                                                    requested: formatValue(control.requestedValue!),
-                                                                                })
-                                                                                : t('agentInput.acp.currentValue', { value: formatValue(option.currentValue) })}
-                                                                        </Text>
-                                                                        {option.description ? (
-                                                                            <Text style={styles.overlayOptionDescription}>
-                                                                                {option.description}
-                                                                            </Text>
-                                                                        ) : null}
-                                                                    </View>
-                                                                        <View style={{ paddingLeft: 12 }}>
-                                                                            <Switch
-                                                                                value={boolValue}
-                                                                                onValueChange={(next) => {
-                                                                                    hapticsLight();
-                                                                                    props.onAcpConfigOptionChange?.(option.id, next ? 'true' : 'false');
-                                                                                }}
-                                                                            />
-                                                                        </View>
-                                                                </View>
-                                                            </Pressable>
-                                                        );
-                                                    }
-
-                                                    const isSelect = option.type === 'select';
-                                                    if (!isSelect || !option.options || option.options.length === 0) {
-                                                        return (
-                                                            <View key={option.id} testID={`agent-input-config-option:${option.id}`} style={styles.overlaySection}>
-                                                                <Text style={styles.overlayOptionLabel}>
-                                                                    {option.name}
-                                                                </Text>
-                                                                <Text testID={`agent-input-config-option-summary:${option.id}`} style={styles.overlayOptionDescription}>
-                                                                    {t('agentInput.acp.currentValue', { value: formatValue(option.currentValue) })}
-                                                                </Text>
-                                                                {option.description ? (
-                                                                    <Text style={styles.overlayOptionDescription}>
-                                                                        {option.description}
-                                                                    </Text>
-                                                                ) : null}
-                                                            </View>
-                                                        );
-                                                    }
-
-                                                    const currentLabel =
-                                                        option.options.find((o) => o.value === option.currentValue)?.name ??
-                                                        formatValue(option.currentValue);
-                                                    const requestedLabel =
-                                                        control.requestedValue !== undefined
-                                                            ? (option.options.find((o) => o.value === control.requestedValue)?.name ??
-                                                                formatValue(control.requestedValue))
-                                                            : null;
-
-                                                    return (
-                                                        <View key={option.id} testID={`agent-input-config-option:${option.id}`} style={styles.overlaySection}>
-                                                            <Text style={styles.overlayOptionLabel}>
-                                                                {option.name}
-                                                            </Text>
-                                                            <Text testID={`agent-input-config-option-summary:${option.id}`} style={styles.overlayOptionDescription}>
-                                                                {control.isPending && requestedLabel
-                                                                    ? t('agentInput.acp.pendingValue', { current: currentLabel, requested: requestedLabel })
-                                                                    : t('agentInput.acp.currentValue', { value: currentLabel })}
-                                                            </Text>
-                                                            {option.description ? (
-                                                                <Text style={styles.overlayOptionDescription}>
-                                                                    {option.description}
-                                                                </Text>
-                                                            ) : null}
-
-                                                            {option.options.map((opt) => {
-                                                                const isSelected = effectiveValue === opt.value;
-                                                                    return (
-                                                                        <Pressable
-                                                                            testID={`agent-input-config-option-option:${option.id}:${String(opt.value)}`}
-                                                                            key={`${option.id}:${String(opt.value)}`}
-                                                                            onPress={() => {
-                                                                                hapticsLight();
-                                                                                props.onAcpConfigOptionChange?.(option.id, opt.value);
-                                                                            }}
-                                                                        style={({ pressed }) => [
-                                                                            styles.overlayOptionRow,
-                                                                            pressed ? styles.overlayOptionRowPressed : null,
-                                                                        ]}
-                                                                    >
-                                                                        <View
-                                                                            style={[
-                                                                                styles.overlayRadioOuter,
-                                                                                isSelected
-                                                                                    ? styles.overlayRadioOuterSelected
-                                                                                    : styles.overlayRadioOuterUnselected,
-                                                                            ]}
-                                                                        >
-                                                                            {isSelected && (
-                                                                                <View style={styles.overlayRadioInner} />
-                                                                            )}
-                                                                        </View>
-                                                                        <View style={{ flexShrink: 1 }}>
-                                                                            <Text
-                                                                                style={[
-                                                                                    styles.overlayOptionLabel,
-                                                                                    isSelected
-                                                                                        ? styles.overlayOptionLabelSelected
-                                                                                        : styles.overlayOptionLabelUnselected,
-                                                                                ]}
-                                                                            >
-                                                                                {opt.name}
-                                                                            </Text>
-                                                                            {opt.description ? (
-                                                                                <Text style={styles.overlayOptionDescription}>
-                                                                                    {opt.description}
-                                                                                </Text>
-                                                                            ) : null}
-                                                                        </View>
-                                                                    </Pressable>
-                                                                );
-                                                            })}
-                                                        </View>
-                                                    );
-                                                })}
-                                            </View>
-                                        </>
-                                    ) : null}
-
-                                        {/* Divider */}
-                                        <View style={styles.overlayDivider} />
-
-                                    <ModelPickerOverlay
-                                        title={t('agentInput.model.title')}
-                                        effectiveLabel={effectiveModelLabel}
-                                        notes={effectiveModelPolicy.notes}
-                                        options={modelOptions.map((option) => ({
-                                            value: option.value,
-                                            label: option.label,
-                                            description: option.description,
-                                        }))}
-                                        selectedValue={effectiveModelPolicy.effectiveModelId}
-                                        emptyText={t('agentInput.model.configureInCli')}
-                                        canEnterCustomModel={canEnterCustomModel}
-                                        customLabel={`${t('profiles.custom')}...`}
-                                        customDescription={t('agentInput.model.customDescription')}
-                                        probe={props.modelOptionsOverrideProbe ?? (sessionModelOptionsProbe ?? undefined)}
-                                        onSelect={(value) => {
-                                            hapticsLight();
-                                            props.onModelModeChange?.(value);
-                                        }}
-                                        onRequestCustomModel={canEnterCustomModel ? async () => {
-                                            hapticsLight();
-                                            const next = await Modal.prompt(
-                                                t('profiles.model'),
-                                                t('agentInput.model.customPromptBody'),
-                                                {
-                                                    placeholder: t('agentInput.model.customPlaceholder'),
-                                                    confirmText: t('common.save'),
-                                                },
-                                            );
-                                            const normalized = typeof next === 'string' ? next.trim() : '';
-                                            if (!normalized) return;
-                                            props.onModelModeChange?.(normalized);
-                                        } : undefined}
-                                    />
-                                </View>
-                            </FloatingOverlay>
-                        )}
-                    </Popover>
-                )}
+                <AgentInputOverlayLayer
+                    suggestions={suggestions}
+                    overlayAnchorRef={overlayAnchorRef}
+                    screenWidth={screenWidth}
+                    autocompleteSelectedIndex={selected}
+                    onAutocompleteSelect={handleSuggestionSelect}
+                    showPermissionPopover={showPermissionPopover && Boolean(props.onPermissionModeChange)}
+                    permissionChipAnchorRef={permissionChipAnchorRef}
+                    onPermissionPopoverRequestClose={closePermissionPopover}
+                    onPermissionSelect={handlePermissionSelect}
+                    agentId={agentId}
+                    permissionModeOptions={permissionModeOptions}
+                    effectivePermissionMode={effectivePermissionPolicy.effectiveMode}
+                    effectivePermissionLabel={effectivePermissionLabel}
+                    effectivePermissionPolicy={effectivePermissionPolicy}
+                    styles={styles}
+                    showActionMenu={showActionMenu}
+                    hasActionMenuPopoverSections={hasActionMenuPopoverSections}
+                    actionMenuAnchorRef={actionMenuAnchorRef}
+                    onActionMenuRequestClose={closeActionMenu}
+                    actionMenuActions={actionMenuActions}
+                    maxWidthCap={layout.maxWidth}
+                    showAgentPicker={showAgentPicker}
+                    hasAgentPickerOptions={hasAgentPickerOptions}
+                    agentPickerAnchor={agentPickerAnchor}
+                    agentChipAnchorRef={agentChipAnchorRef}
+                    agentPickerTitle={props.agentPickerTitle ?? t('newSession.selectAiBackendTitle')}
+                    agentPickerOptions={agentPickerOptions}
+                    effectiveAgentPickerSelectedOptionId={effectiveAgentPickerSelectedOptionId}
+                    onAgentPickerSelect={props.onAgentPickerSelect}
+                    onAgentPickerRequestClose={closeAgentPicker}
+                    agentPickerApplyLabel={props.agentPickerApplyLabel}
+                    showSessionModePicker={showSessionModePicker}
+                    shouldRenderSessionModeChip={shouldRenderSessionModeChip}
+                    sessionModePickerAnchor={sessionModePickerAnchor}
+                    sessionModeChipAnchorRef={sessionModeChipAnchorRef}
+                    sessionModePickerOptions={sessionModePickerOptions}
+                    sessionModeSelectedOptionId={sessionModeChipControl?.selectedId ?? null}
+                    onSessionModeSelect={(selectedId) => {
+                        props.onAcpSessionModeChange?.(selectedId);
+                        closeSessionModePicker();
+                    }}
+                    onSessionModeRequestClose={closeSessionModePicker}
+                    activeExtraCollapsedPopoverChip={activeExtraCollapsedPopoverChip}
+                    activeExtraCollapsedPopoverAnchor={activeExtraCollapsedPopoverAnchor}
+                    extraChipAnchorRefsByKey={extraChipAnchorRefsByKey}
+                    onActiveExtraCollapsedPopoverChipClose={closeActiveExtraCollapsedPopoverChip}
+                    showMachinePopover={showMachinePopover}
+                    machinePopoverAnchor={machinePopoverAnchor}
+                    machineChipAnchorRef={machineChipAnchorRef}
+                    machinePopover={props.machinePopover}
+                    onMachinePopoverRequestClose={closeMachinePopover}
+                    showProfilePopover={showProfilePopover}
+                    profilePopoverAnchor={profilePopoverAnchor}
+                    profileChipAnchorRef={profileChipAnchorRef}
+                    profilePopover={props.profilePopover}
+                    onProfilePopoverRequestClose={closeProfilePopover}
+                    showPathPopover={showPathPopover}
+                    pathPopoverAnchor={pathPopoverAnchor}
+                    pathChipAnchorRef={pathChipAnchorRef}
+                    pathPopover={props.pathPopover}
+                    onPathPopoverRequestClose={closePathPopover}
+                    showResumePopover={showResumePopover}
+                    resumePopoverAnchor={resumePopoverAnchor}
+                    resumeChipAnchorRef={resumeChipAnchorRef}
+                    resumePopover={props.resumePopover}
+                    onResumePopoverRequestClose={closeResumePopover}
+                    showEnvVarsPopover={showEnvVarsPopover}
+                    envVarsPopoverAnchor={envVarsPopoverAnchor}
+                    envVarsChipAnchorRef={envVarsChipAnchorRef}
+                    envVarsPopover={props.envVarsPopover}
+                    onEnvVarsPopoverRequestClose={closeEnvVarsPopover}
+                />
 
                 {/* Connection status, context warning, and permission mode */}
                 {(props.connectionStatus || contextWarning) && (
@@ -2017,188 +2012,32 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         </View>
                     ) : null}
                     {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
-                        <View style={styles.permissionRequestsContainer}>
-                            <View style={{ position: 'relative' }}>
-                                <ScrollView
-                                    testID="agentInput.permissionRequests.scroll"
-                                    style={{ maxHeight: permissionRequestsMaxHeightPx, height: permissionRequestsClampedHeightPx }}
-                                    contentContainerStyle={{ paddingBottom: 2 }}
-                                    nestedScrollEnabled={true}
-                                    scrollEventThrottle={16}
-                                    showsVerticalScrollIndicator={false}
-                                    onContentSizeChange={(_w, h) => {
-                                        setPermissionRequestsContentHeightPx(h);
-                                        permissionRequestsFades.onContentSizeChange?.(_w, h);
-                                    }}
-                                    onLayout={(e) => {
-                                        permissionRequestsFades.onViewportLayout?.(e);
-                                    }}
-                                    onScroll={(e) => {
-                                        permissionRequestsFades.onScroll?.(e);
-                                    }}
-                                >
-                                    <View style={{ gap: 8, paddingTop: 2 }}>
-                                        {composerPermissionRequests.map((req) => {
-                                            const location =
-                                                props.sessionId
-                                                    ? (permissionLocationsById.get(req.id) ?? null)
-                                                    : null;
-                                            return (
-                                                <View key={req.id} style={styles.permissionRequestCard}>
-                                                    <PermissionPromptCard
-                                                        request={req}
-                                                        location={location}
-                                                        sessionId={props.sessionId!}
-                                                        metadata={props.metadata || null}
-                                                        canApprovePermissions={canApprovePermissions}
-                                                        disabledReason={props.permissionDisabledReason}
-                                                    />
-                                                </View>
-                                            );
-                                        })}
-                                        {composerUserActionRequests.map((req) => {
-                                            const location =
-                                                props.sessionId
-                                                    ? (permissionLocationsById.get(req.id) ?? null)
-                                                    : null;
-                                            return (
-                                                <View key={req.id} style={styles.permissionRequestCard}>
-                                                    <UserActionPromptCard
-                                                        request={req}
-                                                        location={location}
-                                                        sessionId={props.sessionId!}
-                                                        metadata={props.metadata || null}
-                                                        canApprovePermissions={canApprovePermissions}
-                                                        disabledReason={props.permissionDisabledReason}
-                                                    />
-                                                </View>
-                                            );
-                                        })}
-                                    </View>
-                                </ScrollView>
-
-                                <ScrollEdgeFades
-                                    color={theme.colors.input.background}
-                                    edges={{
-                                        top: permissionRequestsFades.visibility?.top === true,
-                                        bottom: permissionRequestsFades.visibility?.bottom === true,
-                                    }}
-                                />
-                                <ScrollEdgeIndicators
-                                    color={theme.colors.textSecondary}
-                                    edges={{
-                                        top: permissionRequestsFades.visibility?.top === true,
-                                        bottom: permissionRequestsFades.visibility?.bottom === true,
-                                    }}
-                                />
-                            </View>
-                        </View>
+                        <AgentInputPermissionRequests
+                            sessionId={props.sessionId}
+                            permissionRequests={composerPermissionRequests}
+                            userActionRequests={composerUserActionRequests}
+                            permissionLocationsById={permissionLocationsById}
+                            metadata={props.metadata || null}
+                            canApprovePermissions={canApprovePermissions}
+                            disabledReason={props.permissionDisabledReason}
+                            maxHeightPx={permissionRequestsMaxHeightPx}
+                            clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
+                            onContentSizeChange={(_w, h) => {
+                                setPermissionRequestsContentHeightPx(h);
+                                permissionRequestsFades.onContentSizeChange?.(_w, h);
+                            }}
+                            onLayout={(e) => {
+                                permissionRequestsFades.onViewportLayout?.(e);
+                            }}
+                            onScroll={(e) => {
+                                permissionRequestsFades.onScroll?.(e);
+                            }}
+                            fadeVisibility={permissionRequestsFades.visibility}
+                        />
                     ) : null}
 
                     {props.attachments && props.attachments.length > 0 ? (
-                        <View style={styles.attachmentsRow}>
-                            <ScrollView
-                                horizontal
-                                showsHorizontalScrollIndicator={false}
-                                contentContainerStyle={{ gap: 8 }}
-                            >
-                                {props.attachments.map((att) => {
-                                    const removingDisabled = att.status === 'uploading';
-                                    const percent = att.status === 'uploading' ? resolveUploadProgressPercent(att.uploadProgress) : null;
-                                    const imagePreviewUri =
-                                        att.preview?.kind === 'image' && typeof att.preview.uri === 'string' && att.preview.uri.trim().length > 0
-                                            ? att.preview.uri
-                                            : null;
-                                    const imagePreviewIndex = attachmentImagePreviewItems.findIndex((item) => item.uri === imagePreviewUri && item.title === att.label);
-
-                                    if (imagePreviewUri) {
-                                        return (
-                                            <View key={att.key} style={styles.attachmentImageTile}>
-                                                <Pressable
-                                                    accessibilityLabel={t('common.open')}
-                                                    accessibilityRole="imagebutton"
-                                                    onPress={() => {
-                                                        Modal.show({
-                                                            component: AttachmentImagePreviewModal,
-                                                            props: {
-                                                                images: attachmentImagePreviewItems,
-                                                                initialIndex: imagePreviewIndex >= 0 ? imagePreviewIndex : 0,
-                                                            },
-                                                        });
-                                                    }}
-                                                    style={styles.attachmentImageSurface}
-                                                    testID={`agent-input-attachment-image:${att.key}`}
-                                                >
-                                                    <Image
-                                                        source={{ uri: imagePreviewUri }}
-                                                        style={[{ width: '100%', height: '100%' }, styles.attachmentImage]}
-                                                        contentFit="cover"
-                                                    />
-                                                    {att.status === 'uploading' && percent != null ? (
-                                                        <View style={styles.attachmentImageOverlay}>
-                                                            <Text style={styles.attachmentImageOverlayText}>{percent}%</Text>
-                                                        </View>
-                                                    ) : null}
-                                                    {att.status === 'error' ? (
-                                                        <View style={[styles.attachmentImageOverlay, styles.attachmentImageErrorOverlay]}>
-                                                            {renderIoniconNode('alert-circle', 20, theme.colors.overlay.text)}
-                                                        </View>
-                                                    ) : null}
-                                                </Pressable>
-                                                {att.onRemove ? (
-                                                    <Pressable
-                                                        testID={`agent-input-attachment-remove:${att.key}`}
-                                                        onPress={() => {
-                                                            if (removingDisabled) return;
-                                                            hapticsLight();
-                                                            att.onRemove?.();
-                                                        }}
-                                                        disabled={removingDisabled}
-                                                        hitSlop={8}
-                                                        style={styles.attachmentImageRemoveButton}
-                                                    >
-                                                        {renderIoniconNode('close-circle', 18, theme.colors.textSecondary)}
-                                                    </Pressable>
-                                                ) : null}
-                                            </View>
-                                        );
-                                    }
-
-                                    return (
-                                        <View key={att.key} style={styles.attachmentChip}>
-                                            {renderIoniconNode('document-outline', 14, theme.colors.textSecondary)}
-                                            <Text
-                                                numberOfLines={1}
-                                                style={styles.attachmentChipText}
-                                            >
-                                                {att.label}
-                                            </Text>
-                                            {att.status === 'uploading' ? (
-                                                percent != null ? (
-                                                    <Text style={styles.attachmentChipMeta}>{percent}%</Text>
-                                                ) : (
-                                                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                                                )
-                                            ) : null}
-                                            {att.onRemove ? (
-                                                <Pressable
-                                                    testID={`agent-input-attachment-remove:${att.key}`}
-                                                    onPress={() => {
-                                                        if (removingDisabled) return;
-                                                        hapticsLight();
-                                                        att.onRemove?.();
-                                                    }}
-                                                    disabled={removingDisabled}
-                                                    hitSlop={8}
-                                                >
-                                                    {renderIoniconNode('close-circle', 16, theme.colors.textSecondary)}
-                                                </Pressable>
-                                            ) : null}
-                                        </View>
-                                    );
-                                })}
-                            </ScrollView>
-                        </View>
+                        <AgentInputAttachmentsRow attachments={props.attachments} />
                     ) : null}
                     {/* Input field */}
                     <View
@@ -2230,503 +2069,127 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             // Row 1: Settings, Profile (FIRST), Agent, Abort, Source control status
                             <View
                                 key="row1"
-                                style={[styles.actionButtonsRow, showPathAndResumeRow ? styles.actionButtonsRowWithBelow : null]}
+                                style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
                             >
-                                {(() => {
-                                    const chipStyle = (pressed: boolean) => ([
-                                        styles.actionChip,
-                                        !showChipLabels ? styles.actionChipIconOnly : null,
-                                        pressed ? styles.actionChipPressed : null,
-                                    ]);
-                                    const chipStyleAutoHide = (pressed: boolean) => ([
-                                        styles.actionChip,
-                                        !showAutoHideChipLabels ? styles.actionChipIconOnly : null,
-                                        pressed ? styles.actionChipPressed : null,
-                                    ]);
-                                    const extraChips = (props.extraActionChips ?? []).map((chip) => {
-                                        const isAutoHide = chip.labelPolicy === 'auto-hide';
-                                        return (
-                                            <React.Fragment key={chip.key}>
-                                                {chip.render({
-                                                    chipStyle: isAutoHide ? chipStyleAutoHide : chipStyle,
-                                                    showLabel: isAutoHide ? showAutoHideChipLabels : showChipLabels,
-                                                    iconColor: theme.colors.button.secondary.tint,
-                                                    textStyle: styles.actionChipText,
-                                                    countTextStyle: styles.actionChipCountText,
-                                                    popoverAnchorRef: overlayAnchorRef,
-                                                })}
-                                            </React.Fragment>
-                                        );
-                                    });
-
-                                    const permissionOrControlsChip = (showPermissionChip || actionBarIsCollapsed) ? (
-                                        <Pressable
-                                            ref={settingsAnchorRef}
-                                            key="permission"
-                                            testID="agent-input-settings-button"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                if (!actionBarIsCollapsed && props.onPermissionClick) {
-                                                    props.onPermissionClick();
+                                {actionBarShouldScroll ? (
+                                    <View style={styles.actionButtonsLeftScroll}>
+                                        <ScrollViewWithWheel
+                                            ref={actionBarScrollRef}
+                                            horizontal
+                                            showsHorizontalScrollIndicator={false}
+                                            scrollEnabled={Platform.OS === 'web' ? true : canActionBarScroll}
+                                            alwaysBounceHorizontal={false}
+                                            directionalLockEnabled
+                                            keyboardShouldPersistTaps="handled"
+                                            onWheel={(e: any) => {
+                                                if (Platform.OS !== 'web') return;
+                                                const node = getActionBarScrollNode() as any;
+                                                if (!node) return;
+                                                const ne = e?.nativeEvent ?? e;
+                                                const dx = typeof ne?.deltaX === 'number' ? ne.deltaX : 0;
+                                                const dy = typeof ne?.deltaY === 'number' ? ne.deltaY : 0;
+                                                const delta = Math.abs(dy) >= Math.abs(dx) ? dy : dx;
+                                                if (!delta) return;
+                                                const before = node.scrollLeft ?? 0;
+                                                node.scrollLeft = before + delta;
+                                                reportActionBarWebScroll(node);
+                                            }}
+                                            onLayout={actionBarFades.onViewportLayout}
+                                            onContentSizeChange={(width: number, height: number) => {
+                                                actionBarFades.onContentSizeChange(
+                                                    Math.max(0, width - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+                                                    height
+                                                );
+                                            }}
+                                            onScroll={(e: any) => {
+                                                if (Platform.OS === 'web') {
+                                                    reportActionBarWebScroll();
                                                     return;
                                                 }
-                                                handleSettingsPress();
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            {renderOcticonNode('gear', 16, theme.colors.button.secondary.tint)}
-                                            {showChipLabels && permissionChipLabel ? (
-                                                <Text style={styles.actionChipText}>
-                                                    {permissionChipLabel}
-                                                </Text>
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
-
-                                    const modeChip = (!actionBarIsCollapsed && props.onAcpSessionModeChange) ? (() => {
-                                        const control = sessionModePickerControl
-                                            ? {
-                                                options: sessionModePickerControl.options,
-                                                selectedId: sessionModePickerControl.requestedModeId ?? 'default',
-                                                label: sessionModePickerControl.effectiveModeName,
-                                                isPending: sessionModePickerControl.isPending,
-                                            }
-                                            : preflightAcpSessionModeOptions
-                                                ? {
-                                                    options: preflightAcpSessionModeOptions,
-                                                    selectedId: preflightAcpSessionModeEffective.id,
-                                                    label: preflightAcpSessionModeEffective.name,
-                                                    isPending: false,
+                                                const nativeEvent = e?.nativeEvent;
+                                                const contentSizeWidth = nativeEvent?.contentSize?.width;
+                                                if (typeof contentSizeWidth !== 'number') {
+                                                    actionBarFades.onScroll(e);
+                                                    return;
                                                 }
-                                                : null;
-                                        if (!control) return null;
-
-                                        const optionIds = [
-                                            'default',
-                                            ...control.options.map((o) => o.id).filter((id) => id && id !== 'default'),
-                                        ];
-                                        const uniqueIds = Array.from(new Set(optionIds));
-                                        const shouldRender = shouldRenderChipForOptions({
-                                            optionCount: uniqueIds.length,
-                                            showWhenNoOptions: false,
-                                            showWhenSingleOption: false,
-                                        });
-                                        if (!shouldRender) return null;
-
-                                        const interaction = resolveChipOptionInteraction({
-                                            currentOptionId: control.selectedId,
-                                            selectableOptionIds: uniqueIds,
-                                            cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
-                                        });
-                                        const optionsById = new Map(control.options.map((option) => [option.id, option]));
-
-                                        return (
-                                            <Pressable
-                                                testID="agent-input-session-mode-chip"
-                                                key="mode"
-                                                onPress={() => {
-                                                    hapticsLight();
-                                                    if (interaction.kind === 'cycle') {
-                                                        props.onAcpSessionModeChange?.(interaction.nextOptionId);
-                                                        return;
-                                                    }
-                                                    if (interaction.kind === 'picker') {
-                                                        Modal.show({
-                                                            component: AgentInputChipPickerModal,
-                                                            props: {
-                                                                title: t('agentInput.mode.sectionTitle'),
-                                                                options: interaction.selectableOptionIds.map((id) => ({
-                                                                    id,
-                                                                    label: optionsById.get(id)?.name
-                                                                        ?? (id === 'default' ? t('common.default') : id),
-                                                                    subtitle: optionsById.get(id)?.description,
-                                                                })),
-                                                                selectedOptionId: control.selectedId,
-                                                                onSelect: (selectedId) => props.onAcpSessionModeChange?.(selectedId),
-                                                            },
-                                                        });
-                                                    }
-                                                }}
-                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                                style={(p) => chipStyle(p.pressed)}
-                                                accessibilityRole="button"
-                                                accessibilityLabel={t('agentInput.mode.badgeA11y', { name: control.label })}
-                                            >
-                                                {renderIoniconNode('list-outline', 18, theme.colors.button.secondary.tint)}
-                                                {showChipLabels ? (
-                                                    <Text style={styles.actionChipText}>
-                                                        {control.isPending
-                                                            ? t('agentInput.mode.badgePending', { name: control.label })
-                                                            : t('agentInput.mode.badge', { name: control.label })}
-                                                    </Text>
-                                                ) : null}
-                                            </Pressable>
-                                        );
-                                    })() : null;
-
-                                    const profileChip = props.onProfileClick ? (
-                                        <Pressable
-                                            key="profile"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                props.onProfileClick?.();
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            {renderIoniconNode(profileIcon as any, 18, theme.colors.button.secondary.tint)}
-                                            {showChipLabels ? (
-                                                <Text style={styles.actionChipText}>
-                                                    {profileLabel ?? t('profiles.noProfile')}
-                                                </Text>
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
-
-                                    const envVarsChip = props.onEnvVarsClick ? (
-                                        <Pressable
-                                            key="envVars"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                props.onEnvVarsClick?.();
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            {renderIoniconNode('list-outline', 18, theme.colors.button.secondary.tint)}
-                                            {showChipLabels ? (
-                                                <AgentInputChipLabel
-                                                    label={t('agentInput.envVars.title')}
-                                                    count={props.envVarsCount}
-                                                    textStyle={styles.actionChipText}
-                                                    countTextStyle={styles.actionChipCountText}
-                                                />
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
-
-                                    const agentChip = (props.agentType && props.onAgentClick) ? (
-                                        <Pressable
-                                            key="agent"
-                                            testID="agent-input-agent-chip"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                props.onAgentClick?.();
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            {renderOcticonNode('cpu', 16, theme.colors.button.secondary.tint)}
-                                            {showChipLabels ? (
-                                                <Text style={styles.actionChipText}>
-                                                    {props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey)}
-                                                </Text>
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
-
-                                        const machineChip = props.onMachineClick ? (
-                                            <Pressable
-                                                key="machine"
-                                                testID="agent-input-machine-chip"
-                                                onPress={() => {
-                                                    hapticsLight();
-                                                    props.onMachineClick?.();
-                                                }}
-                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            {renderIoniconNode('desktop-outline', 18, theme.colors.button.secondary.tint)}
-                                            {showChipLabels ? (
-                                                <Text style={styles.actionChipText}>
-                                                    {props.machineName === null
-                                                        ? t('agentInput.noMachinesAvailable')
-                                                        : (typeof props.machineName === 'string'
-                                                            ? truncateWithEllipsis(props.machineName, 12)
-                                                            : t('newSession.selectMachineTitle'))}
-                                                </Text>
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
-
-                                        const pathChip = props.onPathClick ? (
-                                            <Pressable
-                                                key="path"
-                                                testID="agent-input-path-chip"
-                                                onPress={() => {
-                                                    hapticsLight();
-                                                    props.onPathClick?.();
-                                                }}
-                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            {renderIoniconNode('folder-outline', 18, theme.colors.button.secondary.tint)}
-                                            {showChipLabels ? (
-                                                <Text style={styles.actionChipText}>
-                                                    {typeof props.currentPath === 'string' && props.currentPath.length > 0
-                                                        ? props.currentPath
-                                                        : t('newSession.selectPathTitle')}
-                                                </Text>
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
-
-                                        const resumeChip = props.onResumeClick ? (
-                                            <ResumeChip
-                                                key="resume"
-                                                onPress={() => {
-                                                    hapticsLight();
-                                                    inputRef.current?.blur();
-                                                    props.onResumeClick?.();
-                                                }}
-                                                showLabel={showChipLabels}
-                                                resumeSessionId={props.resumeSessionId}
-                                                isChecking={props.resumeIsChecking === true}
-                                                labelTitle={t('newSession.resume.title')}
-                                            labelOptional={t('newSession.resume.optional')}
-                                            iconColor={theme.colors.button.secondary.tint}
-                                            pressableStyle={chipStyle}
-                                            textStyle={styles.actionChipText}
-                                        />
-                                    ) : null;
-
-                                    const abortButton = props.onAbort && props.showAbortButton && !actionBarIsCollapsed ? (
-                                        <Shaker key="abort" ref={shakerRef}>
-                                            <Pressable
-                                                testID="agent-input-abort"
-                                                accessibilityRole="button"
-                                                accessibilityLabel={t('runs.stop.stopRunA11y')}
-                                                style={(p) => [
-                                                    styles.actionButton,
-                                                    p.pressed ? styles.actionButtonPressed : null,
-                                                ]}
-                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                                onPress={handleAbortPress}
-                                                disabled={isAborting}
-                                            >
-                                                {isAborting ? (
-                                                    <ActivityIndicator
-                                                        size="small"
-                                                        color={theme.colors.button.secondary.tint}
-                                                    />
-                                                ) : (
-                                                    renderOcticonNode('stop', 16, theme.colors.button.secondary.tint)
-                                                )}
-                                            </Pressable>
-                                        </Shaker>
-                                    ) : null;
-
-                                    const sourceControlStatusChip = !actionBarIsCollapsed ? (
-                                        <View key="git" style={styles.actionItemWrapper}>
-                                            <SourceControlStatusButton
-                                                sessionId={props.sessionId}
-                                                onPress={props.onFileViewerPress}
-                                                compact={actionBarShouldScroll || !showChipLabels}
-                                            />
-                                        </View>
-                                    ) : null;
-
-                                    const chips = actionBarIsCollapsed
-                                        ? [permissionOrControlsChip].filter(Boolean)
-                                        : [
-                                            permissionOrControlsChip,
-                                            agentChip,
-                                            modeChip,
-                                            profileChip,
-                                            envVarsChip,
-                                            ...extraChips,
-                                            machineChip,
-                                            ...(actionBarShouldScroll ? [pathChip, resumeChip] : []),
-                                            abortButton,
-                                            sourceControlStatusChip,
-                                        ].filter(Boolean);
-
-                                    // IMPORTANT: We must always render the ScrollView in "scroll layout" mode,
-                                    // otherwise we never measure content/viewport widths and can't know whether
-                                    // scrolling is needed (deadlock).
-                                    if (actionBarShouldScroll) {
-                                        const scrollEnabled = Platform.OS === 'web' ? true : canActionBarScroll;
-
-                                        const handleWheel = (e: any) => {
-                                            if (Platform.OS !== 'web') return;
-                                            const node = getActionBarScrollNode() as any;
-                                            if (!node) return;
-                                            const ne = e?.nativeEvent ?? e;
-                                            const dx = typeof ne?.deltaX === 'number' ? ne.deltaX : 0;
-                                            const dy = typeof ne?.deltaY === 'number' ? ne.deltaY : 0;
-                                            // Map vertical wheel to horizontal scrolling (mouse-friendly).
-                                            const delta = Math.abs(dy) >= Math.abs(dx) ? dy : dx;
-                                            if (!delta) return;
-                                            const before = node.scrollLeft ?? 0;
-                                            node.scrollLeft = before + delta;
-                                            reportActionBarWebScroll(node);
-                                        };
-
-                                        const handleScrollContentSizeChange = (width: number, height: number) => {
-                                            actionBarFades.onContentSizeChange(
-                                                Math.max(0, width - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
-                                                height
-                                            );
-                                        };
-
-                                        const handleScroll = (e: any) => {
-                                            if (Platform.OS === 'web') {
-                                                reportActionBarWebScroll();
-                                                return;
-                                            }
-                                            const nativeEvent = e?.nativeEvent;
-                                            const contentSizeWidth = nativeEvent?.contentSize?.width;
-                                            if (typeof contentSizeWidth !== 'number') {
-                                                actionBarFades.onScroll(e);
-                                                return;
-                                            }
-                                            actionBarFades.onScroll({
-                                                ...e,
-                                                nativeEvent: {
-                                                    ...nativeEvent,
-                                                    contentSize: {
-                                                        ...nativeEvent.contentSize,
-                                                        width: Math.max(0, contentSizeWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+                                                actionBarFades.onScroll({
+                                                    ...e,
+                                                    nativeEvent: {
+                                                        ...nativeEvent,
+                                                        contentSize: {
+                                                            ...nativeEvent.contentSize,
+                                                            width: Math.max(0, contentSizeWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+                                                        },
                                                     },
-                                                },
-                                            });
-                                        };
-
-                                        return (
-                                            <View style={styles.actionButtonsLeftScroll}>
-                                                <ScrollViewWithWheel
-                                                    ref={actionBarScrollRef}
-                                                    horizontal
-                                                    showsHorizontalScrollIndicator={false}
-                                                    scrollEnabled={scrollEnabled}
-                                                    alwaysBounceHorizontal={false}
-                                                    directionalLockEnabled
-                                                    keyboardShouldPersistTaps="handled"
-                                                    onWheel={handleWheel}
-                                                    onLayout={actionBarFades.onViewportLayout}
-                                                    onContentSizeChange={handleScrollContentSizeChange}
-                                                    onScroll={handleScroll}
-                                                    scrollEventThrottle={16}
-                                                >
-                                                    <View style={styles.actionButtonsLeftScrollContent as any}>
-                                                        {chips as any}
-                                                    </View>
-                                                </ScrollViewWithWheel>
-                                                <ScrollEdgeFades
-                                                    color={actionBarFadeColor}
-                                                    size={24}
-                                                    edges={{ left: showActionBarFadeLeft, right: showActionBarFadeRight }}
-                                                    leftStyle={styles.actionButtonsFadeLeft as any}
-                                                    rightStyle={styles.actionButtonsFadeRight as any}
-                                                />
-                                                <ScrollEdgeIndicators
-                                                    edges={{ left: showActionBarFadeLeft, right: showActionBarFadeRight }}
-                                                    color={theme.colors.button.secondary.tint}
-                                                    size={14}
-                                                    opacity={0.28}
-                                                    // Keep indicators within the same fade gutters.
-                                                    leftStyle={styles.actionButtonsFadeLeft as any}
-                                                    rightStyle={styles.actionButtonsFadeRight as any}
-                                                />
+                                                });
+                                            }}
+                                            scrollEventThrottle={16}
+                                        >
+                                            <View style={styles.actionButtonsLeftScrollContent as any}>
+                                                {renderedActionControlNodes as any}
                                             </View>
-                                        );
-                                    }
-
-                                    return (
-                                        <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
-                                            {chips as any}
-                                        </View>
-                                    );
-                                })()}
+                                        </ScrollViewWithWheel>
+                                        <ScrollEdgeFades
+                                            color={actionBarFadeColor}
+                                            size={24}
+                                            edges={{ left: showActionBarFadeLeft, right: showActionBarFadeRight }}
+                                            leftStyle={styles.actionButtonsFadeLeft as any}
+                                            rightStyle={styles.actionButtonsFadeRight as any}
+                                        />
+                                        <ScrollEdgeIndicators
+                                            edges={{ left: showActionBarFadeLeft, right: showActionBarFadeRight }}
+                                            color={theme.colors.button.secondary.tint}
+                                            size={14}
+                                            opacity={0.28}
+                                            leftStyle={styles.actionButtonsFadeLeft as any}
+                                            rightStyle={styles.actionButtonsFadeRight as any}
+                                        />
+                                    </View>
+                                ) : (
+                                    <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
+                                        {renderedActionControlNodes as any}
+                                    </View>
+                                )}
 
                                 {/* Send/Voice button - aligned with first row */}
-                                <PrimaryCircleIconButton
+                                <AgentInputSubmitButton
                                     testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
-                                    active={hasSendableContent || props.isSending || Boolean(micPressHandler)}
-                                    loading={props.isSending}
-                                    disabled={props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler)}
-                                    accessibilityLabel={
-                                        hasSendableContent
-                                            ? (props.sessionId ? t('common.send') : t('newSession.title'))
-                                            : (micPressHandler ? t('voiceAssistant.label') : (props.sessionId ? t('common.send') : t('newSession.title')))
-                                    }
-                                    accessibilityHint={
-                                        (!hasSendableContent && !micPressHandler)
-                                            ? t('session.inputPlaceholder')
-                                            : undefined
-                                    }
-                                    accessibilityState={{
-                                        disabled: Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler)),
-                                    }}
-                                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                    onPress={() => {
-                                        hapticsLight();
-                                        if (hasSendableContent) {
-                                            handleSend();
-                                        } else {
-                                            micPressHandler?.();
-                                        }
-                                    }}
-                                    style={{ marginLeft: 8, marginRight: 8 }}
-                                >
-                                    {hasSendableContent ? (
-                                        renderOcticonNode(
-                                            'arrow-up',
-                                            16,
-                                            theme.colors.button.primary.tint,
-                                            { marginTop: Platform.OS === 'web' ? 2 : 0 },
-                                        )
-                                    ) : micPressHandler ? (
-                                        micActive ? (
-                                            renderIoniconNode('stop-circle', 22, theme.colors.button.primary.tint)
-                                        ) : (
-                                            <Image
-                                                source={require('@/assets/images/icon-voice-white.png')}
-                                                style={{ width: 24, height: 24 }}
-                                                tintColor={theme.colors.button.primary.tint}
-                                            />
-                                        )
-                                    ) : (
-                                        renderOcticonNode(
-                                            'arrow-up',
-                                            16,
-                                            theme.colors.button.primary.tint,
-                                            { marginTop: Platform.OS === 'web' ? 2 : 0 },
-                                        )
-                                    )}
-                                </PrimaryCircleIconButton>
+                                    sessionId={props.sessionId}
+                                    submitAccessibilityLabel={props.submitAccessibilityLabel}
+                                    disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler))}
+                                    isSending={props.isSending}
+                                    hasSendableContent={hasSendableContent}
+                                    micPressHandler={micPressHandler}
+                                    micActive={micActive}
+                                    onSend={handleSend}
+                                />
                                     </View>,
 
                                     // Row 2: Path + Resume selectors (separate line to match pre-PR272 layout)
                                     // - wrap: shown below
                                     // - scroll: folds into row 1
-                                    // - collapsed: moved into settings popover
-                                    (showPathAndResumeRow) ? (
+                                    // - collapsed: moved into action menu
+                                    (showSecondaryControlsRow) ? (
                                         <PathAndResumeRow
                                             key="row2"
                                             styles={{
                                                 pathRow: styles.pathRow,
                                                 actionButtonsLeft: styles.actionButtonsLeft,
-                                            actionChip: styles.actionChip,
-                                            actionChipIconOnly: styles.actionChipIconOnly,
-                                            actionChipPressed: styles.actionChipPressed,
-                                            actionChipText: styles.actionChipText,
-                                        }}
-                                        showChipLabels={showChipLabels}
-                                        iconColor={theme.colors.button.secondary.tint}
-                                        currentPath={props.currentPath}
-                                        emptyPathLabel={t('newSession.selectPathTitle')}
-                                        onPathClick={props.onPathClick ? () => {
-                                            hapticsLight();
-                                            props.onPathClick?.();
-                                        } : undefined}
+                                                actionChip: styles.actionChip,
+                                                actionChipIconOnly: styles.actionChipIconOnly,
+                                                actionChipPressed: styles.actionChipPressed,
+                                                actionChipText: styles.actionChipText,
+                                            }}
+                                            leadingControls={secondaryLeadingControlsForWrap}
+                                            showChipLabels={showChipLabels}
+                                            iconColor={theme.colors.button.secondary.tint}
+                                            currentPath={props.currentPath}
+                                            pathChipAnchorRef={pathChipAnchorRef}
+                                            emptyPathLabel={t('newSession.selectPathTitle')}
+                                            onPathClick={handlePathPress}
                                             resumeSessionId={props.resumeSessionId}
-                                            onResumeClick={props.onResumeClick ? () => {
-                                                hapticsLight();
-                                                inputRef.current?.blur();
-                                                props.onResumeClick?.();
-                                            } : undefined}
+                                            resumeChipAnchorRef={resumeChipAnchorRef}
+                                            onResumeClick={handleResumePress}
                                             resumeLabelTitle={t('newSession.resume.title')}
                                             resumeLabelOptional={t('newSession.resume.optional')}
                                         />
@@ -2738,50 +2201,3 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         </View>
     );
 }));
-
-// Source Control Status Button Component
-function SourceControlStatusButton({ sessionId, onPress, compact }: { sessionId?: string, onPress?: () => void, compact?: boolean }) {
-    const hasMeaningfulScmStatus = useHasMeaningfulScmStatus(sessionId || '');
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-
-    if (!sessionId || !onPress) {
-        return null;
-    }
-
-    return (
-        <Pressable
-            testID="session-open-source-control"
-            accessibilityRole="button"
-            accessibilityLabel={t('settings.sourceControl')}
-            style={(p) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                borderRadius: Platform.select({ default: 16, android: 20 }),
-                paddingHorizontal: 8,
-                paddingVertical: 6,
-                height: 32,
-                opacity: p.pressed ? 0.7 : 1,
-                flex: compact ? 0 : 1,
-                overflow: 'hidden',
-            })}
-            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            onPress={() => {
-                hapticsLight();
-                onPress?.();
-            }}
-        >
-            {hasMeaningfulScmStatus ? (
-                <SourceControlStatusBadge sessionId={sessionId} />
-            ) : (
-                normalizeNodeForView(
-                    <Octicons
-                        name="git-branch"
-                        size={16}
-                        color={theme.colors.button.secondary.tint}
-                    />,
-                )
-            )}
-        </Pressable>
-    );
-}

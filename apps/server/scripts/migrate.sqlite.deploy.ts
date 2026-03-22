@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { applyLightDefaultEnv } from "@/flavors/light/env";
+import { applyLightDefaultEnv } from "../sources/flavors/light/env";
 import { requireLightDataDir } from "./migrate.light.deployPlan";
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {

@@ -4,33 +4,30 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (input: any) => {
-      const theme = {
-        colors: {
-          surfaceHighest: '#fff',
-          divider: '#ddd',
-          text: '#111',
-          textSecondary: '#555',
-        },
-      };
-      return typeof input === 'function' ? input(theme, {}) : input;
-    },
-  },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
     if (key === 'delegation.output.title') return 'Delegation output';
     if (key === 'delegation.output.deliverablesTitle') return 'Deliverables';
     return String(key);
   },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
   Text: (props: any) => React.createElement('Text', props, props.children),

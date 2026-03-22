@@ -21,7 +21,7 @@ function createHarness(initial: any) {
 }
 
 describe('messages domain: sidechains (orphan fallback)', () => {
-  it('shows sidechain children in the transcript until the owning tool-call arrives', () => {
+  it('keeps orphan sidechain children out of the root transcript until the owning tool-call arrives', () => {
     const { get, domain } = createHarness({
       sessions: {
         s1: {
@@ -81,7 +81,7 @@ describe('messages domain: sidechains (orphan fallback)', () => {
       .map((id) => get().sessionMessages.s1.messagesById[id])
       .filter((m: any) => m?.kind === 'tool-call')
       .map((m: any) => m.tool?.name);
-    expect(rootToolNames1).toContain('Read');
+    expect(rootToolNames1).toEqual([]);
 
     // Now the parent tool-call arrives.
     domain.applyMessages('s1', [
@@ -124,4 +124,3 @@ describe('messages domain: sidechains (orphan fallback)', () => {
     expect(taskMessage.children.some((c: any) => c.kind === 'tool-call' && c.tool?.name === 'Read')).toBe(true);
   });
 });
-

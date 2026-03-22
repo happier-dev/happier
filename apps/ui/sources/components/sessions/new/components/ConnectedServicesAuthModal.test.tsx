@@ -8,6 +8,8 @@ import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { ConnectedServicesAuthModal } from './ConnectedServicesAuthModal';
+import { renderScreen } from '@/dev/testkit';
+
 
 (
   globalThis as typeof globalThis & {
@@ -74,13 +76,10 @@ async function flushAsyncEffects(turns: number = 3) {
 }
 
 describe('ConnectedServicesAuthModal', () => {
-  it('renders connected profiles immediately when switching a service to connected mode', () => {
+  it('renders connected profiles immediately when switching a service to connected mode', async () => {
     const setBindingForService = vi.fn();
 
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ConnectedServicesAuthModal
+    const screen = await renderScreen(<ConnectedServicesAuthModal
           onClose={() => {}}
           supportedServiceIds={['anthropic']}
           profileOptionsByServiceId={{
@@ -89,29 +88,24 @@ describe('ConnectedServicesAuthModal', () => {
           bindingsByServiceId={{ anthropic: { source: 'native' } }}
           setBindingForService={setBindingForService}
           onOpenSettings={() => {}}
-        />,
-      );
-    });
+        />);
 
-    expect(tree.root.findAll((n) => n.props?.title === 'work')).toHaveLength(0);
+    expect(screen.findAllByProps({ title: 'work' })).toHaveLength(0);
 
-    const connectItem = tree.root.find((n) => n.props?.title === 'Use connected services');
+    const connectItem = screen.findByProps({ title: 'Use connected services' });
 
     act(() => {
       connectItem.props.onPress?.();
     });
 
     expect(setBindingForService).toHaveBeenCalledWith('anthropic', expect.objectContaining({ source: 'connected' }));
-    expect(tree.root.findAll((n) => n.props?.title === 'work')).toHaveLength(1);
+    expect(screen.findAllByProps({ title: 'work' })).toHaveLength(1);
   });
 
-  it('selects the settings default profile when switching a service to connected mode', () => {
+  it('selects the settings default profile when switching a service to connected mode', async () => {
     const setBindingForService = vi.fn();
 
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ConnectedServicesAuthModal
+    const screen = await renderScreen(<ConnectedServicesAuthModal
           onClose={() => {}}
           supportedServiceIds={['anthropic']}
           profileOptionsByServiceId={{
@@ -124,18 +118,16 @@ describe('ConnectedServicesAuthModal', () => {
           setBindingForService={setBindingForService}
           defaultProfileIdByServiceId={{ anthropic: 'personal' }}
           onOpenSettings={() => {}}
-        />,
-      );
-    });
+        />);
 
-    const connectItem = tree.root.find((n) => n.props?.title === 'Use connected services');
+    const connectItem = screen.findByProps({ title: 'Use connected services' });
     act(() => {
       connectItem.props.onPress?.();
     });
 
     expect(setBindingForService).toHaveBeenCalledWith('anthropic', { source: 'connected', profileId: 'personal' });
-    expect(tree.root.findAll((n) => n.props?.title === 'work')).toHaveLength(1);
-    expect(tree.root.findAll((n) => n.props?.title === 'personal')).toHaveLength(1);
+    expect(screen.findAllByProps({ title: 'work' })).toHaveLength(1);
+    expect(screen.findAllByProps({ title: 'personal' })).toHaveLength(1);
   });
 
   it('shows quota summary badges for pinned meters (non-blocking)', async () => {
@@ -183,10 +175,7 @@ describe('ConnectedServicesAuthModal', () => {
       metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
     });
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServicesAuthModal
+    const screen = await renderScreen(<ConnectedServicesAuthModal
           onClose={() => {}}
           supportedServiceIds={['anthropic']}
           profileOptionsByServiceId={{
@@ -195,14 +184,12 @@ describe('ConnectedServicesAuthModal', () => {
           bindingsByServiceId={{ anthropic: { source: 'connected', profileId: 'work' } }}
           setBindingForService={() => {}}
           onOpenSettings={() => {}}
-        />,
-      );
-    });
+        />);
 
     await act(async () => {
       await flushAsyncEffects();
     });
 
-    expect(tree.root.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);
+    expect(screen.getTextContent()).toContain('Weekly 18%');
   });
 });

@@ -75,11 +75,11 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
         const context = await resolveServerScopedContext({
             machineId: params.machineId,
             serverId: params.serverId,
-            forceScoped: options?.forceScoped === true,
+            forceScoped: options?.forceScoped === true || params.preferScoped === true,
             timeoutMs: params.timeoutMs,
         });
 
-        if (context.scope === 'active') {
+        if (context.scope === 'active' && params.preferScoped !== true) {
             try {
                 return await withMachineRpcTimeout(
                     apiSocket.machineRPC<R, A>(
@@ -100,6 +100,10 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                 }
                 return await runOnce({ forceScoped: true });
             }
+        }
+
+        if (context.scope !== 'scoped') {
+            throw new Error('Expected scoped server RPC context');
         }
 
         const machineDataKey = await resolveScopedMachineDataKey({

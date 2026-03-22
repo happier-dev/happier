@@ -1,5 +1,5 @@
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
+import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
 
 export function computeNextAcpSessionModeOverrideMetadata(params: {
     metadata: Metadata;
@@ -8,7 +8,7 @@ export function computeNextAcpSessionModeOverrideMetadata(params: {
 }): Metadata {
     return computeNextMetadataStringOverrideV1({
         metadata: params.metadata as any,
-        overrideKey: 'acpSessionModeOverrideV1',
+        overrideKey: SESSION_MODE_OVERRIDE_KEY,
         valueKey: 'modeId',
         value: params.modeId,
         updatedAt: params.updatedAt,

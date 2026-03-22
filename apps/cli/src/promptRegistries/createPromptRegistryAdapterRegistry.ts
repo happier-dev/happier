@@ -9,7 +9,7 @@ import { createGitPromptRegistryAdapter } from '@/promptRegistries/adapters/git/
 import { createSkillsShPromptRegistryAdapter } from '@/promptRegistries/adapters/skillsSh/createSkillsShPromptRegistryAdapter';
 import type { PromptRegistryAdapter, PromptRegistryResolvedSource } from '@/promptRegistries/types';
 
-type PromptRegistryRegistry = Readonly<{
+export type PromptRegistryRegistry = Readonly<{
   adapters: Map<string, PromptRegistryAdapter>;
   listSources: (configuredSources: readonly PromptRegistryConfiguredSourceV1[]) => Promise<PromptRegistryResolvedSource[]>;
   scanSource: (args: Readonly<{

@@ -1,31 +1,49 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let platformOs: 'ios' | 'web' = 'ios';
-let windowWidth = 360;
-let windowHeight = 800;
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    useWindowDimensions: () => ({ width: windowWidth, height: windowHeight, scale: 2, fontScale: 1 }),
-    Platform: {
-        get OS() {
-            return platformOs;
-        },
-        select: (options: any) => options?.[platformOs] ?? options?.default ?? options?.ios ?? options?.android,
-    },
-    Linking: { openSettings: vi.fn(async () => {}) },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
+const deviceState = vi.hoisted(() => ({
+    platformOs: 'ios' as 'ios' | 'web',
+    windowWidth: 360,
+    windowHeight: 800,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Pressable: 'Pressable',
+                    ActivityIndicator: 'ActivityIndicator',
+                    useWindowDimensions: () => ({
+                        width: deviceState.windowWidth,
+                        height: deviceState.windowHeight,
+                        scale: 2,
+                        fontScale: 1,
+                    }),
+                    Platform: {
+                        get OS() {
+                            return deviceState.platformOs;
+                        },
+                        select: (options: any) => options?.[deviceState.platformOs] ?? options?.default ?? options?.ios ?? options?.android,
+                    },
+                    Linking: {
+                        openSettings: vi.fn(async () => {}),
+                    },
+                    AppState: {
+                        addEventListener: () => ({ remove: () => {} }),
+                    },
+                }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -39,8 +57,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -70,9 +88,9 @@ vi.mock('expo-camera', () => ({
 describe('QrCodeScannerView', () => {
     beforeEach(() => {
         lastCameraProps = null;
-        platformOs = 'ios';
-        windowWidth = 360;
-        windowHeight = 800;
+        deviceState.platformOs = 'ios';
+        deviceState.windowWidth = 360;
+        deviceState.windowHeight = 800;
         vi.unstubAllGlobals();
     });
 
@@ -80,18 +98,14 @@ describe('QrCodeScannerView', () => {
         const onScan = vi.fn(async () => {});
         const { QrCodeScannerView } = await import('./QrCodeScannerView');
 
-        await act(async () => {
-            renderer.create(
-                <QrCodeScannerView
+        await renderScreen(<QrCodeScannerView
                     title="t"
                     subtitle="s"
                     permissionRequiredMessage="perm"
                     onCancel={vi.fn()}
                     onScan={onScan}
                     testIDPrefix="test"
-                />,
-            );
-        });
+                />);
 
         expect(typeof lastCameraProps?.onBarcodeScanned).toBe('function');
 
@@ -105,31 +119,27 @@ describe('QrCodeScannerView', () => {
     });
 
     it('renders a camera scanner on phone-sized web when camera APIs exist', async () => {
-        platformOs = 'web';
-        windowWidth = 360;
-        windowHeight = 800;
+        deviceState.platformOs = 'web';
+        deviceState.windowWidth = 360;
+        deviceState.windowHeight = 800;
         vi.stubGlobal('navigator', { maxTouchPoints: 5, mediaDevices: { getUserMedia: async () => ({}) } } as any);
 
         const { QrCodeScannerView } = await import('./QrCodeScannerView');
 
-        await act(async () => {
-            renderer.create(
-                <QrCodeScannerView
+        await renderScreen(<QrCodeScannerView
                     title="t"
                     permissionRequiredMessage="perm"
                     onCancel={vi.fn()}
                     onScan={vi.fn()}
                     testIDPrefix="test"
-                />,
-            );
-        });
+                />);
         expect(lastCameraProps).not.toBeNull();
     });
 
     it('does not render a camera scanner on desktop web even when camera APIs exist', async () => {
-        platformOs = 'web';
-        windowWidth = 1400;
-        windowHeight = 900;
+        deviceState.platformOs = 'web';
+        deviceState.windowWidth = 1400;
+        deviceState.windowHeight = 900;
         vi.stubGlobal('navigator', {
             maxTouchPoints: 0,
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
@@ -141,17 +151,13 @@ describe('QrCodeScannerView', () => {
 
         const { QrCodeScannerView } = await import('./QrCodeScannerView');
 
-        await act(async () => {
-            renderer.create(
-                <QrCodeScannerView
+        await renderScreen(<QrCodeScannerView
                     title="t"
                     permissionRequiredMessage="perm"
                     onCancel={vi.fn()}
                     onScan={vi.fn()}
                     testIDPrefix="test"
-                />,
-            );
-        });
+                />);
         expect(lastCameraProps).toBeNull();
     });
 });

@@ -4,6 +4,12 @@ import { resolve as resolvePath } from 'node:path';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { repoRootDir } from '../paths';
 import { waitFor } from '../timing';
+import {
+  inspectOwnedProcess,
+  registerProcessOwnershipLease,
+  resolveProcessOwnershipLeasesDir,
+  sweepProcessOwnershipLeases,
+} from './processOwnershipLease';
 import { readPositiveEnvInt } from './uiWebEnv';
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
 import { spawnLoggedProcess } from './spawnProcess';
@@ -11,6 +17,17 @@ import type { StartedUiWeb } from './uiWebTypes';
 
 function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+}
+
+function looksLikeUiWebMetroCommand(command: string): boolean {
+  const normalized = command.replaceAll('\\', '/');
+  return normalized.includes('start --web')
+    && normalized.includes('--host localhost')
+    && (normalized.includes('/expo/bin/cli') || normalized.includes('expo') || normalized.includes('node'));
+}
+
+export function resolveUiWebMetroOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
+  return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'ui-web-metro' });
 }
 
 export function resolveUiWebBaseUrlTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -48,9 +65,9 @@ function extractHttpUrls(text: string): string[] {
   return out;
 }
 
-async function looksLikeUiWebEntryPage(url: string): Promise<boolean> {
+async function looksLikeUiWebEntryPage(url: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   try {
-    const timeoutMs = readPositiveEnvInt(process.env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS, 10_000);
+    const timeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS, 10_000);
     const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return false;
     const text = await res.text().catch(() => '');
@@ -64,7 +81,12 @@ async function looksLikeUiWebEntryPage(url: string): Promise<boolean> {
   }
 }
 
-async function resolveExpoWebBaseUrl(params: { stdoutPath: string; timeoutMs: number; expectedPort?: number }): Promise<string> {
+async function resolveExpoWebBaseUrl(params: {
+  stdoutPath: string;
+  timeoutMs: number;
+  expectedPort?: number;
+  env: NodeJS.ProcessEnv;
+}): Promise<string> {
   const defaultCandidates = [
     'http://localhost:19006',
     'http://127.0.0.1:19006',
@@ -92,7 +114,7 @@ async function resolveExpoWebBaseUrl(params: { stdoutPath: string; timeoutMs: nu
     }
 
     for (const url of orderedCandidates) {
-      if (await looksLikeUiWebEntryPage(url)) {
+      if (await looksLikeUiWebEntryPage(url, params.env)) {
         resolved = url;
         return true;
       }
@@ -103,7 +125,7 @@ async function resolveExpoWebBaseUrl(params: { stdoutPath: string; timeoutMs: nu
   if (resolved) return resolved;
 
   for (const url of expectedCandidates.length > 0 ? expectedCandidates : defaultCandidates) {
-    if (await looksLikeUiWebEntryPage(url)) return url;
+    if (await looksLikeUiWebEntryPage(url, params.env)) return url;
   }
 
   throw new Error(`Failed to resolve Expo web baseUrl from stdout log: ${params.stdoutPath}`);
@@ -150,8 +172,8 @@ async function probeScriptReady(url: string, timeoutMs: number): Promise<ScriptR
   }
 }
 
-async function resolvePrimaryAppScriptUrl(baseUrl: string): Promise<string | null> {
-  const entryTimeoutMs = readPositiveEnvInt(process.env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS, 10_000);
+async function resolvePrimaryAppScriptUrl(baseUrl: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+  const entryTimeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS, 10_000);
   const html = await fetch(baseUrl, { method: 'GET', signal: AbortSignal.timeout(entryTimeoutMs) })
     .then((response) => response.ok ? response.text() : '')
     .catch(() => '');
@@ -169,7 +191,7 @@ async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.Process
   try {
     await waitFor(async () => {
       if (!primaryAppScriptUrl) {
-        primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl);
+        primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl, env);
         retryCountForCurrentScript = 0;
       }
       if (!primaryAppScriptUrl) return false;
@@ -205,6 +227,17 @@ export async function startUiWebMetro(params: {
   env: NodeJS.ProcessEnv;
   port?: number;
 }): Promise<StartedUiWeb> {
+  const currentOwnerInspection = inspectOwnedProcess(process.pid);
+  if (currentOwnerInspection.ok) {
+    await sweepProcessOwnershipLeases({
+      rootDir: repoRootDir(),
+      leaseKind: 'ui-web-metro',
+      currentOwnerPid: process.pid,
+      currentOwnerStartTime: currentOwnerInspection.startTime,
+      isOwnedProcessCommand: (command) => looksLikeUiWebMetroCommand(command),
+    });
+  }
+
   const stdoutPath = resolvePath(params.testDir, 'ui.web.stdout.log');
   const stderrPath = resolvePath(params.testDir, 'ui.web.stderr.log');
 
@@ -249,6 +282,18 @@ export async function startUiWebMetro(params: {
     stderrPath,
   });
 
+  await registerProcessOwnershipLease({
+    rootDir: repoRootDir(),
+    leaseKind: 'ui-web-metro',
+    child: proc.child,
+    ownerPid: process.pid,
+    ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+    metadata: {
+      port: metroPort,
+      testDir: params.testDir,
+    },
+  });
+
   let baseUrl: string;
   try {
     const exitedEarly = new Promise<never>((_, reject) => {
@@ -264,7 +309,12 @@ export async function startUiWebMetro(params: {
     });
 
     baseUrl = await Promise.race([
-      resolveExpoWebBaseUrl({ stdoutPath, timeoutMs: resolveUiWebBaseUrlTimeoutMs(params.env), expectedPort: metroPort }),
+      resolveExpoWebBaseUrl({
+        stdoutPath,
+        timeoutMs: resolveUiWebBaseUrlTimeoutMs(params.env),
+        expectedPort: metroPort,
+        env: params.env,
+      }),
       exitedEarly,
     ]);
 

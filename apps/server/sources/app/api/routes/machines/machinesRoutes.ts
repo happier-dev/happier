@@ -57,6 +57,21 @@ function isMachineRevokedError(value: unknown): value is { error: 'machine_revok
     return (value as { error?: unknown }).error === 'machine_revoked';
 }
 
+function describeUnknownError(error: unknown): { code?: string; message: string } {
+    if (error instanceof Error) {
+        const codeCandidate = (error as Error & { code?: unknown }).code;
+        const code = typeof codeCandidate === 'string' ? codeCandidate : undefined;
+        return {
+            ...(code ? { code } : {}),
+            message: error.message,
+        };
+    }
+    if (typeof error === 'string') {
+        return { message: error };
+    }
+    return { message: String(error) };
+}
+
 export function machinesRoutes(app: Fastify) {
     app.post('/v1/machines', {
         preHandler: app.authenticate,
@@ -274,68 +289,80 @@ export function machinesRoutes(app: Fastify) {
                 });
             }
 
-                log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
+            log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
 
-                type UpdatedMachineRow = Parameters<typeof serializeMachineRow>[0] | null | { error: 'machine_revoked' };
-                let updated: UpdatedMachineRow;
-                try {
-                    updated = await inTx(async (tx) => {
-                        const current = await tx.machine.findFirst({
-                            where: {
-                                accountId: userId,
-                                id,
-                            },
-                        });
-                        if (!current) return null;
-                        if (current.revokedAt) return { error: 'machine_revoked' as const };
-
-                        const currentWantsMetadataUpdate = metadata !== current.metadata;
-                        const currentWantsDaemonStateUpdate =
-                            typeof daemonState === 'string' && daemonState !== (current.daemonState ?? null);
-                        const currentWantsDataEncryptionKeyUpdate =
-                            nextDataEncryptionKey !== undefined
-                            && !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
-
-                        if (!currentWantsMetadataUpdate && !currentWantsDaemonStateUpdate && !currentWantsDataEncryptionKeyUpdate) {
-                            return current;
-                        }
-
-                        const updatedMachine = await tx.machine.update({
-                            where: { accountId_id: { accountId: userId, id } },
-                            data: {
-                                ...(currentWantsMetadataUpdate
-                                    ? { metadata, metadataVersion: { increment: 1 } }
-                                    : {}),
-                                ...(currentWantsDaemonStateUpdate
-                                    ? { daemonState, daemonStateVersion: { increment: 1 } }
-                                    : {}),
-                                ...(currentWantsDataEncryptionKeyUpdate
-                                    ? { dataEncryptionKey: nextDataEncryptionKey }
-                                    : {}),
-                            },
-                        });
-
-                        await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
-
-                        return updatedMachine;
+            type UpdatedMachineRow = Parameters<typeof serializeMachineRow>[0] | null | { error: 'machine_revoked' };
+            let updated: UpdatedMachineRow;
+            try {
+                updated = await inTx(async (tx) => {
+                    const current = await tx.machine.findFirst({
+                        where: {
+                            accountId: userId,
+                            id,
+                        },
                     });
-                } catch (error) {
-                    // Control-plane guardrail: when SQLite is under heavy contention, starting an interactive transaction
-                    // can fail (P2028) which would brick daemon startup/session spawning. Degrade by returning the
-                    // existing machine row and letting a later registration attempt apply metadata/daemonState updates.
-                    if (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008')) {
-                        log(
-                            { module: 'machines', level: 'warn', machineId: id, userId, reason: 'tx_busy' },
-                            `Machine update skipped due to transaction contention: ${error}`,
-                        );
-                        return reply.send({
-                            machine: {
-                                ...serializeMachineRow(machine),
-                            },
-                        });
+                    if (!current) return null;
+                    if (current.revokedAt) return { error: 'machine_revoked' as const };
+
+                    const currentWantsMetadataUpdate = metadata !== current.metadata;
+                    const currentWantsDaemonStateUpdate =
+                        typeof daemonState === 'string' && daemonState !== (current.daemonState ?? null);
+                    const currentWantsDataEncryptionKeyUpdate =
+                        nextDataEncryptionKey !== undefined
+                        && !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
+
+                    if (!currentWantsMetadataUpdate && !currentWantsDaemonStateUpdate && !currentWantsDataEncryptionKeyUpdate) {
+                        return current;
                     }
+
+                    const updatedMachine = await tx.machine.update({
+                        where: { accountId_id: { accountId: userId, id } },
+                        data: {
+                            ...(currentWantsMetadataUpdate
+                                ? { metadata, metadataVersion: { increment: 1 } }
+                                : {}),
+                            ...(currentWantsDaemonStateUpdate
+                                ? { daemonState, daemonStateVersion: { increment: 1 } }
+                                : {}),
+                            ...(currentWantsDataEncryptionKeyUpdate
+                                ? { dataEncryptionKey: nextDataEncryptionKey }
+                                : {}),
+                        },
+                    });
+
+                    await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
+
+                    return updatedMachine;
+                });
+            } catch (error) {
+                if (wantsDataEncryptionKeyUpdate && (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008'))) {
                     throw error;
                 }
+
+                // Control-plane guardrail: when SQLite is under heavy contention, starting an interactive transaction
+                // can fail (P2028/P1008) which would brick daemon startup/session spawning. Degrade only for
+                // metadata/daemonState best-effort writes; dataEncryptionKey changes must fail closed so callers do
+                // not silently believe the machine key was updated when the server still has the old envelope.
+                if (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008')) {
+                    log(
+                        {
+                            module: 'machines',
+                            level: 'warn',
+                            machineId: id,
+                            userId,
+                            reason: 'tx_busy',
+                            error: describeUnknownError(error),
+                        },
+                        'Machine update skipped due to transaction contention',
+                    );
+                    return reply.send({
+                        machine: {
+                            ...serializeMachineRow(machine),
+                        },
+                    });
+                }
+                throw error;
+            }
 
             if (!updated) {
                 // Machine disappeared between the initial lookup and the transaction.

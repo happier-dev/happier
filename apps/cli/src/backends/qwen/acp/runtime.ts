@@ -9,11 +9,13 @@ import { maybeUpdateQwenSessionIdMetadata } from '@/backends/qwen/utils/qwenSess
 
 export function createQwenAcpRuntime(params: {
   directory: string;
+  machineId: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
   const lastPublishedQwenSessionId = { value: null as string | null };
@@ -27,6 +29,10 @@ export function createQwenAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
     getPermissionMode: params.getPermissionMode,
     onSessionIdChange: (nextSessionId) => {
       maybeUpdateQwenSessionIdMetadata({

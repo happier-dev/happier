@@ -1,40 +1,35 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-function restoreEnv(envBackup: NodeJS.ProcessEnv): void {
-  for (const key of Object.keys(process.env)) {
-    if (!(key in envBackup)) delete process.env[key];
-  }
-  Object.assign(process.env, envBackup);
-}
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDirSync } from '@/testkit/fs/tempDir';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 describe('resolveDaemonServiceCliRuntimeFromEnv', () => {
-  const envBackup = { ...process.env };
-  const tempHomes: string[] = [];
+  const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_SERVICE_UID'] as const;
+  let envScope = createEnvKeyScope(envKeys);
 
   afterEach(() => {
-    for (const homeDir of tempHomes.splice(0)) {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
-    restoreEnv(envBackup);
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
   });
 
   it('allows an explicit UID 0 from HAPPIER_DAEMON_SERVICE_UID', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-service-uid-'));
-    tempHomes.push(homeDir);
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_SERVICE_UID = '0';
+    withTempDirSync('happier-cli-daemon-service-uid-', (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_UID: '0',
+      });
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const { resolveDaemonServiceCliRuntimeFromEnv } = await import('./cli.js');
-      const runtime = resolveDaemonServiceCliRuntimeFromEnv();
-      expect(runtime.uid).toBe(0);
-    } finally {
-      warn.mockRestore();
-    }
+      const output = captureConsoleText();
+      return import('./cli.js')
+        .then(({ resolveDaemonServiceCliRuntimeFromEnv }) => {
+          const runtime = resolveDaemonServiceCliRuntimeFromEnv();
+          expect(runtime.uid).toBe(0);
+        })
+        .finally(() => {
+          output.restore();
+        });
+    });
   });
 });

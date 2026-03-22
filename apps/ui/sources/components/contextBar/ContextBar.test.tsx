@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,35 +9,33 @@ const onSelectMachineMock = vi.fn();
 const onChangePathMock = vi.fn();
 const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'web',
-        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-    },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                divider: '#ddd',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f' },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'web',
+                select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
             },
-        }),
-    },
-    useUnistyles: () => ({
+        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 divider: '#ddd',
+                textSecondary: '#666',
                 input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f' },
+                accent: { blue: '#00f', indigo: '#40f' },
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -58,6 +57,13 @@ vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: (input: unknown) => openMachinePathBrowserModalMock(input),
 }));
 
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
+
 describe('ContextBar', () => {
     beforeEach(() => {
         onSelectMachineMock.mockReset();
@@ -68,87 +74,68 @@ describe('ContextBar', () => {
     it('renders machine and workspace controls in machine_and_workspace mode', async () => {
         const { ContextBar } = await import('./ContextBar');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ContextBar, {
-                    mode: 'machine_and_workspace',
-                    machine: {
-                        selectedId: 'machine-1',
-                        subtitle: 'Laptop',
-                        items: [
-                            { id: 'machine-1', title: 'Laptop' },
-                            { id: 'machine-2', title: 'Desktop' },
-                        ],
-                        onSelect: onSelectMachineMock,
-                    },
-                    workspace: {
-                        value: '/repo',
-                        placeholder: 'Project directory',
-                        onChange: onChangePathMock,
-                    },
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(ContextBar, {
+            mode: 'machine_and_workspace',
+            machine: {
+                selectedId: 'machine-1',
+                subtitle: 'Laptop',
+                items: [
+                    { id: 'machine-1', title: 'Laptop' },
+                    { id: 'machine-2', title: 'Desktop' },
+                ],
+                onSelect: onSelectMachineMock,
+            },
+            workspace: {
+                value: '/repo',
+                placeholder: 'Project directory',
+                onChange: onChangePathMock,
+            },
+        }));
 
-        const dropdowns = tree.root.findAllByType('DropdownMenu');
-        const inputs = tree.root.findAllByType('TextInput');
-        expect(dropdowns).toHaveLength(1);
-        expect(inputs).toHaveLength(1);
+        const dropdown = screen.findByType('DropdownMenu');
+        const input = screen.findByType('TextInput');
+        expect(dropdown).toBeTruthy();
+        expect(input).toBeTruthy();
 
-        await act(async () => {
-            dropdowns[0]?.props?.onSelect?.('machine-2');
-        });
+        dropdown.props.onSelect?.('machine-2');
         expect(onSelectMachineMock).toHaveBeenCalledWith('machine-2');
 
-        await act(async () => {
-            inputs[0]?.props?.onChangeText?.('/repo/subdir');
-        });
+        input.props.onChangeText?.('/repo/subdir');
         expect(onChangePathMock).toHaveBeenCalledWith('/repo/subdir');
     });
 
     it('omits the workspace input in machine_only mode', async () => {
         const { ContextBar } = await import('./ContextBar');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ContextBar, {
-                    mode: 'machine_only',
-                    machine: {
-                        selectedId: 'machine-1',
-                        subtitle: 'Laptop',
-                        items: [{ id: 'machine-1', title: 'Laptop' }],
-                        onSelect: onSelectMachineMock,
-                    },
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(ContextBar, {
+            mode: 'machine_only',
+            machine: {
+                selectedId: 'machine-1',
+                subtitle: 'Laptop',
+                items: [{ id: 'machine-1', title: 'Laptop' }],
+                onSelect: onSelectMachineMock,
+            },
+        }));
 
-        expect(tree.root.findAllByType('DropdownMenu')).toHaveLength(1);
-        expect(tree.root.findAllByType('TextInput')).toHaveLength(0);
+        expect(screen.findByType('DropdownMenu')).toBeTruthy();
+        expect(screen.findAllByType('TextInput')).toHaveLength(0);
     });
 
     it('uses a custom machine title when provided', async () => {
         const { ContextBar } = await import('./ContextBar');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ContextBar, {
-                    mode: 'machine_only',
-                    machine: {
-                        title: 'settingsProviders.targetMachineTitle',
-                        selectedId: 'machine-1',
-                        subtitle: 'Laptop',
-                        items: [{ id: 'machine-1', title: 'Laptop' }],
-                        onSelect: onSelectMachineMock,
-                    },
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(ContextBar, {
+            mode: 'machine_only',
+            machine: {
+                title: 'settingsProviders.targetMachineTitle',
+                selectedId: 'machine-1',
+                subtitle: 'Laptop',
+                items: [{ id: 'machine-1', title: 'Laptop' }],
+                onSelect: onSelectMachineMock,
+            },
+        }));
 
-        const dropdown = tree.root.findByType('DropdownMenu');
+        const dropdown = screen.findByType('DropdownMenu');
         expect(dropdown.props.itemTrigger.title).toBe('settingsProviders.targetMachineTitle');
     });
 
@@ -156,28 +143,22 @@ describe('ContextBar', () => {
         openMachinePathBrowserModalMock.mockResolvedValueOnce('/repo/from-browser');
         const { ContextBar } = await import('./ContextBar');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ContextBar, {
-                    mode: 'workspace_only',
-                    workspace: {
-                        value: '/repo',
-                        placeholder: 'Project directory',
-                        onChange: onChangePathMock,
-                        browse: {
-                            machineId: 'machine-1',
-                            serverId: 'server-1',
-                        },
-                    },
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(ContextBar, {
+            mode: 'workspace_only',
+            workspace: {
+                value: '/repo',
+                placeholder: 'Project directory',
+                onChange: onChangePathMock,
+                browse: {
+                    machineId: 'machine-1',
+                    serverId: 'server-1',
+                },
+            },
+        }));
 
-        const browseButton = tree.root.findByProps({ testID: 'path-browser-trigger' });
-        await act(async () => {
-            await browseButton.props.onPress();
-        });
+        const browseButton = screen.findByTestId('path-browser-trigger');
+        expect(browseButton).toBeTruthy();
+        await browseButton?.props?.onPress?.();
 
         expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',

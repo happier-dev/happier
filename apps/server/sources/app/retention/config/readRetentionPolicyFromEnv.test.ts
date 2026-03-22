@@ -73,4 +73,14 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             HAPPIER_SERVER_RETENTION__SESSIONS__MODE: 'delete_inactive',
         })).toThrow(/SESSIONS__INACTIVITY_DAYS/i);
     });
+
+    it('rejects non-integer numeric values for positive integer settings', () => {
+        expect(() => readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__INTERVAL_MS: '1.5',
+        })).toThrow(/INTERVAL_MS must be a positive integer/i);
+
+        expect(() => readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__BATCH_SIZE: '1e3',
+        })).toThrow(/BATCH_SIZE must be a positive integer/i);
+    });
 });

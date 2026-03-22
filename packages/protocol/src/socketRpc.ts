@@ -6,7 +6,7 @@ export const SOCKET_RPC_EVENTS = {
   ERROR: 'rpc-error',
   CALL: 'rpc-call',
   REQUEST: 'rpc-request',
+  MACHINE_TRANSFER_ENVELOPE: 'machine-transfer-envelope',
 } as const;
 
 export type SocketRpcEvent = (typeof SOCKET_RPC_EVENTS)[keyof typeof SOCKET_RPC_EVENTS];
-

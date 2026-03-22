@@ -13,6 +13,14 @@ export default defineConfig({
         env: {
             HAPPIER_FEATURE_POLICY_ENV: '',
         },
-        exclude: ['**/.project/**', '**/node_modules/**', '**/dist/**', ...resolveVitestFeatureTestExcludeGlobs()],
+        exclude: [
+            '**/.project/**',
+            '**/.worktrees/**',
+            '**/.dev/**',
+            '**/output/**',
+            '**/node_modules/**',
+            '**/dist/**',
+            ...resolveVitestFeatureTestExcludeGlobs(),
+        ],
     },
 })

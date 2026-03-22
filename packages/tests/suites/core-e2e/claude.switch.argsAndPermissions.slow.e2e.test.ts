@@ -6,15 +6,14 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
+import { createSessionWithCiphertexts, fetchAllMessages } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
@@ -23,6 +22,37 @@ import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 
 const run = createRunDirs({ runLabel: 'core' });
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+async function waitForSessionSwitchEvent(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  secret: Uint8Array;
+  mode: 'local' | 'remote';
+}>): Promise<void> {
+  await waitFor(async () => {
+    const rows = await fetchAllMessages(params.baseUrl, params.token, params.sessionId);
+    for (const row of rows) {
+      const decrypted = asRecord(decryptLegacyBase64(row.content.c, params.secret));
+      const content = asRecord(decrypted?.content);
+      const eventData = asRecord(content?.data);
+      if (decrypted?.role !== 'agent') continue;
+      if (content?.type !== 'event') continue;
+      if (eventData?.type !== 'switch') continue;
+      if (eventData?.mode === params.mode) return true;
+    }
+    return false;
+  }, {
+    timeoutMs: 60_000,
+    intervalMs: 500,
+    context: `session switch event (${params.mode})`,
+  });
+}
 
 describe('core e2e: Claude switching preserves args + permissions', () => {
   let server: StartedServer | null = null;
@@ -96,8 +126,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
-
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
@@ -265,8 +293,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
-
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
       args: [
@@ -303,6 +329,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       // Legacy remote runner: should still keep bypassPermissions.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
+      await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'remote' });
 
       await postEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
@@ -320,6 +347,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       expect(legacyRemoteInvocation.argv).toContain('bypassPermissions');
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 25_000 });
+      await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'local' });
 
       const localInvocation2: FakeClaudeInvocation = await waitForFakeClaudeInvocation(
         fakeLog,
@@ -335,6 +363,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
 
       // Agent SDK remote runner: should also keep bypassPermissions.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
+      await waitForSessionSwitchEvent({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, mode: 'remote' });
 
       await postEncryptedUiTextMessage({
         baseUrl: server.baseUrl,
@@ -426,8 +455,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
-
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),

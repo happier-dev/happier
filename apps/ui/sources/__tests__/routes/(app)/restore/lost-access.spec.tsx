@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createWelcomeFeaturesResponse } from '../index.testHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -8,35 +9,62 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
+const mockState = vi.hoisted(() => ({
+    canOpenURL: vi.fn(async () => true),
+    clearPendingExternalAuth: vi.fn(async () => true),
+    getExternalAuthUrl: vi.fn(async (_params: unknown) => 'https://example.test/oauth'),
+    openURL: vi.fn(async () => true),
+    setPendingExternalAuth: vi.fn(async () => true),
+}));
+
 vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default,
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                    Dimensions: {
+                                        get: () => ({ width: 800, height: 600 }),
+                                    },
+                                    ScrollView: 'ScrollView',
+                                    View: 'View',
+                                    Text: 'Text',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    Linking: {
+                                        canOpenURL: mockState.canOpenURL,
+                                        openURL: mockState.openURL,
+                                    },
+                                }
+    );
+});
 
-const canOpenURL = vi.fn(async () => true);
-const openURL = vi.fn(async () => true);
-vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Dimensions: { get: () => ({ width: 800, height: 600 }) },
-    ScrollView: 'ScrollView',
-    View: 'View',
-    Text: 'Text',
-    ActivityIndicator: 'ActivityIndicator',
-    Linking: { canOpenURL, openURL },
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ replace: vi.fn(), back: vi.fn(), push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { replace: vi.fn(), back: vi.fn(), push: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: vi.fn(async () => true),
-        alert: vi.fn(async () => {}),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: vi.fn(async () => true),
+            alert: vi.fn(async () => {}),
+        },
+    }).module;
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({
@@ -47,12 +75,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     }),
 }));
 
-const setPendingExternalAuth = vi.fn(async () => true);
-const clearPendingExternalAuth = vi.fn(async () => true);
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        setPendingExternalAuth,
-        clearPendingExternalAuth,
+        setPendingExternalAuth: mockState.setPendingExternalAuth,
+        clearPendingExternalAuth: mockState.clearPendingExternalAuth,
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
@@ -74,12 +100,11 @@ vi.mock('@/encryption/libsodium.lib', () => ({
     },
 }));
 
-const getExternalAuthUrl = vi.fn(async (_params: unknown) => 'https://example.test/oauth');
 vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: () => ({
         id: 'github',
         displayName: 'GitHub',
-        getExternalAuthUrl,
+        getExternalAuthUrl: mockState.getExternalAuthUrl,
     }),
 }));
 
@@ -113,19 +138,18 @@ afterEach(() => {
 describe('/restore/lost-access', () => {
     it('starts provider reset flow by setting intent=reset and opening the external signup URL', async () => {
         vi.resetModules();
-        openURL.mockClear();
-        canOpenURL.mockClear();
-        setPendingExternalAuth.mockClear();
-        clearPendingExternalAuth.mockClear();
+        mockState.openURL.mockClear();
+        mockState.canOpenURL.mockClear();
+        mockState.setPendingExternalAuth.mockClear();
+        mockState.clearPendingExternalAuth.mockClear();
+        mockState.getExternalAuthUrl.mockClear();
 
         const { default: Screen } = await import('@/app/(app)/restore/lost-access');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
+            tree = (await renderScreen(<Screen />)).tree;
+            await flushHookEffects();
             if (!tree) {
                 throw new Error('Expected lost access screen renderer');
             }
@@ -135,12 +159,12 @@ describe('/restore/lost-access', () => {
                 await triggerProviderReset();
             });
 
-            expect(setPendingExternalAuth).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github', intent: 'reset' }));
-            expect(getExternalAuthUrl).toHaveBeenCalledWith(
+            expect(mockState.setPendingExternalAuth).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github', intent: 'reset' }));
+            expect(mockState.getExternalAuthUrl).toHaveBeenCalledWith(
                 expect.objectContaining({ mode: 'keyed', publicKey: 'base64-value+slash/plus+' }),
             );
-            expect(canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
-            expect(openURL).toHaveBeenCalledWith('https://example.test/oauth');
+            expect(mockState.canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
+            expect(mockState.openURL).toHaveBeenCalledWith('https://example.test/oauth');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -150,10 +174,10 @@ describe('/restore/lost-access', () => {
 
     it('blocks unsafe provider URLs and clears pending state', async () => {
         vi.resetModules();
-        openURL.mockClear();
-        canOpenURL.mockClear();
-        setPendingExternalAuth.mockClear();
-        clearPendingExternalAuth.mockClear();
+        mockState.openURL.mockClear();
+        mockState.canOpenURL.mockClear();
+        mockState.setPendingExternalAuth.mockClear();
+        mockState.clearPendingExternalAuth.mockClear();
 
         vi.doMock('@/auth/providers/registry', () => ({
             getAuthProvider: () => ({
@@ -167,10 +191,8 @@ describe('/restore/lost-access', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
+            tree = (await renderScreen(<Screen />)).tree;
+            await flushHookEffects();
             if (!tree) {
                 throw new Error('Expected lost access screen renderer');
             }
@@ -180,9 +202,9 @@ describe('/restore/lost-access', () => {
                 await triggerProviderReset();
             });
 
-            expect(canOpenURL).not.toHaveBeenCalled();
-            expect(openURL).not.toHaveBeenCalled();
-            expect(clearPendingExternalAuth).toHaveBeenCalled();
+            expect(mockState.canOpenURL).not.toHaveBeenCalled();
+            expect(mockState.openURL).not.toHaveBeenCalled();
+            expect(mockState.clearPendingExternalAuth).toHaveBeenCalled();
         } finally {
             act(() => {
                 tree?.unmount();

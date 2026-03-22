@@ -49,6 +49,7 @@ import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMac
 import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -313,7 +314,7 @@ export default function MachineDetailScreen() {
         return sessions.filter(item => {
             if (typeof item === 'string') return false;
             const session = item as Session;
-            return session.metadata?.machineId === machineId;
+            return (readMachineTargetForSession(session.id)?.machineId ?? session.metadata?.machineId) === machineId;
         }) as Session[];
     }, [sessions, machineId]);
 

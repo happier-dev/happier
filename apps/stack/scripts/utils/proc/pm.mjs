@@ -227,6 +227,11 @@ async function resolvePreferredNodeBinDir(dir, env = process.env) {
 
 async function preparePmEnv(dir, envIn = process.env) {
   const env = await applyStackCacheEnv(envIn);
+  if (typeof env.REDISMS_DISABLE_POSTINSTALL === 'undefined') {
+    // redis-memory-server only uses postinstall to prefetch binaries; skipping it avoids making
+    // stack-managed dependency refreshes depend on local Redis build prerequisites.
+    env.REDISMS_DISABLE_POSTINSTALL = '1';
+  }
   const preferredNodeBinDir = await resolvePreferredNodeBinDir(dir, env);
   if (preferredNodeBinDir) {
     prependPathEntry(env, preferredNodeBinDir);
@@ -241,6 +246,54 @@ async function preparePmEnv(dir, envIn = process.env) {
 }
 
 const _yarnReadyKeys = new Set();
+
+async function readPackageJsonIfExists(pkgJsonPath) {
+  if (!(await pathExists(pkgJsonPath))) {
+    return null;
+  }
+  return await readJson(pkgJsonPath);
+}
+
+async function ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet = false, env, pm }) {
+  const componentPkgJsonPath = join(componentDir, 'package.json');
+  const componentPkg = await readPackageJsonIfExists(componentPkgJsonPath);
+  if (componentPkg?.name !== '@happier-dev/server') {
+    return;
+  }
+  if (typeof componentPkg?.scripts?.['generate:providers'] !== 'string') {
+    return;
+  }
+
+  const requiredOutputs = [
+    join(installDir, 'node_modules', '.prisma', 'client', 'default.js'),
+    join(componentDir, 'generated', 'sqlite-client', 'index.js'),
+  ];
+  if (requiredOutputs.every((outputPath) => existsSync(outputPath))) {
+    return;
+  }
+
+  const stdio = quiet ? 'ignore' : 'inherit';
+  if (!quiet) {
+    // eslint-disable-next-line no-console
+    console.log('[local] generating happier-server Prisma provider outputs...');
+  }
+
+  if (pm.name === 'yarn') {
+    await ensureYarnReady({ dir: installDir, env, quiet });
+    await run(pm.cmd, ['-s', 'workspace', '@happier-dev/server', 'generate:providers'], {
+      cwd: installDir,
+      stdio,
+      env,
+    });
+    return;
+  }
+
+  await run(pm.cmd, ['run', '-s', 'generate:providers'], {
+    cwd: componentDir,
+    stdio,
+    env,
+  });
+}
 
 async function ensureYarnReady({ dir, env, quiet = false }) {
   const e = env && typeof env === 'object' ? env : process.env;
@@ -398,6 +451,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       String(env?.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? '').trim() === '1' ||
       String(env?.HAPPIER_STACK_DISABLE_REFRESH_DEPS ?? '').trim() === '1';
     if (skipRefresh) {
+      await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
       return;
     }
 
@@ -408,6 +462,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       String(env?.HAPPIER_STACK_SERVICE_ALLOW_REFRESH_DEPS ?? '').trim() === '1' ||
       String(env?.HAPPIER_STACK_ALLOW_REFRESH_DEPS ?? '').trim() === '1';
     if (isServiceMode(env) && !allowRefresh) {
+      await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
       return;
     }
 
@@ -470,6 +525,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       }
     }
 
+    await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
     return;
   }
 
@@ -478,6 +534,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     console.log(`[local] installing ${label} dependencies (first run)...`);
   }
   await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
+  await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
 }
 
 function collectExpectedExportFileTargets(exportsField) {

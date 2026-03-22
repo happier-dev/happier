@@ -1,5 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
-import { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
 export function createEmptyCustomProfile(): AIBackendProfile {
     return {
@@ -7,7 +7,15 @@ export function createEmptyCustomProfile(): AIBackendProfile {
         name: '',
         environmentVariables: [],
         defaultPermissionModeByAgent: {},
-        compatibility: { claude: true, codex: true, gemini: true },
+        defaultPermissionModeByTargetKey: {},
+        defaultPersistenceModeByAgent: {},
+        defaultPersistenceModeByTargetKey: {},
+        compatibility: {},
+        compatibilityByTargetKey: {
+            'agent:claude': true,
+            'agent:codex': true,
+            'agent:gemini': true,
+        },
         envVarRequirements: [],
         isBuiltIn: false,
         createdAt: Date.now(),

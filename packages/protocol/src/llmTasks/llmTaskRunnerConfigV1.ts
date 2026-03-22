@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
+import { BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
 import { EphemeralTaskPermissionModeSchema } from '../ephemeralTasks.js';
 
 export const LlmTaskRunnerConfigV1Schema = z
   .object({
     v: z.literal(1),
-    backendId: z.string().trim().min(1),
+    backendTarget: BackendTargetRefSchema,
     modelId: z.string().trim().min(1).optional(),
     permissionMode: EphemeralTaskPermissionModeSchema.optional(),
   })

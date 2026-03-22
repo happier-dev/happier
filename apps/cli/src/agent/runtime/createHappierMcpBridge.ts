@@ -2,11 +2,17 @@ import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappySe
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
 
+function isTruthyEnvFlag(raw: string | undefined): boolean {
+  const normalized = (raw ?? '').trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y'
+}
+
 async function resolveHappierMcpServerConfig(url: string, _commandMode: 'direct-script' | 'current-process'): Promise<McpServerConfig> {
   return await resolveNodeBackedMcpServerCommand({
     distEntrypointSegments: ['backends', 'codex', 'happyMcpStdioBridge.mjs'],
     sourceEntrypointSegments: ['backends', 'codex', 'happyMcpStdioBridge.ts'],
     args: ['--url', url],
+    preferSourceEntrypoint: isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT),
   })
 }
 

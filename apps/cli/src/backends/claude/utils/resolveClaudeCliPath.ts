@@ -1,7 +1,6 @@
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
 
-import { projectPath } from '@/projectPath';
+import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 
 type ClaudeVersionUtilsModule = {
   getClaudeCliPath: () => string;
@@ -15,7 +14,7 @@ export function resolveClaudeCliPath(): string {
   }
 
   const require = createRequire(import.meta.url);
-  const utilsPath = join(projectPath(), 'scripts', 'claude_version_utils.cjs');
+  const utilsPath = resolveCliRuntimeAssetPath('scripts', 'claude_version_utils.cjs');
   const mod = require(utilsPath) as ClaudeVersionUtilsModule;
 
   if (!mod || typeof mod.getClaudeCliPath !== 'function') {

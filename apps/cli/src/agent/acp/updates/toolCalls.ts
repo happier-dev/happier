@@ -15,6 +15,7 @@ import {
   type HandlerContext,
   type HandlerResult,
   type SessionUpdate,
+  type ToolCallLifecycleState,
 } from './types';
 
 /**
@@ -66,6 +67,32 @@ function emitTimeoutToolResult(params: Readonly<{
   });
 }
 
+function scheduleIdleAfterToolCompletion(ctx: HandlerContext, logMessage: string): void {
+  if (typeof ctx.scheduleIdleStatusAfterToolCompletion === 'function') {
+    logger.debug(logMessage);
+    ctx.scheduleIdleStatusAfterToolCompletion();
+    return;
+  }
+
+  logger.debug(logMessage);
+  ctx.emitIdleStatus();
+}
+
+function clearToolCallExecutionTimeout(toolCallId: string, ctx: HandlerContext): void {
+  const timeout = ctx.toolCallTimeouts.get(toolCallId);
+  if (!timeout) return;
+  clearTimeout(timeout);
+  ctx.toolCallTimeouts.delete(toolCallId);
+}
+
+function setToolCallLifecycleState(
+  toolCallId: string,
+  state: ToolCallLifecycleState,
+  ctx: HandlerContext,
+): void {
+  ctx.toolCallLifecycleStates.set(toolCallId, state);
+}
+
 function armToolCallExecutionTimeout(params: Readonly<{
   toolCallId: string;
   toolKind: string | unknown;
@@ -107,8 +134,10 @@ function armToolCallExecutionTimeout(params: Readonly<{
     ctx.toolCallIdToInputMap.delete(toolCallId);
 
     if (ctx.activeToolCalls.size === 0) {
-      logger.debug('[AcpBackend] No more active tool calls after timeout, emitting idle status');
-      ctx.emitIdleStatus();
+      scheduleIdleAfterToolCompletion(
+        ctx,
+        '[AcpBackend] No more active tool calls after timeout, scheduling idle status after the post-tool quiet period',
+      );
     }
   }, timeoutMs);
 
@@ -145,6 +174,27 @@ function extractTextFromContentBlocks(value: unknown): string | null {
   }
 
   return parts.length > 0 ? parts.join('') : null;
+}
+
+export function markToolCallWaitingForPermission(toolCallId: string, ctx: HandlerContext): void {
+  if (ctx.finalizedToolCalls.has(toolCallId)) return;
+  setToolCallLifecycleState(toolCallId, 'waiting_for_permission', ctx);
+  clearToolCallExecutionTimeout(toolCallId, ctx);
+}
+
+export function markToolCallRunningAfterPermission(toolCallId: string, ctx: HandlerContext): void {
+  if (ctx.finalizedToolCalls.has(toolCallId)) return;
+  if (!ctx.activeToolCalls.has(toolCallId)) return;
+  const toolKindStr = ctx.toolCallIdToNameMap.get(toolCallId) ?? 'unknown';
+  setToolCallLifecycleState(toolCallId, 'running', ctx);
+  armToolCallExecutionTimeout({
+    toolCallId,
+    toolKind: toolKindStr,
+    toolKindStr,
+    ctx,
+    source: 'tool_call_update',
+    suffix: 'resumed after permission',
+  });
 }
 
 function inferToolKindFromUpdate(update: SessionUpdate): string | null {
@@ -219,18 +269,22 @@ function emitTerminalOutputFromMeta(update: SessionUpdate, ctx: HandlerContext):
   });
 }
 
-function emitToolCallRefresh(
-  toolCallId: string,
-  toolKind: string | unknown,
-  update: SessionUpdate,
-  ctx: HandlerContext,
-): void {
+function resolveToolCallIdentity(params: Readonly<{
+  toolCallId: string;
+  toolKind: string | unknown;
+  update: SessionUpdate;
+  ctx: HandlerContext;
+}>): Readonly<{
+  toolKindStr: string | undefined;
+  realToolName: string;
+  effectiveRawInput: unknown;
+}> {
+  const { toolCallId, toolKind, update, ctx } = params;
   const toolKindStr = typeof toolKind === 'string' ? toolKind : undefined;
 
   const rawInput = extractToolInput(update);
   const cachedInput = ctx.toolCallIdToInputMap.get(toolCallId) ?? null;
   const rawInputRecord = asRecord(rawInput);
-
   const cachedRecord = asRecord(cachedInput);
   const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord ?? cachedRecord, update);
   if (Object.keys(toolNameInferenceInput).length > 0) {
@@ -244,15 +298,35 @@ function emitToolCallRefresh(
     'unknown';
   const realToolName =
     ctx.transport.determineToolName?.(baseName, toolCallId, toolNameInferenceInput, {
-      recentPromptHadChangeTitle: false,
+      recentPromptHadChangeTitle: ctx.recentPromptHadChangeTitle === true,
       toolCallCountSincePrompt: ctx.toolCallCountSincePrompt,
-  }) ?? baseName;
+    }) ?? baseName;
 
   const effectiveRawInput =
     rawInputRecord && Object.keys(rawInputRecord).length > 0
       ? rawInput
       : (cachedRecord && Object.keys(cachedRecord).length > 0 ? cachedRecord : rawInput);
 
+  return {
+    toolKindStr,
+    realToolName,
+    effectiveRawInput,
+  };
+}
+
+function emitToolCallRefresh(
+  toolCallId: string,
+  toolKind: string | unknown,
+  update: SessionUpdate,
+  ctx: HandlerContext,
+): void {
+  const { toolKindStr, realToolName, effectiveRawInput } = resolveToolCallIdentity({
+    toolCallId,
+    toolKind,
+    update,
+    ctx,
+  });
+  ctx.toolCallIdToNameMap.set(toolCallId, realToolName);
   const parsedArgs = parseArgsFromContent(effectiveRawInput);
   const args = { ...parsedArgs };
 
@@ -284,33 +358,24 @@ export function startToolCall(
     return;
   }
   const startTime = Date.now();
-  const toolKindStr = typeof toolKind === 'string' ? toolKind : undefined;
+  const { toolKindStr, realToolName: toolName, effectiveRawInput } = resolveToolCallIdentity({
+    toolCallId,
+    toolKind,
+    update,
+    ctx,
+  });
   const isInvestigation = ctx.transport.isInvestigationTool?.(toolCallId, toolKindStr) ?? false;
-
-  const rawInput = extractToolInput(update);
-  const cachedInput = ctx.toolCallIdToInputMap.get(toolCallId) ?? null;
-  const rawInputRecord = asRecord(rawInput);
-  const cachedRecord = asRecord(cachedInput);
-  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord ?? cachedRecord, update);
-  if (Object.keys(toolNameInferenceInput).length > 0) {
-    ctx.toolCallIdToInputMap.set(toolCallId, toolNameInferenceInput);
-  }
-
-  // Determine a stable tool name (never use `update.title`, which is human-readable and can vary per call).
-  const seededName = ctx.toolCallIdToNameMap.get(toolCallId);
-  const extractedName = ctx.transport.extractToolNameFromId?.(toolCallId);
-  const baseName = seededName ?? extractedName ?? toolKindStr ?? 'unknown';
-  const toolName =
-    ctx.transport.determineToolName?.(baseName, toolCallId, toolNameInferenceInput, {
-      recentPromptHadChangeTitle: false,
-      toolCallCountSincePrompt: ctx.toolCallCountSincePrompt,
-    }) ?? baseName;
 
   // Store mapping for permission requests.
   ctx.toolCallIdToNameMap.set(toolCallId, toolName);
 
   ctx.activeToolCalls.add(toolCallId);
   ctx.toolCallStartTimes.set(toolCallId, startTime);
+  const lifecycleState =
+    update.status === 'pending' || ctx.toolCallLifecycleStates.get(toolCallId) === 'waiting_for_permission'
+      ? 'waiting_for_permission'
+      : 'running';
+  setToolCallLifecycleState(toolCallId, lifecycleState, ctx);
 
   logger.debug(
     `[AcpBackend] ⏱️ Set startTime for ${toolCallId} at ${new Date(startTime).toISOString()} (from ${source})`,
@@ -327,7 +392,7 @@ export function startToolCall(
   // Some ACP providers send `status: pending` while waiting for a user permission response. Do not start
   // the execution timeout until the tool is actually in progress, otherwise long permission waits can
   // cause spurious timeouts and confusing UI state.
-  if (update.status !== 'pending') {
+  if (lifecycleState === 'running') {
     armToolCallExecutionTimeout({
       toolCallId,
       toolKind,
@@ -349,11 +414,6 @@ export function startToolCall(
   ctx.emit({ type: 'status', status: 'running' });
 
   // Parse args and emit tool-call event.
-  const effectiveRawInput =
-    rawInputRecord && Object.keys(rawInputRecord).length > 0
-      ? rawInput
-      : (cachedRecord && Object.keys(cachedRecord).length > 0 ? cachedRecord : rawInput);
-
   const parsedArgs = parseArgsFromContent(effectiveRawInput);
   const args = { ...parsedArgs };
 
@@ -394,6 +454,7 @@ export function completeToolCall(
 
   ctx.finalizedToolCalls.add(toolCallId);
   ctx.activeToolCalls.delete(toolCallId);
+  setToolCallLifecycleState(toolCallId, 'completed', ctx);
   ctx.toolCallStartTimes.delete(toolCallId);
   ctx.toolCallIdToNameMap.delete(toolCallId);
   ctx.toolCallIdToInputMap.delete(toolCallId);
@@ -433,8 +494,10 @@ export function completeToolCall(
   // If no more active tool calls, emit idle.
   if (ctx.activeToolCalls.size === 0) {
     ctx.clearIdleTimeout();
-    logger.debug('[AcpBackend] All tool calls completed, emitting idle status');
-    ctx.emitIdleStatus();
+    scheduleIdleAfterToolCompletion(
+      ctx,
+      '[AcpBackend] All tool calls completed, scheduling idle status after the post-tool quiet period',
+    );
   }
 }
 
@@ -490,6 +553,7 @@ export function failToolCall(
   // Cleanup.
   ctx.finalizedToolCalls.add(toolCallId);
   ctx.activeToolCalls.delete(toolCallId);
+  setToolCallLifecycleState(toolCallId, status, ctx);
   ctx.toolCallStartTimes.delete(toolCallId);
   ctx.toolCallIdToNameMap.delete(toolCallId);
   ctx.toolCallIdToInputMap.delete(toolCallId);
@@ -538,8 +602,10 @@ export function failToolCall(
   // If no more active tool calls, emit idle.
   if (ctx.activeToolCalls.size === 0) {
     ctx.clearIdleTimeout();
-    logger.debug('[AcpBackend] All tool calls completed/failed, emitting idle status');
-    ctx.emitIdleStatus();
+    scheduleIdleAfterToolCompletion(
+      ctx,
+      '[AcpBackend] All tool calls completed/failed, scheduling idle status after the post-tool quiet period',
+    );
   }
 }
 
@@ -550,7 +616,6 @@ export function handleToolCallUpdate(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): HandlerResult {
-  const status = update.status;
   const toolCallId = update.toolCallId;
 
   if (!toolCallId) {
@@ -558,6 +623,7 @@ export function handleToolCallUpdate(
     return { handled: false };
   }
 
+  const status = update.status;
   const inferredToolKind = inferToolKindFromUpdate(update);
   const toolKind =
     typeof update.kind === 'string'
@@ -570,10 +636,17 @@ export function handleToolCallUpdate(
     return { handled: true, toolCallCountSincePrompt };
   }
 
+  // Some ACP providers (notably Codex ACP) omit `status` on non-terminal tool_call_update updates while a tool is
+  // running. Treat these as in-progress liveness signals only when we already armed an execution timeout, so we
+  // don't accidentally start timing out permission-pending tool calls.
+  const lifecycleState = ctx.toolCallLifecycleStates.get(toolCallId);
+  const effectiveStatus = status ?? (lifecycleState === 'running' ? 'in_progress' : undefined);
+
   // Some ACP providers stream terminal output via tool_call_update.meta.
   emitTerminalOutputFromMeta(update, ctx);
 
-  const isTerminalStatus = status === 'completed' || status === 'failed' || status === 'cancelled';
+  const isTerminalStatus =
+    effectiveStatus === 'completed' || effectiveStatus === 'failed' || effectiveStatus === 'cancelled';
   // Some ACP providers can emit a terminal tool_call_update without ever sending an in_progress/pending
   // update first (notably: Gemini), or after a permission gate without any intermediate updates (Qwen).
   // If we didn't track this tool call as active, seed a synthetic tool-call so downstream normalization
@@ -582,14 +655,18 @@ export function handleToolCallUpdate(
     startToolCall(toolCallId, toolKind, { ...update, status: 'pending' }, ctx, 'tool_call_update');
   }
 
-  if (status === 'in_progress' || status === 'pending') {
+  if (effectiveStatus === 'in_progress' || effectiveStatus === 'pending') {
     if (!ctx.activeToolCalls.has(toolCallId)) {
       toolCallCountSincePrompt++;
       startToolCall(toolCallId, toolKind, update, ctx, 'tool_call_update');
     } else {
+      if (effectiveStatus === 'pending') {
+        markToolCallWaitingForPermission(toolCallId, ctx);
+      }
       // If the tool call was previously pending permission, it may not have an execution timeout yet.
       // Arm the timeout as soon as it transitions to in_progress.
-      if (status === 'in_progress') {
+      if (effectiveStatus === 'in_progress') {
+        setToolCallLifecycleState(toolCallId, 'running', ctx);
         const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
         armToolCallExecutionTimeout({
           toolCallId,
@@ -610,8 +687,14 @@ export function handleToolCallUpdate(
       }
     }
   } else if (status === 'completed') {
+    if (hasMeaningfulToolUpdate(update)) {
+      emitToolCallRefresh(toolCallId, toolKind, update, ctx);
+    }
     completeToolCall(toolCallId, toolKind, update, ctx);
   } else if (status === 'failed' || status === 'cancelled') {
+    if (hasMeaningfulToolUpdate(update)) {
+      emitToolCallRefresh(toolCallId, toolKind, update, ctx);
+    }
     failToolCall(toolCallId, status, toolKind, update, ctx);
   }
 

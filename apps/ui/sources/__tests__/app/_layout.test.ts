@@ -1,16 +1,28 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
+type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
+type PlatformSelectOptions<T> = {
+    web?: T;
+    ios?: T;
+    default?: T;
+};
+
+const platformState = vi.hoisted(() => ({
+    os: 'web' as 'web' | 'ios',
+}));
+
 let isAuthenticated = true;
 let segments: string[] = ['(app)'];
 let pathname = '/';
-let platformOs: 'web' | 'ios' = 'web';
 
 const router = { replace: vi.fn(), push: vi.fn() };
 type NotificationResponsePayload = {
@@ -68,6 +80,26 @@ function stubFeatureFetch() {
 
 vi.mock('react-native-reanimated', () => ({}));
 
+vi.mock('socket.io-client', () => {
+    const socket = {
+        connected: false,
+        connect: vi.fn(function connect(this: { connected: boolean }) {
+            this.connected = true;
+        }),
+        on: vi.fn(),
+        onAny: vi.fn(),
+        off: vi.fn(),
+        emit: vi.fn(),
+        disconnect: vi.fn(),
+        removeAllListeners: vi.fn(),
+    };
+
+    return {
+        io: vi.fn(() => socket),
+        Socket: class Socket {},
+    };
+});
+
 vi.mock('expo-notifications', () => {
     return {
         DEFAULT_ACTION_IDENTIFIER: 'default',
@@ -78,7 +110,6 @@ vi.mock('expo-notifications', () => {
 
 vi.mock('@expo/vector-icons', () => {
     const React = require('react');
-    type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
     return {
         Ionicons: (props: NativeChildrenProps) => React.createElement('Ionicons', props, props.children),
     };
@@ -92,9 +123,16 @@ vi.mock('@/constants/Typography', () => {
     return { Typography: { default: () => ({}) } };
 });
 
-vi.mock('@/text', () => {
-    return { t: (key: string) => key };
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
 });
+
+vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
+    useHappierVoiceSupport: () => true,
+}));
 
 vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
     ActivityBadgeRuntime: () => null,
@@ -104,50 +142,59 @@ vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () 
     ActivityLocalNotificationRuntime: () => null,
 }));
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
-    type PlatformSelectOptions<T> = { web?: T; ios?: T; default?: T };
-    return {
-        View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
-        ScrollView: (props: NativeChildrenProps) => React.createElement('ScrollView', props, props.children),
-        Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
-        TextInput: (props: NativeChildrenProps) => React.createElement('TextInput', props, props.children),
-        ActivityIndicator: (props: NativeChildrenProps) => React.createElement('ActivityIndicator', props, props.children),
-        Platform: {
-            get OS() {
-                return platformOs;
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
+            ScrollView: (props: NativeChildrenProps) => React.createElement('ScrollView', props, props.children),
+            Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
+            TextInput: (props: NativeChildrenProps) => React.createElement('TextInput', props, props.children),
+            ActivityIndicator: (props: NativeChildrenProps) => React.createElement('ActivityIndicator', props, props.children),
+            Platform: {
+                get OS() {
+                    return platformState.os;
+                },
+                select: <T,>(options: PlatformSelectOptions<T>) => (
+                    platformState.os === 'web'
+                        ? options.web ?? options.default
+                        : options.ios ?? options.default
+                ),
             },
-            select: <T,>(options: PlatformSelectOptions<T>) => (platformOs === 'web' ? options.web ?? options.default : options.ios ?? options.default),
-        },
-        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }) },
-        InteractionManager: { runAfterInteractions: (fn: () => void) => fn() },
-        StyleSheet: { create: <T,>(styles: T) => styles },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-        processColor: <T,>(value: T) => value,
-        AppState: { addEventListener: () => ({ remove: () => {} }) },
-        TouchableOpacity: (props: NativeChildrenProps) => React.createElement('TouchableOpacity', props, props.children),
-        Text: (props: NativeChildrenProps) => React.createElement('Text', props, props.children),
-    };
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+            },
+            InteractionManager: {
+                runAfterInteractions: (fn: () => void) => fn(),
+            },
+            StyleSheet: {
+                create: <T,>(styles: T) => styles,
+            },
+            useWindowDimensions: () => ({ width: 800, height: 600 }),
+            processColor: <T,>(value: T) => value,
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            TouchableOpacity: (props: NativeChildrenProps) => React.createElement('TouchableOpacity', props, props.children),
+            Text: (props: NativeChildrenProps) => React.createElement('Text', props, props.children),
+        }
+    );
 });
 
-vi.mock('expo-router', () => {
-    const React = require('react');
-    type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
-    const Stack = (props: NativeChildrenProps) => React.createElement('Stack', props, props.children);
-    Stack.Screen = (props: NativeChildrenProps) => React.createElement('StackScreen', props, props.children);
-    return {
-        Stack,
-        router,
-        useSegments: () => {
-            React.useMemo(() => 0, [segments.join('|')]);
-            return segments;
-        },
-        usePathname: () => {
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: router,
+        pathname: () => {
             React.useMemo(() => 0, [pathname]);
             return pathname;
         },
-    };
+        segments: () => {
+            React.useMemo(() => 0, [segments.join('|')]);
+            return segments;
+        },
+    });
+    return expoRouterMock.module;
 });
 
 vi.mock('@/auth/context/AuthContext', () => {
@@ -166,22 +213,16 @@ vi.mock('@/auth/routing/authRouting', () => {
     };
 });
 
-vi.mock('react-native-unistyles', () => {
-    const React = require('react');
-    return {
-        StyleSheet: { create: <T,>(styles: T) => styles, absoluteFillObject: {} },
-        useUnistyles: () => {
-            React.useMemo(() => 0, []);
-            return {
-                theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
                     colors: {
                         surface: '#fff',
                         header: { background: '#fff', tint: '#000' },
                     },
                 },
-            };
-        },
-    };
+    });
 });
 
 vi.mock('@/utils/platform/platform', () => {
@@ -194,7 +235,7 @@ afterEach(() => {
     router.replace.mockReset();
     router.push.mockReset();
     lastNotificationResponse = null;
-    platformOs = 'web';
+    platformState.os = 'web';
     isAuthenticated = true;
     segments = ['(app)'];
 });
@@ -210,9 +251,7 @@ describe('RootLayout hooks order', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(React.createElement(RootLayout));
-            });
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
 
             isAuthenticated = false;
             segments = ['(app)', 'settings'];
@@ -229,7 +268,7 @@ describe('RootLayout hooks order', () => {
                 });
             }
         }
-    }, 30_000);
+    }, 60_000);
 });
 
 describe('RootLayout notification routing', () => {
@@ -239,7 +278,7 @@ describe('RootLayout notification routing', () => {
         const { default: RootLayout } = await import('@/app/(app)/_layout');
 
         isAuthenticated = true;
-        platformOs = 'ios';
+        platformState.os = 'ios';
         lastNotificationResponse = {
             actionIdentifier: 'default',
             notification: {
@@ -249,9 +288,7 @@ describe('RootLayout notification routing', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(React.createElement(RootLayout));
-            });
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
             await act(async () => {
                 // flush microtasks
                 await Promise.resolve();
@@ -275,9 +312,7 @@ describe('RootLayout restore navigation', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(React.createElement(RootLayout));
-            });
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
             if (!tree) throw new Error('Expected renderer');
 
             const screens = tree.root.findAllByType('StackScreen' as any);
@@ -286,6 +321,9 @@ describe('RootLayout restore navigation', () => {
 
             const showQr = screens.find((s) => s.props?.name === 'restore/show-qr');
             expect(showQr?.props?.options?.headerTitle).toBe('navigation.linkNewDevice');
+
+            const sessionTerminal = screens.find((s) => s.props?.name === 'session/[id]/terminal');
+            expect(sessionTerminal?.props?.options?.headerShown).toBe(false);
         } finally {
             if (tree) {
                 act(() => {

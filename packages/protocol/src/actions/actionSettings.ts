@@ -1,20 +1,37 @@
 import { z } from 'zod';
 
-import { ActionIdSchema, type ActionId } from './actionIds.js';
+import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, type ActionSurfaces } from './actionSpecs.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 
 const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
+export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
+const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
 
-const ActionSettingsOverrideSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    enabledPlacements: z.array(ActionUiPlacementSchema).default([]),
-    disabledSurfaces: z.array(ActionSurfaceKeySchema).default([]),
-    disabledPlacements: z.array(ActionUiPlacementSchema).default([]),
-  })
-  .strict();
+function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return raw;
+  }
+
+  const next = { ...(raw as Record<string, unknown>) };
+  if (Array.isArray(next.disabledSurfaces)) {
+    next.disabledSurfaces = next.disabledSurfaces.map((surface) => surface === 'session_control_cli' ? 'cli' : surface);
+  }
+  return next;
+}
+
+const ActionSettingsOverrideSchema = z.preprocess(
+  normalizeLegacyActionSettingsOverride,
+  z
+    .object({
+      enabled: z.boolean().optional(),
+      enabledPlacements: z.array(ActionUiPlacementSchema).default([]),
+      disabledSurfaces: z.array(ActionSurfaceKeySchema).default([]),
+      disabledPlacements: z.array(ActionUiPlacementSchema).default([]),
+    })
+    .strict(),
+);
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
 export const ActionsSettingsV1Schema = z
@@ -29,7 +46,7 @@ export const ActionsSettingsV1Schema = z
     const next: Record<ActionId, ActionSettingsOverride> = {} as any;
     const actions = value.actions ?? {};
     for (const [rawId, override] of Object.entries(actions)) {
-      const parsedId = ActionIdSchema.safeParse(rawId);
+      const parsedId = ActionIdSchema.safeParse(normalizeLegacyActionId(rawId));
       if (!parsedId.success) continue;
       next[parsedId.data] = override;
     }
@@ -43,18 +60,21 @@ export type ActionEnablementContext = Readonly<{
   placement?: ActionUiPlacement | null;
 }>;
 
+export function isActionSettingsOptInPlacement(placement: ActionUiPlacement): boolean {
+  return ACTION_SETTINGS_OPT_IN_PLACEMENT_SET.has(placement);
+}
+
 export function isActionEnabledByActionsSettings(
   actionId: ActionId,
   settings: ActionsSettingsV1,
   ctx?: ActionEnablementContext,
 ): boolean {
-  const optInPlacements = new Set<ActionUiPlacement>(['agent_input_chips']);
   const override = (settings as any)?.actions?.[actionId] as ActionSettingsOverride | undefined;
   if (override?.enabled === false) return false;
   const surface = ctx?.surface ?? null;
   if (surface && override?.disabledSurfaces?.includes(surface as any)) return false;
   const placement = ctx?.placement ?? null;
-  if (placement && optInPlacements.has(placement as any)) {
+  if (placement && isActionSettingsOptInPlacement(placement)) {
     if (override?.disabledPlacements?.includes(placement as any)) return false;
     if (override?.enabledPlacements?.includes(placement as any)) return true;
     return false;

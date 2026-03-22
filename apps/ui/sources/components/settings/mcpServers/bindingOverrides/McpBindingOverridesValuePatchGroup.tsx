@@ -16,6 +16,15 @@ function describeValueRef(valueRef: McpValueRefV1): string {
     return t('settings.mcpServersValueSourceSavedSecret');
 }
 
+function describePatchedValue(value: McpValueRefV1 | null): string {
+    if (value === null) {
+        return t('settings.mcpServersOverridesDeleteValue');
+    }
+
+    const parsed = McpValueRefV1Schema.safeParse(value);
+    return parsed.success ? describeValueRef(parsed.data) : t('settings.mcpServersValidationFailed');
+}
+
 export type McpBindingOverridesValuePatchGroupProps = Readonly<{
     kind: PatchKind;
     patch: Record<string, McpValueRefV1 | null>;
@@ -64,7 +73,7 @@ export const McpBindingOverridesValuePatchGroup = React.memo(function McpBinding
                 <Item
                     key={key}
                     title={key}
-                    subtitle={value === null ? t('settings.mcpServersOverridesDeleteValue') : describeValueRef(McpValueRefV1Schema.parse(value))}
+                    subtitle={describePatchedValue(value)}
                     icon={<Ionicons name={iconName} size={29} color={value === null ? theme.colors.textDestructive : theme.colors.accent.indigo} />}
                     onPress={() => {
                         if (value === null) {
@@ -126,4 +135,3 @@ export const McpBindingOverridesValuePatchGroup = React.memo(function McpBinding
         </ItemGroup>
     );
 });
-

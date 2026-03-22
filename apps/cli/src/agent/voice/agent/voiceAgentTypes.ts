@@ -7,20 +7,29 @@ export type Verbosity = 'short' | 'balanced';
 
 export type VoiceAgentStartParams = Readonly<{
   agentId: AgentId;
+  profileId?: string | null;
+  contextSessionId?: string | null;
   chatModelId: string;
   commitModelId: string;
   commitIsolation?: boolean;
   permissionPolicy: PermissionPolicy;
   idleTtlSeconds: number;
   initialContext: string;
+  initialContextMode?: 'bootstrap' | 'first_turn';
   verbosity?: Verbosity;
   resumeHandle?: ExecutionRunResumeHandle | null;
+  disabledActionIds?: readonly string[];
   /**
    * Optional one-time bootstrap behavior for newly created (non-resumed) sessions.
    * - `ready_handshake`: send a bootstrap prompt and require the model to reply with `READY`.
    * - `none` / undefined: no bootstrap; first user turn seeds the system prompt.
    */
   bootstrapMode?: 'ready_handshake' | 'none';
+  /**
+   * Optional timeout budget for bootstrap handshakes.
+   * When omitted, the backend default response-completion timeout applies.
+   */
+  bootstrapTimeoutMs?: number;
 }>;
 
 export type VoiceAgentStartResult = Readonly<{
@@ -59,7 +68,18 @@ export class VoiceAgentError extends Error {
   }
 }
 
-export type BackendFactory = (opts: { agentId: AgentId; modelId: string; permissionPolicy: PermissionPolicy }) => AgentBackend;
+export type BackendFactory = (opts: {
+  agentId: AgentId;
+  modelId: string;
+  permissionPolicy: PermissionPolicy;
+  start?: Readonly<{ intent: 'voice_agent' }>;
+}) => AgentBackend;
+
+export type ResolveVoiceSystemAppendBlocksArgs = Readonly<{
+  profileId?: string | null;
+  sessionId?: string | null;
+  workingDirectory?: string | null;
+}>;
 
 export type VoiceAgentTurn = { role: 'user' | 'assistant'; text: string };
 
@@ -89,6 +109,9 @@ export type VoiceAgentInstance = {
   chatModelId: string;
   commitModelId: string;
   initialContext: string;
+  disabledActionIds: readonly string[];
+  memoryRecallGuidanceEnabled: boolean;
+  systemAppendBlocks: readonly string[];
   bootstrapped: boolean;
   history: VoiceAgentTurn[];
   lastUsedAt: number;

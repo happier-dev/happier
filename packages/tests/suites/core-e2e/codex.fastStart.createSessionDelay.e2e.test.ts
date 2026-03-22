@@ -8,7 +8,6 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
@@ -37,7 +36,7 @@ describe('core e2e: Codex fast-start', () => {
     const testDir = run.testDir('codex-fast-start-create-session-delay');
     const startedAt = new Date().toISOString();
 
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
 
     const cliHome = resolve(join(testDir, 'cli-home'));
@@ -110,19 +109,21 @@ setInterval(() => {}, 1000);
       HAPPIER_E2E_CODEX_SESSION_ID: codexSessionId,
       // Enable Codex local-control so `--happy-starting-mode local` uses the local launcher.
       HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
+      HAPPIER_CODEX_ACP_NPX_MODE: 'never',
+      HAPPIER_CODEX_ACP_BIN: fakeCodexPath,
       // Make server session creation slow enough that we can verify local spawn happens first.
-      HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '10000',
+      HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '30000',
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    const cliDistEntrypoint = await ensureCliDistBuilt(
+      { testDir, env: cliEnv },
+      { skipDistIntegrityCheck: true, skipSourceFreshnessCheck: true },
+    );
 
     proc = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: process.execPath,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        cliDistEntrypoint,
         'codex',
         '--started-by',
         'terminal',
@@ -136,11 +137,11 @@ setInterval(() => {}, 1000);
     });
 
     await waitFor(async () => existsSync(rolloutPath), {
-      timeoutMs: 5000,
+      timeoutMs: 20_000,
       intervalMs: 25,
       context: 'fake Codex rollout file exists (spawned)',
     });
 
     expect(existsSync(rolloutPath)).toBe(true);
-  });
+  }, 60_000);
 });

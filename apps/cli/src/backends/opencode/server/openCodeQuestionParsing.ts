@@ -1,12 +1,8 @@
 import type { OpenCodeQuestionRequest } from './types';
 import { asRecord, normalizeString } from './openCodeParsing';
+import { looksLikeFreeformQuestionHintLabel, splitCommaSeparatedLabels } from '@/agent/questions/structuredQuestionAnswerText';
 
-function splitCommaSeparatedLabels(value: string): string[] {
-  return value
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
+export { looksLikeFreeformQuestionHintLabel };
 
 export function hasAnyMeaningfulInputFields(rawInput: unknown): boolean {
   if (rawInput == null) return false;
@@ -30,14 +26,6 @@ export function extractBashCommandHint(rawInput: unknown): string {
     if (joined) return joined;
   }
   return '';
-}
-
-export function looksLikeFreeformQuestionHintLabel(label: string): boolean {
-  const normalized = label.trim().toLowerCase();
-  if (!normalized) return false;
-  // OpenCode sometimes encodes freeform questions as a single “type/enter your answer” option.
-  // Treat these as typed answers rather than a real selection.
-  return normalized.includes('type') || normalized.includes('enter') || normalized.includes('your own answer');
 }
 
 export function openCodeQuestionRecordLooksFreeform(q: Record<string, unknown>): boolean {

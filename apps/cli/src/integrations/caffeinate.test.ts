@@ -85,7 +85,7 @@ describe('caffeinate', () => {
         expect(spawnMock).not.toHaveBeenCalled();
     });
 
-    it('spawns caffeinate on darwin and avoids duplicate spawn when already running', async () => {
+    it('spawns caffeinate on darwin, waits on the current process, and avoids duplicate spawn when already running', async () => {
         const fakeChild = createFakeChildProcess(777);
         spawnMock.mockReturnValue(fakeChild);
         const { startCaffeinate, isCaffeinateRunning } = await importCaffeinateModule();
@@ -94,7 +94,7 @@ describe('caffeinate', () => {
         expect(startCaffeinate()).toBe(true);
         expect(isCaffeinateRunning()).toBe(true);
         expect(spawnMock).toHaveBeenCalledTimes(1);
-        expect(spawnMock).toHaveBeenCalledWith('caffeinate', ['-im'], {
+        expect(spawnMock).toHaveBeenCalledWith('caffeinate', ['-im', '-w', String(process.pid)], {
             stdio: 'ignore',
             detached: false,
         });

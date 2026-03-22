@@ -54,7 +54,15 @@ export async function machineMcpServersTest(
     input: MachineMcpServersTestInput,
     opts?: MachineMcpServersOpts,
 ): Promise<DaemonMcpServersTestResponse> {
-    const payload = DaemonMcpServersTestRequestSchema.parse({ ...(input as any), machineId } as DaemonMcpServersTestRequest);
+    const payload = input.t === 'draft'
+        ? DaemonMcpServersTestRequestSchema.parse({
+            ...input,
+            machineId,
+        })
+        : DaemonMcpServersTestRequestSchema.parse({
+            ...input,
+            machineId,
+        });
     const response = await machineRpcWithServerScope<unknown, DaemonMcpServersTestRequest>({
         machineId,
         serverId: opts?.serverId,

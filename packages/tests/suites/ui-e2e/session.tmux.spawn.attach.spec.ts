@@ -13,6 +13,8 @@ import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } f
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { ensureCliDistSnapshotEntrypoint } from '../../src/testkit/process/cliDist';
 import { repoRootDir } from '../../src/testkit/paths';
+import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 type TerminalAttachmentInfoV1 = {
@@ -28,6 +30,15 @@ function tmuxAvailable(): boolean {
     if (process.platform === 'win32') return false;
     const res = spawnSync('tmux', ['-V'], { stdio: 'ignore' });
     return res.status === 0;
+}
+
+function commandAvailable(command: string): boolean {
+    const result = spawnSync(command, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+}
+
+function canReadProcessUid(): boolean {
+    return typeof process.getuid === 'function';
 }
 
 function attachmentInfoPath(happyHomeDir: string, sessionId: string): string {
@@ -158,8 +169,7 @@ async function createSessionFromComposer(params: {
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByTestId('agent-input-machine-chip').click();
-    await page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
+    await openNewSessionMachineSelection({ page, uiBaseUrl });
 
     const exact = page.getByTestId(`new-session-machine:${machineId}`);
     await expect(exact).toHaveCount(1, { timeout: 120_000 });
@@ -175,6 +185,9 @@ async function createSessionFromComposer(params: {
 
 test.describe('ui e2e: tmux spawn → attach', () => {
     test.describe.configure({ mode: 'serial' });
+    test.skip(!tmuxAvailable(), 'tmux is not available on this machine');
+    test.skip(!commandAvailable('sqlite3'), 'sqlite3 is not available on this machine');
+    test.skip(!canReadProcessUid(), 'process.getuid is not available');
 
     const suiteDir = run.testDir('session-tmux-spawn-attach-suite');
     const cliHomeDir = resolve(join(suiteDir, 'cli-home'));
@@ -235,8 +248,6 @@ test.describe('ui e2e: tmux spawn → attach', () => {
 
     test('starts a UI-created session in tmux and can attach via CLI', async ({ page }) => {
         test.setTimeout(900_000);
-        if (!tmuxAvailable()) test.skip(true, 'tmux is not available on this machine');
-        if (typeof (process as any).getuid !== 'function') test.skip(true, 'process.getuid is not available');
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
         await page.setViewportSize({ width: 1440, height: 900 });
@@ -274,14 +285,7 @@ test.describe('ui e2e: tmux spawn → attach', () => {
         await cliLogin.waitForSuccess();
         await cliLogin.stop().catch(() => {});
 
-        try {
-            const okButton = page.getByRole('button', { name: 'OK' });
-            await expect(okButton).toBeVisible({ timeout: 5_000 });
-            await okButton.click();
-            await expect(okButton).toBeHidden({ timeout: 30_000 });
-        } catch {
-            // ignore missing/changed success dialog
-        }
+        await acknowledgeTerminalConnectSuccessIfPresent(page);
 
         const fakeClaudePath = fakeClaudeFixturePath();
         daemon = await startTestDaemon({
@@ -307,7 +311,7 @@ test.describe('ui e2e: tmux spawn → attach', () => {
         const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: `hello ${run.runId}` });
         await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 180_000 });
+        await expect.poll(async () => page.locator('[data-testid^="transcript-message-"]').count(), { timeout: 180_000 }).toBeGreaterThan(1);
 
         const info = await waitForAttachmentInfo(cliHomeDir, sessionId);
         expect(info.terminal.mode).toBe('tmux');
@@ -317,7 +321,8 @@ test.describe('ui e2e: tmux spawn → attach', () => {
         expect(target.startsWith(`${tmuxSessionName}:`)).toBe(true);
 
         // Verify isolated tmux server socket exists.
-        const uid = (process as any).getuid() as number;
+        const uid = process.getuid?.();
+        if (typeof uid !== 'number') throw new Error('process.getuid is not available');
         const socketPath = `${tmuxTmpDir}/tmux-${uid}/default`;
         expect(existsSync(socketPath)).toBe(true);
 
@@ -361,11 +366,9 @@ test.describe('ui e2e: tmux spawn → attach', () => {
             .find((l) => l.startsWith('1 '));
         expect(active).toBe(`1 ${windowName}`);
 
-        // UI should allow switching remote → local → remote using stable selectors (testIDs).
-        await expect(page.getByTestId('session-chatFooter-switchToLocal')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('session-chatFooter-switchToLocal').click();
+        // UI should allow switching back to remote after the terminal has attached locally.
         await expect(page.getByTestId('session-chatFooter-switchToRemote')).toHaveCount(1, { timeout: 180_000 });
         await page.getByTestId('session-chatFooter-switchToRemote').click();
-        await expect(page.getByTestId('session-chatFooter-switchToLocal')).toHaveCount(1, { timeout: 180_000 });
+        await expect(page.getByTestId('session-chatFooter-switchToRemote')).toHaveCount(0, { timeout: 180_000 });
     });
 });

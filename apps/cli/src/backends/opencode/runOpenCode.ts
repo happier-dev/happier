@@ -50,7 +50,6 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
   let unmountRemoteUi = async (): Promise<void> => undefined;
   const localControl = createOpenCodeSharedLocalControl({
     support: resolveOpenCodeLocalControlSupport({
-      startedBy: opts.startedBy,
       backendMode,
       hasTTY: process.stdout.isTTY && process.stdin.isTTY,
     }),

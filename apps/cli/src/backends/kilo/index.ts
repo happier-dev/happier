@@ -9,6 +9,7 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/kilo/cli/command')).handleKiloCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/kilo/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/kilo/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/kilo/cli/auth/kiloCliAuthSpec')).kiloCliAuthSpec,
   vendorResumeSupport: AGENTS_CORE.kilo.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createKiloBackend } = await import('@/backends/kilo/acp/backend');
@@ -16,4 +17,3 @@ export const agent = {
   },
   checklists,
 } satisfies AgentCatalogEntry;
-

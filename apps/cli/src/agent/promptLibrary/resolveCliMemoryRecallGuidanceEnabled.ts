@@ -1,13 +1,14 @@
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { resolveMemoryIndexPaths } from '@/daemon/memory/memoryIndexPaths';
 import { stat } from 'node:fs/promises';
-import type { ActionSurfaces, MemorySettingsV1 } from '@happier-dev/protocol';
+import {
+  isMemoryRecallGuidanceSupported,
+  type MemoryRecallGuidanceSurface,
+  type MemorySettingsV1,
+} from '@happier-dev/protocol';
 
-type MemoryRecallGuidanceSurface = keyof Pick<ActionSurfaces, 'mcp' | 'voice_tool' | 'voice_action_block'>;
 type MemoryRecallIndexStat = Readonly<Pick<Awaited<ReturnType<typeof stat>>, 'size'>>;
 type MemoryRecallIndexStatReader = (path: string) => Promise<MemoryRecallIndexStat>;
-
-const DEFAULT_MEMORY_RECALL_GUIDANCE_SURFACES = ['mcp'] as const satisfies readonly MemoryRecallGuidanceSurface[];
 
 export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
   surfaces?: readonly MemoryRecallGuidanceSurface[];
@@ -18,10 +19,11 @@ export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
     stat?: MemoryRecallIndexStatReader;
   }>;
 }>): Promise<boolean> {
-  const surfaces: readonly MemoryRecallGuidanceSurface[] =
-    args?.surfaces && args.surfaces.length > 0 ? args.surfaces : DEFAULT_MEMORY_RECALL_GUIDANCE_SURFACES;
   const readActionEnabled = args?.deps?.isActionEnabledByEnv ?? isActionEnabledByEnv;
-  if (!surfaces.some((surface) => readActionEnabled('memory.search', { surface }))) {
+  if (!isMemoryRecallGuidanceSupported({
+    surfaces: args?.surfaces,
+    isActionEnabled: (actionId, surface) => readActionEnabled(actionId, { surface }),
+  })) {
     return false;
   }
 

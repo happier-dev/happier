@@ -33,12 +33,18 @@ vi.mock('./api/session/apiChanges', () => ({
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
-  const actual = await vi.importActual<any>('react-native');
-  return {
-    ...actual,
-    Platform: { ...(actual?.Platform ?? {}), OS: 'web' },
-    AppState: { currentState: 'active', addEventListener: appStateAddListener as any },
-  };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            AppState: {
+                                currentState: 'active',
+                                addEventListener: appStateAddListener as any,
+                            },
+                        }
+    );
 });
 
 vi.mock('@/sync/api/session/apiSocket', () => {
@@ -111,7 +117,14 @@ describe('sync socket offline tracking', () => {
     upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
+      const url: string =
+        typeof input === 'string'
+          ? input
+          : input instanceof Request
+            ? input.url
+            : 'url' in input
+              ? String(input.url)
+              : input.toString();
       if (url.includes('/v2/sessions')) {
         return new Response(
           JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),

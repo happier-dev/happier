@@ -1,4 +1,4 @@
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 
 export async function fetchSessionDataEncryptionKey(params: Readonly<{
   token: string;

@@ -4,11 +4,14 @@
     "index",
     "claude",
     "codex",
+    "custom-acp",
     "gemini",
     "opencode",
     "augment",
+    "copilot",
     "kilo",
     "kimi",
+    "kiro",
     "qwen",
     "pi"
   ]

@@ -1,5 +1,3 @@
-import type { CatalogAgentId } from '@/backends/types';
-
 type AcpSidechainMeta = { sidechainId?: string };
 
 export type ACPMessageData = AcpSidechainMeta & (
@@ -17,11 +15,10 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'token_count'; [key: string]: unknown }
 );
 
-export type ACPProvider = CatalogAgentId;
+export type ACPProvider = string;
 
 export type SessionEventMessage =
   | { type: 'switch'; mode: 'local' | 'remote' }
   | { type: 'message'; message: string }
   | { type: 'permission-mode-changed'; mode: import('../types').PermissionMode }
   | { type: 'ready' };
-

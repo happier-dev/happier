@@ -8,7 +8,9 @@ import { pathExists } from './utils/fs/fs.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { detectPackageManagerCmd, pickFirstScript, readPackageJsonScripts } from './utils/proc/package_scripts.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
-import { readdir, readFile } from 'node:fs/promises';
+import { collectTestFiles } from './utils/test/collect_test_files.mjs';
+import { collectStackUnitTestFiles } from './utils/test/test_collection.mjs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 
 const EXTRA_COMPONENTS = ['stacks'];
@@ -54,25 +56,6 @@ function normalizeTargetsOrThrow(rawTargets) {
 
   if (!mapped.length) return ['all'];
   return mapped;
-}
-
-async function collectTestFiles(dir) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files = [];
-  for (const e of entries) {
-    // Avoid dot-dirs and dot-files (e.g. .DS_Store).
-    if (e.name.startsWith('.')) continue;
-    const p = join(dir, e.name);
-    if (e.isDirectory()) {
-      files.push(...(await collectTestFiles(p)));
-      continue;
-    }
-    if (!e.isFile()) continue;
-    if (!e.name.endsWith('.test.mjs')) continue;
-    files.push(p);
-  }
-  files.sort();
-  return files;
 }
 
 function pickTestScript(scripts) {
@@ -179,10 +162,11 @@ async function main() {
         // Note: do not rely on shell glob expansion here.
         // Node 20 does not expand globs for `--test`, and bash/sh won't expand globs inside quotes.
         // Enumerate files ourselves so this works reliably in CI.
-        const scriptsDir = join(rootDir, 'scripts');
-        const testFiles = await collectTestFiles(scriptsDir);
+        const { scriptsDir, testsDir, testFiles } = await collectStackUnitTestFiles(import.meta.url, {
+          collect: collectTestFiles,
+        });
         if (testFiles.length === 0) {
-          throw new Error(`[test] stacks: no test files found under ${scriptsDir}`);
+          throw new Error(`[test] stacks: no test files found under ${scriptsDir} or ${testsDir}`);
         }
         await run(process.execPath, ['--test', ...testFiles], { cwd: rootDir, env: process.env });
         results.push({ target, ok: true, skipped: false, dir: rootDir, pm: 'node', script: '--test' });

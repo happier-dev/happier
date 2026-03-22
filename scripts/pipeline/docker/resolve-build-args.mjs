@@ -8,6 +8,13 @@
 export function resolveOptionalDockerBuildArgs(env, opts) {
   /** @type {string[]} */
   const args = [];
+  const readFirstNonEmpty = (...keys) => {
+    for (const key of keys) {
+      const value = String(env[key] ?? '').trim();
+      if (value) return value;
+    }
+    return '';
+  };
 
   const sentryToken = String(env.SENTRY_AUTH_TOKEN ?? '').trim();
   if (sentryToken) {
@@ -43,6 +50,15 @@ export function resolveOptionalDockerBuildArgs(env, opts) {
   const posthogHost = String(env.POSTHOG_HOST ?? '').trim();
   if (posthogHost) {
     args.push('--build-arg', `POSTHOG_HOST=${posthogHost}`);
+  }
+
+  const happierServerUrl = readFirstNonEmpty(
+    'EXPO_PUBLIC_HAPPIER_SERVER_URL',
+    'EXPO_PUBLIC_HAPPY_SERVER_URL',
+    'EXPO_PUBLIC_SERVER_URL',
+  );
+  if (happierServerUrl) {
+    args.push('--build-arg', `EXPO_PUBLIC_HAPPIER_SERVER_URL=${happierServerUrl}`);
   }
 
   return args;

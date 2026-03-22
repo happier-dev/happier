@@ -1,94 +1,51 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { clearDaemonState, writeDaemonState } from '@/persistence';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
+const { mockIo } = vi.hoisted(() => ({
+  mockIo: vi.fn(),
+}));
+
+vi.mock('socket.io-client', () => ({
+  io: mockIo,
+}));
+
 describe('happier session create plaintext sessions (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-create-plain-'));
+    happyHomeDir = await createTempDir('happier-cli-session-create-plain-');
 
     const sessionId = 'sess_integration_create_plain_123';
+    let metadataJson = JSON.stringify({ path: process.cwd(), host: 'spawn-host' });
+    let metadataVersion = 0;
+    let observedSpawnBody: Record<string, unknown> | null = null;
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
 
-      if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }));
-        return;
-      }
-
-      if (req.method === 'GET' && url.pathname === `/v2/sessions/archived`) {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }));
-        return;
-      }
-
-      if (req.method === 'GET' && url.pathname === `/v1/features`) {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json');
-        res.end(
-          JSON.stringify({
-            features: {},
-            capabilities: {
-              encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'e2ee' },
-            },
-          }),
-        );
-        return;
-      }
-
-      if (req.method === 'GET' && url.pathname === `/v1/account/encryption`) {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ mode: 'plain', updatedAt: 0 }));
-        return;
-      }
-
-      if (req.method === 'POST' && url.pathname === `/v1/sessions`) {
+      if (req.method === 'POST' && url.pathname === `/spawn-session`) {
         const chunks: Buffer[] = [];
         for await (const c of req) chunks.push(Buffer.from(c));
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        observedSpawnBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
 
-        if (body.encryptionMode !== 'plain') {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'expected_plain_encryption_mode' }));
-          return;
-        }
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ success: true, sessionId }));
+        return;
+      }
 
-        // Plain sessions must store metadata as JSON (not ciphertext).
-        let parsedMeta: any = null;
-        try {
-          parsedMeta = JSON.parse(String(body.metadata ?? 'null'));
-        } catch {
-          parsedMeta = null;
-        }
-        if (!parsedMeta || typeof parsedMeta !== 'object') {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'expected_plain_metadata_json' }));
-          return;
-        }
-
-        if (body.dataEncryptionKey !== null) {
-          res.statusCode = 400;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'expected_no_data_key_for_plain' }));
-          return;
-        }
-
+      if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
@@ -98,10 +55,11 @@ describe('happier session create plaintext sessions (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
-              metadata: body.metadata,
-              metadataVersion: 0,
+              active: true,
+              activeAt: 2,
+              archivedAt: null,
+              metadata: metadataJson,
+              metadataVersion,
               agentState: null,
               agentStateVersion: 0,
               pendingCount: 0,
@@ -133,9 +91,36 @@ describe('happier session create plaintext sessions (integration)', () => {
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
+
+    writeDaemonState({
+      pid: process.pid,
+      httpPort: address.port,
+      startedAt: Date.now(),
+      startedWithCliVersion: 'test',
+      controlToken: 'test-token',
+    });
+
+    const socket = createApiSessionSocketStub({
+      emit: async (event: string, args: unknown[]) => {
+        if (event !== 'update-metadata') return;
+        const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
+        const decrypted = JSON.parse(String(data?.metadata ?? '{}'));
+        expect(decrypted?.summary?.text).toBe('My Title');
+        expect(decrypted?.tag).toBe('MyTag');
+        expect(observedSpawnBody).toEqual({
+          directory: process.cwd(),
+          backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
+        });
+        metadataJson = String(data.metadata);
+        metadataVersion = 1;
+        callback?.({ result: 'success', version: metadataVersion, metadata: metadataJson });
+      },
+    });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
+    await clearDaemonState();
     if (server) {
       await new Promise<void>((resolve, reject) => {
         server!.close((error) => (error ? reject(error) : resolve()));
@@ -143,29 +128,23 @@ describe('happier session create plaintext sessions (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
     }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
   });
 
-  it('creates/loads sessions using encryptionMode=plain when the server supports optional plaintext storage and the account mode is plain', async () => {
+  it('returns a spawned plaintext session summary when metadata updates stay plaintext', async () => {
     const { handleSessionCommand } = await import('./index');
 
     const machineKeySeed = new Uint8Array(32).fill(8);
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
-      stdout.push(args.join(' '));
-    });
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--json'], {
@@ -179,7 +158,7 @@ describe('happier session create plaintext sessions (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.v).toBe(1);
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_create');
@@ -187,10 +166,10 @@ describe('happier session create plaintext sessions (integration)', () => {
       expect(parsed.data?.session?.id).toBe('sess_integration_create_plain_123');
       expect(parsed.data?.session?.tag).toBe('MyTag');
       expect(parsed.data?.session?.title).toBe('My Title');
+      expect(parsed.data?.session?.active).toBe(true);
       expect(parsed.data?.session?.encryptionMode).toBe('plain');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });
-

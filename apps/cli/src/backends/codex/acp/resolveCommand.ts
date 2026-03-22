@@ -1,27 +1,31 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { delimiter as pathDelimiter } from 'node:path';
 
 import { isCodexPermissionMode, type PermissionMode } from '@/api/types';
-import { configuration } from '@/configuration';
+import { resolveExistingCodexAcpManagedBinPath } from '@/capabilities/deps/codexAcp';
+import { appendCodexCliConfigOverridesArgs } from '../utils/appendCodexCliConfigOverridesArgs';
 
 export type SpawnSpec = { command: string; args: string[] };
-export type ResolveCodexAcpSpawnOptions = { permissionMode?: PermissionMode };
+export type ResolveCodexAcpSpawnOptions = {
+  permissionMode?: PermissionMode;
+  disableUserMcpServers?: boolean;
+  env?: NodeJS.ProcessEnv;
+  currentWorkingDirectory?: string;
+};
 
-type NpxMode = 'auto' | 'never' | 'force';
-
-function readCodexAcpNpxMode(): NpxMode {
-  const raw = typeof process.env.HAPPIER_CODEX_ACP_NPX_MODE === 'string'
-    ? process.env.HAPPIER_CODEX_ACP_NPX_MODE.trim().toLowerCase()
-    : '';
-  if (raw === 'never' || raw === 'force' || raw === 'auto') return raw;
-
-  return 'auto';
+function isRunnableCodexAcpPath(candidatePath: string): boolean {
+  try {
+    accessSync(candidatePath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function isCodexAcpOnPath(): boolean {
-  const path = typeof process.env.PATH === 'string' ? process.env.PATH : '';
+function isCodexAcpOnPath(env: NodeJS.ProcessEnv): boolean {
+  const path = typeof env.PATH === 'string' ? env.PATH : '';
   if (!path) return false;
   const candidates = process.platform === 'win32'
     ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp']
@@ -32,7 +36,8 @@ function isCodexAcpOnPath(): boolean {
     if (!trimmed) continue;
     for (const name of candidates) {
       try {
-        if (existsSync(join(trimmed, name))) return true;
+        const candidatePath = join(trimmed, name);
+        if (existsSync(candidatePath) && isRunnableCodexAcpPath(candidatePath)) return true;
       } catch {
         // ignore
       }
@@ -41,10 +46,10 @@ function isCodexAcpOnPath(): boolean {
   return false;
 }
 
-function readCodexAcpConfigOverrides(): string[] {
+function readCodexAcpConfigOverrides(env: NodeJS.ProcessEnv): string[] {
   const raw =
-    typeof process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES === 'string'
-      ? process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES
+    typeof env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES === 'string'
+      ? env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES
       : '';
   return raw
     .split('\n')
@@ -52,8 +57,8 @@ function readCodexAcpConfigOverrides(): string[] {
     .filter((l) => l.length > 0);
 }
 
-function resolveCodexConfigTomlPath(): string {
-  const codexHome = typeof process.env.CODEX_HOME === 'string' ? process.env.CODEX_HOME.trim() : '';
+function resolveCodexConfigTomlPath(env: NodeJS.ProcessEnv): string {
+  const codexHome = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
   if (codexHome) return join(codexHome, 'config.toml');
   return join(homedir(), '.codex', 'config.toml');
 }
@@ -73,8 +78,8 @@ function normalizeCodexMcpServerKeyFromConfigSection(raw: string): string | null
   return firstSegment ? firstSegment : null;
 }
 
-function readCodexMcpServerKeysFromConfigToml(): string[] {
-  const configPath = resolveCodexConfigTomlPath();
+function readCodexMcpServerKeysFromConfigToml(env: NodeJS.ProcessEnv): string[] {
+  const configPath = resolveCodexConfigTomlPath(env);
   let text: string;
   try {
     text = readFileSync(configPath, 'utf8');
@@ -95,23 +100,20 @@ function readCodexMcpServerKeysFromConfigToml(): string[] {
   return Array.from(keys).sort((a, b) => a.localeCompare(b));
 }
 
-function appendConfigOverridesArgs(spec: SpawnSpec): SpawnSpec {
-  // Happier-managed Codex ACP sessions should not inherit arbitrary user-configured MCP servers.
+function appendConfigOverridesArgs(spec: SpawnSpec, opts: ResolveCodexAcpSpawnOptions): SpawnSpec {
+  const env = opts.env ?? process.env;
+  // Probe-style Codex ACP spawns should not inherit arbitrary user-configured MCP servers.
   // Codex can block responding to `loadSession` while it attempts to start all configured MCP servers,
-  // which makes resume and local↔remote switching unreliable.
+  // which makes capability probing and resume checks unreliable.
   //
-  // Users can re-enable MCP servers by adding explicit overrides in HAPPIER_CODEX_ACP_CONFIG_OVERRIDES
-  // (these are appended after this default).
-  const baseOverrides: string[] = readCodexMcpServerKeysFromConfigToml().map(
-    (key) => `mcp_servers.${key}.enabled=false`,
-  );
+  // Live Codex ACP sessions preserve user MCP configuration by default so provider features like
+  // thought streaming remain available. Callers can still opt out explicitly for probe-like spawns.
+  const baseOverrides: string[] = opts.disableUserMcpServers === true
+    ? readCodexMcpServerKeysFromConfigToml(env).map((key) => `mcp_servers.${key}.enabled=false`)
+    : [];
 
-  const overrides = readCodexAcpConfigOverrides();
-  if (baseOverrides.length === 0 && overrides.length === 0) return spec;
-  return {
-    command: spec.command,
-    args: [...spec.args, ...baseOverrides.flatMap((o) => ['-c', o]), ...overrides.flatMap((o) => ['-c', o])],
-  };
+  const overrides = readCodexAcpConfigOverrides(env);
+  return appendCodexCliConfigOverridesArgs(spec, [...baseOverrides, ...overrides]);
 }
 
 /**
@@ -128,53 +130,42 @@ export function resolveCodexAcpCommand(): string {
  *
  * Order:
  * 1) Explicit env override: HAPPIER_CODEX_ACP_BIN
- * 2) Capability install under HAPPIER_HOME_DIR/tools/codex-acp
+ * 2) Managed codex-acp install under HAPPIER_HOME_DIR/tools/codex-acp/current/bin
  * 3) PATH fallback (`codex-acp`) when available
- * 4) npx fallback (default) when not installed
+ * 4) PATH fallback (`codex-acp`)
  */
 export function resolveCodexAcpSpawn(opts: ResolveCodexAcpSpawnOptions = {}): SpawnSpec {
   return resolveCodexAcpSpawnWithOptions(opts);
 }
 
 export function resolveCodexAcpSpawnWithOptions(opts: ResolveCodexAcpSpawnOptions = {}): SpawnSpec {
-  const envOverride = typeof process.env.HAPPIER_CODEX_ACP_BIN === 'string'
-    ? process.env.HAPPIER_CODEX_ACP_BIN.trim()
+  const env = opts.env ?? process.env;
+  const currentWorkingDirectory = opts.currentWorkingDirectory ?? process.cwd();
+  const envOverride = typeof env.HAPPIER_CODEX_ACP_BIN === 'string'
+    ? env.HAPPIER_CODEX_ACP_BIN.trim()
     : '';
   if (envOverride) {
     // Normalize to absolute so spawn works even when the provider changes cwd (e.g. session workspace).
-    const resolved = isAbsolute(envOverride) ? envOverride : resolvePath(process.cwd(), envOverride);
+    const resolved = isAbsolute(envOverride) ? envOverride : resolvePath(currentWorkingDirectory, envOverride);
     if (!existsSync(resolved)) {
       throw new Error(`Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN does not exist: ${resolved}`);
     }
-    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: resolved, args: [] }), opts);
+    if (!isRunnableCodexAcpPath(resolved)) {
+      throw new Error(`Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN is not executable: ${resolved}`);
+    }
+    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: resolved, args: [] }, opts), opts);
   }
 
-  const binName = process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp';
-  const defaultPath = join(configuration.happyHomeDir, 'tools', 'codex-acp', 'node_modules', '.bin', binName);
-  if (existsSync(defaultPath)) {
-    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: defaultPath, args: [] }), opts);
+  const managedPath = resolveExistingCodexAcpManagedBinPath(env);
+  if (managedPath) {
+    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: managedPath, args: [] }, opts), opts);
   }
 
-  const npxMode = readCodexAcpNpxMode();
-  if (npxMode === 'force') {
-    return appendPermissionModeDerivedOverrides(
-      appendConfigOverridesArgs({ command: 'npx', args: ['--prefer-offline', '-y', '@zed-industries/codex-acp'] }),
-      opts,
-    );
+  // Default: prefer user-installed CLI on PATH and surface an unavailable spawn if nothing resolves.
+  if (isCodexAcpOnPath(env)) {
+    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }, opts), opts);
   }
-
-  if (npxMode === 'never') {
-    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }), opts);
-  }
-
-  // Default: prefer installed CLI on PATH when present; otherwise use npx.
-  if (isCodexAcpOnPath()) {
-    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }), opts);
-  }
-  return appendPermissionModeDerivedOverrides(
-    appendConfigOverridesArgs({ command: 'npx', args: ['--prefer-offline', '-y', '@zed-industries/codex-acp'] }),
-    opts,
-  );
+  return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }, opts), opts);
 }
 
 function appendPermissionModeDerivedOverrides(spec: SpawnSpec, opts: ResolveCodexAcpSpawnOptions): SpawnSpec {

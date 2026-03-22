@@ -1,15 +1,20 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Platform: {
+                            OS: 'web',
+                        },
+                    }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -24,9 +29,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
     SessionRepositoryTreeBrowserView: (props: any) => React.createElement('SessionRepositoryTreeBrowserView', props),
@@ -63,17 +69,10 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
     it('keeps Git and Files tab surfaces mounted so switching tabs preserves state', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
-        const findHostSurfaceView = (testID: string) => {
-            return tree!.root.find((node) => (node.type as unknown) === 'View' && node.props?.testID === testID);
-        };
-        const getStyleValue = (node: renderer.ReactTestInstance, key: string) => {
-            const style = node.props.style;
-            const styles = Array.isArray(style) ? style : [style];
+        const getStyleValue = (node: ReactTestInstance, key: string) => {
+            const styles = Array.isArray(node.props.style) ? node.props.style : [node.props.style];
             for (const entry of styles) {
                 if (entry && typeof entry === 'object' && key in entry) {
                     return (entry as Record<string, unknown>)[key];
@@ -82,30 +81,23 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
             return undefined;
         };
 
-        expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
+        expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         // Lazy-mount inactive tabs for faster initial open.
-        expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(0);
+        expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(0);
 
-        await act(async () => {
-            const filesTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab:files' });
-            filesTab.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-tab:files');
 
-        expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
-        expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
-        const repositoryTree = tree!.root.findByType('SessionRepositoryTreeBrowserView');
-        expect(repositoryTree).toBeTruthy();
-        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-git'), 'visibility')).toBe('hidden');
-        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-files'), 'visibility')).toBe('visible');
+        expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
+        expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        expect(screen.findByType('SessionRepositoryTreeBrowserView')).toBeTruthy();
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'visibility')).toBe('hidden');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'visibility')).toBe('visible');
 
         // Switching back keeps both mounted.
-        await act(async () => {
-            const gitTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab:git' });
-            gitTab.props.onPress();
-        });
-        expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
-        expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
-        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-git'), 'visibility')).toBe('visible');
-        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-files'), 'visibility')).toBe('hidden');
+        await screen.pressByTestIdAsync('session-rightpanel-tab:git');
+        expect(screen.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
+        expect(screen.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-git')!, 'visibility')).toBe('visible');
+        expect(getStyleValue(screen.findByTestId('session-rightpanel-surface-files')!, 'visibility')).toBe('hidden');
     });
 });

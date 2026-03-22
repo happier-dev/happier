@@ -1,32 +1,19 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    ActivityIndicator: 'ActivityIndicator',
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: { create: (value: any) => value },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -35,23 +22,31 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useLocalSetting: ((key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            }) as any,
+            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+        },
+    });
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -83,7 +78,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 }));
 
 const launcherViewSpy = vi.fn();
-let SessionDetailsPanel: typeof import('./SessionDetailsPanel').SessionDetailsPanel;
 
 vi.mock('@/components/sessions/runs/launcher/SessionExecutionRunLauncherView', () => ({
     SessionExecutionRunLauncherView: (props: any) => {
@@ -105,19 +99,14 @@ vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
 }));
 
 describe('SessionDetailsPanel (execution run launcher resource)', () => {
-    beforeAll(async () => {
-        ({ SessionDetailsPanel } = await import('./SessionDetailsPanel'));
-    }, 60_000);
+    const getSessionDetailsPanel = async () => (await import('./SessionDetailsPanel')).SessionDetailsPanel;
 
     it('renders SessionExecutionRunLauncherView for execution run launcher tabs', async () => {
         launcherViewSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const SessionDetailsPanel = await getSessionDetailsPanel();
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree).toBeTruthy();
         expect(launcherViewSpy).toHaveBeenCalledTimes(1);
         expect(launcherViewSpy.mock.calls[0]?.[0]).toMatchObject({
             sessionId: 's1',
@@ -125,18 +114,16 @@ describe('SessionDetailsPanel (execution run launcher resource)', () => {
             presentation: 'panel',
             initialIntent: 'review',
         });
+        expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 
-    it('renders execution-run launcher tabs without an intermediate loading fallback', () => {
+    it('renders execution-run launcher tabs without an intermediate loading fallback', async () => {
         launcherViewSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const SessionDetailsPanel = await getSessionDetailsPanel();
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree).toBeTruthy();
-        expect(tree!.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(0);
         expect(launcherViewSpy).toHaveBeenCalledTimes(1);
     });
 });

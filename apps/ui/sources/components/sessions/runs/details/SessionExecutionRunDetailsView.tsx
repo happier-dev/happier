@@ -18,6 +18,7 @@ import {
     resolveDaemonExecutionRunFallback,
     type ExecutionRunTranscriptFallback,
 } from '@/components/sessions/runs/details/resolveDaemonExecutionRunFallback';
+import { resolveExecutionRunGetFailureLoadedState } from '@/components/sessions/runs/details/resolveExecutionRunGetFailureLoadedState';
 import { SessionMessageDetailsView } from '@/components/sessions/transcript/details/SessionMessageDetailsView';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { canSendMessagesToExecutionRun } from '@/sync/domains/executionRuns/canSendMessagesToExecutionRun';
@@ -47,14 +48,6 @@ function isSessionEncryptionNotFoundError(input: unknown): boolean {
     if (code === 'session_encryption_not_found') return true;
     const message = typeof (input as { error?: unknown }).error === 'string' ? String((input as { error?: string }).error) : '';
     return /session encryption not found/i.test(message);
-}
-
-function isRpcMethodNotAvailableError(input: unknown): boolean {
-    if (!input || typeof input !== 'object') return false;
-    const code = typeof (input as { errorCode?: unknown }).errorCode === 'string' ? String((input as { errorCode?: string }).errorCode) : '';
-    if (code === 'RPC_METHOD_NOT_AVAILABLE') return true;
-    const message = typeof (input as { error?: unknown }).error === 'string' ? String((input as { error?: string }).error) : '';
-    return /rpc method not available/i.test(message);
 }
 
 function readNonEmptyString(value: unknown): string | null {
@@ -124,30 +117,21 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                 await sync.loadOlderMessages(props.sessionId).catch(() => null);
                 return;
             }
-            if (isRpcMethodNotAvailableError(result)) {
-                const daemonFallback = await resolveDaemonExecutionRunFallback({
-                    sessionId: props.sessionId,
-                    runId: props.runId,
-                    transcriptFallback,
-                }).catch(() => null);
-                if (daemonFallback) {
-                    setState({
-                        status: 'loaded',
-                        run: daemonFallback.run,
-                        latestToolResult: transcriptFallback?.latestToolResult,
-                        source: 'daemon_fallback',
-                    });
-                    setDaemonProcessLine(daemonFallback.daemonProcessLine);
-                    return;
+            const daemonFallback = await resolveDaemonExecutionRunFallback({
+                sessionId: props.sessionId,
+                runId: props.runId,
+                transcriptFallback,
+            }).catch(() => null);
+            const fallbackState = resolveExecutionRunGetFailureLoadedState({
+                result,
+                transcriptFallback,
+                daemonFallback,
+            });
+            if (fallbackState) {
+                setState(fallbackState);
+                if (fallbackState.source === 'daemon_fallback') {
+                    setDaemonProcessLine(daemonFallback?.daemonProcessLine ?? null);
                 }
-            }
-            if (result.errorCode === 'execution_run_not_found' && transcriptFallback) {
-                setState({
-                    status: 'loaded',
-                    run: transcriptFallback.run,
-                    latestToolResult: transcriptFallback.latestToolResult,
-                    source: 'transcript_fallback',
-                });
                 return;
             }
             setState({ status: 'error', error: String(result.error ?? t('runs.runDetails.failedToLoad')) });
@@ -208,7 +192,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         if (!kind) return null;
         return renderExecutionRunStructuredMeta({ meta: { kind, payload: (meta as { payload?: unknown }).payload }, sessionId: props.sessionId });
     }, [props.sessionId, state]);
-    const canMutateRunViaSessionRpc = state.status === 'loaded' && state.source !== 'daemon_fallback';
+    const canMutateRunViaSessionRpc = state.status === 'loaded' && state.source === 'session_rpc';
     const canShowSendComposer = props.showSendComposer !== false
         && state.status === 'loaded'
         && canMutateRunViaSessionRpc
@@ -231,6 +215,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={t('toolView.open')}
+                        testID="session-run-details-open-tool-message"
                         onPress={() => {
                             router.push(`/session/${encodeURIComponent(props.sessionId)}/message/${encodeURIComponent(transcriptToolRouteId)}`);
                         }}
@@ -261,6 +246,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={t('runs.stop.stopRunA11y')}
+                        testID="session-run-details-stop"
                         onPress={() => {
                             fireAndForget((async () => {
                                 setStopError(null);
@@ -302,6 +288,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                     {sendError ? <Text style={{ color: theme.colors.textSecondary }}>{sendError}</Text> : null}
                     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                         <TextInput
+                            testID="session-run-details-send-input"
                             value={sendText}
                             onChangeText={setSendText}
                             placeholder={t('runs.send.placeholder')}
@@ -320,6 +307,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={t('runs.send.a11y.sendToRun')}
+                            testID="session-run-details-send"
                             onPress={() => {
                                 const message = sendText.trim();
                                 if (!message) return;
@@ -385,7 +373,6 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                     sessionId={props.sessionId}
                     session={session}
                     message={transcriptMessage}
-                    presentation={props.presentation}
                     showComposer={canShowSendComposer}
                 />
             ) : null}

@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,6 +10,7 @@ const deleteArtifactMock = vi.hoisted(() => vi.fn(async () => undefined));
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
 const duplicatePromptDocMock = vi.hoisted(() => vi.fn(async () => 'doc-1-copy'));
 const duplicatePromptBundleMock = vi.hoisted(() => vi.fn(async () => 'bundle-1-copy'));
+const modalAlertMock = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const setPromptInvocationsMock = vi.fn();
@@ -28,22 +31,22 @@ const useArtifactsMock = vi.hoisted(() => vi.fn(() => [
     },
 ]));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                            },
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                groupped: { background: 'white' },
-                textSecondary: '#999',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-            },
-        }),
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 groupped: { background: 'white' },
@@ -54,13 +57,16 @@ vi.mock('react-native-unistyles', () => ({
                 button: { secondary: { tint: '#777' } },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    Stack: { Screen: () => null },
-    useRouter: () => ({ push: routerPushSpy, back: routerBackSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy, back: routerBackSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -90,14 +96,19 @@ vi.mock('@/components/ui/forms/settingsTextInputMetrics', () => ({
     SETTINGS_TEXT_INPUT_METRICS: {},
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalConfirmMock,
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: modalConfirmMock,
+            alert: modalAlertMock,
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useArtifacts: () => useArtifactsMock(),
     useAllMachines: () => [],
     useSettingMutable: (key: string) => {
@@ -144,7 +155,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             deleteArtifact: vi.fn(),
         }),
     },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -176,9 +188,10 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('PromptLibraryEntryListScreen', () => {
     beforeEach(() => {
@@ -192,28 +205,24 @@ describe('PromptLibraryEntryListScreen', () => {
         setPromptFoldersMock.mockClear();
         duplicatePromptDocMock.mockClear();
         duplicatePromptBundleMock.mockClear();
+        modalAlertMock.mockClear();
     });
 
-    it('renders entries before the add item and exposes row actions for each prompt', async () => {
+    it('renders entries, subtitles, row actions, and the add item', async () => {
         const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptLibraryEntryListScreen, { kind: 'doc' }));
-        });
+        const screen = await renderScreen(<PromptLibraryEntryListScreen kind="doc" />);
 
-        const items = tree.root.findAllByType('Item');
-        expect(items.map((node) => node.props?.testID)).toEqual([
-            'promptLibrary.entry.doc.doc-1',
-            'promptLibrary.entry.doc.doc-2',
-            'promptLibrary.add.doc',
-        ]);
-        expect(items[0]?.props?.subtitle).toBe('Ops · urgent, release · promptLibrary.linkedAssetsCount · machine-1');
-        expect(items[1]?.props?.subtitle).toBe('promptLibrary.imported · docs');
+        const firstEntry = screen.findByTestId('promptLibrary.entry.doc.doc-1');
+        const secondEntry = screen.findByTestId('promptLibrary.entry.doc.doc-2');
+        const addEntry = screen.findByTestId('promptLibrary.add.doc');
 
-        const actionHosts = tree.root.findAllByType('ItemRowActions');
-        expect(actionHosts).toHaveLength(2);
-        expect(actionHosts[0]?.props?.actions?.map((action: any) => action.id)).toEqual([
+        expect(firstEntry).toBeTruthy();
+        expect(secondEntry).toBeTruthy();
+        expect(addEntry).toBeTruthy();
+        expect(firstEntry?.props?.subtitle).toBe('Ops · urgent, release · promptLibrary.linkedAssetsCount · machine-1');
+        expect(secondEntry?.props?.subtitle).toBe('promptLibrary.imported · docs');
+        expect(firstEntry?.props?.rightElement?.props?.actions?.map((action: any) => action.id)).toEqual([
             'edit',
             'duplicate',
             'external',
@@ -225,34 +234,23 @@ describe('PromptLibraryEntryListScreen', () => {
     it('filters the library list from the search field before the add row', async () => {
         const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptLibraryEntryListScreen, { kind: 'doc' }));
-        });
-
-        const searchInput = tree.root.findByProps({ testID: 'promptLibrary.search.doc' });
+        const screen = await renderScreen(<PromptLibraryEntryListScreen kind="doc" />);
 
         await act(async () => {
-            searchInput.props.onChangeText?.('urgent');
+            screen.changeTextByTestId('promptLibrary.search.doc', 'urgent');
         });
 
-        const items = tree.root.findAllByType('Item');
-        expect(items.map((node) => node.props?.testID)).toEqual([
-            'promptLibrary.entry.doc.doc-1',
-            'promptLibrary.add.doc',
-        ]);
+        expect(screen.findByTestId('promptLibrary.entry.doc.doc-1')).toBeTruthy();
+        expect(screen.findByTestId('promptLibrary.entry.doc.doc-2')).toBeNull();
+        expect(screen.findByTestId('promptLibrary.add.doc')).toBeTruthy();
     });
 
     it('deletes a prompt artifact and prunes linked template, stack, and external-link references', async () => {
         const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptLibraryEntryListScreen, { kind: 'doc' }));
-        });
-
-        const actions = tree.root.findAllByType('ItemRowActions');
-        const deleteAction = actions[0]?.props?.actions?.find((action: any) => action.id === 'delete');
+        const screen = await renderScreen(<PromptLibraryEntryListScreen kind="doc" />);
+        const firstEntry = screen.findByTestId('promptLibrary.entry.doc.doc-1');
+        const deleteAction = firstEntry?.props?.rightElement?.props?.actions?.find((action: any) => action.id === 'delete');
         expect(deleteAction).toBeTruthy();
 
         await act(async () => {
@@ -275,13 +273,9 @@ describe('PromptLibraryEntryListScreen', () => {
     it('duplicates a prompt artifact and routes to the new editor entry', async () => {
         const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptLibraryEntryListScreen, { kind: 'doc' }));
-        });
-
-        const actions = tree.root.findAllByType('ItemRowActions');
-        const duplicateAction = actions[0]?.props?.actions?.find((action: any) => action.id === 'duplicate');
+        const screen = await renderScreen(<PromptLibraryEntryListScreen kind="doc" />);
+        const firstEntry = screen.findByTestId('promptLibrary.entry.doc.doc-1');
+        const duplicateAction = firstEntry?.props?.rightElement?.props?.actions?.find((action: any) => action.id === 'duplicate');
         expect(duplicateAction).toBeTruthy();
 
         await act(async () => {
@@ -290,5 +284,41 @@ describe('PromptLibraryEntryListScreen', () => {
 
         expect(duplicatePromptDocMock).toHaveBeenCalledWith('doc-1');
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1-copy');
+    });
+
+    it('keeps local references unchanged when deleting a prompt artifact fails', async () => {
+        deleteArtifactMock.mockRejectedValueOnce(new Error('delete failed'));
+        const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
+
+        const screen = await renderScreen(<PromptLibraryEntryListScreen kind="doc" />);
+        const firstEntry = screen.findByTestId('promptLibrary.entry.doc.doc-1');
+        const deleteAction = firstEntry?.props?.rightElement?.props?.actions?.find((action: any) => action.id === 'delete');
+        expect(deleteAction).toBeTruthy();
+
+        await act(async () => {
+            await deleteAction?.onPress?.();
+        });
+
+        expect(setPromptInvocationsMock).not.toHaveBeenCalled();
+        expect(setPromptStacksMock).not.toHaveBeenCalled();
+        expect(setPromptExternalLinksMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
+    });
+
+    it('shows an error and stays on the current screen when duplication fails', async () => {
+        duplicatePromptDocMock.mockRejectedValueOnce(new Error('copy failed'));
+        const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
+
+        const screen = await renderScreen(<PromptLibraryEntryListScreen kind="doc" />);
+        const firstEntry = screen.findByTestId('promptLibrary.entry.doc.doc-1');
+        const duplicateAction = firstEntry?.props?.rightElement?.props?.actions?.find((action: any) => action.id === 'duplicate');
+        expect(duplicateAction).toBeTruthy();
+
+        await act(async () => {
+            await duplicateAction?.onPress?.();
+        });
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
     });
 });

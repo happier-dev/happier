@@ -169,7 +169,9 @@ describe('sessionRegistry', () => {
     expect(markers[0].respawn).toMatchObject({
       version: 1,
       directory: '/tmp',
-      experimentalCodexResume: true,
+      codexBackendMode: 'acp',
     });
+    expect(markers[0].respawn).not.toHaveProperty('experimentalCodexResume');
   });
+
 });

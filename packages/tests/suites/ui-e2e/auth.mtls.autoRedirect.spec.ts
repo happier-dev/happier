@@ -48,7 +48,9 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
         HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: '1',
         HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: 'san_email',
         HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: 'example.com',
+        HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS: 'CN=Example Root CA',
         HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER: 'x-happier-client-cert-email',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: 'x-happier-client-cert-issuer',
         HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER: 'x-happier-client-cert-sha256',
 
         HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED: '1',
@@ -60,6 +62,7 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
       targetBaseUrl: server.baseUrl,
       identityHeaders: {
         'x-happier-client-cert-email': 'alice@example.com',
+        'x-happier-client-cert-issuer': 'CN=Example Root CA',
         'x-happier-client-cert-sha256': 'sha256:abc123',
       },
     });
@@ -73,6 +76,7 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+        HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
     uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
@@ -97,6 +101,7 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
     );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+    await page.waitForTimeout(5_000);
 
     await expect(page.getByTestId('welcome-create-account')).toHaveCount(0, { timeout: 120_000 });
     await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });

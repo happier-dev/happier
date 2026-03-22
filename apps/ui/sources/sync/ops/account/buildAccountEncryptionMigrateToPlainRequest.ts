@@ -1,7 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
-import { decodeBase64 } from '@/encryption/base64';
-import { deriveSettingsSecretsKey, unsealSecretsDeep } from '@/sync/encryption/secretSettings';
+import { deriveSettingsSecretsKeySet, unsealSecretsDeepWithKeys } from '@/sync/encryption/secretSettings';
 import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import {
@@ -43,21 +41,16 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
   }>>;
   decryptAutomationTemplateRaw: (payloadCiphertext: string) => Promise<unknown | null>;
 }>): Promise<AccountEncryptionMigrateRequest> {
-  const seed = (() => {
+  const settingsSecretsReadKeys = (() => {
     try {
-      return isLegacyAuthCredentials(params.credentials)
-        ? decodeBase64(params.credentials.secret, 'base64url')
-        : decodeBase64(params.credentials.encryption.machineKey, 'base64');
+      return deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(params.credentials)).readKeys;
     } catch {
-      return null;
+      return [];
     }
   })();
-  const secretsKey = seed && seed.length === 32
-    ? await deriveSettingsSecretsKey(seed).catch(() => null)
-    : null;
 
   const settingsForServer = stripLocalOnlyAccountSettings(params.settings);
-  const plainSettings = unsealSecretsDeep(settingsForServer, secretsKey);
+  const plainSettings = unsealSecretsDeepWithKeys(settingsForServer, settingsSecretsReadKeys);
 
   const connectedServices = await (async () => {
     if (params.connectedServiceProfiles.length === 0) {

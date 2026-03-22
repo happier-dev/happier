@@ -54,6 +54,7 @@ function sessionMessagesRow(params: Readonly<{
     messageIdsOldestFirst: params.idsOldestFirst,
     messagesById: params.messagesById,
     messagesMap: params.messagesById,
+    draftsByLocalId: {},
     reducerState,
     latestThinkingMessageId: null,
     latestThinkingMessageActivityAtMs: null,
@@ -199,5 +200,47 @@ describe('getForkedTranscriptSnapshotCached', () => {
     expect(snapshot!.messageOriginById['r2']).toEqual({ sessionId: 'root', isReadOnlyContext: true });
     expect(snapshot!.messageOriginById['p1']).toEqual({ sessionId: 'parent', isReadOnlyContext: true });
     expect(snapshot!.messageOriginById['c1']).toEqual({ sessionId: 'child', isReadOnlyContext: false });
+  });
+
+  it('dedupes overlapping message ids across segments by preferring the child segment', () => {
+    const parentMessagesById: Record<string, Message> = {
+      shared: userMessage('shared', 1, 'shared-parent'),
+      p2: userMessage('p2', 2, 'two'),
+    };
+    const childMessagesById: Record<string, Message> = {
+      shared: userMessage('shared', 1, 'shared-child'),
+      c2: userMessage('c2', 2, 'child-two'),
+    };
+
+    const state = createState({
+      sessions: {
+        parent: { ...sessionRow('parent', { path: '/tmp', host: 'h' }), seq: 2 },
+        child: {
+          ...sessionRow('child', {
+            path: '/tmp',
+            host: 'h',
+            forkV1: {
+              v: 1,
+              parentSessionId: 'parent',
+              parentCutoffSeqInclusive: 2,
+              createdAtMs: 1,
+              strategy: 'provider_native',
+            },
+          } as any),
+          seq: 2,
+        },
+      },
+      sessionMessages: {
+        parent: sessionMessagesRow({ idsOldestFirst: ['shared', 'p2'], messagesById: parentMessagesById, messagesVersion: 1, isLoaded: true }),
+        child: sessionMessagesRow({ idsOldestFirst: ['shared', 'c2'], messagesById: childMessagesById, messagesVersion: 1, isLoaded: true }),
+      },
+    });
+
+    const snapshot = getForkedTranscriptSnapshotCached(state, 'child');
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.combinedMessageIdsOldestFirst).toEqual(['shared', 'p2', 'c2']);
+    expect(snapshot!.messageOriginById['shared']).toEqual({ sessionId: 'parent', isReadOnlyContext: true });
+    expect(snapshot!.combinedMessagesById['shared']?.kind).toBe('user-text');
+    expect((snapshot!.combinedMessagesById['shared'] as any).text).toBe('shared-parent');
   });
 });

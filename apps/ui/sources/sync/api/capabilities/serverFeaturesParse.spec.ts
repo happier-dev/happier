@@ -30,6 +30,29 @@ function createValidFeaturesResponse() {
                 contextWindowMs: 30 * 60 * 1000,
             },
             voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+            server: {
+                retention: {
+                    policyVersion: 1,
+                    enabled: true,
+                    sessions: {
+                        mode: 'delete_inactive',
+                        inactivityDays: 30,
+                        requires: ['updatedAt', 'lastActiveAt'],
+                    },
+                    accountChanges: { mode: 'delete_older_than', days: 30 },
+                    voiceSessionLeases: { mode: 'keep_forever' },
+                    userFeedItems: { mode: 'delete_older_than', days: 90 },
+                    sessionShareAccessLogs: { mode: 'delete_older_than', days: 30 },
+                    publicShareAccessLogs: { mode: 'delete_older_than', days: 30 },
+                    terminalAuthRequests: { mode: 'delete_older_than', days: 7 },
+                    accountAuthRequests: { mode: 'delete_older_than', days: 7 },
+                    authPairingSessions: { mode: 'delete_older_than', days: 7 },
+                    repeatKeys: { mode: 'delete_older_than', days: 7 },
+                    globalLocks: { mode: 'delete_older_than', days: 7 },
+                    automationRuns: { mode: 'delete_older_than', days: 30 },
+                    automationRunEvents: { mode: 'delete_older_than', days: 30 },
+                },
+            },
             social: { friends: { allowUsername: false, requiredIdentityProviderId: 'github' } },
             oauth: { providers: { github: { enabled: true, configured: true } } },
             auth: {
@@ -92,5 +115,22 @@ describe('serverFeaturesParse', () => {
 
         const out = parseServerFeatures(payload);
         expect(out?.capabilities.auth.providers.github.offboarding.source).toBe('oidc');
+    });
+
+    it('parses server retention capabilities from /v1/features', () => {
+        const payload = createValidFeaturesResponse();
+
+        const out = parseServerFeatures(payload);
+
+        expect(out?.capabilities.server.retention).toMatchObject({
+            enabled: true,
+            sessions: {
+                mode: 'delete_inactive',
+                inactivityDays: 30,
+                requires: ['updatedAt', 'lastActiveAt'],
+            },
+            accountChanges: { mode: 'delete_older_than', days: 30 },
+            voiceSessionLeases: { mode: 'keep_forever' },
+        });
     });
 });

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
-import { MachineIdConflictError } from '../api';
+import { MachineIdConflictError, MachineRevokedError } from '../api';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -25,6 +25,78 @@ describe('ensureMachineRegistered', () => {
     else process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
     vi.resetModules();
   });
+
+  it('uses the provided recovery logger instead of the shared UI logger', async () => {
+    vi.useRealTimers();
+    const customRecoveryLogger = { info: vi.fn() };
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-machine-conflict-custom-logger-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+
+    try {
+      const oldMachineId = 'machine-old';
+      writeFileSync(
+        join(homeDir, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 5,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: { cloud: oldMachineId },
+            machineIdConfirmedByServerByServerId: { cloud: true },
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { logger } = await import('@/ui/logger');
+      const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
+
+      let attempts = 0;
+      const api = {
+        getOrCreateMachine: async (opts: { machineId: string; metadata: MachineMetadata; daemonState?: DaemonState }): Promise<Machine> => {
+          attempts += 1;
+          if (attempts === 1) throw new MachineIdConflictError(opts.machineId);
+          return {
+            id: opts.machineId,
+            encryptionKey: new Uint8Array(),
+            encryptionVariant: 'legacy',
+            metadata: opts.metadata,
+            metadataVersion: 0,
+            daemonState: opts.daemonState ?? null,
+            daemonStateVersion: 0,
+          };
+        },
+      };
+
+      await ensureMachineRegistered({
+        api: api as any,
+        machineId: oldMachineId,
+        metadata: { host: 'host1' } as any,
+        recoveryLogger: customRecoveryLogger,
+      });
+
+      expect(customRecoveryLogger.info).toHaveBeenCalledTimes(2);
+      expect(logger.info).not.toHaveBeenCalled();
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it('rotates machine id and retries once on machine_id_conflict', async () => {
     // Defensive: other test files may enable fake timers and forget to restore them.
@@ -197,6 +269,90 @@ describe('ensureMachineRegistered', () => {
     }
   });
 
+  it('rotates machine id and retries once on machine_revoked', async () => {
+    vi.useRealTimers();
+
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-machine-revoked-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+
+    try {
+      const oldMachineId = 'machine-revoked';
+      writeFileSync(
+        join(homeDir, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: {
+              cloud: oldMachineId,
+            },
+            machineIdConfirmedByServerByServerId: {
+              cloud: true,
+            },
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { readSettings } = await import('@/persistence');
+      const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
+
+      const calls: string[] = [];
+      const api = {
+        getOrCreateMachine: async (opts: { machineId: string; metadata: MachineMetadata; daemonState?: DaemonState }): Promise<Machine> => {
+          calls.push(opts.machineId);
+          if (calls.length === 1) {
+            throw new MachineRevokedError(opts.machineId);
+          }
+          return {
+            id: opts.machineId,
+            encryptionKey: new Uint8Array(),
+            encryptionVariant: 'legacy',
+            metadata: opts.metadata,
+            metadataVersion: 0,
+            daemonState: opts.daemonState ?? null,
+            daemonStateVersion: 0,
+          };
+        },
+      };
+
+      const { machine, machineId } = await ensureMachineRegistered({
+        api: api as any,
+        machineId: oldMachineId,
+        metadata: { host: 'host1' } as any,
+      });
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toBe(oldMachineId);
+      expect(calls[1]).not.toBe(oldMachineId);
+      expect(machineId).toBe(calls[1]);
+      expect(machine.id).toBe(calls[1]);
+
+      const settings = await readSettings();
+      expect(settings.machineId).toBe(calls[1]);
+      expect(settings.machineIdConfirmedByServer).toBeUndefined();
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('persists the rotated machine id under the active account id when provided', async () => {
     vi.useRealTimers();
 
@@ -283,6 +439,7 @@ describe('ensureMachineRegistered', () => {
 
       const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
       expect(raw.machineIdByServerId.cloud).toBe(calls[1]);
+      expect(raw.machineIdByServerIdByAccountId?.cloud?.['acct-a']).toBe(calls[1]);
       expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
     } finally {
       rmSync(homeDir, { recursive: true, force: true });

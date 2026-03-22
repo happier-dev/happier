@@ -1,7 +1,7 @@
 import { getTrackingAnonymousUserId, tracking } from '@/track';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import { PROVIDER_SETTING_ARTIFACT_ENTRIES } from '@/agents/providers/_registry/providerSettingArtifacts';
+import { PROVIDER_SETTING_ARTIFACT_ENTRIES } from '@/agents/providers/registry/providerSettingArtifacts';
 import { ACCOUNT_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/account/accountSettingArtifacts';
 import { LOCAL_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
 

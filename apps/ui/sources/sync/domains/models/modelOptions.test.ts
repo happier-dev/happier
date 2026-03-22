@@ -57,7 +57,7 @@ describe('modelOptions', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
-                acpSessionModelsV1: {
+                sessionModelsV1: {
                     v: 1,
                     provider: 'opencode',
                     updatedAt: 1,
@@ -75,9 +75,36 @@ describe('modelOptions', () => {
         expect(out[2]?.description).toBe('Accurate');
     });
 
+    it('preserves dynamic session model ids, labels, and descriptions from metadata', () => {
+        const out = getModelOptionsForSession(
+            'codex',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 1,
+                    currentModelId: 'gpt-5.4',
+                    availableModels: [
+                        {
+                            id: 'gpt-5.4',
+                            name: 'GPT-5.4',
+                            description: 'Latest frontier coding model.',
+                        },
+                    ],
+                },
+            }),
+        );
+
+        expect(out[1]).toEqual({
+            value: 'gpt-5.4',
+            label: 'GPT-5.4',
+            description: 'Latest frontier coding model.',
+        });
+    });
+
     it('treats ACP session models as selectable', () => {
         const metadata = withMetadata({
-            acpSessionModelsV1: {
+            sessionModelsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
@@ -131,7 +158,7 @@ describe('modelOptions', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
-                acpSessionModelsV1: {
+                sessionModelsV1: {
                     v: 1,
                     provider: 'claude',
                     updatedAt: 1,
@@ -149,7 +176,7 @@ describe('modelOptions', () => {
             hasDynamicModelListForSession(
                 'opencode',
                 withMetadata({
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         provider: 'opencode',
                         updatedAt: 1,
@@ -164,7 +191,7 @@ describe('modelOptions', () => {
             hasDynamicModelListForSession(
                 'opencode',
                 withMetadata({
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         provider: 'gemini',
                         updatedAt: 1,
@@ -174,5 +201,22 @@ describe('modelOptions', () => {
                 }),
             ),
         ).toBe(false);
+    });
+
+    it('falls back to legacy ACP session models when canonical key is absent', () => {
+        const out = getModelOptionsForSession(
+            'opencode',
+            withMetadata({
+                acpSessionModelsV1: {
+                    v: 1,
+                    provider: 'opencode',
+                    updatedAt: 1,
+                    currentModelId: 'model-a',
+                    availableModels: [{ id: 'model-a', name: 'Model A' }],
+                },
+            }),
+        );
+
+        expect(out.map((o) => o.value)).toEqual(['default', 'model-a']);
     });
 });

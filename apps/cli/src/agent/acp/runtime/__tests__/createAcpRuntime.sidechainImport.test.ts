@@ -3,12 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, ToolCallMessage, ToolResultMessage } from '@/agent/core/AgentMessage';
 import { createAcpRuntime, type AcpRuntimeBackend } from '../createAcpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import {
-  createApprovedPermissionHandler,
-  createDeferred,
-  createFakeAcpRuntimeBackend,
-  createSessionClientWithMetadata,
-} from '../createAcpRuntime.testkit';
+import { createDeferred } from '@/testkit/async/deferred';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (sidechain import)', () => {
   it('imports Task sub-session replay as sidechain messages when tool-result includes sessionId metadata', async () => {

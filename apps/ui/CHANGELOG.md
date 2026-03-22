@@ -1,6 +1,12 @@
 # Changelog
 
-## Version 0.1.2 - 2026-03-02
+## Version 3 - 2026-03-05
+
+This release improves file attachments with image-first previews in the composer and transcript, plus clearer per-file upload progress while files are uploading.
+
+- Added inline image thumbnails for image attachments in the composer and transcript, including per-file upload progress indicators during uploads.
+
+## Version 2 - 2026-03-02
 
 This release is a major upgrade to self-hosting and cross-device workflows (plaintext mode, keyless auth, mTLS, "Add Phone" pairing, and safer canonical URLs), plus a big step forward in in-app development features (panes, files/source control, diffs, replay/forking, and OpenCode deeper integration). It also improves reliability across web/desktop/mobile with better crash recovery, diagnostics, notifications controls, and more resilient daemon connectivity.
 
@@ -85,7 +91,188 @@ This release is a major upgrade to self-hosting and cross-device workflows (plai
 - Added reduced-motion accessibility support.
 - Expanded localization across tools, runs, files, settings, voice, automations, navigation, and modals.
 
-## Version 0.1.0 - 2026-02-15
+Happier is moving well and fast. I hope to be able to push a new preview release in the next few weeks.
+
+This new version will fix a lot of the bugs that have been reported:
+- Default server URL in the app
+- Better handling of server URLs and public server URLs
+- iOS path picker fix
+- change_title fixed
+- OpenCode modes (plan/build)
+- /clear wired and passed down to Claude/Codex
+- "Working" session indicator flicker
+- Session list flicker
+- Push notifications
+- Better display of permission requests
+- Separation of user actions (AskUserQuestion) and permissions
+- Horizontal scrolling in markdown tables/code
+- Back button unresponsive
+- Claude MCP and user settings preservation
+
+In addition to that, it will also have a lot of new features and improvements:
+
+### Claude
+- Claude Agent Teams full integration: create and manage Claude Teams directly from Happier, send messages to teammates, add new teammates, monitor your team, etc
+- Better streaming and handling of Claude Tasks/subagents in the transcript and in sidechains
+- Turn-end diff summary
+- Browse existing Claude sessions and display their transcript/history in Happier
+- Follow live sessions started outside of Happier (e.g. with `claude`) in Happier
+- Takeover an existing Claude session in Happier
+
+### Codex
+- Codex app-server as the default Codex backend
+- Codex Fast mode
+- Rollback discussion/edit previous message
+- Turn-end diff summary
+- Browse existing Codex sessions and display their transcript/history in Happier
+- Follow live sessions started outside of Happier (e.g. with `codex` or the Codex app) in Happier
+- Takeover an existing Codex session in Happier
+
+### OpenCode
+- OpenCode server as the default OpenCode backend
+- Local/remote switching = using OpenCode in the terminal and seeing the session in Happier UI
+- Per-message session forking
+- Turn-end diff summary
+- Browse existing OpenCode sessions and display their transcript/history in Happier
+- Follow live sessions started outside of Happier (e.g. with `opencode` or the OpenCode UI/app) in Happier
+- Takeover an existing OpenCode session in Happier
+
+### File browser, editor, Git and terminal
+- Fully refactored file browser
+- "Review" mode to scroll through the full diff of the repository/session/turn
+- Edit, download, upload, create files
+- Create, download directories
+- Complete Git operations: commit, pull, push, manage branches, manage worktrees, manage remotes, stash
+- Integrated multi-tab editor
+- Integrated terminal
+
+### Multi-accounts & connected services
+- Connect multiple Codex/Claude accounts in the UI (OAuth, device-auth, and/or setup-token) - e.g. your work and personal Codex accounts
+- Select a specific account to use when starting a session
+- Assign accounts to profiles and/or workspaces
+- Monitor your accounts usage from Happier
+
+### In-app terminal CLI auth
+- Log in to `claude`, `codex`, etc directly from the app using the integrated terminal
+
+### Automations
+- Define tasks that should run at specific times/intervals
+- Automations can run in existing sessions or new sessions
+
+### Happier Subagents
+- Happier-native subagents: e.g. start a Codex subagent in a Claude session. Ask Codex to start and manage multiple parallel subagents, etc
+- Agents sidebar allows you to view, monitor and manage all types of subagents: Claude, OpenCode, Happier
+
+### Happier Review
+- Start multiple parallel review agents directly from your Happier session, including Coderabbit
+- Findings of the reviewers' agents are displayed in the UI for you to accept/reject/ask for clarifications
+- Clarifications are sent back to the reviewer agent
+- Accepted findings are sent to the session for implementation
+
+### Happier Replay
+- Happier-native session replay/summarization, used by the voice agent and sessions in specific cases to replay sessions
+
+### Happier Fork
+- Fork any session at any point in time
+- If the backend supports forking, we use the backend's native fork mechanism (e.g. OpenCode)
+- Otherwise, we use Happier Replay to extract the session messages and replay them in the new session up to the fork point
+
+### Happier Memory
+- Optional unencrypted local database of your sessions
+- Supports optional vector database with local embeddings generation and/or OpenAI-compatible embedding API
+- Allows your agents to remember and search previous sessions
+
+### Attachments
+- Attach any files/images to your messages
+- Uploads the files in a temporary folder in your project's folder or OS temporary folder
+
+### Skills
+- Manage Skills from Happier and sync/install skills for Claude/Codx/OpenCode/etc
+- skills.sh direct integration
+
+### Prompts
+- Add any prompt/text to Happier's system prompt for the coding agent and voice agent
+- The agents can propose edits to the prompts (OpenClaw's SOUL.md-like)
+- Agent edits proposals are sent as action requests for you to review and accept/reject
+
+### Voice
+- Largely improved voice experience
+- Voice Agent now prefer human-labels instead of IDs
+- Lots of improvements to ElevenLabs integration following feedbacks
+-
+
+### Browse and import sessions
+
+### Direct sessions
+- Start session
+
+### Notifications and badges
+
+### Transcript and timeline
+- Improved transcript rendering speed and streaming
+- Subtle animations (configurable)
+- Improved tools rendering in the transcript: tools calls are now grouped and displayed collapsed by default
+- Settings allows you to go back to previous non-grouped rendering of tools and choose your prefered transcript/tools rendering (cards, non-cards, timeline, thinking display, tools expended or not, etc)
+- Define tools that you want to be displayed as expended by default. E.g. have the Diff or Bash tools always render expended, while keeping the others collapsed by default
+
+### Custom ACP backends
+- Add any ACP backend/CLI from the app
+
+### Profiles
+- List profiles from the CLI
+- Start a session from the CLI using a profile
+
+### MCP servers
+- Manage/add MCP servers directly in Happier
+- Compatible with all Happier backends
+- Those are not saved in the Claude/Codex/OpenCode MCP configurations, they are additive to them
+- Allows to define your MCP servers 1x in Happier and have them work with all your machines/backends/CLIs
+- Define machine-overrides to set specific paths/arguments depending on your machines
+- Compatible with backends who do not support MCPs (PI and some of the ACP backends) by instructing them to use the Happier MCP Bridge CLI
+- Set default MCP servers per workspace/machine
+
+### Happier Actions
+- Actions is the internal list of actions that you, your coding agents and voice agents are able to perform in Happier
+- For each action, you can set exactly where they are surfaced/enabled:
+  - Voice agent tools
+  - Coding agent MCP server
+  - Slash commands
+  - Agent Input chips (optional, only for some actions as a shortcut, like "Review")
+- Most of the actions are enabled by default
+
+### Inbox
+- Centralize all the permission requests/actions from all your sessions
+  - Permission requests
+  - User actions (AskUserQuestion, ExitPlanMode, etc)
+  - Actions approvals
+  - Sync conflicts
+  - Updates
+
+### UI
+- Resizable left sidebar
+- New Panel system:
+  - Right sidebar: file browser, git, agents, workspace, etc
+  - Details panel: file/diff viewer, file editor
+  - Bottom panel: terminal
+- Session list is now cached and session metadata is decrypted only when necessary and when there are updates to the session (thanks @lucharo for the original idea)
+
+### Server retention settings
+- Servers can define retention policies to avoid infinite growth
+- Happier Cloud server will have a 30 days retention policy. Sessions inactive since 30 days will be remove from the server to limit costs for the free server.
+
+### Workspaces
+- Create workspaces to manage settings for specific projects/folders
+- Link workspace locations between different machines
+- Sync workspace folders between machines (Mutagen-inspired)
+
+### Happier Sync
+- Used by the workspaces to sync projects files between machines
+- Supports one way/two way sync and conflicts resolution
+- Conflicts are surfaced in the UI
+
+### Happier Handoff
+
+## Version 1 - 2026-02-15
 
 Welcome to Happier - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.
 

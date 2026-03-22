@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicSessionModeProbeCacheForTests } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,7 +43,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
     let latest: any = null;
     function Harness() {
       latest = useNewSessionPreflightSessionModesState({
-        agentType: 'opencode' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -50,10 +52,7 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     expect((latest.modeOptions ?? []).some((o: any) => o.id === 'mode1')).toBe(true);
@@ -71,4 +70,3 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
     });
   });
 });
-

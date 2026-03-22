@@ -18,6 +18,7 @@ import type {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
+import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
@@ -38,9 +39,15 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
 }> {
     const parsedBackendTarget = BackendTargetRefSchema.safeParse((params ?? {}).backendTarget);
     const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
+    const codexBackendModeOverrideRaw = (params ?? {}).codexBackendModeOverride;
+    const codexBackendModeOverride =
+        typeof codexBackendModeOverrideRaw === 'string' && ['mcp', 'acp', 'appServer'].includes(codexBackendModeOverrideRaw)
+            ? codexBackendModeOverrideRaw
+            : null;
 
-    if (!backendTarget || backendTarget.kind !== 'configuredAcpBackend') {
-        return { backendTarget, credentials: null, accountSettings: null };
+    const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || params?.agentId === 'codex';
+    if (!shouldLoadAccountSettings) {
+      return { backendTarget, credentials: null, accountSettings: null };
     }
 
     const credentials = await readCredentials().catch(() => null);
@@ -48,15 +55,24 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
 
     const accountSettingsContext = await bootstrapAccountSettingsContext({
         credentials,
+        ...(params?.agentId ? { agentId: params.agentId as AgentId } : {}),
         backendTarget,
         mode: 'blocking',
         refresh: 'force',
     }).catch(() => null);
 
+    const accountSettings = accountSettingsContext?.settings ?? null;
+    const effectiveAccountSettings = params?.agentId === 'codex' && codexBackendModeOverride
+      ? {
+          ...(accountSettings ?? {}),
+          codexBackendMode: codexBackendModeOverride,
+        }
+      : accountSettings;
+
     return {
-        backendTarget,
-        credentials,
-        accountSettings: accountSettingsContext?.settings ?? null,
+      backendTarget,
+      credentials,
+      accountSettings: effectiveAccountSettings,
     };
 }
 
@@ -130,6 +146,7 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 install: { title: 'Install' },
                 probeModels: { title: 'Probe models' },
                 probeModes: { title: 'Probe modes' },
+                probeConfigOptions: { title: 'Probe config options' },
             },
         },
         detect: async ({ request, context }) => {
@@ -141,7 +158,7 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 return invokeProviderCliInstall(agentId, params);
             }
             if (method === 'probeModels') {
-                const probeContext = await resolveProbeBackendContext(params);
+                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
                 const timeoutMsRaw = (params ?? {}).timeoutMs;
                 const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
                 const cwdRaw = (params ?? {}).cwd;
@@ -157,12 +174,28 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 return { ok: true, result };
             }
             if (method === 'probeModes') {
-                const probeContext = await resolveProbeBackendContext(params);
+                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
                 const timeoutMsRaw = (params ?? {}).timeoutMs;
                 const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
                 const cwdRaw = (params ?? {}).cwd;
                 const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
                 const result = await probeAgentModesBestEffort({
+                    agentId,
+                    backendTarget: probeContext.backendTarget,
+                    cwd,
+                    timeoutMs,
+                    accountSettings: probeContext.accountSettings,
+                    credentials: probeContext.credentials,
+                });
+                return { ok: true, result };
+            }
+            if (method === 'probeConfigOptions') {
+                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
+                const timeoutMsRaw = (params ?? {}).timeoutMs;
+                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+                const cwdRaw = (params ?? {}).cwd;
+                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+                const result = await probeAgentConfigOptionsBestEffort({
                     agentId,
                     backendTarget: probeContext.backendTarget,
                     cwd,
@@ -185,6 +218,7 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
         ...existingMethods,
         ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
         ...(existingMethods.probeModes ? {} : { probeModes: { title: 'Probe modes' } }),
+        ...(existingMethods.probeConfigOptions ? {} : { probeConfigOptions: { title: 'Probe config options' } }),
         ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
     };
 
@@ -195,7 +229,7 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
             return invokeProviderCliInstall(agentId, params);
         }
         if (method === 'probeModels') {
-            const probeContext = await resolveProbeBackendContext(params);
+            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
             const timeoutMsRaw = (params ?? {}).timeoutMs;
             const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
             const cwdRaw = (params ?? {}).cwd;
@@ -211,12 +245,28 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
             return { ok: true, result };
         }
         if (method === 'probeModes') {
-            const probeContext = await resolveProbeBackendContext(params);
+            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
             const timeoutMsRaw = (params ?? {}).timeoutMs;
             const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
             const cwdRaw = (params ?? {}).cwd;
             const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
             const result = await probeAgentModesBestEffort({
+                agentId,
+                backendTarget: probeContext.backendTarget,
+                cwd,
+                timeoutMs,
+                accountSettings: probeContext.accountSettings,
+                credentials: probeContext.credentials,
+            });
+            return { ok: true, result };
+        }
+        if (method === 'probeConfigOptions') {
+            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
+            const timeoutMsRaw = (params ?? {}).timeoutMs;
+            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+            const cwdRaw = (params ?? {}).cwd;
+            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+            const result = await probeAgentConfigOptionsBestEffort({
                 agentId,
                 backendTarget: probeContext.backendTarget,
                 cwd,

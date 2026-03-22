@@ -1,7 +1,8 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import { PermissionFooter } from '../permissions/PermissionFooter';
+import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,32 +17,32 @@ const sessionStore = vi.hoisted(() => ({
     updateSessionPermissionMode: vi.fn((..._args: unknown[]) => {}),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-    Alert: { alert: vi.fn() },
-    Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
-    StyleSheet: { create: <T,>(styles: T) => styles },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: <T,>(styles: T) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                permissionButton: {
-                    allow: { background: '#0f0' },
-                    deny: { background: '#f00' },
-                    allowAll: { background: '#00f' },
-                },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            TouchableOpacity: 'TouchableOpacity',
+            ActivityIndicator: 'ActivityIndicator',
+            Alert: {
+                alert: vi.fn(),
             },
-        },
-    }),
-}));
+            Platform: {
+                OS: 'ios',
+                select: <T,>(value: { ios?: T }) => value.ios,
+            },
+            StyleSheet: {
+                create: <T,>(styles: T) => styles,
+            },
+        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -60,13 +61,17 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: { getState: () => sessionStore },
-}));
+});
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/agents/catalog/resolve', () => ({
     resolveAgentIdForPermissionUi: () => 'claude',
@@ -81,6 +86,29 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
     }),
 }));
 
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        getAgentBehavior: () => ({
+            permissions: {
+                footer: {
+                    usePermissionUpdates: true,
+                },
+            },
+        }),
+    };
+});
+
+function findPermissionFooterButton(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+    label: string,
+) {
+    const button = findTestInstanceByTypeContainingText(screen.tree, 'TouchableOpacity', label);
+    expect(button).toBeTruthy();
+    return button!;
+}
+
 describe('PermissionFooter (Claude permission updates)', () => {
     beforeEach(() => {
         ops.sessionAllow.mockClear();
@@ -91,29 +119,15 @@ describe('PermissionFooter (Claude permission updates)', () => {
     });
 
     it('approves allow-all-edits using updatedPermissions setMode', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PermissionFooter, {
-                    permission: { id: 'p1', status: 'pending' },
-                    sessionId: 's1',
-                    toolName: 'Edit',
-                    toolInput: { file_path: 'a.ts' },
-                    metadata: { flavor: 'opencode' },
-                }),
-            );
-        });
-
-        const buttons = tree.root.findAllByType('TouchableOpacity' as any);
-        const allowAllEditsButton = buttons.find((btn) => {
-            const texts = btn.findAllByType('Text' as any);
-            return texts.some((t) => t.props.children === 'claude.permissions.yesAllowAllEdits');
-        });
-        expect(allowAllEditsButton).toBeTruthy();
-
-        await act(async () => {
-            allowAllEditsButton!.props.onPress();
-        });
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'Edit',
+            toolInput: { file_path: 'a.ts' },
+            metadata: { flavor: 'opencode' },
+        }));
+        const allowAllEditsButton = findPermissionFooterButton(screen, 'claude.permissions.yesAllowAllEdits');
+        await pressTestInstanceAsync(allowAllEditsButton, 'allow-all-edits button');
 
         expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
         expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(
@@ -126,85 +140,71 @@ describe('PermissionFooter (Claude permission updates)', () => {
         );
     });
 
-    it('approves allow-for-session using updatedPermissions addRules', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PermissionFooter, {
-                    permission: { id: 'p1', status: 'pending' },
-                    sessionId: 's1',
-                    toolName: 'Bash',
-                    toolInput: { command: 'pwd' },
-                    metadata: { flavor: 'opencode' },
-                }),
-            );
-        });
-
-        const buttons = tree.root.findAllByType('TouchableOpacity' as any);
-        const allowForToolButton = buttons.find((btn) => {
-            const texts = btn.findAllByType('Text' as any);
-            return texts.some((t) => t.props.children === 'claude.permissions.yesForTool');
-        });
-        expect(allowForToolButton).toBeTruthy();
-
-        await act(async () => {
-            allowForToolButton!.props.onPress();
-        });
+    it('approves allow-for-session using a tool-wide allowlist update for shell tools', async () => {
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'Bash',
+            toolInput: { command: 'pwd' },
+            metadata: { flavor: 'opencode' },
+        }));
+        const allowForToolButton = findPermissionFooterButton(screen, 'claude.permissions.yesForTool');
+        await pressTestInstanceAsync(allowForToolButton, 'allow-for-session button');
 
         expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
         expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(
             's1',
             'p1',
             expect.objectContaining({
-                allowedTools: ['Bash(pwd)'],
+                allowedTools: ['Bash'],
                 updatedPermissions: [
                     {
                         type: 'addRules',
                         behavior: 'allow',
                         destination: 'session',
-                        rules: [{ toolName: 'Bash', ruleContent: 'pwd' }],
+                        rules: [{ toolName: 'Bash' }],
                     },
                 ],
             }),
         );
     });
 
+    it('treats tool-wide shell allowlists as approved-for-session state', async () => {
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: {
+                id: 'p1',
+                status: 'approved',
+                allowedTools: ['Bash'],
+            },
+            sessionId: 's1',
+            toolName: 'Bash',
+            toolInput: { command: 'git status' },
+            metadata: { flavor: 'opencode' },
+        }));
+        const allowForToolButton = findPermissionFooterButton(screen, 'claude.permissions.yesForTool');
+        const styleFragments = (allowForToolButton!.props.style as unknown[]).filter(Boolean) as Array<Record<string, unknown>>;
+        expect(styleFragments).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ borderLeftColor: expect.any(String) }),
+            ]),
+        );
+        expect(styleFragments.some((style) => style.borderLeftColor !== 'transparent')).toBe(true);
+        expect(styleFragments.some((style) => style.opacity === 0.3)).toBe(false);
+    });
+
     it('approves allow-command-name using stripped shell prelude', async () => {
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PermissionFooter, {
-                    permission: { id: 'p1', status: 'pending' },
-                    sessionId: 's1',
-                    toolName: 'Bash',
-                    toolInput: {
-                        command:
-                            'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SETUP_TOKEN; pwd',
-                    },
-                    metadata: { flavor: 'opencode' },
-                }),
-            );
-        });
-
-        const buttons = tree.root.findAllByType('TouchableOpacity' as any);
-
-        const commandNameButton = buttons.find((btn) => {
-            const texts = btn.findAllByType('Text' as any);
-            const joined = texts
-                .map((t) => {
-                    const c = t.props.children;
-                    if (Array.isArray(c)) return c.join('');
-                    return typeof c === 'string' ? c : '';
-                })
-                .join(' ');
-            return joined.includes('claude.permissions.yesForCommandName');
-        });
-
-        expect(commandNameButton).toBeTruthy();
-
-        await act(async () => {
-            commandNameButton!.props.onPress();
-        });
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'Bash',
+            toolInput: {
+                command:
+                    'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SETUP_TOKEN; pwd',
+            },
+            metadata: { flavor: 'opencode' },
+        }));
+        const commandNameButton = findPermissionFooterButton(screen, 'claude.permissions.yesForCommandName');
+        await pressTestInstanceAsync(commandNameButton, 'allow-command-name button');
 
         expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
         expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(

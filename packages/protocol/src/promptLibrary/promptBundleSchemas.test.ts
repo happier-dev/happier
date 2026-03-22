@@ -99,4 +99,17 @@ describe('validatePromptBundleBodyV1AgainstSchemaId', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errorCode).toBe('size_limit_exceeded');
   });
+
+  it('reports invalid_request for malformed bundle bodies', () => {
+    const res = validatePromptBundleBodyV1AgainstSchemaId({
+      bundleSchemaId: 'skills.skill_md_v1',
+      body: {
+        v: 1,
+        entries: [],
+      } as unknown as PromptBundleBodyV1,
+    });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.errorCode).toBe('invalid_request');
+  });
 });

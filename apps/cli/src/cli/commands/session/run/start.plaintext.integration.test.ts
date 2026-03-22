@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
@@ -15,14 +16,13 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session run start (plaintext integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-run-start-plain-'));
+    happyHomeDir = await createTempDir('happier-cli-session-run-start-plain-');
 
     const sessionId = 'sess_integration_run_start_plain_123';
     const metadataPlain = JSON.stringify({ path: '/tmp', flavor: 'claude' });
@@ -81,31 +81,18 @@ describe('happier session run start (plaintext integration)', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    mockIo.mockReset();
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-
-      const emit = vi.fn((event: string, data: any, cb?: (...args: any[]) => void) => {
+    const socket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
         expect(data.params).toMatchObject({
           intent: 'review',
-          backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         });
         cb?.({ ok: true, result: { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' } });
-      });
-
-      const connect = vi.fn(() => {
-        const list = handlers.get('connect') ?? [];
-        for (const fn of list) fn();
-      });
-
-      return { on, emit, connect, disconnect: vi.fn(), close: vi.fn() };
+      },
     });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
@@ -113,14 +100,13 @@ describe('happier session run start (plaintext integration)', () => {
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
     }
     server = null;
-    if (happyHomeDir) await rm(happyHomeDir, { recursive: true, force: true });
+    if (happyHomeDir) {
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
+    }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -129,8 +115,7 @@ describe('happier session run start (plaintext integration)', () => {
   it('returns a session_run_start JSON envelope', async () => {
     const { handleSessionCommand } = await import('../index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     try {
       await handleSessionCommand(
@@ -146,15 +131,16 @@ describe('happier session run start (plaintext integration)', () => {
         },
       );
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_plain_123');
       expect(parsed.data?.runId).toBe('run_1');
       expect(parsed.data?.callId).toBe('call_1');
+      expect(parsed.data?.backendId).toBe('claude');
+      expect(parsed.data?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });
-

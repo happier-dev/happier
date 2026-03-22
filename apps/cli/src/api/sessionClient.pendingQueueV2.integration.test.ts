@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 
+import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
 }));
@@ -11,22 +15,8 @@ vi.mock('socket.io-client', () => ({
 
 type PendingRow = { localId?: unknown };
 
-function createMockSocket() {
-  return {
-    connected: false,
-    connect: vi.fn(),
-    on: vi.fn(),
-    off: vi.fn(),
-    disconnect: vi.fn(),
-    close: vi.fn(),
-    emit: vi.fn(),
-    emitWithAck: vi.fn(),
-  };
-}
-
 describe('ApiSessionClient pending queue V2 helpers', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+  const envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
   let server: Server | null = null;
   let serverUrl = '';
   let pendingRows: PendingRow[] = [];
@@ -36,22 +26,18 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     const { reloadConfiguration } = await import('@/configuration');
     const { ApiSessionClient } = await import('./session/sessionClient');
 
-    const mockSocket = createMockSocket();
-    const mockUserSocket = createMockSocket();
-    mockIo.mockReset();
-    mockIo.mockImplementationOnce(() => mockSocket as any).mockImplementationOnce(() => mockUserSocket as any);
+    const sessionSocket = createApiSessionSocketStub();
+    const userSocket = createApiSessionSocketStub();
+    bindApiSessionSocketPairMock(mockIo, {
+      sessionSocket,
+      userSocket,
+      fallbackSocket: sessionSocket,
+    });
 
     reloadConfiguration();
-    const session: any = {
-      id: 'test-session-id',
-      seq: 0,
+    const session = createMockSession({
       metadata: { path: '/tmp', host: 'localhost' },
-      metadataVersion: 0,
-      agentState: null,
-      agentStateVersion: 0,
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy' as const,
-    };
+    });
     return new ApiSessionClient('test-token', session);
   }
 
@@ -92,8 +78,10 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     }
 
     serverUrl = `http://127.0.0.1:${address.port}`;
-    process.env.HAPPIER_SERVER_URL = serverUrl;
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
+    envScope.patch({
+      HAPPIER_SERVER_URL: serverUrl,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+    });
   });
 
   afterEach(async () => {
@@ -104,10 +92,7 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     }
     server = null;
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+    envScope.restore();
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -135,4 +120,3 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     expect(discardedLocalIds).toEqual(['a', 'b']);
   });
 });
-

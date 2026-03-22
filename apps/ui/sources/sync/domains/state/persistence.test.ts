@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { settingsDefaults } from '../settings/settings';
 
-const store = new Map<string, string>();
+const store = vi.hoisted(() => new Map<string, string>());
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -24,11 +25,23 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+        translateLoose: (key: string) => key,
+        getPreferredLanguage: () => 'en',
+    });
+});
+
+import '../settings/settings';
+
 import {
     clearPersistence,
     loadNewSessionDraft,
     loadPendingSettings,
     savePendingSettings,
+    loadSettings,
     loadSessionModelModes,
     saveSessionModelModes,
     loadSessionMaterializedMaxSeqById,
@@ -49,6 +62,10 @@ describe('persistence', () => {
     });
 
     describe('session model modes', () => {
+        it('loads default settings without touching the settings store bootstrap path', () => {
+            expect(loadSettings()).toBeTruthy();
+        });
+
         it('returns an empty object when nothing is persisted', () => {
             expect(loadSessionModelModes()).toEqual({});
         });
@@ -264,6 +281,7 @@ describe('persistence', () => {
         });
     });
 
+
     describe('session action drafts', () => {
         it('returns an empty object when nothing is persisted', () => {
             expect(loadSessionActionDrafts()).toEqual({});
@@ -335,6 +353,66 @@ describe('persistence', () => {
             expect((draft as any)?.acpSessionModeId).toBe('plan');
         });
 
+        it('roundtrips sessionConfigOptionOverrides when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    sessionConfigOptionOverrides: {
+                        v: 1,
+                        updatedAt: 123,
+                        overrides: {
+                            speed: {
+                                updatedAt: 123,
+                                value: 'fast',
+                            },
+                        },
+                    },
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.sessionConfigOptionOverrides).toEqual({
+                v: 1,
+                updatedAt: 123,
+                overrides: {
+                    speed: {
+                        updatedAt: 123,
+                        value: 'fast',
+                    },
+                },
+            });
+        });
+
+        it('roundtrips transcriptStorage when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    transcriptStorage: 'direct',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.transcriptStorage).toBe('direct');
+        });
+
         it('preserves valid non-session modelMode values', () => {
             store.set(
                 'new-session-draft-v1',
@@ -394,6 +472,69 @@ describe('persistence', () => {
 
             const draft = loadNewSessionDraft();
             expect(draft?.resumeSessionId).toBe('abc123');
+        });
+
+        it('roundtrips backendTarget when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'customAcp',
+                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+        });
+
+        it('roundtrips codexBackendMode when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    codexBackendMode: 'appServer',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.codexBackendMode).toBe('appServer');
+        });
+
+        it('ignores the legacy sessionType field when hydrating a canonical draft', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect(draft?.agentType).toBe('claude');
+            expect((draft as any)?.sessionType).toBeUndefined();
         });
 
         it('migrates legacy auggieAllowIndexing into agentNewSessionOptionStateByAgentId', () => {
@@ -487,6 +628,7 @@ describe('persistence', () => {
             expect(draft?.automationDraft?.name).toBe('Nightly');
             expect(draft?.automationDraft?.everyMinutes).toBe(30);
         });
+
     });
 
     describe('session review comment drafts', () => {

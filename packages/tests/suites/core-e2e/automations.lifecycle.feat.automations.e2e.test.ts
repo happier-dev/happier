@@ -40,7 +40,7 @@ describe('core e2e: automations lifecycle', () => {
 
   it('creates, runs, and surfaces automation changes', async () => {
     const testDir = run.testDir('automations-lifecycle');
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
     const cursor0 = await fetchCursor(server.baseUrl, auth.token);
 

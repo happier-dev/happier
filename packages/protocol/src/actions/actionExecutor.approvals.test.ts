@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
-function createApprovalRequest(status: ApprovalRequestV1['status'] = 'open'): ApprovalRequestV1 {
+function createApprovalRequest(
+  status: ApprovalRequestV1['status'] = 'open',
+  overrides: Partial<ApprovalRequestV1> = {},
+): ApprovalRequestV1 {
   const base: ApprovalRequestV1 = {
     v: 1,
     status,
@@ -16,16 +19,17 @@ function createApprovalRequest(status: ApprovalRequestV1['status'] = 'open'): Ap
   };
 
   if (status === 'approved') {
-    return { ...base, decision: { kind: 'approve', decidedAtMs: 2 } };
+    return { ...base, ...overrides, decision: { kind: 'approve', decidedAtMs: 2 } };
   }
 
   if (status === 'rejected') {
-    return { ...base, decision: { kind: 'reject', decidedAtMs: 2 } };
+    return { ...base, ...overrides, decision: { kind: 'reject', decidedAtMs: 2 } };
   }
 
   if (status === 'executed') {
     return {
       ...base,
+      ...overrides,
       decision: { kind: 'approve', decidedAtMs: 2 },
       execution: { executedAtMs: 3, ok: true, result: { ok: true } },
     };
@@ -34,12 +38,13 @@ function createApprovalRequest(status: ApprovalRequestV1['status'] = 'open'): Ap
   if (status === 'failed') {
     return {
       ...base,
+      ...overrides,
       decision: { kind: 'approve', decidedAtMs: 2 },
       execution: { executedAtMs: 3, ok: false, errorCode: 'action_failed', error: 'action_failed' },
     };
   }
 
-  return base;
+  return { ...base, ...overrides };
 }
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
@@ -52,9 +57,9 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     executionRunAction: async () => ({}),
     sessionOpen: async () => ({}),
     sessionFork: async () => ({}),
+    sessionRollback: async () => ({}),
     sessionSpawnNew: async () => ({}),
     sessionSpawnPicker: async () => ({}),
-    workspacesListRecent: async () => ({ items: [] }),
     pathsListRecent: async () => ({ items: [] }),
     machinesList: async () => ({ items: [] }),
     serversList: async () => ({ items: [] }),
@@ -69,8 +74,8 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     sessionList: async () => ({}),
     sessionActivityGet: async () => ({}),
     sessionRecentMessagesGet: async () => ({}),
-    daemonMemorySearch: async () => ({ items: [] }),
-    daemonMemoryGetWindow: async () => ({ items: [] }),
+    daemonMemorySearch: async () => ({ v: 1, ok: true as const, hits: [] }),
+    daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
     daemonMemoryEnsureUpToDate: async () => ({}),
     resetGlobalVoiceAgent: async () => {},
     ...overrides,
@@ -144,7 +149,7 @@ describe('createActionExecutor (approvals)', () => {
 
   it('executes the underlying action when an approval is approved', async () => {
     const approvalsGet = vi.fn(async () => createApprovalRequest());
-    const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
@@ -173,9 +178,79 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it('uses the stored approval serverId when the decision context omits one', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', { serverId: 'server-a' }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+
+    const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(approvalsGet).toHaveBeenCalledWith({ artifactId: 'a1', serverId: null });
+    expect(sessionSendMessage).toHaveBeenCalledWith({ sessionId: 's1', message: 'hello', serverId: 'server-a' });
+    expect(approvalsUpdate).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      artifactId: 'a1',
+      serverId: 'server-a',
+      request: expect.objectContaining({
+        serverId: 'server-a',
+        status: 'approved',
+      }),
+    }));
+    expect(approvalsUpdate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      artifactId: 'a1',
+      serverId: 'server-a',
+      request: expect.objectContaining({
+        serverId: 'server-a',
+        status: 'executed',
+      }),
+    }));
+  });
+
+  it('executes approved prompt library actions even when the decision surface is ui_button', async () => {
+    const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
+      actionId: 'prompt_doc.update',
+      actionArgs: {
+        artifactId: 'doc-1',
+        title: 'Review prompt',
+        markdown: '# Review',
+      },
+      summary: 'Update prompt',
+    }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
+    const promptDocUpdate = vi.fn(async () => ({ ok: true, artifactId: 'doc-1' }));
+
+    const executor = createExecutor({ approvalsGet, approvalsUpdate, promptDocUpdate });
+
+    const res = await executor.execute('approval.request.decide' as any, {
+      artifactId: 'a1',
+      decision: 'approve',
+    }, {
+      surface: 'ui_button',
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'executed',
+        execution: expect.objectContaining({ ok: true }),
+      },
+    });
+    expect(promptDocUpdate).toHaveBeenCalledWith({
+      artifactId: 'doc-1',
+      title: 'Review prompt',
+      markdown: '# Review',
+    });
+  });
+
   it('resumes an already-approved approval by finalizing execution', async () => {
     const approvalsGet = vi.fn(async () => createApprovalRequest('approved'));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
@@ -222,7 +297,7 @@ describe('createActionExecutor (approvals)', () => {
     },
   ] as const)('returns the existing terminal result for duplicate $decision decisions on $status approvals', async ({ status, decision, expected }) => {
     const approvalsGet = vi.fn(async () => createApprovalRequest(status));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
@@ -246,7 +321,7 @@ describe('createActionExecutor (approvals)', () => {
     { status: 'canceled', decision: 'reject' },
   ] as const)('rejects deciding a $status approval without mutating or executing', async ({ status, decision }) => {
     const approvalsGet = vi.fn(async () => createApprovalRequest(status));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
@@ -265,7 +340,7 @@ describe('createActionExecutor (approvals)', () => {
     const approvalsGet = vi.fn()
       .mockResolvedValueOnce(createApprovalRequest('open'))
       .mockResolvedValueOnce(createApprovalRequest('executed'));
-    const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });

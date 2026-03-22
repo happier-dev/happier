@@ -373,6 +373,8 @@ export function ReviewFindingsMessageCard(props: {
                 return (
                     <View key={finding.id} style={styles.findingRow}>
                         <Pressable
+                            testID={`review-findings-header:${finding.id}`}
+                            accessibilityRole="button"
                             onPress={() => setExpandedFindingId((prev) => (prev === finding.id ? null : finding.id))}
                             style={styles.findingHeader}
                         >
@@ -483,6 +485,8 @@ export function ReviewFindingsMessageCard(props: {
             {applyError ? <Text style={styles.errorText}>{applyError}</Text> : null}
 
             <Pressable
+                testID="review-findings-apply-triage"
+                accessibilityRole="button"
                 onPress={handleApplyTriage}
                 style={[styles.applyButton, (!hasUnsavedTriageChanges || isSaving) && styles.applyButtonDisabled]}
                 disabled={!hasUnsavedTriageChanges || isSaving}
@@ -497,6 +501,8 @@ export function ReviewFindingsMessageCard(props: {
             </Pressable>
 
             <Pressable
+                testID="review-findings-publish-accepted"
+                accessibilityRole="button"
                 onPress={handlePublishAcceptedFindings}
                 style={[styles.applyButton, (acceptedFindingIds.length === 0 || isApplying) && styles.applyButtonDisabled]}
                 disabled={acceptedFindingIds.length === 0 || isApplying}

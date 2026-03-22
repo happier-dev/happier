@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 import { renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelpers';
 
@@ -58,35 +59,6 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
   getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
-
-async function flushHookEffects(turns = 3) {
-  for (let index = 0; index < turns; index += 1) {
-    await Promise.resolve();
-  }
-}
-
-async function mountHookAndCollectValues<T>(useValue: () => T): Promise<{ seen: T[]; unmount: () => void }> {
-  const seen: T[] = [];
-
-  function Test() {
-    const value = useValue();
-    React.useEffect(() => {
-      seen.push(value);
-    }, [value]);
-    return null;
-  }
-
-  let root!: renderer.ReactTestRenderer;
-  await act(async () => {
-    root = renderer.create(React.createElement(Test));
-    await flushHookEffects();
-  });
-
-  return {
-    seen,
-    unmount: () => root.unmount(),
-  };
-}
 
 describe('useConnectedServiceQuotaBadges', () => {
   beforeEach(() => {
@@ -248,9 +220,16 @@ describe('useConnectedServiceQuotaBadges', () => {
         });
 
       const { useConnectedServiceQuotaBadges } = await import('./useConnectedServiceQuotaBadges');
-      const { seen, unmount } = await mountHookAndCollectValues(() => useConnectedServiceQuotaBadges([
-        { serviceId: 'anthropic', profileId: 'work' },
-      ]));
+      const seen: ReturnType<typeof useConnectedServiceQuotaBadges>[] = [];
+      const hook = await renderHook(() => {
+        const value = useConnectedServiceQuotaBadges([
+          { serviceId: 'anthropic', profileId: 'work' },
+        ]);
+        React.useEffect(() => {
+          seen.push(value);
+        }, [value]);
+        return value;
+      });
 
       expect(setIntervalSpy).not.toHaveBeenCalled();
       expect(getConnectedServiceQuotaSnapshotSealedSpy).toHaveBeenCalledTimes(1);
@@ -263,10 +242,8 @@ describe('useConnectedServiceQuotaBadges', () => {
       expect(getConnectedServiceQuotaSnapshotSealedSpy).toHaveBeenCalledTimes(2);
       const last = seen.at(-1) ?? {};
       expect(last['anthropic/work']?.map((b) => b.text)).toContain('Weekly 18%');
-      await act(async () => {
-        unmount();
-        await flushHookEffects();
-      });
+      await hook.unmount();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     } finally {
       setIntervalSpy.mockRestore();
       vi.useRealTimers();

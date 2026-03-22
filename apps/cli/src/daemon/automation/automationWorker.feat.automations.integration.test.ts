@@ -644,6 +644,95 @@ describe('automationWorker integration', () => {
     }
   });
 
+  it('enqueues plaintext pending content for plaintext existing_session automation prompts', async () => {
+    const now = Date.now();
+    const template = buildEncryptedTemplateCiphertext({
+      directory: '/tmp/happier-automation',
+      existingSessionId: 'session-existing',
+      sessionEncryptionMode: 'plain',
+      prompt: 'Run the plaintext scheduled maintenance checks.',
+    });
+
+    const server = await startAutomationServer({
+      claimRunOnce: {
+        run: {
+          id: 'run-6-plain',
+          automationId: 'automation-6-plain',
+          state: 'queued',
+          scheduledAt: now,
+          dueAt: now,
+          claimedAt: null,
+          startedAt: null,
+          finishedAt: null,
+          claimedByMachineId: null,
+          leaseExpiresAt: null,
+          attempt: 1,
+          summaryCiphertext: null,
+          errorCode: null,
+          errorMessage: null,
+          producedSessionId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        automation: {
+          id: 'automation-6-plain',
+          name: 'Existing plaintext target with prompt',
+          enabled: true,
+          targetType: 'existing_session',
+          templateCiphertext: template,
+        },
+      },
+    });
+
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-automation-worker-existing-plain-prompt-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_SERVER_URL = server.baseUrl;
+    process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
+
+    vi.resetModules();
+    const { startAutomationWorker } = await import('./automationWorker');
+
+    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-existing' }));
+
+    const worker = startAutomationWorker({
+      token: 'token-6-plain',
+      machineId: 'machine-6-plain',
+      encryption: TEST_ENCRYPTION,
+      spawnSession,
+      env: {
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
+        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
+        HAPPIER_AUTOMATION_LEASE_MS: '200',
+        HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
+      } as NodeJS.ProcessEnv,
+    });
+
+    try {
+      await waitForCondition(() => server.state.succeeded.length === 1);
+      expect(server.state.pendingEnqueue).toHaveLength(1);
+      expect(server.state.pendingEnqueue[0]).toEqual(expect.objectContaining({
+        localId: expect.any(String),
+        content: {
+          t: 'plain',
+          v: expect.objectContaining({
+            role: 'user',
+            content: {
+              type: 'text',
+              text: 'Run the plaintext scheduled maintenance checks.',
+            },
+          }),
+        },
+      }));
+      expect(server.state.pendingMaterialize).toHaveLength(1);
+      expect(server.state.failed).toHaveLength(0);
+    } finally {
+      worker.stop();
+      await server.close();
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('enqueues and materializes existing_session automation prompt', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({

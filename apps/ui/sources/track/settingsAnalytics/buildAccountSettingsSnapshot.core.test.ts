@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
@@ -56,7 +57,7 @@ describe('buildAccountSettingsSnapshot', () => {
             hideInactiveSessions: true,
             groupInactiveSessionsByProject: true,
             showFlavorIcons: false,
-            avatarStyle: 'minimal',
+            avatarStyle: 'gradient',
             sessionListActiveGroupingV1: 'date',
             sessionListInactiveGroupingV1: 'project',
             useMachinePickerSearch: true,
@@ -79,7 +80,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__hideInactiveSessions).toBe(true);
         expect(snapshot.properties.acct_setting__groupInactiveSessionsByProject).toBe(true);
         expect(snapshot.properties.acct_setting__showFlavorIcons).toBe(false);
-        expect(snapshot.properties.acct_setting__avatarStyle).toBe('minimal');
+        expect(snapshot.properties.acct_setting__avatarStyle).toBe('gradient');
         expect(snapshot.properties.acct_setting__sessionListActiveGroupingV1).toBe('date');
         expect(snapshot.properties.acct_setting__sessionListInactiveGroupingV1).toBe('project');
         expect(snapshot.properties.acct_setting__useMachinePickerSearch).toBe(true);
@@ -91,7 +92,10 @@ describe('buildAccountSettingsSnapshot', () => {
             ...settingsDefaults,
             codexBackendMode: 'mcp',
             opencodeBackendMode: 'acp',
-            opencodeServerBaseUrl: 'https://example.com/',
+            opencodeServerBaseUrl: '',
+            opencodeServerBaseUrlByServerIdV1: {
+                server_1: 'https://example.com/',
+            },
             claudeRemoteAgentSdkEnabled: false,
             claudeRemoteSettingSourcesV2: ['project'],
             claudeRemoteAdvancedOptionsJson: '{"maxTurns":4}',
@@ -100,9 +104,22 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__codexBackendMode).toBe('mcp');
         expect(snapshot.properties.acct_setting__opencodeBackendMode).toBe('acp');
         expect(snapshot.properties.acct_setting__opencodeServerBaseUrl).toBe(true);
+        expect(snapshot.properties).not.toHaveProperty('acct_setting__opencodeServerBaseUrlByServerIdV1');
         expect(snapshot.properties.acct_setting__claudeRemoteAgentSdkEnabled).toBe(false);
         expect(snapshot.properties.acct_setting__claudeRemoteSettingSourcesV2).toBe('project');
         expect(snapshot.properties.acct_setting__claudeRemoteAdvancedOptionsJson).toBe(true);
     });
-});
 
+    it('tracks transcript storage overrides for configured backend targets using canonical target keys', () => {
+        const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+        const snapshot = buildAccountSettingsSnapshot({
+            ...settingsDefaults,
+            newSessionDefaultPersistenceModeByTargetKeyV1: {
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'persisted',
+                [configuredTargetKey]: 'direct',
+            },
+        });
+
+        expect(snapshot.properties[`acct_setting__newSessionDefaultPersistenceModeByTargetKeyV1__${configuredTargetKey}`]).toBe('direct');
+    });
+});

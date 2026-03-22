@@ -1,13 +1,18 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-let platformOs: 'web' | 'ios' | 'android' = 'ios';
+const platformState = vi.hoisted(() => ({
+    os: 'ios' as 'web' | 'ios' | 'android',
+}));
+
 let isTauriDesktopValue = false;
 let sessionsValue: any[] = [];
 let friendRequestsValue: Array<{ id: string }> = [];
@@ -26,19 +31,27 @@ let changelogUnreadValue = false;
 const applyExpoNativeBadgeState = vi.hoisted(() => vi.fn(async () => {}));
 const applyTauriBadgeState = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('react-native', () => ({
-    Platform: {
-        get OS() {
-            return platformOs;
-        },
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                get OS() {
+                    return platformState.os;
+                },
+            },
+        }
+    );
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAllSessions: () => sessionsValue,
     useFriendRequests: () => friendRequestsValue,
     useLocalSettings: () => localSettingsValue,
-}));
+});
+});
 
 vi.mock('@/hooks/inbox/useUpdates', () => ({
     useUpdates: () => ({ updateAvailable: updateAvailableValue }),
@@ -62,7 +75,7 @@ vi.mock('./channels/applyTauriBadgeState', () => ({
 
 describe('ActivityBadgeRuntime', () => {
     afterEach(() => {
-        platformOs = 'ios';
+        platformState.os = 'ios';
         isTauriDesktopValue = false;
         sessionsValue = [];
         friendRequestsValue = [];
@@ -98,9 +111,7 @@ describe('ActivityBadgeRuntime', () => {
         const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityBadgeRuntime />);
-        });
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
 
         expect(applyExpoNativeBadgeState).toHaveBeenCalledWith({
             count: 3,
@@ -131,9 +142,7 @@ describe('ActivityBadgeRuntime', () => {
         const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityBadgeRuntime />);
-        });
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
 
         expect(applyExpoNativeBadgeState).toHaveBeenCalledWith({
             count: 0,
@@ -146,16 +155,14 @@ describe('ActivityBadgeRuntime', () => {
     });
 
     it('shows the tauri dock dot only for non-numeric inbox attention when enabled', async () => {
-        platformOs = 'web';
+        platformState.os = 'web';
         isTauriDesktopValue = true;
         updateAvailableValue = true;
 
         const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityBadgeRuntime />);
-        });
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
 
         expect(applyTauriBadgeState).toHaveBeenCalledWith({
             count: 0,

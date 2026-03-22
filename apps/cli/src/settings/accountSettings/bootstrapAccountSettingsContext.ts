@@ -1,7 +1,11 @@
 import axios from 'axios';
 
 import type { AgentId } from '@happier-dev/agents';
-import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol';
+import {
+  accountSettingsParse,
+  type AccountSettings,
+  type BackendTargetRefV1,
+} from '@happier-dev/protocol';
 
 import { createHash } from 'node:crypto';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -22,6 +26,7 @@ import {
   writeAccountSettingsCacheAtomic,
 } from './accountSettingsCache';
 import { setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
+import { resolveAccountSettingsHttpBaseUrl } from './resolveAccountSettingsHttpBaseUrl';
 
 export type AccountSettingsBootstrapMode = 'blocking' | 'fast';
 export type AccountSettingsRefreshMode = 'auto' | 'force';
@@ -35,13 +40,17 @@ export type AccountSettingsContext = Readonly<{
   whenRefreshed: Promise<AccountSettingsContext> | null;
 }>;
 
-function migrateAccountSettingsForCodexAcpDefault(settings: AccountSettings): AccountSettings {
+function migrateAccountSettingsForCodexAppServerDefault(settings: AccountSettings): AccountSettings {
   const schemaVersion = settings.schemaVersion;
   if (!Number.isFinite(schemaVersion) || schemaVersion >= 6) return settings;
+  const existingCodexBackendMode = settings.codexBackendMode;
   return {
     ...settings,
     schemaVersion: 6,
-    codexBackendMode: 'acp',
+    codexBackendMode:
+      existingCodexBackendMode === 'mcp' || existingCodexBackendMode === 'acp' || existingCodexBackendMode === 'appServer'
+        ? existingCodexBackendMode
+        : 'appServer',
   };
 }
 
@@ -54,7 +63,14 @@ type BootstrapDeps = Readonly<{
     | { settingsContent: AccountSettingsContentEnvelope | null; settingsVersion: number }
   >;
   decryptCiphertext: (args: { credentials: Credentials; ciphertext: string }) => Promise<Record<string, unknown> | null>;
-  applySideEffects: (args: { settings: AccountSettings; agentId?: AgentId; source: AccountSettingsContext['source']; settingsVersion: number; loadedAtMs: number }) => void;
+  applySideEffects: (args: {
+    settings: AccountSettings;
+    agentId?: AgentId;
+    backendTarget?: BackendTargetRefV1;
+    source: AccountSettingsContext['source'];
+    settingsVersion: number;
+    loadedAtMs: number;
+  }) => void;
 }>;
 
 function readAccountSettingsModeFromEnv(): 'auto' | 'never' {
@@ -94,6 +110,7 @@ export function resetInMemoryAccountSettingsContextForTests(): void {
 export async function bootstrapAccountSettingsContext(params: Readonly<{
   credentials: Credentials;
   agentId?: AgentId;
+  backendTarget?: BackendTargetRefV1;
   mode?: AccountSettingsBootstrapMode;
   refresh?: AccountSettingsRefreshMode;
   nowMs?: number;
@@ -111,8 +128,9 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     readCache: params.deps?.readCache ?? readAccountSettingsCache,
     writeCache: params.deps?.writeCache ?? writeAccountSettingsCacheAtomic,
     fetchFromServer: params.deps?.fetchFromServer ?? (async ({ credentials }) => {
+      const accountSettingsBaseUrl = resolveAccountSettingsHttpBaseUrl();
       try {
-        const response = await axios.get(`${configuration.serverUrl}/v2/account/settings`, {
+        const response = await axios.get(`${accountSettingsBaseUrl}/v2/account/settings`, {
           headers: {
             Authorization: `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
@@ -145,7 +163,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         return { settingsContent: null, settingsVersion };
       } catch (err: any) {
         if (err?.code !== 'settings_v2_not_supported') throw err;
-        const response = await axios.get(`${configuration.serverUrl}/v1/account/settings`, {
+        const response = await axios.get(`${accountSettingsBaseUrl}/v1/account/settings`, {
           headers: {
             Authorization: `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
@@ -163,10 +181,10 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     decryptCiphertext: params.deps?.decryptCiphertext ?? (async ({ credentials, ciphertext }) => {
       return decryptAccountSettingsCiphertext({ credentials, ciphertext });
     }),
-    applySideEffects: params.deps?.applySideEffects ?? (({ settings, agentId, source, settingsVersion, loadedAtMs }) => {
+    applySideEffects: params.deps?.applySideEffects ?? (({ settings, agentId, backendTarget, source, settingsVersion, loadedAtMs }) => {
       setActiveAccountSettingsSnapshot({ source, settings, settingsVersion, loadedAtMs, settingsSecretsReadKeys });
-      if (agentId) {
-        assertBackendEnabledByAccountSettings({ agentId, settings });
+      if (agentId || backendTarget) {
+        assertBackendEnabledByAccountSettings({ agentId, backendTarget, settings });
       }
       applyAccountSettingsToProcessEnv({ settings });
     }),
@@ -178,26 +196,48 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const modeFromEnv = readAccountSettingsModeFromEnv();
   if (modeFromEnv === 'never') {
     const settings = accountSettingsParse({});
-    const ctx: AccountSettingsContext = { source: 'none', settings, settingsVersion: 0, loadedAtMs: nowMs, settingsSecretsReadKeys, whenRefreshed: null };
-    deps.applySideEffects({ settings, agentId: params.agentId, source: 'none', settingsVersion: 0, loadedAtMs: nowMs });
+    const ctx: AccountSettingsContext = {
+      source: 'none',
+      settings,
+      settingsVersion: 0,
+      loadedAtMs: nowMs,
+      settingsSecretsReadKeys,
+      whenRefreshed: null,
+    };
+    deps.applySideEffects({
+      settings,
+      agentId: params.agentId,
+      backendTarget: params.backendTarget,
+      source: 'none',
+      settingsVersion: 0,
+      loadedAtMs: nowMs,
+    });
     inMemoryByScopeKey.set(scopeKey, ctx);
     return ctx;
   }
 
   const existing = inMemoryByScopeKey.get(scopeKey) ?? null;
   if (refresh === 'auto' && existing && shouldTreatCacheAsFresh({ version: 2, cachedAt: existing.loadedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)) {
+    deps.applySideEffects({
+      settings: existing.settings,
+      agentId: params.agentId,
+      backendTarget: params.backendTarget,
+      source: existing.source,
+      settingsVersion: existing.settingsVersion,
+      loadedAtMs: existing.loadedAtMs,
+    });
     return existing;
   }
 
   const cache = await deps.readCache(cachePath);
 
   const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<AccountSettings> => {
-    if (!content) return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse({}));
-    if (content.t === 'plain') return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse(content.v));
+    if (!content) return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse({}));
+    if (content.t === 'plain') return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(content.v));
     const ciphertext = typeof content.c === 'string' ? content.c : '';
-    if (!ciphertext) return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse({}));
+    if (!ciphertext) return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse({}));
     const decrypted = await deps.decryptCiphertext({ credentials: params.credentials, ciphertext });
-    return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse(decrypted ?? {}));
+    return migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(decrypted ?? {}));
   };
 
   const cacheContent: AccountSettingsContentEnvelope | null =
@@ -210,8 +250,22 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const useCache = async (): Promise<AccountSettingsContext> => {
     const settings = await parseFromContent(cacheContent);
     const settingsVersion = cache?.settingsVersion ?? 0;
-    const ctx: AccountSettingsContext = { source: cache ? 'cache' : 'none', settings, settingsVersion, loadedAtMs: nowMs, settingsSecretsReadKeys, whenRefreshed: null };
-    deps.applySideEffects({ settings, agentId: params.agentId, source: ctx.source, settingsVersion, loadedAtMs: nowMs });
+    const ctx: AccountSettingsContext = {
+      source: cache ? 'cache' : 'none',
+      settings,
+      settingsVersion,
+      loadedAtMs: nowMs,
+      settingsSecretsReadKeys,
+      whenRefreshed: null,
+    };
+    deps.applySideEffects({
+      settings,
+      agentId: params.agentId,
+      backendTarget: params.backendTarget,
+      source: ctx.source,
+      settingsVersion,
+      loadedAtMs: nowMs,
+    });
     inMemoryByScopeKey.set(scopeKey, ctx);
     return ctx;
   };
@@ -234,8 +288,22 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     } catch (err) {
       logger.debug('[accountSettings] cache write failed; continuing without persistence', serializeAxiosErrorForLog(err));
     }
-    const ctx: AccountSettingsContext = { source: 'network', settings, settingsVersion, loadedAtMs: nowMs, settingsSecretsReadKeys, whenRefreshed: null };
-    deps.applySideEffects({ settings, agentId: params.agentId, source: 'network', settingsVersion, loadedAtMs: nowMs });
+    const ctx: AccountSettingsContext = {
+      source: 'network',
+      settings,
+      settingsVersion,
+      loadedAtMs: nowMs,
+      settingsSecretsReadKeys,
+      whenRefreshed: null,
+    };
+    deps.applySideEffects({
+      settings,
+      agentId: params.agentId,
+      backendTarget: params.backendTarget,
+      source: 'network',
+      settingsVersion,
+      loadedAtMs: nowMs,
+    });
     inMemoryByScopeKey.set(scopeKey, ctx);
     return ctx;
   };

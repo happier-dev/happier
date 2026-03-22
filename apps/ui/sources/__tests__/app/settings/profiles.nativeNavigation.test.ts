@@ -1,10 +1,12 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
+
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
 type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
@@ -25,55 +27,62 @@ type CapturedProfilesListProps = {
     onEditProfile?: (profile: ProfileRow) => void;
 };
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'ios' },
-        View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
-        Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'ios',
+        },
+    });
 });
 
-vi.mock('@expo/vector-icons', () => {
-    const React = require('react');
-    return {
-        Ionicons: (props: NativeChildrenProps) => React.createElement('Ionicons', props, props.children),
-    };
-});
-
-const routerMock = {
+const routerMock = vi.hoisted(() => ({
     push: vi.fn(),
     back: vi.fn(),
-};
-
-vi.mock('expo-router', () => ({
-    useRouter: () => routerMock,
-    useNavigation: () => ({ setOptions: vi.fn() }),
+    replace: vi.fn(),
+    setParams: vi.fn(),
+    navigationSetOptions: vi.fn(),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: { colors: { groupped: { background: '#ffffff' }, surface: '#ffffff', divider: '#dddddd' } },
-        rt: { insets: { bottom: 0 } },
-    }),
-    StyleSheet: {
-        create: (fn: (theme: { colors: { groupped: { background: string }; divider: string } }) => unknown) =>
-            fn({ colors: { groupped: { background: '#ffffff' }, divider: '#dddddd' } }),
-    },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        navigation: { setOptions: routerMock.navigationSetOptions },
+    });
+    routerMock.push = expoRouterMock.spies.push;
+    routerMock.back = expoRouterMock.spies.back;
+    routerMock.replace = expoRouterMock.spies.replace;
+    routerMock.setParams = expoRouterMock.spies.setParams;
+    return expoRouterMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => false,
-    useSettingMutable: () => [[], vi.fn()],
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), show: vi.fn() },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSetting: () => false,
+        useSettingMutable: () => [[], vi.fn()],
+    });
+});
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            show: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: vi.fn(async () => 'keep'),
@@ -132,9 +141,7 @@ describe('ProfileManager (native)', () => {
     async function renderProfileManager() {
         const ProfileManager = (await import('@/app/(app)/settings/profiles')).default;
         capturedProfilesListProps = null;
-        await act(async () => {
-            renderer.create(React.createElement(ProfileManager));
-        });
+        await renderScreen(React.createElement(ProfileManager));
     }
 
     it('navigates to the profile edit screen when adding a profile', async () => {

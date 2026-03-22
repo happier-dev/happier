@@ -6,10 +6,14 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Typography } from '@/constants/Typography';
+import { layout } from '@/components/ui/layout/layout';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { t } from '@/text';
 import { TextInput } from '@/components/ui/text/Text';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
+import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 
 
 type PathSelectorBaseProps = {
@@ -18,16 +22,22 @@ type PathSelectorBaseProps = {
     onChangeSelectedPath: (path: string) => void;
     onSubmitSelectedPath?: (path: string) => void;
     submitBehavior?: 'showRow' | 'confirm';
-    recentPaths: string[];
+    recentPaths: ReadonlyArray<string>;
     usePickerSearch: boolean;
-    searchVariant?: 'header' | 'group' | 'none';
-    favoriteDirectories: string[];
+    searchVariant?: 'header' | 'group' | 'belowInput' | 'none';
+    favoriteDirectories: ReadonlyArray<string>;
     onChangeFavoriteDirectories: (dirs: string[]) => void;
     /**
      * When true, clicking a path row will focus the input (and try to place cursor at the end).
      * Wizard UX generally wants this OFF; the dedicated picker screen wants this ON.
      */
     focusInputOnSelect?: boolean;
+    machineBrowse?: Readonly<{
+        enabled: boolean;
+        machineId: string | null;
+        serverId?: string | null;
+        title?: string;
+    }>;
 };
 
 type PathSelectorControlledSearchProps = {
@@ -47,22 +57,49 @@ export type PathSelectorProps =
 const ITEM_RIGHT_GAP = 16;
 
 const stylesheet = StyleSheet.create((theme) => ({
+    pathEntrySection: {
+        backgroundColor: theme.colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.divider,
+    },
+    pathEntryContent: {
+        width: '100%',
+        maxWidth: layout.maxWidth,
+        alignSelf: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
     pathInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 16,
     },
     pathInput: {
         flex: 1,
         backgroundColor: theme.colors.input.background,
         borderRadius: 10,
         paddingHorizontal: 12,
-        minHeight: 36,
+        paddingVertical: 8,
+        minHeight: 40,
         position: 'relative',
         borderWidth: 0.5,
         borderColor: theme.colors.divider,
+        justifyContent: 'center',
+    },
+    pathTextInput: {
+        flex: 1,
+        color: theme.colors.input.text,
+        paddingVertical: 0,
+        minHeight: 24,
+        textAlignVertical: 'center',
+        ...Typography.default(),
+        ...(Platform.OS === 'web'
+            ? ({
+                outlineStyle: 'none',
+                outlineWidth: 0,
+                boxShadow: 'none',
+            } as any)
+            : undefined),
     },
     searchHeaderContainer: {
         backgroundColor: 'transparent',
@@ -94,6 +131,7 @@ export function PathSelector({
     onSubmitSelectedPath,
     submitBehavior = 'showRow',
     focusInputOnSelect = true,
+    machineBrowse,
 }: PathSelectorProps) {
     const { theme, rt } = useUnistyles();
     const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
@@ -107,6 +145,15 @@ export function PathSelector({
     const searchQuery = isSearchQueryControlled ? controlledSearchQuery : uncontrolledSearchQuery;
     const setSearchQuery = isSearchQueryControlled ? onChangeSearchQueryProp : setUncontrolledSearchQuery;
     const [submittedCustomPath, setSubmittedCustomPath] = useState<string | null>(null);
+    const renderIconNode = React.useCallback(
+        (
+            name: React.ComponentProps<typeof Ionicons>['name'],
+            size: number,
+            color: string,
+            style?: React.ComponentProps<typeof Ionicons>['style'],
+        ) => normalizeNodeForView(<Ionicons name={name} size={size} color={color} style={style} />),
+        [],
+    );
 
     const suggestedPaths = useMemo(() => {
         const homeDir = machineHomeDir || '/home';
@@ -255,9 +302,13 @@ export function PathSelector({
 
     const setPathAndFocus = React.useCallback((path: string) => {
         onChangeSelectedPath(path);
+        if (submitBehavior === 'confirm') {
+            onSubmitSelectedPath?.(path);
+            return;
+        }
         setSubmittedCustomPath(null);
         focusInputAtEnd(path);
-    }, [focusInputAtEnd, onChangeSelectedPath]);
+    }, [focusInputAtEnd, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const handleSubmitPath = React.useCallback(() => {
         const trimmed = selectedPath.trim();
@@ -273,16 +324,29 @@ export function PathSelector({
         }
     }, [onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
 
+    const handleBrowseMachinePath = React.useCallback(async () => {
+        if (!machineBrowse?.enabled || !machineBrowse.machineId) return;
+        const selected = await openMachinePathBrowserModal({
+            machineId: machineBrowse.machineId,
+            serverId: machineBrowse.serverId,
+            title: machineBrowse.title,
+            initialPath: resolveAbsolutePath(selectedPath.trim(), machineHomeDir),
+        });
+        if (selected) {
+            onChangeSelectedPath(selected);
+            if (submitBehavior === 'confirm') {
+                onSubmitSelectedPath?.(selected);
+                return;
+            }
+            setSubmittedCustomPath(null);
+        }
+    }, [machineBrowse, machineHomeDir, onChangeSelectedPath, onSubmitSelectedPath, selectedPath, submitBehavior]);
+
     const renderRightElement = React.useCallback((absolutePath: string, isSelected: boolean, isFavorite: boolean) => {
         return (
             <View style={styles.rightElementRow}>
                 <View style={styles.iconSlot}>
-                    <Ionicons
-                        name="checkmark-circle"
-                        size={24}
-                        color={selectedIndicatorColor}
-                        style={{ opacity: isSelected ? 1 : 0 }}
-                    />
+                    {renderIconNode('checkmark-circle', 24, selectedIndicatorColor, { opacity: isSelected ? 1 : 0 })}
                 </View>
                 <Pressable
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -291,26 +355,22 @@ export function PathSelector({
                         toggleFavorite(absolutePath);
                     }}
                 >
-                    <Ionicons
-                        name={isFavorite ? 'star' : 'star-outline'}
-                        size={24}
-                        color={isFavorite ? selectedIndicatorColor : theme.colors.textSecondary}
-                    />
+                    {renderIconNode(
+                        isFavorite ? 'star' : 'star-outline',
+                        24,
+                        isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                    )}
                 </Pressable>
             </View>
         );
-    }, [selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+    }, [renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
 
     const renderCustomRightElement = React.useCallback((absolutePath: string) => {
         const isFavorite = favoritePaths.includes(absolutePath);
         return (
             <View style={styles.rightElementRow}>
                 <View style={styles.iconSlot}>
-                    <Ionicons
-                        name="checkmark-circle"
-                        size={24}
-                        color={selectedIndicatorColor}
-                    />
+                    {renderIconNode('checkmark-circle', 24, selectedIndicatorColor)}
                 </View>
                 <Pressable
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -319,11 +379,11 @@ export function PathSelector({
                         toggleFavorite(absolutePath);
                     }}
                 >
-                    <Ionicons
-                        name={isFavorite ? 'star' : 'star-outline'}
-                        size={24}
-                        color={isFavorite ? selectedIndicatorColor : theme.colors.textSecondary}
-                    />
+                    {renderIconNode(
+                        isFavorite ? 'star' : 'star-outline',
+                        24,
+                        isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                    )}
                 </Pressable>
                 <Pressable
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -334,15 +394,11 @@ export function PathSelector({
                         setTimeout(() => inputRef.current?.focus(), 50);
                     }}
                 >
-                    <Ionicons
-                        name="close-circle"
-                        size={24}
-                        color={theme.colors.textSecondary}
-                    />
+                    {renderIconNode('close-circle', 24, theme.colors.textSecondary)}
                 </Pressable>
             </View>
         );
-    }, [favoritePaths, onChangeSelectedPath, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+    }, [favoritePaths, onChangeSelectedPath, renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
 
     const showSubmittedCustomPathRow = useMemo(() => {
         if (!submittedCustomPath) return null;
@@ -370,43 +426,46 @@ export function PathSelector({
                 />
             )}
 
-            <ItemGroup title={t('newSession.pathPicker.enterPathTitle')}>
-                <View style={styles.pathInputContainer}>
-                    <View style={[styles.pathInput, { paddingVertical: 8 }]}>
-                        <TextInput
-                            ref={inputRef}
-                            value={selectedPath}
-                            onChangeText={handleChangeSelectedPath}
-                            placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
-                            placeholderTextColor={theme.colors.input.placeholder}
-                            style={[
-                                {
-                                    color: theme.colors.input.text,
-                                    paddingTop: 8,
-                                    paddingBottom: 8,
-                                },
-                                Typography.default(),
-                                Platform.OS === 'web'
-                                    ? ({
-                                        outlineStyle: 'none',
-                                        outlineWidth: 0,
-                                        boxShadow: 'none',
-                                    } as any)
-                                    : undefined,
-                            ]}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            autoComplete="off"
-                            textContentType="none"
-                            importantForAutofill="no"
-                            returnKeyType="done"
-                            blurOnSubmit={true}
-                            multiline={false}
-                            onSubmitEditing={handleSubmitPath}
-                        />
+            <View style={styles.pathEntrySection}>
+                <View style={styles.pathEntryContent}>
+                    <View style={styles.pathInputContainer}>
+                        <View style={styles.pathInput}>
+                            <TextInput
+                                testID="path-selector-input"
+                                ref={inputRef}
+                                value={selectedPath}
+                                onChangeText={handleChangeSelectedPath}
+                                placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                style={styles.pathTextInput}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                autoComplete="off"
+                                textContentType="none"
+                                importantForAutofill="no"
+                                returnKeyType="done"
+                                blurOnSubmit={true}
+                                multiline={false}
+                                onSubmitEditing={handleSubmitPath}
+                            />
+                        </View>
+                        {machineBrowse?.enabled ? (
+                            <PathInputBrowseButton
+                                onPress={handleBrowseMachinePath}
+                                disabled={!machineBrowse.machineId}
+                            />
+                        ) : null}
                     </View>
                 </View>
-            </ItemGroup>
+            </View>
+
+            {usePickerSearch && searchVariant === 'belowInput' && (
+                <SearchHeader
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder={t('newSession.searchPathsPlaceholder')}
+                />
+            )}
 
             {showSubmittedCustomPathRow && (
                 <ItemGroup title={t('newSession.pathPicker.customPathTitle')}>

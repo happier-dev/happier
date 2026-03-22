@@ -62,6 +62,12 @@ describe('mcpServerCrud', () => {
         expect(deleted.bindings).toEqual([]);
     });
 
+    it('returns the original settings when deleting a missing server', () => {
+        const settings = addMcpServerCatalogEntryV1(baseSettings(), makeStdioServer({ id: 's1', name: 'foo' }));
+
+        expect(deleteMcpServerCatalogEntryV1(settings, 'missing')).toBe(settings);
+    });
+
     it('rejects bindings for missing serverId', () => {
         const binding = makeAllMachinesBinding({ id: 'b1', serverId: 'missing' });
         expect(() => addMcpServerBindingV1(baseSettings(), binding)).toThrow(/server not found/i);

@@ -1,26 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get(path: string, opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, { opts, handler });
-    }
-    post() {}
-}
+import { createFakeRouteApp, getRouteEntry } from "../../testkit/routeHarness";
 
 describe("changesRoutes rate limits", () => {
     it("registers GET /v2/changes with an explicit rate limit", async () => {
         const { changesRoutes } = await import("./changesRoutes");
-        const app = new FakeApp();
+        const app = createFakeRouteApp();
         changesRoutes(app as any);
-        const cursorRoute = app.routes.get("GET /v2/cursor");
-        expect(cursorRoute?.opts?.config?.rateLimit).toEqual(
+        expect(getRouteEntry(app, "GET", "/v2/cursor").opts.config?.rateLimit).toEqual(
             expect.objectContaining({ max: expect.any(Number), timeWindow: expect.any(String) }),
         );
-        const route = app.routes.get("GET /v2/changes");
-        expect(route?.opts?.config?.rateLimit).toEqual(
+        expect(getRouteEntry(app, "GET", "/v2/changes").opts.config?.rateLimit).toEqual(
             expect.objectContaining({ max: expect.any(Number), timeWindow: expect.any(String) }),
         );
     });

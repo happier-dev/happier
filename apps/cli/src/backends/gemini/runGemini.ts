@@ -22,6 +22,7 @@ import { emitReadyIfIdle as emitReadyIfIdleShared } from '@/agent/runtime/emitRe
 import { hashObject } from '@/utils/deterministicJson';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { stopCaffeinate } from '@/integrations/caffeinate';
@@ -35,11 +36,12 @@ import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/pe
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
+import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 
 import type { AgentBackend } from '@/agent';
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
@@ -68,12 +70,14 @@ import {
 } from '@/backends/gemini/runtime/geminiTurnMessageState';
 import { createGeminiBackendInstance } from '@/backends/gemini/runtime/createGeminiBackendInstance';
 import { ensureGeminiAcpSession } from '@/backends/gemini/runtime/ensureGeminiAcpSession';
+import { resolveShouldPrependAppendSystemPromptOnNextFreshSessionPrompt } from '@/backends/gemini/runtime/freshSessionSystemPromptState';
 import { sendGeminiPromptWithRetry } from '@/backends/gemini/runtime/sendGeminiPromptWithRetry';
 import { createGeminiTerminalUi } from '@/backends/gemini/runtime/createGeminiTerminalUi';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { resolveGeminiQueuedPromptWithReplaySeed } from '@/backends/gemini/runtime/resolveGeminiQueuedPromptWithReplaySeed';
+import { formatGeminiPromptDebugSummary } from '@/backends/gemini/runtime/formatGeminiPromptDebugSummary';
 import { buildGeminiPromptForMessage } from '@/backends/gemini/utils/buildGeminiPromptForMessage';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -366,6 +370,12 @@ export async function runGemini(opts: {
       pushSender: api.push(),
       waitingForCommandLabel: 'Gemini',
       logPrefix: '[Gemini]',
+      sessionTitle: getSessionNotificationTitle(session.getMetadataSnapshot.bind(session)),
+      assistantPreviewText: getLatestAssistantMessagePreview(messageBuffer),
+      accountSettings: opts.accountSettingsContext?.settings ?? null,
+      settingsSecretsReadKeys: opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
+      includeAssistantPreviewText:
+        opts.accountSettingsContext?.settings?.notificationsSettingsV1?.readyIncludeMessageText !== false,
       shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
     });
   };
@@ -467,13 +477,19 @@ export async function runGemini(opts: {
   // Start Happier MCP server and create Gemini backend
   //
 
+  const runtimeContext = resolveAttachedRunRuntimeContext({
+    session,
+    metadata,
+    fallbackDirectory: process.cwd(),
+  });
+
   const { happierMcpServer, mcpServers } = await resolveRunnerMcpServers({
     session,
     credentials: opts.credentials,
     accountSettings: opts.accountSettingsContext?.settings ?? null,
     machineId,
-    directory: metadata.path ?? process.cwd(),
-    sessionMetadata: session.getMetadataSnapshot(),
+    directory: runtimeContext.runtimeDirectory,
+    sessionMetadata: runtimeContext.sessionMetadataSnapshot ?? runtimeContext.resolvedMetadata,
     commandMode: 'current-process',
   });
 
@@ -486,7 +502,7 @@ export async function runGemini(opts: {
 
       try {
         if (outcome.archive) {
-          await archiveAndCloseSession(session);
+          await archiveAndCloseRuntimeSession(session, opts.credentials, outcome.archiveReason);
         }
       } catch (e) {
         logger.debug('[Gemini] Failed to archive session during termination (non-fatal)', e);
@@ -539,6 +555,7 @@ export async function runGemini(opts: {
     logPrefix: '[Gemini]',
     pushSender: api.push(),
     getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
+    getAccountSettingsSecretsReadKeys: () => opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
     onAbortRequested: handleAbort,
     alwaysAutoApproveToolNameIncludes: ['geminireasoning', 'codexreasoning'],
   });
@@ -710,6 +727,8 @@ export async function runGemini(opts: {
         const { sessionId } = await activeBackend.startSession();
         acpSessionId = sessionId;
         logger.debug(`[gemini] New ACP session started: ${acpSessionId}`);
+        shouldPrependAppendSystemPromptOnNextFreshSessionPrompt =
+          resolveShouldPrependAppendSystemPromptOnNextFreshSessionPrompt({ startedFreshSession: true });
         maybeUpdateGeminiSessionIdMetadata({
           getGeminiSessionId: () => acpSessionId,
           updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
@@ -767,9 +786,10 @@ export async function runGemini(opts: {
             });
             acpSessionId = ensuredSession.acpSessionId;
             storedResumeId = ensuredSession.storedResumeId;
-            if (!ensuredSession.startedFreshSession) {
-              shouldPrependAppendSystemPromptOnNextFreshSessionPrompt = false;
-            }
+            shouldPrependAppendSystemPromptOnNextFreshSessionPrompt =
+              resolveShouldPrependAppendSystemPromptOnNextFreshSessionPrompt({
+                startedFreshSession: ensuredSession.startedFreshSession,
+              });
             maybeUpdateGeminiSessionIdMetadata({
               getGeminiSessionId: () => acpSessionId,
               updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
@@ -831,8 +851,7 @@ export async function runGemini(opts: {
           shouldPrependAppendSystemPromptOnNextFreshSessionPrompt = builtPrompt.nextIsFirstMessage;
         }
 
-        logger.debug(`[gemini] Sending prompt to Gemini (length: ${promptToSend.length}): ${promptToSend.substring(0, 100)}...`);
-        logger.debug(`[gemini] Full prompt: ${promptToSend}`);
+        logger.debug(formatGeminiPromptDebugSummary(promptToSend));
         
         await sendGeminiPromptWithRetry({
           backend: geminiBackend,

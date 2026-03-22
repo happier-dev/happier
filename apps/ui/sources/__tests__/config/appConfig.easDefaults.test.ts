@@ -30,6 +30,10 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
         'EXPO_IOS_BACKGROUND_AUDIO',
+        'HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE',
+        'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
+        'HAPPIER_EXPO_USE_NATIVE_DEBUG',
+        'EX_UPDATES_NATIVE_DEBUG',
     ] as const;
 
     const previous: Partial<Record<(typeof keys)[number], string | undefined>> = {};
@@ -60,6 +64,8 @@ describe('app.config.js', () => {
         expect(exp.extra?.app?.variant).toBe('development');
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
+        expect(exp.ios?.bundleIdentifier).toBe('dev.happier.app.development');
+        expect(exp.android?.package).toBe('dev.happier.app.dev');
     });
 
     it('exposes variant under extra.app when APP_ENV is set', () => {
@@ -179,6 +185,33 @@ describe('app.config.js', () => {
 
         const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
         expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
+    });
+
+    it('does not enable OTA-native debug development-client launch overrides by default', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'development';
+            return getPublicConfig();
+        });
+
+        const devClientPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-dev-client');
+        expect(devClientPlugin).toBeUndefined();
+        expect(exp.developmentClient?.silentLaunch).toBeUndefined();
+        expect(exp.updates?.useNativeDebug).toBeUndefined();
+    });
+
+    it('enables OTA-native debug development-client behavior only when explicitly requested by env', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'development';
+            process.env.HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE = 'most-recent';
+            process.env.HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH = 'true';
+            process.env.HAPPIER_EXPO_USE_NATIVE_DEBUG = 'true';
+            return getPublicConfig();
+        });
+
+        const devClientPlugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-dev-client');
+        expect(devClientPlugin).toEqual(['expo-dev-client', expect.objectContaining({ launchMode: 'most-recent' })]);
+        expect(exp.developmentClient?.silentLaunch).toBe(true);
+        expect(exp.updates?.useNativeDebug).toBe(true);
     });
 
     it('does not include unused optional native plugins in the default config', () => {

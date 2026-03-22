@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TmuxCommandResult, TmuxSpawnOptions } from '@/integrations/tmux';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 vi.mock('chalk', () => ({
   default: {
@@ -41,8 +42,7 @@ describe.sequential('startHappyHeadlessInTmux', () => {
   );
 
   let nowSpy: ReturnType<typeof vi.spyOn>;
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let output = captureConsoleText();
 
   const restoreTrackedEnv = () => {
     for (const key of trackedEnvKeys) {
@@ -56,14 +56,13 @@ describe.sequential('startHappyHeadlessInTmux', () => {
     restoreTrackedEnv();
     vi.clearAllMocks();
     nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123);
-    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    output.restore();
+    output = captureConsoleText();
   });
 
   afterEach(() => {
     nowSpy.mockRestore();
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
+    output.restore();
     restoreTrackedEnv();
   });
 
@@ -73,10 +72,9 @@ describe.sequential('startHappyHeadlessInTmux', () => {
 
     await startHappyHeadlessInTmux([]);
 
-    const lines = logSpy.mock.calls.map(([line]) => String(line ?? ''));
-    expect(lines.some((l: string) => l.includes('Started Happier in tmux'))).toBe(true);
-    expect(lines.some((l: string) => l.includes('tmux select-window -t') && l.includes('picked:happy-123-claude'))).toBe(true);
-    expect(lines.some((l: string) => l.includes('tmux attach -t'))).toBe(false);
+    expect(output.lines.some((line) => line.includes('Started Happier in tmux'))).toBe(true);
+    expect(output.lines.some((line) => line.includes('tmux select-window -t') && line.includes('picked:happy-123-claude'))).toBe(true);
+    expect(output.lines.some((line) => line.includes('tmux attach -t'))).toBe(false);
   }, 15_000);
 
   it('prints attach then select-window when outside tmux', async () => {
@@ -85,9 +83,8 @@ describe.sequential('startHappyHeadlessInTmux', () => {
 
     await startHappyHeadlessInTmux([]);
 
-    const lines = logSpy.mock.calls.map(([line]) => String(line ?? ''));
-    const attachIdx = lines.findIndex((l: string) => l.includes('tmux attach -t') && l.includes('happy'));
-    const selectIdx = lines.findIndex((l: string) => l.includes('tmux select-window -t') && l.includes('happy:happy-123-claude'));
+    const attachIdx = output.lines.findIndex((line) => line.includes('tmux attach -t') && line.includes('happy'));
+    const selectIdx = output.lines.findIndex((line) => line.includes('tmux select-window -t') && line.includes('happy:happy-123-claude'));
     expect(attachIdx).toBeGreaterThanOrEqual(0);
     expect(selectIdx).toBeGreaterThanOrEqual(0);
     expect(attachIdx).toBeLessThan(selectIdx);

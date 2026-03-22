@@ -36,6 +36,19 @@ function buildRenderableFromRowAndCache(
     const metadataMatches = cachedEntry?.metadataVersion === row.metadataVersion;
     const agentStateMatches = cachedEntry?.agentStateVersion === row.agentStateVersion;
 
+    const hasPendingPermissionRequests =
+        typeof row.pendingPermissionRequestCount === 'number'
+            ? row.pendingPermissionRequestCount > 0
+            : agentStateMatches
+                ? cachedEntry?.hasPendingPermissionRequests === true
+                : undefined;
+    const hasPendingUserActionRequests =
+        typeof row.pendingUserActionRequestCount === 'number'
+            ? row.pendingUserActionRequestCount > 0
+            : agentStateMatches
+                ? cachedEntry?.hasPendingUserActionRequests === true
+                : undefined;
+
     return {
         id: row.id,
         seq: row.seq,
@@ -66,12 +79,8 @@ function buildRenderableFromRowAndCache(
         presence: row.active ? 'online' : row.activeAt,
         accessLevel: normalizeAccessLevel(row.share?.accessLevel),
         canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
-        hasPendingPermissionRequests: agentStateMatches
-            ? cachedEntry?.hasPendingPermissionRequests === true
-            : undefined,
-        hasPendingUserActionRequests: agentStateMatches
-            ? cachedEntry?.hasPendingUserActionRequests === true
-            : undefined,
+        hasPendingPermissionRequests,
+        hasPendingUserActionRequests,
     };
 }
 
@@ -114,6 +123,7 @@ function orderRowsForWarmHydration(params: {
 async function decryptSessionRow(
     row: SessionListRow,
     encryption: SessionListEncryption,
+    serverId?: string | null,
 ): Promise<(Omit<Session, 'presence'> & { presence?: 'online' | number }) | null> {
     const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
     const sessionEncryption = encryption.getSessionEncryption(row.id);
@@ -135,6 +145,7 @@ async function decryptSessionRow(
 
         return {
             ...row,
+            serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : undefined,
             encryptionMode,
             thinking: false,
             thinkingAt: 0,
@@ -187,6 +198,7 @@ function scheduleReadStateRepair(params: {
 }
 
 export async function fetchAndApplySessions(params: {
+    serverId?: string | null;
     credentials: AuthCredentials;
     encryption: SessionListEncryption;
     sessionDataKeys: Map<string, Uint8Array>;
@@ -199,6 +211,7 @@ export async function fetchAndApplySessions(params: {
     sessionListEagerHydrationCount?: number;
     sessionListHydrationConcurrencyLimit?: number;
     getExistingSession?: (sessionId: string) => Session | null | undefined;
+    shouldContinue?: () => boolean;
     repairInvalidReadStateV1: (params: { sessionId: string; sessionSeqUpperBound: number }) => Promise<void>;
     log: { log: (message: string) => void };
 }): Promise<void> {
@@ -280,6 +293,7 @@ export async function fetchAndApplySessions(params: {
 
     const cachedSessionListEntries = params.cachedSessionListEntries ?? {};
     const shouldApplyRenderables = typeof params.applySessionListRenderables === 'function';
+    const shouldContinue = params.shouldContinue ?? (() => true);
 
     if (shouldApplyRenderables) {
         const renderables = sessions.map((row) => buildRenderableFromRowAndCache(row, cachedSessionListEntries[row.id]));
@@ -293,17 +307,21 @@ export async function fetchAndApplySessions(params: {
         if (rowsNeedingHydration.length > 0) {
             void runTasksWithLimit(
                 rowsNeedingHydration.map((row) => async () => {
-                    const decryptedSession = await decryptSessionRow(row, encryption);
+                    if (!shouldContinue()) return null;
+                    const decryptedSession = await decryptSessionRow(row, encryption, params.serverId);
+                    if (!shouldContinue()) return null;
                     if (!decryptedSession) return null;
                     applyHydratedSessions({
                         sessions: [decryptedSession],
                         applySessions,
                         getExistingSession: params.getExistingSession,
                     });
-                    scheduleReadStateRepair({
-                        sessions: [decryptedSession],
-                        repairInvalidReadStateV1,
-                    });
+                    if (shouldContinue()) {
+                        scheduleReadStateRepair({
+                            sessions: [decryptedSession],
+                            repairInvalidReadStateV1,
+                        });
+                    }
                     return decryptedSession;
                 }),
                 concurrencyLimit,
@@ -317,7 +335,7 @@ export async function fetchAndApplySessions(params: {
     }
 
     const decryptedResults = await runTasksWithLimit(
-        sessions.map((row) => async () => decryptSessionRow(row, encryption)),
+        sessions.map((row) => async () => decryptSessionRow(row, encryption, params.serverId)),
         concurrencyLimit,
     );
     const decryptedSessions = decryptedResults.filter((session): session is NonNullable<typeof session> => Boolean(session));

@@ -1,9 +1,15 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IModal } from '@/modal';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type SessionListDirectoryLikeResponse =
     | { success: true; entries: Array<{ name: string; type: 'file' | 'directory' | 'other' }> }
@@ -12,60 +18,81 @@ type SessionRenamePathLikeResult = { success: true } | { success: false; error: 
 type SessionStatFileLikeResult = { success: true; exists: boolean } | { success: false; error: string };
 type SessionDeletePathLikeResult = { success: true } | { success: false; error: string };
 
-const sessionListDirectorySpy = vi.fn<(_sessionId: string, _path: string) => Promise<SessionListDirectoryLikeResponse>>(
-    async (_sessionId: string, _path: string) => ({
-        success: true,
-        entries: [],
-    })
-);
+const {
+    sessionListDirectorySpy,
+    sessionRenamePathSpy,
+    sessionStatFileSpy,
+    sessionDeletePathSpy,
+    modalShowStrategy,
+    renameConflictStrategyState,
+    modalPromptSpy,
+    modalConfirmSpy,
+    modalAlertSpy,
+    setClipboardStringSafeSpy,
+} = vi.hoisted(() => {
+    const renameConflictStrategy: { value: 'keep_both' | 'replace' | 'cancel' | null } = {
+        value: null,
+    };
 
-const sessionRenamePathSpy = vi.fn<(_sessionId: string, _input: { from: string; to: string; overwrite?: boolean }) => Promise<SessionRenamePathLikeResult>>(
-    async (_sessionId: string, _input: { from: string; to: string; overwrite?: boolean }) => ({ success: true }),
-);
-const sessionStatFileSpy = vi.fn<(_sessionId: string, _path: string) => Promise<SessionStatFileLikeResult>>(
-    async (_sessionId: string, _path: string) => ({ success: true, exists: false }),
-);
-const sessionDeletePathSpy = vi.fn<(_sessionId: string, _path: string) => Promise<SessionDeletePathLikeResult>>(
-    async (_sessionId: string, _path: string) => ({ success: true }),
-);
+    const modalShowStrategy = vi.fn((config: any) => {
+        if (!renameConflictStrategy.value || !config?.component) return 'modal-1';
 
-const modalPromptSpy = vi.fn<IModal['prompt']>(async () => null);
-const modalConfirmSpy = vi.fn<IModal['confirm']>(async () => false);
-const modalAlertSpy = vi.fn<IModal['alert']>(() => {});
-let renameConflictStrategy: 'keep_both' | 'replace' | 'cancel' | null = null;
-const modalShowSpy = vi.fn((config: any) => {
-    if (!renameConflictStrategy || !config?.component) return 'modal-1';
-    const element = config.component({
-        ...(config.props ?? {}),
-        onClose: vi.fn(),
-        onRequestClose: vi.fn(),
+        const element = config.component({
+            ...(config.props ?? {}),
+            onClose: vi.fn(),
+            onRequestClose: vi.fn(),
+        });
+
+        queueMicrotask(() => {
+            act(() => {
+                element.props.onResolve?.(renameConflictStrategy.value);
+            });
+        });
+
+        return 'modal-1';
     });
 
-    act(() => {
-        element.props.onResolve?.(renameConflictStrategy);
-    });
-    return 'modal-1';
+    return {
+        sessionListDirectorySpy: vi.fn<(_sessionId: string, _path: string) => Promise<SessionListDirectoryLikeResponse>>(
+            async (_sessionId: string, _path: string) => ({
+                success: true,
+                entries: [],
+            }),
+        ),
+        sessionRenamePathSpy: vi.fn<(_sessionId: string, _input: { from: string; to: string; overwrite?: boolean }) => Promise<SessionRenamePathLikeResult>>(
+            async (_sessionId: string, _input: { from: string; to: string; overwrite?: boolean }) => ({ success: true }),
+        ),
+        sessionStatFileSpy: vi.fn<(_sessionId: string, _path: string) => Promise<SessionStatFileLikeResult>>(
+            async (_sessionId: string, _path: string) => ({ success: true, exists: false }),
+        ),
+        sessionDeletePathSpy: vi.fn<(_sessionId: string, _path: string) => Promise<SessionDeletePathLikeResult>>(
+            async (_sessionId: string, _path: string) => ({ success: true }),
+        ),
+        modalShowStrategy,
+        renameConflictStrategyState: renameConflictStrategy,
+        modalPromptSpy: vi.fn(async (): Promise<string | null> => null),
+        modalConfirmSpy: vi.fn(async () => false),
+        modalAlertSpy: vi.fn(() => {}),
+        setClipboardStringSafeSpy: vi.fn(async (_value: string) => true),
+    };
 });
 
-const setClipboardStringSafeSpy = vi.fn(async (_value: string) => true);
-
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
-            const header = ListHeaderComponent
-                ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
-                : null;
-            const items = (data ?? []).map((item: any, index: number) => {
-                const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
-                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-            });
-            return React.createElement('FlatList', null, header, ...items);
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+                                            const header = ListHeaderComponent
+                                                ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
+                                                : null;
+                                            const items = (data ?? []).map((item: any, index: number) => {
+                                                const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
+                                                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                                            });
+                                            return React.createElement('FlatList', null, header, ...items);
+                                        },
+                                    }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -101,8 +128,37 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
+    RoundButton: (props: any) => React.createElement('RoundButton', props),
+}));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    return {
+        Modal: {
+            ...modalMock.module.Modal,
+            show: modalShowStrategy,
+            prompt: modalPromptSpy,
+            confirm: modalConfirmSpy,
+            alert: modalAlertSpy,
+            hide: vi.fn(),
+        },
+    } as any;
+});
+
+vi.mock('@/utils/ui/clipboard', () => ({
+    setClipboardStringSafe: (value: string) => setClipboardStringSafeSpy(value),
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -112,59 +168,9 @@ vi.mock('@/sync/ops', () => ({
     sessionDeletePath: (sessionId: string, path: string) => sessionDeletePathSpy(sessionId, path),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                text: '#eee',
-                textSecondary: '#aaa',
-                textLink: '#08f',
-                warning: '#f80',
-                success: '#0f0',
-                textDestructive: '#f00',
-            },
-            dark: false,
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#111',
-                        surfaceHigh: '#222',
-                        divider: '#333',
-                        text: '#eee',
-                        textSecondary: '#aaa',
-                        textLink: '#08f',
-                        warning: '#f80',
-                        success: '#0f0',
-                        textDestructive: '#f00',
-                    },
-                })
-                : value,
-    },
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: any) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: (title: string, message?: string, options?: Parameters<IModal['prompt']>[2]) => modalPromptSpy(title, message, options),
-        confirm: (title: string, message?: string, options?: Parameters<IModal['confirm']>[2]) => modalConfirmSpy(title, message, options),
-        alert: (title: string, message?: string, buttons?: Parameters<IModal['alert']>[2]) => modalAlertSpy(title, message, buttons),
-        show: (config: Parameters<IModal['show']>[0]) => modalShowSpy(config),
-    },
-}));
-
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: (value: string) => setClipboardStringSafeSpy(value),
-}));
+afterEach(() => {
+    standardCleanup();
+});
 
 describe('RepositoryTreeList (row menu)', () => {
     const theme = {
@@ -177,47 +183,71 @@ describe('RepositoryTreeList (row menu)', () => {
             textLink: '#08f',
         },
         dark: false,
-    } as any;
+    } as const;
 
     beforeEach(() => {
-        renameConflictStrategy = null;
-        modalShowSpy.mockReset();
-        sessionStatFileSpy.mockReset();
+        modalShowStrategy.mockClear();
+        renameConflictStrategyState.value = null;
+        modalPromptSpy.mockClear();
+        modalConfirmSpy.mockClear();
+        modalAlertSpy.mockClear();
+        sessionListDirectorySpy.mockClear();
+        sessionRenamePathSpy.mockClear();
+        sessionStatFileSpy.mockClear();
+        sessionDeletePathSpy.mockClear();
+        setClipboardStringSafeSpy.mockClear();
+        modalPromptSpy.mockResolvedValue(null);
+        modalConfirmSpy.mockResolvedValue(false);
+        modalAlertSpy.mockImplementation(() => {});
+        sessionListDirectorySpy.mockResolvedValue({
+            success: true,
+            entries: [],
+        });
+        sessionRenamePathSpy.mockResolvedValue({ success: true });
         sessionStatFileSpy.mockResolvedValue({ success: true, exists: false });
+        sessionDeletePathSpy.mockResolvedValue({ success: true });
+        setClipboardStringSafeSpy.mockResolvedValue(true);
     });
 
-    function findFileRowActions(tree: renderer.ReactTestRenderer) {
-        const actions = tree.root.findAllByType('ItemRowActions' as any);
-        const fileActions = actions.find((node: any) => node.props?.actions?.some((action: any) => action.id === 'repository-tree-menuitem-download'));
-        expect(fileActions).toBeTruthy();
-        return fileActions!;
+    async function renderRepositoryTreeList() {
+        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+
+        function Wrapper() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            return (
+                <RepositoryTreeList
+                    theme={theme}
+                    sessionId="session-1"
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
+                    onOpenFile={vi.fn()}
+                />
+            );
+        }
+
+        return renderScreen(React.createElement(Wrapper));
     }
 
-    function findDirectoryRowActions(tree: renderer.ReactTestRenderer) {
-        const actions = tree.root.findAllByType('ItemRowActions' as any);
-        const directoryActions = actions.find((node: any) => node.props?.actions?.some((action: any) => action.id === 'repository-tree-menuitem-zip')
-            && !node.props?.actions?.some((action: any) => action.id === 'repository-tree-menuitem-download'));
-        expect(directoryActions).toBeTruthy();
-        return directoryActions!;
+    function findRowActions(screen: Awaited<ReturnType<typeof renderScreen>>, path: string) {
+        const row = screen.findByTestId(`repository-tree-row-${toTestIdSafeValue(path)}`);
+        expect(row).toBeTruthy();
+
+        const actionHosts = row!.findAllByType('ItemRowActions' as any);
+        expect(actionHosts.length).toBeGreaterThan(0);
+        return actionHosts[0]!;
     }
 
-    async function pressRowAction(node: any, actionId: string) {
-        const action = node.props.actions.find((candidate: any) => candidate.id === actionId);
+    async function pressRowAction(screen: Awaited<ReturnType<typeof renderScreen>>, path: string, actionId: string) {
+        const actionHost = findRowActions(screen, path);
+        const action = actionHost.props.actions.find((candidate: any) => candidate.id === actionId);
         expect(action).toBeTruthy();
+
         await act(async () => {
             await action.onPress();
         });
     }
 
     it('renders file and directory action menus with the expected items', async () => {
-        modalPromptSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalAlertSpy.mockReset();
-        setClipboardStringSafeSpy.mockReset();
-        sessionRenamePathSpy.mockReset();
-        sessionDeletePathSpy.mockReset();
-
-        sessionListDirectorySpy.mockReset();
         sessionListDirectorySpy.mockImplementation(async (_sessionId: string, path: string) => {
             if (path !== '') return { success: true, entries: [] };
             return {
@@ -229,110 +259,49 @@ describe('RepositoryTreeList (row menu)', () => {
             };
         });
 
-        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+        const screen = await renderRepositoryTreeList();
 
-        function Wrapper() {
-            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
-            return (
-                <RepositoryTreeList
-                    theme={theme}
-                    sessionId="session-1"
-                    expandedPaths={expandedPaths}
-                    onExpandedPathsChange={setExpandedPaths}
-                    onOpenFile={vi.fn()}
-                />
-            );
-        }
+        expect(screen.findByTestId(`repository-tree-row-${toTestIdSafeValue('README.md')}`)).toBeTruthy();
+        expect(screen.findByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`)).toBeTruthy();
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Wrapper />);
-        });
-
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const fileMenu = findFileRowActions(tree!);
+        const fileMenu = findRowActions(screen, 'README.md');
+        expect(fileMenu.props.overflowTriggerTestID).toBe(`repository-tree-row-menu-${toTestIdSafeValue('README.md')}`);
         expect(fileMenu.props.compactThreshold).toBe(Number.POSITIVE_INFINITY);
         expect(fileMenu.props.compactActionIds).toEqual([]);
-        expect(fileMenu.props.actions.map((item: any) => item.id)).toEqual(
-            expect.arrayContaining([
-                'repository-tree-menuitem-rename',
-                'repository-tree-menuitem-delete',
-                'repository-tree-menuitem-download',
-                'repository-tree-menuitem-zip',
-                'repository-tree-menuitem-copy-path',
-            ])
-        );
+        expect(fileMenu.props.actions.map((item: any) => item.id)).toEqual([
+            'repository-tree-menuitem-rename',
+            'repository-tree-menuitem-delete',
+            'repository-tree-menuitem-download',
+            'repository-tree-menuitem-zip',
+            'repository-tree-menuitem-copy-path',
+        ]);
 
-        const directoryMenu = findDirectoryRowActions(tree!);
-        expect(directoryMenu.props.actions.map((item: any) => item.id)).toEqual(
-            expect.arrayContaining([
-                'repository-tree-menuitem-rename',
-                'repository-tree-menuitem-delete',
-                'repository-tree-menuitem-zip',
-                'repository-tree-menuitem-copy-path',
-            ])
-        );
+        const directoryMenu = findRowActions(screen, 'src');
+        expect(directoryMenu.props.actions.map((item: any) => item.id)).toEqual([
+            'repository-tree-menuitem-rename',
+            'repository-tree-menuitem-delete',
+            'repository-tree-menuitem-zip',
+            'repository-tree-menuitem-copy-path',
+        ]);
     });
 
     it('renames a file when the Rename menu item is selected', async () => {
-        modalPromptSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalAlertSpy.mockReset();
-        setClipboardStringSafeSpy.mockReset();
-        sessionRenamePathSpy.mockReset();
-        sessionDeletePathSpy.mockReset();
-
-        sessionListDirectorySpy.mockReset();
         sessionListDirectorySpy.mockResolvedValue({
             success: true,
             entries: [{ name: 'README.md', type: 'file' }],
         });
-
         modalPromptSpy.mockResolvedValue('README2.md');
 
-        const { RepositoryTreeList } = await import('./RepositoryTreeList');
-
-        function Wrapper() {
-            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
-            return (
-                <RepositoryTreeList
-                    theme={theme}
-                    sessionId="session-1"
-                    expandedPaths={expandedPaths}
-                    onExpandedPathsChange={setExpandedPaths}
-                    onOpenFile={vi.fn()}
-                />
-            );
-        }
-
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Wrapper />);
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const fileMenu = findFileRowActions(tree!);
-        await pressRowAction(fileMenu, 'repository-tree-menuitem-rename');
+        const screen = await renderRepositoryTreeList();
+        await pressRowAction(screen, 'README.md', 'repository-tree-menuitem-rename');
 
         expect(modalPromptSpy).toHaveBeenCalledTimes(1);
         expect(sessionRenamePathSpy).toHaveBeenCalledWith('session-1', { from: 'README.md', to: 'README2.md', overwrite: undefined });
     });
 
     it('offers keep-both rename conflict resolution and retries with a suffixed path', async () => {
-        modalPromptSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalAlertSpy.mockReset();
-        setClipboardStringSafeSpy.mockReset();
-        sessionRenamePathSpy.mockReset();
-        sessionDeletePathSpy.mockReset();
-        renameConflictStrategy = 'keep_both';
-
-        sessionListDirectorySpy.mockReset();
+        renameConflictStrategyState.value = 'keep_both';
+        modalPromptSpy.mockResolvedValue('rename-target.txt');
         sessionListDirectorySpy.mockResolvedValue({
             success: true,
             entries: [
@@ -340,7 +309,6 @@ describe('RepositoryTreeList (row menu)', () => {
                 { name: 'rename-target.txt', type: 'file' },
             ],
         });
-        modalPromptSpy.mockResolvedValue('rename-target.txt');
         sessionRenamePathSpy
             .mockResolvedValueOnce({ success: false, error: 'Destination already exists' })
             .mockResolvedValueOnce({ success: true });
@@ -349,33 +317,13 @@ describe('RepositoryTreeList (row menu)', () => {
             exists: path !== 'rename-target (1).txt',
         }));
 
-        const { RepositoryTreeList } = await import('./RepositoryTreeList');
-
-        function Wrapper() {
-            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
-            return (
-                <RepositoryTreeList
-                    theme={theme}
-                    sessionId="session-1"
-                    expandedPaths={expandedPaths}
-                    onExpandedPathsChange={setExpandedPaths}
-                    onOpenFile={vi.fn()}
-                />
-            );
-        }
-
-        let tree: renderer.ReactTestRenderer;
+        const screen = await renderRepositoryTreeList();
+        await pressRowAction(screen, 'rename-source.txt', 'repository-tree-menuitem-rename');
         await act(async () => {
-            tree = renderer.create(<Wrapper />);
-        });
-        await act(async () => {
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        const fileMenu = findFileRowActions(tree!);
-        await pressRowAction(fileMenu, 'repository-tree-menuitem-rename');
-
-        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        expect(modalShowStrategy).toHaveBeenCalledTimes(1);
         expect(sessionStatFileSpy).toHaveBeenCalledWith('session-1', 'rename-target (1).txt');
         expect(sessionRenamePathSpy.mock.calls).toEqual([
             ['session-1', { from: 'rename-source.txt', to: 'rename-target.txt', overwrite: undefined }],
@@ -385,15 +333,8 @@ describe('RepositoryTreeList (row menu)', () => {
     });
 
     it('offers replace rename conflict resolution and retries with overwrite=true', async () => {
-        modalPromptSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalAlertSpy.mockReset();
-        setClipboardStringSafeSpy.mockReset();
-        sessionRenamePathSpy.mockReset();
-        sessionDeletePathSpy.mockReset();
-        renameConflictStrategy = 'replace';
-
-        sessionListDirectorySpy.mockReset();
+        renameConflictStrategyState.value = 'replace';
+        modalPromptSpy.mockResolvedValue('rename-target.txt');
         sessionListDirectorySpy.mockResolvedValue({
             success: true,
             entries: [
@@ -401,38 +342,17 @@ describe('RepositoryTreeList (row menu)', () => {
                 { name: 'rename-target.txt', type: 'file' },
             ],
         });
-        modalPromptSpy.mockResolvedValue('rename-target.txt');
         sessionRenamePathSpy
             .mockResolvedValueOnce({ success: false, error: 'Destination already exists' })
             .mockResolvedValueOnce({ success: true });
 
-        const { RepositoryTreeList } = await import('./RepositoryTreeList');
-
-        function Wrapper() {
-            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
-            return (
-                <RepositoryTreeList
-                    theme={theme}
-                    sessionId="session-1"
-                    expandedPaths={expandedPaths}
-                    onExpandedPathsChange={setExpandedPaths}
-                    onOpenFile={vi.fn()}
-                />
-            );
-        }
-
-        let tree: renderer.ReactTestRenderer;
+        const screen = await renderRepositoryTreeList();
+        await pressRowAction(screen, 'rename-source.txt', 'repository-tree-menuitem-rename');
         await act(async () => {
-            tree = renderer.create(<Wrapper />);
-        });
-        await act(async () => {
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        const fileMenu = findFileRowActions(tree!);
-        await pressRowAction(fileMenu, 'repository-tree-menuitem-rename');
-
-        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        expect(modalShowStrategy).toHaveBeenCalledTimes(1);
         expect(sessionRenamePathSpy.mock.calls).toEqual([
             ['session-1', { from: 'rename-source.txt', to: 'rename-target.txt', overwrite: undefined }],
             ['session-1', { from: 'rename-source.txt', to: 'rename-target.txt', overwrite: true }],
@@ -441,92 +361,28 @@ describe('RepositoryTreeList (row menu)', () => {
     });
 
     it('deletes a directory recursively when Delete is selected', async () => {
-        modalPromptSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalAlertSpy.mockReset();
-        setClipboardStringSafeSpy.mockReset();
-        sessionRenamePathSpy.mockReset();
-        sessionDeletePathSpy.mockReset();
-
-        sessionListDirectorySpy.mockReset();
         sessionListDirectorySpy.mockResolvedValue({
             success: true,
             entries: [{ name: 'src', type: 'directory' }],
         });
-
         modalConfirmSpy.mockResolvedValue(true);
 
-        const { RepositoryTreeList } = await import('./RepositoryTreeList');
-
-        function Wrapper() {
-            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
-            return (
-                <RepositoryTreeList
-                    theme={theme}
-                    sessionId="session-1"
-                    expandedPaths={expandedPaths}
-                    onExpandedPathsChange={setExpandedPaths}
-                    onOpenFile={vi.fn()}
-                />
-            );
-        }
-
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Wrapper />);
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const directoryMenu = findDirectoryRowActions(tree!);
-        await pressRowAction(directoryMenu, 'repository-tree-menuitem-delete');
+        const screen = await renderRepositoryTreeList();
+        await pressRowAction(screen, 'src', 'repository-tree-menuitem-delete');
 
         expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
         expect(sessionDeletePathSpy).toHaveBeenCalledWith('session-1', { path: 'src', recursive: true });
     });
 
     it('copies the path when Copy path is selected', async () => {
-        modalPromptSpy.mockReset();
-        modalConfirmSpy.mockReset();
-        modalAlertSpy.mockReset();
-        setClipboardStringSafeSpy.mockReset();
-        sessionRenamePathSpy.mockReset();
-        sessionDeletePathSpy.mockReset();
-
-        sessionListDirectorySpy.mockReset();
         sessionListDirectorySpy.mockResolvedValue({
             success: true,
             entries: [{ name: 'README.md', type: 'file' }],
         });
-
         setClipboardStringSafeSpy.mockResolvedValue(true);
 
-        const { RepositoryTreeList } = await import('./RepositoryTreeList');
-
-        function Wrapper() {
-            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
-            return (
-                <RepositoryTreeList
-                    theme={theme}
-                    sessionId="session-1"
-                    expandedPaths={expandedPaths}
-                    onExpandedPathsChange={setExpandedPaths}
-                    onOpenFile={vi.fn()}
-                />
-            );
-        }
-
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Wrapper />);
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const fileMenu = findFileRowActions(tree!);
-        await pressRowAction(fileMenu, 'repository-tree-menuitem-copy-path');
+        const screen = await renderRepositoryTreeList();
+        await pressRowAction(screen, 'README.md', 'repository-tree-menuitem-copy-path');
 
         expect(setClipboardStringSafeSpy).toHaveBeenCalledWith('README.md');
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);

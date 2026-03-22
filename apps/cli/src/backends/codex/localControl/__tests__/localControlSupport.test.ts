@@ -39,16 +39,25 @@ describe('Codex local-control support (pure decisions)', () => {
         hasTtyForLocal: true,
       })).toEqual({ ok: true, backend: 'acp' });
     });
+
+    it('returns ok for app-server when local control is enabled there', () => {
+      expect(decideCodexLocalControlSupport({
+        startedBy: 'cli',
+        experimentalCodexAcpEnabled: true,
+        hasTtyForLocal: true,
+        localControlBackend: 'appServer',
+      })).toEqual({ ok: true, backend: 'appServer' });
+    });
   });
 
   describe('user-facing messages', () => {
     it('formats launch fallback reasons', () => {
       expect(formatCodexLocalControlLaunchFallbackMessage('started-by-daemon')).toContain('daemon');
-      expect(formatCodexLocalControlLaunchFallbackMessage('resume-disabled')).toContain('ACP');
+      expect(formatCodexLocalControlLaunchFallbackMessage('resume-disabled')).toContain('resumable');
     });
 
     it('formats switch denied reasons', () => {
-      expect(formatCodexLocalControlSwitchDeniedMessage('resume-disabled')).toContain('disabled');
+      expect(formatCodexLocalControlSwitchDeniedMessage('resume-disabled')).toContain('enabled');
       expect(formatCodexLocalControlSwitchDeniedMessage('started-by-daemon')).toContain('daemon');
     });
   });

@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 declare global {
     // eslint-disable-next-line no-var
@@ -42,9 +44,7 @@ describe('MarkdownView (span styles)', () => {
         };
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MarkdownView markdown={markdown} textStyle={textStyle} />);
-        });
+        tree = (await renderScreen(<MarkdownView markdown={markdown} textStyle={textStyle} />)).tree;
 
         const findTextNode = (text: string) =>
             tree!.root.findAll((n) => typeof n.props?.children === 'string' && n.props.children === text)[0]!;

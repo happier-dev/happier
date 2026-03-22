@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { importOpenCodeTaskSidechainBestEffort } from './openCodeTaskSidechainImport';
 
 describe('importOpenCodeTaskSidechainBestEffort', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
   it('retries listing messages until sidechain transcript becomes available', async () => {
     vi.useFakeTimers();
     vi.stubEnv('HAPPIER_OPENCODE_TASK_SIDECHAIN_IMPORT_WAIT_MS', '80');

@@ -46,7 +46,7 @@ function normalizeTransport(value: unknown): McpServerCatalogEntryTransportV1 | 
 }
 
 function detectUnsupportedServerFields(serverName: string, value: PlainObject): string[] {
-    const supported = new Set(['command', 'args', 'url', 'transport', 'type', 'headers', 'env', 'enabled']);
+    const supported = new Set(['command', 'args', 'url', 'transport', 'type', 'headers', 'env', 'enabled', 'title']);
     return Object.keys(value)
         .filter((key) => !supported.has(key))
         .sort()
@@ -122,11 +122,13 @@ function parseServerDraft(serverName: string, value: unknown): ImportedMcpServer
     const warnings = detectUnsupportedServerFields(serverName, value);
     const enabled = value.enabled !== false;
     const env = parseValueMap(value.env);
+    const title = typeof value.title === 'string' && value.title.trim().length > 0 ? value.title.trim() : undefined;
 
     if (typeof value.command === 'string' && value.command.trim()) {
         const args = Array.isArray(value.args) ? value.args.filter((arg): arg is string => typeof arg === 'string') : [];
         return {
             name: serverName,
+            title,
             transport: 'stdio',
             stdio: {
                 command: value.command,
@@ -142,6 +144,7 @@ function parseServerDraft(serverName: string, value: unknown): ImportedMcpServer
         const transport = normalizeTransport(value.transport) ?? normalizeTransport(value.type) ?? 'http';
         return {
             name: serverName,
+            title,
             transport: transport === 'stdio' ? 'http' : transport,
             remote: {
                 url: value.url,

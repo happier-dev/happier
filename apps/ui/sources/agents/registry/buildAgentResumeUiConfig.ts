@@ -10,14 +10,13 @@ export function buildAgentResumeUiConfig(params: Readonly<{
     uiVendorResumeIdCopiedKey: TranslationKey | null;
 }>): AgentCoreConfig['resume'] {
     const resume = AGENTS_CORE[params.agentId]?.resume;
+    const vendorResumeIdField = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
 
     return {
-        vendorResumeIdField: resume?.vendorResumeIdField ?? null,
+        vendorResumeIdField,
         uiVendorResumeIdLabelKey: params.uiVendorResumeIdLabelKey,
         uiVendorResumeIdCopiedKey: params.uiVendorResumeIdCopiedKey,
-        supportsVendorResume: resume?.vendorResume !== 'unsupported',
-        runtimeGate: resume?.runtimeGate ?? null,
+        supportsVendorResume: resume?.vendorResume === 'supported' || resume?.vendorResume === 'experimental',
         experimental: resume?.vendorResume === 'experimental',
     };
 }
-

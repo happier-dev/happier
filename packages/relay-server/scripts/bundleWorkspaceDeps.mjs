@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   bundleWorkspacePackages,
   findRepoRoot,
+  resolveWorkspaceBundlesFromPackageJson,
   vendorBundledPackageRuntimeDependencies,
 } from '../../../packages/cli-common/dist/workspaces/index.js';
 
@@ -13,13 +14,10 @@ export function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
   const relayDir = opts.relayDir ?? resolve(repoRoot, 'packages', 'relay-server');
 
-  const bundles = [
-    {
-      packageName: '@happier-dev/release-runtime',
-      srcDir: resolve(repoRoot, 'packages', 'release-runtime'),
-      destDir: resolve(relayDir, 'node_modules', '@happier-dev', 'release-runtime'),
-    },
-  ];
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: relayDir,
+  });
 
   bundleWorkspacePackages({ bundles });
 

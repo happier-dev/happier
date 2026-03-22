@@ -2,7 +2,6 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { SourceControlBranchSummary } from '@/components/sessions/files/SourceControlBranchSummary';
-import { SourceControlWorkspaceRailSection } from '@/components/sessions/sourceControl/workspaces/SourceControlWorkspaceRailSection';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { SourceControlRemoteActionsRail, type SourceControlRemoteAction } from '@/components/sessions/sourceControl/remoteActions/SourceControlRemoteActionsRail';
@@ -50,7 +49,6 @@ export const SessionRightPanelGitUpdateTab = React.memo((props: SessionRightPane
                         disabled={props.disabled}
                     />
                 ) : null}
-                <SourceControlWorkspaceRailSection sessionId={props.sessionId} scmSnapshot={props.scmSnapshot} />
                 <SourceControlRemoteActionsRail theme={props.theme} actions={props.actions} hint={props.hint} />
             </ScrollView>
             <ScrollEdgeFades

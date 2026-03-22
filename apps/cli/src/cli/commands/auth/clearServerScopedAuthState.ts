@@ -1,4 +1,5 @@
 import type { Settings } from '@/persistence';
+import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 
 function deleteKey<T extends Record<string, unknown>>(obj: T | undefined, key: string): T | undefined {
   if (!obj) return obj;
@@ -9,14 +10,15 @@ function deleteKey<T extends Record<string, unknown>>(obj: T | undefined, key: s
 }
 
 export function clearServerScopedAuthStateInSettings(settings: Settings, serverId: string): Settings {
-  const target = String(serverId ?? '').trim();
-  if (!target) return settings;
+  const rawTarget = String(serverId ?? '').trim();
+  if (!rawTarget) return settings;
+  const target = sanitizeServerIdForFilesystem(rawTarget, 'cloud');
 
-  const nextMachineIds = deleteKey(settings.machineIdByServerId, target) ?? {};
-  const nextMachineIdsByAccountId = deleteKey(settings.machineIdByServerIdByAccountId, target) ?? {};
-  const nextLastTokenSubs = deleteKey(settings.lastTokenSubByServerId, target) ?? {};
-  const nextMachineConfirmed = deleteKey(settings.machineIdConfirmedByServerByServerId, target) ?? {};
-  const nextCursors = deleteKey(settings.lastChangesCursorByServerIdByAccountId, target) ?? {};
+  const nextMachineIds = deleteKey(settings.machineIdByServerId, target);
+  const nextMachineIdsByAccountId = deleteKey(settings.machineIdByServerIdByAccountId, target);
+  const nextLastTokenSubs = deleteKey(settings.lastTokenSubByServerId, target);
+  const nextMachineConfirmed = deleteKey(settings.machineIdConfirmedByServerByServerId, target);
+  const nextCursors = deleteKey(settings.lastChangesCursorByServerIdByAccountId, target);
 
   return {
     ...settings,

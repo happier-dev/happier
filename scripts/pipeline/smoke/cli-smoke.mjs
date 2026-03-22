@@ -6,6 +6,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
+import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
 
 function fail(message) {
   console.error(message);
@@ -40,15 +42,20 @@ function run(opts, cmd, args, extra) {
   }
 
   const stdio = extra?.stdio ?? 'inherit';
-  const needsShell =
-    process.platform === 'win32' && (String(cmd).toLowerCase().endsWith('.cmd') || String(cmd).toLowerCase().endsWith('.bat'));
-  return execFileSync(cmd, args, {
+  const env = { ...process.env, ...(extra?.env ?? {}) };
+  const invocation = resolveWindowsCommandInvocation({
+    command: cmd,
+    args,
+    env,
+    resolveCommandOnPath: true,
+  });
+  return execFileSync(invocation.command, invocation.args, {
     cwd,
-    env: { ...process.env, ...(extra?.env ?? {}) },
+    env,
     encoding: stdio === 'inherit' ? 'utf8' : 'utf8',
     stdio,
-    shell: needsShell,
     timeout,
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
 }
 
@@ -76,12 +83,33 @@ function mkTmpDir(prefix) {
  */
 function npmPack(pkgDir, destDir, opts) {
   if (opts.dryRun) {
-    const printable = `npm pack --silent --pack-destination ${destDir}`;
+    const printable = path.basename(pkgDir) === 'cli'
+      ? `${process.execPath} apps/cli/scripts/packTarball.mjs --dest-dir ${destDir}`
+      : `npm pack --silent --pack-destination ${destDir}`;
     console.log(`[dry-run] (cwd: ${pkgDir}) ${printable}`);
     return path.join(destDir, 'DRY_RUN.tgz');
   }
 
   fs.mkdirSync(destDir, { recursive: true });
+  if (path.basename(pkgDir) === 'cli') {
+    const scriptPath = path.resolve(pkgDir, 'scripts', 'packTarball.mjs');
+    const raw = execFileSync(process.execPath, [scriptPath, '--dest-dir', destDir], {
+      cwd: pkgDir,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      timeout: 10 * 60_000,
+    }).trim();
+    const { tgzPath } = resolvePackedTarball(raw, {
+      cwd: pkgDir,
+      sourceLabel: 'CLI pack helper',
+    });
+    if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
+      throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
+    }
+    return tgzPath;
+  }
+
   const env = { ...process.env };
   const invocation = resolveWindowsCommandInvocation({
     command: 'npm',
@@ -115,44 +143,10 @@ function npmPack(pkgDir, destDir, opts) {
  * @returns {string}
  */
 function resolveInstalledBin(prefixDir) {
-  const exe = process.platform === 'win32' ? 'happier.cmd' : 'happier';
+  const binPath = resolveInstalledBinPath(prefixDir);
+  if (binPath) return binPath;
 
-  const env = { ...process.env, npm_config_prefix: prefixDir };
-  let binDir = '';
-  try {
-    const invocation = resolveWindowsCommandInvocation({
-      command: 'npm',
-      args: ['bin', '-g'],
-      env,
-      resolveCommandOnPath: true,
-    });
-    binDir = execFileSync(invocation.command, invocation.args, {
-      env,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    })
-      .trim()
-      .split(/\r?\n/)[0]
-      .trim();
-  } catch {
-    binDir = '';
-  }
-
-  const candidates = [
-    ...(binDir ? [path.join(binDir, exe)] : []),
-    path.join(prefixDir, 'bin', exe),
-    path.join(prefixDir, exe),
-    path.join(prefixDir, 'node_modules', '.bin', exe),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
-    }
-  }
-
-  fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: ${exe})`);
+  fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: happier)`);
 }
 
 function main() {

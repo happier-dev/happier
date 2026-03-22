@@ -1,5 +1,5 @@
-import { hmac } from '@noble/hashes/hmac';
-import { sha512 } from '@noble/hashes/sha512';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha512 } from '@noble/hashes/sha512.js';
 
 function encodeUtf8(value: string): Uint8Array {
   return new TextEncoder().encode(value);
@@ -32,4 +32,3 @@ export function deriveKey(master: Uint8Array, usage: string, path: readonly stri
   }
   return state.key;
 }
-

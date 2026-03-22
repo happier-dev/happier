@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { listRepositoryDirectoryEntries, sortRepositoryDirectoryEntries, warmRepositoryDirectoryCache } from './repositoryDirectory';
+import {
+    clearCachedRepositoryDirectoryEntries,
+    getCachedRepositoryDirectoryEntries,
+    listRepositoryDirectoryEntries,
+    setCachedRepositoryDirectoryEntries,
+    sortRepositoryDirectoryEntries,
+    warmRepositoryDirectoryCache,
+} from './repositoryDirectory';
 
 vi.mock('@/sync/ops', () => ({
     sessionListDirectory: vi.fn(),
@@ -32,7 +39,7 @@ describe('listRepositoryDirectoryEntries', () => {
         (sessionListDirectory as any).mockResolvedValue({
             success: true,
             entries: [
-                { name: 'Å.txt', type: 'file' },
+                { name: 'Å.txt', type: 'file', size: 12, modified: 1700000000000 },
                 { name: 'a.txt', type: 'file' },
             ],
         });
@@ -43,6 +50,9 @@ describe('listRepositoryDirectoryEntries', () => {
 
         // NFKC would change 'Å' to 'Å'. We must preserve the raw name.
         expect(result.entries.some((e) => e.name === 'Å.txt')).toBe(true);
+        const angular = result.entries.find((e) => e.name === 'Å.txt') ?? null;
+        expect(angular?.sizeBytes).toBe(12);
+        expect(angular?.modifiedMs).toBe(1700000000000);
     });
 });
 
@@ -80,5 +90,33 @@ describe('warmRepositoryDirectoryCache', () => {
         const cached = await warmRepositoryDirectoryCache({ sessionId: 's', directoryPath: '' });
         expect(cached.ok).toBe(true);
         expect(sessionListDirectory).not.toHaveBeenCalled();
+    });
+});
+
+describe('clearCachedRepositoryDirectoryEntries', () => {
+    it('clears all cached directories for a session without affecting others', () => {
+        setCachedRepositoryDirectoryEntries({
+            sessionId: 'session-1',
+            directoryPath: '',
+            entries: [{ name: 'src', type: 'directory' }],
+        });
+        setCachedRepositoryDirectoryEntries({
+            sessionId: 'session-1',
+            directoryPath: 'src',
+            entries: [{ name: 'index.ts', type: 'file' }],
+        });
+        setCachedRepositoryDirectoryEntries({
+            sessionId: 'session-2',
+            directoryPath: '',
+            entries: [{ name: 'README.md', type: 'file' }],
+        });
+
+        clearCachedRepositoryDirectoryEntries({ sessionId: 'session-1' });
+
+        expect(getCachedRepositoryDirectoryEntries({ sessionId: 'session-1', directoryPath: '' })).toBeNull();
+        expect(getCachedRepositoryDirectoryEntries({ sessionId: 'session-1', directoryPath: 'src' })).toBeNull();
+        expect(getCachedRepositoryDirectoryEntries({ sessionId: 'session-2', directoryPath: '' })).toEqual([
+            { name: 'README.md', type: 'file' },
+        ]);
     });
 });

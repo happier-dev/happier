@@ -9,6 +9,7 @@ import {
 import {
   resolveUiWebExportBeforeAllTimeoutMs,
   resolveUiWebExportBuildTimeoutMs,
+  resolveUiWebExportRootDir,
   startUiWebExport,
 } from './uiWebExport';
 
@@ -19,6 +20,7 @@ export {
   resolveUiWebMetroStatusTimeoutMs,
   resolveUiWebScriptFetchTotalTimeoutMs,
   resolveUiWebExportBuildTimeoutMs,
+  resolveUiWebExportRootDir,
 };
 
 export function resolveUiWebBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): number {

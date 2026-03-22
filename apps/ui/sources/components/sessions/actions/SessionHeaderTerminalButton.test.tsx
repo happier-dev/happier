@@ -1,8 +1,27 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                }
+    );
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 const openBottomSpy = vi.fn();
 const closeBottomSpy = vi.fn();
@@ -46,12 +65,15 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'embeddedTerminalDockLocation') return 'bottom';
         return null;
     },
-}));
+});
+});
 
 describe('SessionHeaderTerminalButton', () => {
     it('opens terminal in the bottom pane when docked to bottom', async () => {
@@ -61,15 +83,10 @@ describe('SessionHeaderTerminalButton', () => {
 
         const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
 
-        const pressable = (tree! as any).root.findByType('Pressable');
-        await act(async () => {
-            pressable.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-header-terminal-button');
 
         expect(openBottomSpy).toHaveBeenCalledWith({ tabId: 'terminal' });
         expect(setBottomTabSpy).toHaveBeenCalledWith('terminal');
@@ -85,17 +102,25 @@ describe('SessionHeaderTerminalButton', () => {
 
         const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
 
-        const pressable = (tree! as any).root.findByType('Pressable');
-        await act(async () => {
-            pressable.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-header-terminal-button');
 
         expect(closeBottomSpy).toHaveBeenCalledTimes(1);
         expect(openBottomSpy).not.toHaveBeenCalled();
+    });
+
+    it('suppresses the header terminal button testID when the session screen is hidden', async () => {
+        const { SessionScreenTestIdsProvider } = await import('../shell/sessionScreenTestIds');
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+
+        const screen = await renderScreen(
+            <SessionScreenTestIdsProvider enabled={false}>
+                <SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />
+            </SessionScreenTestIdsProvider>,
+        );
+
+        expect(screen.findByTestId('session-header-terminal-button')).toBeNull();
     });
 });

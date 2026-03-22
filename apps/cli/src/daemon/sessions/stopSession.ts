@@ -49,7 +49,6 @@ export function createStopSession(params: Readonly<{
               `[DAEMON RUN] Sent SIGTERM to daemon-spawned session process group ${normalizedSessionId} (pid=${pid})`,
             );
             stoppedAny = true;
-            pidToTrackedSession.delete(pid);
             continue;
           } catch {
             // fall through
@@ -61,7 +60,6 @@ export function createStopSession(params: Readonly<{
         } catch (error) {
           logger.debug(`[DAEMON RUN] Failed to kill session ${normalizedSessionId} (pid=${pid}):`, error);
         }
-        pidToTrackedSession.delete(pid);
         continue;
       }
 
@@ -79,12 +77,10 @@ export function createStopSession(params: Readonly<{
       } catch (error) {
         logger.debug(`[DAEMON RUN] Failed to kill external session PID ${pid}:`, error);
       }
-
-      pidToTrackedSession.delete(pid);
     }
 
     if (stoppedAny) {
-      logger.debug(`[DAEMON RUN] Removed session ${normalizedSessionId} from tracking`);
+      logger.debug(`[DAEMON RUN] Stop requested for session ${normalizedSessionId}; waiting for exit observation`);
     }
     return stoppedAny;
   };

@@ -77,6 +77,9 @@ describe('socket update handling: plaintext update-session', () => {
                 body: {
                     t: 'update-session',
                     id: 's1',
+                    lastViewedSessionSeq: 5,
+                    pendingPermissionRequestCount: 2,
+                    pendingUserActionRequestCount: 1,
                     metadata: { version: 2, value: JSON.stringify({ path: '/work', host: 'devbox' }) },
                     agentState: { version: 3, value: JSON.stringify({ controlledByUser: true }) },
                 },
@@ -95,6 +98,9 @@ describe('socket update handling: plaintext update-session', () => {
             expect(updatedSession.metadataVersion).toBe(2);
             expect(updatedSession.agentState).toEqual({ controlledByUser: true });
             expect(updatedSession.agentStateVersion).toBe(3);
+            expect(updatedSession.lastViewedSessionSeq).toBe(5);
+            expect(updatedSession.pendingPermissionRequestCount).toBe(2);
+            expect(updatedSession.pendingUserActionRequestCount).toBe(1);
         } finally {
             consoleError.mockRestore();
         }

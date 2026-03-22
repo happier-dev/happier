@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 import { encodeBase64 } from '@/encryption/base64';
 
 import { Encryption } from './encryption';
-import { SecretBoxEncryption } from './encryptor';
+
+function sealLegacySecretBoxJson(payload: unknown, key: Uint8Array): string {
+    const nonce = new Uint8Array(tweetnacl.secretbox.nonceLength).fill(7);
+    const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+    const boxed = tweetnacl.secretbox(plaintext, nonce, key);
+    const bytes = new Uint8Array(nonce.length + boxed.length);
+    bytes.set(nonce, 0);
+    bytes.set(boxed, nonce.length);
+    return encodeBase64(bytes, 'base64');
+}
 
 describe('Encryption automation templates', () => {
     it('encryptAutomationTemplateRaw ciphertext is decryptable across legacy and dataKey modes', async () => {
@@ -26,8 +36,7 @@ describe('Encryption automation templates', () => {
         const legacyEncryption = await Encryption.create(recoverySecret);
 
         const payload = { directory: '/tmp/project', prompt: 'Legacy secretbox' };
-        const legacySecretbox = new SecretBoxEncryption(recoverySecret);
-        const legacyCiphertext = encodeBase64((await legacySecretbox.encrypt([payload]))[0], 'base64');
+        const legacyCiphertext = sealLegacySecretBoxJson(payload, recoverySecret);
 
         const decrypted = await legacyEncryption.decryptAutomationTemplateRaw(legacyCiphertext);
         expect(decrypted).toEqual(payload);
@@ -39,11 +48,9 @@ describe('Encryption automation templates', () => {
 
         const machineKey = legacyEncryption.getContentPrivateKey();
         const payload = { directory: '/tmp/project', prompt: 'Legacy machine secretbox' };
-        const machineSecretbox = new SecretBoxEncryption(machineKey);
-        const legacyCiphertext = encodeBase64((await machineSecretbox.encrypt([payload]))[0], 'base64');
+        const legacyCiphertext = sealLegacySecretBoxJson(payload, machineKey);
 
         const decrypted = await legacyEncryption.decryptAutomationTemplateRaw(legacyCiphertext);
         expect(decrypted).toEqual(payload);
     });
 });
-

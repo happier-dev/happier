@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { t } from '@/text';
+import { renderScreen } from '@/dev/testkit';
 import {
     RequireFriendsIdentityForFriends,
     RequireFriendsIdentityForFriendsBase,
@@ -83,11 +84,14 @@ vi.mock('@/utils/errors/errors', async (importOriginal) => {
     return { ...actual };
 });
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: async () => {},
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: async () => {},
+        },
+    }).module;
+});
 
 const hoistedStorage = vi.hoisted(() => {
     const state = {
@@ -122,7 +126,7 @@ vi.mock('@/sync/store/hooks', () => ({
 
 type BaseProps = React.ComponentProps<typeof RequireFriendsIdentityForFriendsBase>;
 
-function renderBase(overrides: Partial<BaseProps>): renderer.ReactTestRenderer {
+async function renderBase(overrides: Partial<BaseProps>) {
     const props: BaseProps = {
         variant: 'username',
         isReady: false,
@@ -132,11 +136,7 @@ function renderBase(overrides: Partial<BaseProps>): renderer.ReactTestRenderer {
         children: <TextStub>CHILD</TextStub>,
         ...overrides,
     };
-    return renderer.create(<RequireFriendsIdentityForFriendsBase {...props} />);
-}
-
-function findByLabel(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.root.findAll((node) => node.props?.accessibilityLabel === label);
+    return renderScreen(<RequireFriendsIdentityForFriendsBase {...props} />);
 }
 
 function TextStub(props: { children?: React.ReactNode }) {
@@ -145,63 +145,48 @@ function TextStub(props: { children?: React.ReactNode }) {
 
 describe('RequireFriendsIdentityForFriendsBase', () => {
     it('renders a username gate when identity is not ready and variant=username', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderBase({});
-        });
+        const screen = await renderBase({});
 
-        expect(tree!.root.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
-        expect(findByLabel(tree!, t('profile.username')).length).toBeGreaterThan(0);
-        expect(findByLabel(tree!, t('common.save')).length).toBeGreaterThan(0);
-        expect(findByLabel(tree!, t('friends.providerGate.connect', { provider: 'GitHub' })).length).toBeGreaterThan(0);
+        expect(screen.tree.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
+        expect(screen.findAllByProps({ accessibilityLabel: t('profile.username') }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: t('common.save') }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: t('friends.providerGate.connect', { provider: 'GitHub' }) }).length).toBeGreaterThan(0);
     });
 
     it('prefills the username input when initialUsername is provided', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderBase({ initialUsername: 'my_provider_name' });
-        });
+        const screen = await renderBase({ initialUsername: 'my_provider_name' });
 
-        const usernameInputs = findByLabel(tree!, t('profile.username'));
+        const usernameInputs = screen.findAllByProps({ accessibilityLabel: t('profile.username') });
         expect(usernameInputs.length).toBeGreaterThan(0);
         expect(usernameInputs[0]?.props?.value).toBe('my_provider_name');
     });
 
     it('renders a username hint when provided', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderBase({ usernameHint: 'That name is already taken' });
-        });
+        const screen = await renderBase({ usernameHint: 'That name is already taken' });
 
-        expect(tree!.root.findAllByProps({ children: 'That name is already taken' }).length).toBeGreaterThan(0);
+        expect(screen.tree.findAllByProps({ children: 'That name is already taken' }).length).toBeGreaterThan(0);
     });
 
     it('renders a provider-only gate when variant=provider', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderBase({
-                variant: 'provider',
-                providerDisplayName: 'GitHub',
-            });
+        const screen = await renderBase({
+            variant: 'provider',
+            providerDisplayName: 'GitHub',
         });
 
-        expect(tree!.root.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
-        expect(findByLabel(tree!, t('friends.providerGate.connect', { provider: 'GitHub' })).length).toBeGreaterThan(0);
-        expect(findByLabel(tree!, t('common.save'))).toHaveLength(0);
+        expect(screen.tree.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
+        expect(screen.findAllByProps({ accessibilityLabel: t('friends.providerGate.connect', { provider: 'GitHub' }) }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: t('common.save') })).toHaveLength(0);
     });
 
     it('shows a configuration hint when Not available? is pressed', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderBase({
-                variant: 'provider',
-                unavailableReason: 'OAuth not configured',
-            });
+        const screen = await renderBase({
+            variant: 'provider',
+            unavailableReason: 'OAuth not configured',
         });
 
-        expect(tree!.root.findAllByProps({ children: 'OAuth not configured' })).toHaveLength(0);
+        expect(screen.tree.findAllByProps({ children: 'OAuth not configured' })).toHaveLength(0);
 
-        const hintButtons = tree!.root.findAll(
+        const hintButtons = screen.tree.findAll(
             (node) =>
                 node.props?.accessibilityLabel === t('friends.providerGate.notAvailable') &&
                 typeof node.props?.onPress === 'function',
@@ -212,33 +197,27 @@ describe('RequireFriendsIdentityForFriendsBase', () => {
             hintButtons[0]?.props?.onPress();
         });
 
-        expect(tree!.root.findAllByProps({ children: 'OAuth not configured' }).length).toBeGreaterThan(0);
+        expect(screen.tree.findAllByProps({ children: 'OAuth not configured' }).length).toBeGreaterThan(0);
     });
 
     it('renders children when identity is ready', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderBase({
-                isReady: true,
-            });
+        const screen = await renderBase({
+            isReady: true,
         });
 
-        expect(tree!.root.findAllByProps({ children: 'CHILD' }).length).toBeGreaterThan(0);
+        expect(screen.tree.findAllByProps({ children: 'CHILD' }).length).toBeGreaterThan(0);
     });
 });
 
 describe('RequireFriendsIdentityForFriends (wrapper)', () => {
     it('renders a provider gate using the required provider from features', async () => {
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <RequireFriendsIdentityForFriends>
-                    <TextStub>CHILD</TextStub>
-                </RequireFriendsIdentityForFriends>,
-            );
-        });
+        const screen = await renderScreen(
+            <RequireFriendsIdentityForFriends>
+                <TextStub>CHILD</TextStub>
+            </RequireFriendsIdentityForFriends>,
+        );
 
-        expect(tree!.root.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
-        expect(findByLabel(tree!, t('friends.providerGate.connect', { provider: 'FakeHub' })).length).toBeGreaterThan(0);
+        expect(screen.tree.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
+        expect(screen.findAllByProps({ accessibilityLabel: t('friends.providerGate.connect', { provider: 'FakeHub' }) }).length).toBeGreaterThan(0);
     });
 });

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 
 import {
   acquireSingleFlightLock,
@@ -67,6 +68,15 @@ function isVersionInvocation(argv: string[]): boolean {
   return argv.includes('--version') || argv.includes('-v');
 }
 
+function resolveUpdateCheckEntrypoint(cliRootDir: string): string {
+  const normalizedRoot = String(cliRootDir ?? '').trim();
+  const packageDistEntrypoint = join(normalizedRoot, 'package-dist', 'index.mjs');
+  if (existsSync(packageDistEntrypoint)) {
+    return packageDistEntrypoint;
+  }
+  return join(normalizedRoot, 'dist', 'index.mjs');
+}
+
 export function maybeAutoUpdateNotice(params: Readonly<{
   argv: string[];
   isTTY: boolean;
@@ -126,7 +136,7 @@ export function maybeAutoUpdateNotice(params: Readonly<{
 
   if (!shouldCheck) return;
 
-  const entry = join(params.cliRootDir, 'dist', 'index.mjs');
+  const entry = resolveUpdateCheckEntrypoint(params.cliRootDir);
   const spawnImpl = params.spawnDetached ?? spawnDetachedNode;
   const lockTtlMs = envNumber(env, 'HAPPIER_CLI_UPDATE_CHECK_LOCK_TTL_MS') ?? DEFAULT_CHECK_LOCK_TTL_MS;
   const lockPath = join(params.homeDir, 'cache', 'update.check.lock.json');

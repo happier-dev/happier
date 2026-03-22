@@ -1,7 +1,10 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeToolCall } from './ToolView.testHelpers';
+import {
+  renderScreen,
+  standardCleanup,
+} from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,14 +15,37 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: () => false,
-  useSessionTranscriptDraftMessages: () => [],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+    importOriginal,
+    overrides: {
+      useSetting: () => false,
+      useSessionTranscriptDraftMessages: () => [],
+    },
+  }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Text: 'Text',
+                                    ScrollView: 'ScrollView',
+                                    Pressable: 'Pressable',
+                                    Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                  }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/components/ui/media/CodeView', () => ({
   CodeView: () => null,
@@ -54,6 +80,10 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 }));
 
 describe('ToolFullView (text selection scope)', () => {
+  afterEach(() => {
+    standardCleanup();
+  });
+
   it('defaults tool renderer content to selectable in the full view', async () => {
     const { ToolFullView } = await import('./ToolFullView');
 
@@ -64,12 +94,9 @@ describe('ToolFullView (text selection scope)', () => {
       description: 'Run echo hello',
     });
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
-    });
+    const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
 
-    const hostTextNodes = tree.root.findAllByType('Text' as any);
+    const hostTextNodes = screen.findAllByType('Text' as any);
     const target = hostTextNodes.find((n) => Array.isArray(n.props.children) ? n.props.children.includes('select me') : n.props.children === 'select me');
     expect(target).toBeTruthy();
     expect(target!.props.selectable).toBe(true);

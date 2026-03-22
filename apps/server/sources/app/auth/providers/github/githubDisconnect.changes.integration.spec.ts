@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createDbMocks, installDbModuleMock } from "../../../api/testkit/dbMocks";
+
 const emitUpdate = vi.fn();
 const buildUpdateAccountUpdate = vi.fn((_userId: string, _profile: any, updSeq: number, updId: string) => ({
     id: updId,
@@ -20,18 +22,11 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-const dbAccountFindUnique = vi.fn();
-const dbAccountIdentityFindFirst = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findUnique: (...args: any[]) => dbAccountFindUnique(...args),
-        },
-        accountIdentity: {
-            findFirst: (...args: any[]) => dbAccountIdentityFindFirst(...args),
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    account: ["findUnique"],
+    accountIdentity: ["findFirst"],
+} as const);
+installDbModuleMock({ db: dbMocks.db });
 
 let txAccountUpdate: any;
 let txAccountIdentityDeleteMany: any;
@@ -70,8 +65,8 @@ describe("githubDisconnect (AccountChange integration)", () => {
     });
 
     it("marks account change and emits update using returned cursor", async () => {
-        dbAccountFindUnique.mockResolvedValue({ username: "octocat" });
-        dbAccountIdentityFindFirst.mockResolvedValue({ profile: { login: "octocat" } });
+        dbMocks.db.account.findUnique.mockResolvedValue({ username: "octocat" });
+        dbMocks.db.accountIdentity.findFirst.mockResolvedValue({ profile: { login: "octocat" } });
         txAccountUpdate = vi.fn(async (args: any) => {
             expect(args.data.username).toBeNull();
             return {};
@@ -95,8 +90,8 @@ describe("githubDisconnect (AccountChange integration)", () => {
     });
 
     it("preserves a custom username when disconnecting GitHub", async () => {
-        dbAccountFindUnique.mockResolvedValue({ username: "custom" });
-        dbAccountIdentityFindFirst.mockResolvedValue({ profile: { login: "octocat" } });
+        dbMocks.db.account.findUnique.mockResolvedValue({ username: "custom" });
+        dbMocks.db.accountIdentity.findFirst.mockResolvedValue({ profile: { login: "octocat" } });
         txAccountUpdate = vi.fn(async () => ({}));
         txAccountIdentityDeleteMany = vi.fn(async () => ({}));
 

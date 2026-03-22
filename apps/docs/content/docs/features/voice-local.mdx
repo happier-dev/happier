@@ -1,67 +1,453 @@
 ---
 title: Local voice providers
-description: Run local OpenAI-compatible STT/TTS servers for Local Voice.
+description: Configure Local voice in Happier with device, self-hosted, Google, and local-neural STT/TTS providers.
 ---
 
-Local Voice is a turn-based pipeline that uses **OpenAI-compatible** endpoints that you host yourself:
+**Local voice** is Happier’s configurable speech pipeline.
 
-- **STT**: `POST /v1/audio/transcriptions`
-- **TTS**: `POST /v1/audio/speech`
+It lets you mix and match:
 
-In the app, configure **Settings → Voice → Local Voice**:
+- **speech-to-text (STT)**
+- **text-to-speech (TTS)**
+- **direct-to-session** or **voice-agent** conversation flow
 
-- **STT Base URL** (typically `http://<host>:<port>/v1`)
-- **TTS Base URL** (typically `http://<host>:<port>/v1`)
-- Optional API keys (stored encrypted), model/voice fields, and output format
+Open **Settings → Voice → Local voice** to configure it.
 
-Optional experimental toggles:
+## What Local voice supports
 
-- **Device STT**: use on-device speech recognition (no STT HTTP endpoint required).
-- **Device TTS**: use on-device speech synthesis (no TTS HTTP endpoint required).
+### STT providers
 
-## What you need (minimum)
+You can choose one of these speech-to-text providers:
 
-- **STT is required** to use voice input (talking into the mic).
-- **TTS is optional** (it is only required if you want spoken replies).
-- STT and TTS can be hosted on the same server (if it supports both endpoints), or on two separate servers.
+- **Device STT**: platform speech recognition on the device
+- **OpenAI-compatible STT**: your own `/v1/audio/transcriptions` endpoint
+- **Google Gemini (audio)**: Google Gemini audio transcription
+- **Local neural STT**: on-device Sherpa streaming STT on native builds
 
-## Direct-to-session vs voice agent mode
+### TTS providers
 
-Local Voice supports two conversation modes:
+You can choose one of these text-to-speech providers:
 
-- **Direct-to-session:** each time you speak, the transcribed text is sent into the Happier session as a normal message.
-- **Voice agent mode:** each time you speak, the transcribed text is sent into an ephemeral multi-turn “voice agent” chat. The voice agent does not write to the session transcript unless it explicitly calls `sendSessionMessage` (for example, when you ask it to apply a decision to the session).
+- **Device TTS**: platform text-to-speech on the device
+- **OpenAI-compatible TTS**: your own `/v1/audio/speech` endpoint
+- **Google Cloud Text-to-Speech**
+- **Local neural TTS**: Kokoro on web and native
 
-Voice agent mode can use:
+You can mix providers freely. For example:
 
-- **Daemon voice agent (recommended):** uses the daemon’s per-session process (no extra HTTP endpoints required).
-- **OpenAI-compatible voice agent:** calls a user-configured chat endpoint (`POST /v1/chat/completions`). This is useful if you want the entire voice stack (STT+TTS+chat) to be local/HTTP-based.
+- device STT + device TTS
+- device STT + Kokoro TTS
+- OpenAI-compatible STT + Google Cloud TTS
+- Gemini STT + Kokoro TTS
 
-## Important networking notes
+## Conversation modes
 
-- On phones, `localhost` / `127.0.0.1` usually refers to the phone itself, not your computer.
-  - Use your computer’s LAN IP (e.g. `http://192.168.1.10:8000/v1`) or a tunnel.
-- If you expose a server beyond your LAN, add authentication and HTTPS.
-- On web, you may need to handle CORS.
+Local voice supports two conversation modes.
 
-## Compatible servers (examples)
+### Direct to session
 
-Happier doesn’t bundle these servers — you run them separately. The goal is interoperability via OpenAI-compatible APIs.
+In **Direct to session**, your speech is transcribed and sent directly into the active session.
 
-### STT (speech-to-text)
+Use this when you want:
 
-- [`etalab-ia/faster-whisper-server`](https://github.com/etalab-ia/faster-whisper-server)
-- [`matatonic/openedai-whisper`](https://github.com/matatonic/openedai-whisper) (unmaintained)
+- dictation-like behavior
+- simple speech input into a session
+- fewer moving parts
 
-### TTS (text-to-speech)
+TTS can still stay enabled here, so Happier can read replies back to you.
 
-- [`remsky/Kokoro-FastAPI`](https://github.com/remsky/Kokoro-FastAPI)
-- [`travisvn/chatterbox-tts-api`](https://github.com/travisvn/chatterbox-tts-api) (AGPL-3.0)
-- [`travisvn/openai-edge-tts`](https://github.com/travisvn/openai-edge-tts) (uses Microsoft Edge TTS; requires network access)
-- [`matatonic/openedai-speech`](https://github.com/matatonic/openedai-speech) (archived; OpenAI-compatible; supports local backends like piper/XTTS)
+### Agent
+
+In **Agent** mode, your speech first goes through a dedicated voice agent.
+
+Use this when you want the voice layer to:
+
+- ask follow-up questions
+- summarize before acting
+- use structured actions
+- avoid writing every utterance into the target session
+
+This mode is useful when you want voice to feel like a colleague instead of a dictation layer.
+
+## Voice agent backend
+
+In local voice agent mode, **voice agent backend** controls which runtime actually runs the agent:
+
+- **Daemon voice agent**: uses Happier’s daemon-backed voice agent runtime
+- **OpenAI-compatible voice agent**: calls your configured chat-completions endpoint directly
+
+Use the daemon backend when you want the tightest Happier integration, including the working-directory and teleport behavior described below.
+
+## Machine targeting
+
+For daemon-backed local voice agent mode, you can choose where the voice agent should run:
+
+- **Auto**: pick a stable machine automatically
+- **Fixed machine**: always use the machine you selected
+
+### What “Auto” means
+
+Auto does **not** mean “follow whichever machine became active most recently.”
+
+The goal is stability:
+
+- Happier resolves a machine automatically when it starts the voice agent
+- the running voice agent stays anchored there instead of roaming every time your active session changes
+
+This avoids unnecessary stop/restart churn while you move around the app.
+
+If you want predictable placement, choose a **fixed machine** instead.
+
+## Voice home vs session project root
+
+Daemon-backed local voice agent mode uses two kinds of working directories:
+
+### Voice home
+
+A stable non-project directory used for global/sidebar-started voice sessions.
+
+Use this when you want the voice agent to have a neutral workspace instead of starting inside a project automatically.
+
+### Session project root
+
+When you start voice directly from a session, Happier can start the voice agent in that session’s project root.
+
+Use this when you want the voice agent to behave more like a coding colleague inside the current project.
+
+## Stay in voice home
+
+If you enable **Stay in voice home**, the voice agent always stays in voice home.
+
+That means:
+
+- session-started voice does not start in the session project root
+- teleporting into a session root is blocked
+
+Use this when you want a safer, more neutral default working directory.
+
+## Teleport to current session
+
+For daemon-backed local voice agent sessions, the session voice surface can show a **teleport** action.
+
+Teleport lets you move the running voice agent to the current session’s project root.
+
+Important rules:
+
+- teleport is only available for the **daemon** backend
+- it is hidden/blocked when **Allow teleport** is off
+- it is hidden/blocked when **Stay in voice home** is on
+- it fails closed when the runtime is not eligible
+
+This is useful when you started globally from voice home and later want the agent to inspect the current project more deeply.
+
+## Warm roots
+
+The local voice agent can either keep a single working-root runtime or keep multiple roots warm:
+
+- **Single**: keep one root active
+- **Keep warm**: retain several recent roots for faster return/resume
+
+When using **Keep warm**, you can choose the maximum number of warm roots to retain.
+
+Use **Single** for the simplest behavior. Use **Keep warm** when you regularly bounce between a small number of projects and want faster reuse.
+
+## Persistence and resumability
+
+Voice agent mode separates two related choices:
+
+### Transcript persistence
+
+- **Ephemeral**: voice agent transcript state is temporary
+- **Persistent**: keep voice agent conversation state across app reloads / restarts
+
+### Resumability mode
+
+When persistence is enabled, you can choose how the agent resumes:
+
+- **Replay**: rebuild context from saved transcript/replay inputs
+- **Provider resume**: use provider-native resume when supported
+
+Provider resume is capability-driven. When it is not available for the current backend/agent combination, Happier disables it instead of pretending it will work.
+
+You can also enable **fallback to replay** so provider-resume setups still recover when native resume is unavailable in practice.
+
+## Agent source and model source
+
+Local voice agent mode also separates:
+
+### Agent source
+
+- **Follow session**: use the session’s agent/backend context
+- **Fixed agent**: choose a specific voice agent backend/provider
+
+### Model source
+
+For chat and commit behavior, model selection can come from:
+
+- the session
+- the chat model
+- a custom model selection
+
+When a backend exposes a dynamic model list, Happier uses that live list in the dropdown instead of forcing manual text entry.
+
+## Shared Local voice settings
+
+### Preferred STT and TTS providers
+
+Use the **STT provider** and **TTS provider** dropdowns to choose the speech backends for the current Local voice configuration.
+
+### Test TTS
+
+Use **Test TTS** to verify the currently selected TTS provider end-to-end.
+
+This is the main output test for:
+
+- device TTS
+- OpenAI-compatible TTS
+- Google Cloud TTS
+- Kokoro local neural TTS
+
+### Auto-speak replies
+
+If enabled, Happier speaks replies automatically after a turn completes.
+
+### Barge-in
+
+If enabled, starting a new turn can interrupt current speech playback so you do not need to wait for the previous spoken reply to finish.
+
+### Network timeout
+
+Use **Network timeout** to control how long Happier waits for STT or TTS network operations before failing.
+
+This matters most when you use:
+
+- self-hosted OpenAI-compatible endpoints
+- Google Gemini STT
+- Google Cloud TTS
+
+## Device STT and Device TTS
+
+Use device providers when you want the simplest local setup with no extra servers.
+
+### Device STT
+
+Device STT uses built-in platform speech recognition where available.
+
+When **Device STT** is selected, Happier can also expose **hands-free** controls such as:
+
+- **silence timeout**
+- **minimum speech duration**
+
+These settings control when a spoken turn should be considered finished.
+
+### Device TTS
+
+Device TTS uses the operating system’s speech synthesizer.
+
+It is the easiest option, but audio quality and available voices depend on the platform.
+
+## OpenAI-compatible STT and TTS
+
+Use these providers when you already run your own OpenAI-style speech endpoints.
+
+### STT
+
+OpenAI-compatible STT expects:
+
+- `POST /v1/audio/transcriptions`
+
+You can configure:
+
+- base URL
+- API key
+- model
+
+### TTS
+
+OpenAI-compatible TTS expects:
+
+- `POST /v1/audio/speech`
+
+You can configure:
+
+- base URL
+- API key
+- model
+- voice
+- output format (`mp3` or `wav`)
+
+This path works well with self-hosted speech servers that intentionally match OpenAI’s API shape.
+
+## Google providers
+
+### Google Gemini STT
+
+Google Gemini STT is available as an STT provider for Local voice.
+
+You can configure:
+
+- API key
+- model
+- optional language hint
+
+Use this when you want Google transcription quality without changing the rest of your Local voice pipeline.
+
+### Google Cloud TTS
+
+Google Cloud Text-to-Speech is available as a TTS provider.
+
+You can configure:
+
+- API key
+- optional Android certificate SHA-1
+- language
+- voice
+- output format
+- speaking rate
+- pitch
+
+The Google Cloud voice picker is searchable and lets you choose from the voices supported by your current API key and selected language.
+
+## Local neural TTS: Kokoro
+
+Happier’s **Local neural TTS** currently uses **Kokoro**.
+
+### On web and desktop web
+
+On web, Kokoro runs through the web runtime and downloads its required assets on demand.
+
+You can configure:
+
+- **Kokoro model pack**
+- **Download / prepare model**
+- **Clear browser cache**
+- **Voice**
+- **Speed**
+
+After the first successful download, the browser keeps the model files cached so they do not need to be fetched again for every turn.
+
+### On native
+
+On native builds, Kokoro uses downloadable native model packs.
+
+You can configure:
+
+- **Kokoro model pack**
+- **Download model**
+- **Remove downloaded assets**
+- **Check for updates**
+- **Voice**
+- **Speed**
+
+Model downloads happen on demand and can be removed later to free storage.
+
+### Voice previews
+
+The Kokoro voice dropdown includes inline preview playback so you can audition a voice before selecting it.
+
+## Local neural STT: Sherpa streaming STT
+
+On native builds, **Local neural STT** uses downloadable **Sherpa** streaming STT packs.
+
+You can configure:
+
+- **Model pack**
+- **Download model**
+- **Remove downloaded assets**
+- **Check for updates**
+- **Language hint**
+
+This gives Local voice a fully on-device STT option without requiring an external server.
+
+## Model downloads, updates, and storage
+
+Both Kokoro native TTS packs and Sherpa native STT packs are downloaded on demand from Happier’s model-pack manifests.
+
+From settings, users can:
+
+- download missing packs
+- see download progress
+- stop an in-progress download
+- check whether a newer model-pack build is available
+- remove downloaded assets to free storage
+
+On web, Kokoro runtime files are stored in browser caches. On native, model packs are stored on the device.
+
+## Recommended setups
+
+### Simplest fully local setup
+
+- **STT**: Device STT
+- **TTS**: Device TTS
+- **Conversation mode**: Direct to session
+
+### Better spoken output with minimal complexity
+
+- **STT**: Device STT
+- **TTS**: Local neural TTS (Kokoro)
+- **Conversation mode**: Agent
+
+### Fully self-hosted speech stack
+
+- **STT**: OpenAI-compatible STT
+- **TTS**: OpenAI-compatible TTS
+- **Conversation mode**: Agent
+
+### Hybrid cloud/local setup
+
+- **STT**: Google Gemini STT
+- **TTS**: Kokoro or Google Cloud TTS
+- **Conversation mode**: Agent
+
+## Networking notes
+
+### Mobile and localhost
+
+On phones, `localhost` and `127.0.0.1` usually point to the phone itself, not your computer.
+
+If your speech server runs on your computer, use:
+
+- your computer’s LAN IP, or
+- a tunnel
+
+### Web and CORS
+
+For web builds, your STT or TTS server may need CORS configured correctly.
+
+### Exposing services outside your LAN
+
+If you expose a speech server beyond your local network, add proper authentication and HTTPS.
 
 ## Troubleshooting
 
-- **Can’t connect from mobile**: verify the server is bound to `0.0.0.0`, allow the port in firewall, and use your LAN IP.
-- **403/401**: check that your API key (if needed) is configured in the app and the server.
-- **Bad audio / wrong voice**: confirm `model` and `voice` values supported by your TTS server.
+### Local voice hears me, but nothing is spoken back
+
+Check:
+
+- that a TTS provider is selected
+- that **Auto-speak replies** is enabled if you expect automatic playback
+- that **Test TTS** works
+
+### Kokoro is unavailable
+
+Check:
+
+- that the runtime is supported on your platform
+- that the model was downloaded successfully
+- that the selected Kokoro pack is ready
+
+### Sherpa STT is unavailable
+
+Check:
+
+- that you are on a native build
+- that the Sherpa model pack has been downloaded
+- that the selected language or pack matches your use case
+
+### Nothing is written into the target session
+
+If you are in **Agent** mode, this can be expected. The voice agent does not need to write every utterance into the target session. It can keep part of the conversation in the hidden voice conversation and only send explicit actions back when needed.
+
+## Related pages
+
+- [Voice overview](./voice)

@@ -115,6 +115,7 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
   const loadArtifact = React.useCallback(async (artifactId: string, options?: Readonly<{
     preserveDirtyFields?: boolean;
   }>) => {
+    setIsLoading(true);
     const local = storage.getState().artifacts[artifactId] ?? null;
     if (local?.body === undefined) {
       const credentials = sync.getCredentials();
@@ -145,16 +146,15 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
 
     (async () => {
       try {
-        await loadArtifact(savedArtifactId);
-        if (!cancelled) {
+        const loaded = await loadArtifact(savedArtifactId);
+        if (!cancelled && loaded) {
           isTitleDirtyRef.current = false;
           isSkillMarkdownDirtyRef.current = false;
           isFolderDirtyRef.current = false;
           isTagsDirtyRef.current = false;
+          setIsLoading(false);
         }
       } catch {
-      } finally {
-        if (!cancelled) setIsLoading(false);
       }
     })();
 
@@ -169,10 +169,11 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
       let cancelled = false;
       void (async () => {
         try {
-          await loadArtifact(savedArtifactId, { preserveDirtyFields: true });
+          const loaded = await loadArtifact(savedArtifactId, { preserveDirtyFields: true });
+          if (!cancelled && loaded) {
+            setIsLoading(false);
+          }
         } catch {
-        } finally {
-          if (!cancelled) setIsLoading(false);
         }
       })();
       return () => {

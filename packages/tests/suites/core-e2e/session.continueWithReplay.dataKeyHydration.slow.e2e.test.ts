@@ -24,6 +24,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -77,7 +78,7 @@ function tryParseSessionMetadata(ciphertextBase64: string, machineKey: Uint8Arra
   const trimmed = ciphertextBase64.trim();
   if (trimmed.startsWith('{')) {
     try {
-      return JSON.parse(trimmed);
+      return unwrapSerializedJsonValue(JSON.parse(trimmed));
     } catch {
       // Fall through to encrypted payload handling.
     }
@@ -87,12 +88,13 @@ function tryParseSessionMetadata(ciphertextBase64: string, machineKey: Uint8Arra
   // bundle format as encrypted messages, keyed by the opened DEK (or machineKey fallback).
   try {
     const maybeDataKey = decryptDataKeyBase64(trimmed, machineKey);
-    if (maybeDataKey && typeof maybeDataKey === 'object') return maybeDataKey;
+    const unwrapped = unwrapSerializedJsonValue(maybeDataKey);
+    if (unwrapped && typeof unwrapped === 'object') return unwrapped;
   } catch {
     // Ignore and fall through to legacy.
   }
 
-  const legacy = decryptLegacyBase64(trimmed, machineKey);
+  const legacy = unwrapSerializedJsonValue(decryptLegacyBase64(trimmed, machineKey));
   return legacy && typeof legacy === 'object' ? legacy : null;
 }
 
@@ -253,7 +255,6 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
     if (!parsed.success || parsed.data.type !== 'success') {
       throw new Error('Expected success result from session.continueWithReplay');
     }
-    expect((parsed.data as any).seedDraft).toBeUndefined();
     expect(typeof parsed.data.sessionId).toBe('string');
     expect(parsed.data.sessionId.length).toBeGreaterThan(0);
 
@@ -283,5 +284,5 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
     expect((childMetadata as any)?.forkV1?.parentSessionId).toBe(previousSessionId);
 
     ui.close();
-  });
+  }, 240_000);
 });

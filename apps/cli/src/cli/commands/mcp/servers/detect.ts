@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
-import { readFlagValue } from '@/sessionControl/argvFlags';
-import { printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 
 import type { McpCommandDeps } from '../deps';
 import { readRepeatedFlagValues } from '../argv';

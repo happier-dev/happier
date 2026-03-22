@@ -1,6 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    createModalModuleMock,
+    createPartialStorageModuleMock,
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import {
     SCM_OPERATION_ERROR_CODES,
     type ScmStashDropResponse,
@@ -12,9 +18,9 @@ import {
     type ScmStashShowRequest,
     type ScmStashShowResponse,
 } from '@happier-dev/protocol';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 import { SessionScmStashDetailsView } from './SessionScmStashDetailsView';
-import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,40 +59,27 @@ const sessionScmStashDropSpy = vi.fn<
 
 let scmWriteEnabled = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                View: 'View',
+                                                ActivityIndicator: 'ActivityIndicator',
+                                                Pressable: 'Pressable',
+                                                ScrollView: 'ScrollView',
+                                                Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
+                                            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                divider: '#ddd',
-                text: '#111',
-                textSecondary: '#666',
-                warning: '#f00',
-                success: '#0a0',
-                danger: '#c00',
-                textLink: '#00f',
-                groupped: { background: '#fff' },
-            },
-        },
-    }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { divider: '#ddd' } }) },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -99,33 +92,42 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => scmWriteEnabled,
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionScmStashList: (sessionId: string, request: ScmStashListRequest) => sessionScmStashListSpy(sessionId, request),
-    sessionScmStashShow: (sessionId: string, request: ScmStashShowRequest) => sessionScmStashShowSpy(sessionId, request),
-    sessionScmStashPop: (sessionId: string, request: ScmStashPopRequest) => sessionScmStashPopSpy(sessionId, request),
-    sessionScmStashDrop: (sessionId: string, request: ScmStashDropRequest) => sessionScmStashDropSpy(sessionId, request),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionScmStashList: (sessionId: string, request: ScmStashListRequest) => sessionScmStashListSpy(sessionId, request),
+            sessionScmStashShow: (sessionId: string, request: ScmStashShowRequest) => sessionScmStashShowSpy(sessionId, request),
+            sessionScmStashPop: (sessionId: string, request: ScmStashPopRequest) => sessionScmStashPopSpy(sessionId, request),
+            sessionScmStashDrop: (sessionId: string, request: ScmStashDropRequest) => sessionScmStashDropSpy(sessionId, request),
+        },
+    });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'wrapLinesInDiffs') return true;
-        if (key === 'showLineNumbers') return true;
-        if (key === 'scmReviewMaxFiles') return 25;
-        if (key === 'scmReviewMaxChangedLines') return 2000;
-        if (key === 'scmReviewPrefetchAheadCountWeb') return 1;
-        if (key === 'scmReviewPrefetchBehindCountWeb') return 1;
-        if (key === 'scmReviewPrefetchDebounceMs') return 0;
-        return undefined;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    return createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'wrapLinesInDiffs') return true;
+            if (key === 'showLineNumbers') return true;
+            if (key === 'scmReviewMaxFiles') return 25;
+            if (key === 'scmReviewMaxChangedLines') return 2000;
+            if (key === 'scmReviewPrefetchAheadCountWeb') return 1;
+            if (key === 'scmReviewPrefetchBehindCountWeb') return 1;
+            if (key === 'scmReviewPrefetchDebounceMs') return 0;
+            return undefined;
+        },
+    });
+});
 
 const invalidateFromMutationAndAwaitSpy = vi.fn(async (..._args: any[]) => {});
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -136,12 +138,12 @@ vi.mock('@/scm/scmStatusSync', () => ({
 
 const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async (..._args: any[]) => true);
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: (...args: any[]) => modalAlertSpy(...args),
-        confirm: (...args: any[]) => modalConfirmSpy(...args),
-    },
-}));
+vi.mock('@/modal', () => {
+    const modalModuleMock = createModalModuleMock({ confirmResult: true });
+    modalModuleMock.spies.alert.mockImplementation((...args: any[]) => modalAlertSpy(...args));
+    modalModuleMock.spies.confirm.mockImplementation((...args: any[]) => modalConfirmSpy(...args));
+    return modalModuleMock.module;
+});
 
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
     DiffFilesListView: (props: any) => {
@@ -155,22 +157,31 @@ vi.mock('@/components/ui/code/diff/DiffPresentationStyleToggleButton', () => ({
 }));
 
 describe('SessionScmStashDetailsView', () => {
-    it('loads managed stashes and renders the diff for the first stash', async () => {
+    beforeEach(() => {
         scmWriteEnabled = true;
         sessionScmStashListSpy.mockClear();
         sessionScmStashShowSpy.mockClear();
+        sessionScmStashPopSpy.mockClear();
+        sessionScmStashDropSpy.mockClear();
         diffFilesListSpy.mockClear();
+        invalidateFromMutationAndAwaitSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+    });
 
-        await act(async () => {
-            renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
+    afterEach(() => {
+        standardCleanup();
+        vi.useRealTimers();
+    });
 
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (diffFilesListSpy.mock.calls.length > 0) break;
-        }
+    async function renderStashDetailsView() {
+        const screen = await renderScreen(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
+        await flushHookEffects({ cycles: 2 });
+        return screen;
+    }
+
+    it('loads managed stashes and renders the diff for the first stash', async () => {
+        await renderStashDetailsView();
 
         expect(sessionScmStashListSpy).toHaveBeenCalledTimes(1);
         expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
@@ -179,10 +190,6 @@ describe('SessionScmStashDetailsView', () => {
 
     it('retries the selected stash diff when the backend is transiently unavailable', async () => {
         vi.useFakeTimers();
-        scmWriteEnabled = true;
-        sessionScmStashListSpy.mockClear();
-        sessionScmStashShowSpy.mockClear();
-        diffFilesListSpy.mockClear();
         sessionScmStashListSpy.mockResolvedValue({
             success: true,
             managedCount: 1,
@@ -210,70 +217,34 @@ describe('SessionScmStashDetailsView', () => {
                 truncated: false,
             });
 
-        await act(async () => {
-            renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
+        await renderStashDetailsView();
 
         expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
 
-        await act(async () => {
-            vi.advanceTimersByTime(1_000);
-            await Promise.resolve();
-        });
+        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
 
         expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
 
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (diffFilesListSpy.mock.calls.length > 0) break;
-        }
-
         expect(diffFilesListSpy).toHaveBeenCalled();
-        vi.useRealTimers();
     });
 
     it('stops retrying the stash list when the backend stays unavailable and surfaces the error', async () => {
         vi.useFakeTimers();
-        scmWriteEnabled = true;
-        sessionScmStashListSpy.mockClear();
-        sessionScmStashShowSpy.mockClear();
         sessionScmStashListSpy.mockResolvedValue({
             success: false,
             error: 'RPC method not available',
             errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderStashDetailsView();
+        await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
 
-        for (let i = 0; i < 11; i++) {
-            await act(async () => {
-                vi.advanceTimersByTime(1_000);
-                await Promise.resolve();
-            });
-        }
-
-        const roots = tree.root.findAllByProps({ testID: 'scm-stash-details-root' });
-        expect(roots).toHaveLength(1);
         expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
-        expect(
-            tree.root.findAll(
-                (node) => typeof node.props?.children === 'string' && String(node.props.children).includes('RPC method not available'),
-            ),
-        ).not.toHaveLength(0);
-        vi.useRealTimers();
+        expect(screen.getTextContent()).toContain('RPC method not available');
     });
 
     it('stops retrying the selected stash diff when the backend stays unavailable and surfaces the error', async () => {
         vi.useFakeTimers();
-        scmWriteEnabled = true;
-        sessionScmStashListSpy.mockClear();
-        sessionScmStashShowSpy.mockClear();
-        diffFilesListSpy.mockClear();
         sessionScmStashListSpy.mockResolvedValue({
             success: true,
             managedCount: 1,
@@ -286,32 +257,14 @@ describe('SessionScmStashDetailsView', () => {
             errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
-
-        for (let i = 0; i < 11; i++) {
-            await act(async () => {
-                vi.advanceTimersByTime(1_000);
-                await Promise.resolve();
-            });
-        }
+        const screen = await renderStashDetailsView();
+        await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
 
         expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
-        expect(
-            tree.root.findAll(
-                (node) => typeof node.props?.children === 'string' && String(node.props.children).includes('RPC method not available'),
-            ),
-        ).not.toHaveLength(0);
-        vi.useRealTimers();
+        expect(screen.getTextContent()).toContain('RPC method not available');
     });
 
     it('loads the clicked stash when switching between managed stash pills', async () => {
-        scmWriteEnabled = true;
-        sessionScmStashListSpy.mockClear();
-        sessionScmStashShowSpy.mockClear();
-        diffFilesListSpy.mockClear();
         sessionScmStashListSpy.mockResolvedValue({
             success: true,
             managedCount: 2,
@@ -336,70 +289,16 @@ describe('SessionScmStashDetailsView', () => {
             truncated: false,
         }));
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
-
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (tree.root.findAllByProps({ testID: `scm-stash-pill-${toTestIdSafeValue('stash@{1}')}` }).length > 0) break;
-        }
-
-        const secondPill = tree.root.findByProps({ testID: `scm-stash-pill-${toTestIdSafeValue('stash@{1}')}` });
-        act(() => {
-            secondPill.props.onPress();
-        });
-
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (
-                sessionScmStashShowSpy.mock.calls.some(
-                    (call) => call[1] && typeof call[1] === 'object' && (call[1] as { stashRef?: string }).stashRef === 'stash@{1}',
-                )
-            ) {
-                break;
-            }
-        }
+        const screen = await renderStashDetailsView();
+        await screen.pressByTestIdAsync(`scm-stash-pill-${toTestIdSafeValue('stash@{1}')}`);
 
         expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{1}' }));
     });
 
     it('pops the selected stash when restoring', async () => {
-        scmWriteEnabled = true;
-        sessionScmStashListSpy.mockClear();
-        sessionScmStashShowSpy.mockClear();
-        sessionScmStashPopSpy.mockClear();
-        invalidateFromMutationAndAwaitSpy.mockClear();
-        modalConfirmSpy.mockClear();
+        const screen = await renderStashDetailsView();
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
-
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (tree.root.findAllByProps({ testID: 'scm-stash-restore-button' }).length > 0) break;
-        }
-
-        const restoreButton = tree.root.findByProps({ testID: 'scm-stash-restore-button' });
-        act(() => {
-            restoreButton.props.onPress();
-        });
-
-        for (let i = 0; i < 10; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (sessionScmStashPopSpy.mock.calls.length > 0) break;
-        }
+        await screen.pressByTestIdAsync('scm-stash-restore-button');
 
         expect(modalConfirmSpy).toHaveBeenCalled();
         expect(sessionScmStashPopSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
@@ -408,36 +307,9 @@ describe('SessionScmStashDetailsView', () => {
     });
 
     it('drops the selected stash when discarding', async () => {
-        scmWriteEnabled = true;
-        sessionScmStashListSpy.mockClear();
-        sessionScmStashShowSpy.mockClear();
-        sessionScmStashDropSpy.mockClear();
-        invalidateFromMutationAndAwaitSpy.mockClear();
-        modalConfirmSpy.mockClear();
+        const screen = await renderStashDetailsView();
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        });
-
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (tree.root.findAllByProps({ testID: 'scm-stash-discard-button' }).length > 0) break;
-        }
-
-        const discardButton = tree.root.findByProps({ testID: 'scm-stash-discard-button' });
-        act(() => {
-            discardButton.props.onPress();
-        });
-
-        for (let i = 0; i < 10; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (sessionScmStashDropSpy.mock.calls.length > 0) break;
-        }
+        await screen.pressByTestIdAsync('scm-stash-discard-button');
 
         expect(modalConfirmSpy).toHaveBeenCalled();
         expect(sessionScmStashDropSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));

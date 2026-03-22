@@ -8,6 +8,7 @@ The **Session** settings screen controls how Happier sessions behave in the app.
 Recent versions split the advanced controls into focused sub-screens so the root page stays easier to scan:
 
 - **Permissions**
+- **Session handoff**
 - **Transcript**
 - **Tool Rendering**
 
@@ -23,6 +24,7 @@ Open:
 From there, use the dedicated entries to open:
 
 - **Permissions**
+- **Session handoff**
 - **Transcript**
 - **Tool Rendering**
 
@@ -36,10 +38,67 @@ The root Session screen keeps the controls that affect how you work day to day:
 - **Message history** scope as a dropdown
 - **Input layout** preferences
 - **Replay / resume** defaults
+- **Session handoff** defaults
 - **Terminal connect** options
 - **Attach / local-control launch defaults** such as tmux and Windows remote session mode
 
 This keeps the root screen focused on common workflow choices instead of mixing them with large advanced settings groups.
+
+## Session handoff settings
+
+The dedicated **Session handoff** screen controls the defaults used when you move a session between machines.
+
+It includes:
+
+- **Transfer workspace**
+- **Workspace conflict policy**
+- **Ignored files**
+- **Direct session target mode**
+
+### Workspace transfer defaults
+
+By default, Happier keeps workspace transfer **off**.
+
+You can change the default behavior to:
+
+- transfer the workspace by default
+- keep the target workspace unchanged by default
+
+The handoff modal still lets you override this per handoff.
+
+### Conflict policy
+
+The default conflict policy can be:
+
+- **Create sibling copy**
+- **Replace existing path**
+
+This controls what should happen if the destination path already exists.
+
+### Ignored files
+
+The default ignored-file mode can be:
+
+- **Exclude ignored files**
+- **Include selected ignored files**
+
+If you choose **Include selected ignored files**, you can set comma-separated include globs such as:
+
+- `dist/**`
+- `.env.local`
+
+### Direct session target mode
+
+This applies only when the source session is currently **Direct**.
+
+You can choose:
+
+- **Keep direct**
+- **Convert to synced**
+
+That setting becomes the default choice in the handoff modal, but you can still override it case by case.
+
+For the full workflow, see [Session handoff](./session-handoff).
 
 ## Attach and local-control settings
 
@@ -179,5 +238,6 @@ If you are looking for a setting and no longer see it inline on the root Session
 
 ## Related guides
 
+- [Session handoff](./session-handoff)
 - [ACP backends](./acp-backends)
 - [Profiles](./profiles)

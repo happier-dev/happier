@@ -4,6 +4,7 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { resolveOpenCodeServerAuthHeadersFromEnv } from './openCodeServerAuth';
 import { subscribeSseJson } from './openCodeSse';
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodeSession } from './types';
+import { waitForOpenCodeServerHealth } from './waitForOpenCodeServerHealth';
 import {
   ensureSharedManagedOpenCodeServerBaseUrl,
   isLoopbackManagedOpenCodeBaseUrl,
@@ -49,12 +50,30 @@ async function fetchJson<T>(params: {
   return (await response.json()) as T;
 }
 
+function isRetryableManagedServerTransportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.startsWith('opencode http ')) return false;
+  return (
+    normalized.includes('fetch failed')
+    || normalized.includes('econnrefused')
+    || normalized.includes('econnreset')
+    || normalized.includes('socket hang up')
+    || normalized.includes('connect_error')
+    || normalized.includes('terminated')
+    || normalized.includes('networkerror')
+    || normalized.includes('other side closed')
+  );
+}
+
 export type OpenCodeServerRuntimeClient = Readonly<{
   setDirectoryOverride: (directory: string) => void;
   sessionList: () => Promise<unknown[]>;
   sessionCreate: (opts?: { permission?: unknown[] }) => Promise<OpenCodeSession>;
   sessionGet: (opts: { sessionId: string }) => Promise<OpenCodeSession>;
   sessionMessagesList: (opts: { sessionId: string }) => Promise<unknown[]>;
+  sessionDiff: (opts: { sessionId: string; messageId?: string }) => Promise<unknown[]>;
   sessionStatusList: () => Promise<Record<string, { type?: string }>>;
   globalConfigGet: () => Promise<{ model?: string }>;
   agentsList: () => Promise<ReadonlyArray<{ name: string; description?: string }>>;
@@ -80,9 +99,9 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
-function resolveSseReconnectDelayMs(attempt: number): number {
-  const baseRaw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SSE_RECONNECT_BASE_DELAY_MS ?? ''), 10);
-  const maxRaw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SSE_RECONNECT_MAX_DELAY_MS ?? ''), 10);
+function resolveSseReconnectDelayMs(attempt: number, env: NodeJS.ProcessEnv): number {
+  const baseRaw = Number.parseInt(String(env.HAPPIER_OPENCODE_SSE_RECONNECT_BASE_DELAY_MS ?? ''), 10);
+  const maxRaw = Number.parseInt(String(env.HAPPIER_OPENCODE_SSE_RECONNECT_MAX_DELAY_MS ?? ''), 10);
   const baseMs = Number.isFinite(baseRaw) && baseRaw > 0 ? Math.trunc(baseRaw) : 250;
   const maxMs = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.trunc(maxRaw) : 5_000;
 
@@ -124,12 +143,13 @@ async function sleepUntilOrAbort(ms: number, signal: AbortSignal): Promise<void>
   });
 }
 
-export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer; baseUrlOverride?: string | null }>): Promise<OpenCodeServerRuntimeClient> {
+export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer; baseUrlOverride?: string | null; env?: NodeJS.ProcessEnv }>): Promise<OpenCodeServerRuntimeClient> {
+  const env = params.env ?? process.env;
   const baseUrlOverrideRaw = typeof params.baseUrlOverride === 'string' ? params.baseUrlOverride.trim() : '';
-  const envUrlRaw = typeof process.env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? process.env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
+  const envUrlRaw = typeof env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
   const usingManagedServer = baseUrlOverrideRaw.length === 0 && envUrlRaw.length === 0;
 
-  const headers = resolveOpenCodeServerAuthHeadersFromEnv();
+  const headers = resolveOpenCodeServerAuthHeadersFromEnv(env);
 
   let directoryOverride = '';
   const resolveDirectory = (): string => {
@@ -200,6 +220,36 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
     }
   };
 
+  const waitForManagedServerHealthAfterRefreshBestEffort = async (): Promise<void> => {
+    if (!usingManagedServer) return;
+    try {
+      await waitForOpenCodeServerHealth({
+        baseUrl,
+        timeoutMs: 2_000,
+        pollIntervalMs: 100,
+        headers,
+      });
+    } catch {
+      // best-effort only; caller will decide whether to propagate the original error
+    }
+  };
+
+  const fetchJsonWithManagedServerRetry = async <T>(
+    request: (currentBaseUrl: string) => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await request(baseUrl);
+    } catch (error) {
+      if (!usingManagedServer || !isRetryableManagedServerTransportError(error)) {
+        throw error;
+      }
+      logger.debug('[OpenCodeServer] Retrying managed HTTP request after transient transport failure', error);
+      await refreshBaseUrlIfManagedBestEffort();
+      await waitForManagedServerHealthAfterRefreshBestEffort();
+      return await request(baseUrl);
+    }
+  };
+
   // Best-effort health probe (useful for diagnostics if url is stale).
   try {
     await fetchJson<{ healthy: boolean; version: string }>({
@@ -247,19 +297,30 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       });
     },
     sessionMessagesList: async ({ sessionId }) => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/message`, { directory: resolveDirectory() }),
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/message`, { directory: resolveDirectory() }),
         method: 'GET',
         headers,
-      });
+      }));
+      return Array.isArray(raw) ? raw : [];
+    },
+    sessionDiff: async ({ sessionId, messageId }) => {
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/diff`, {
+          directory: resolveDirectory(),
+          ...(messageId ? { messageID: messageId } : {}),
+        }),
+        method: 'GET',
+        headers,
+      }));
       return Array.isArray(raw) ? raw : [];
     },
     sessionStatusList: async () => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, '/session/status', { directory: resolveDirectory() }),
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, '/session/status', { directory: resolveDirectory() }),
         method: 'GET',
         headers,
-      });
+      }));
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
       return raw as Record<string, { type?: string }>;
     },
@@ -311,8 +372,8 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       });
     },
     sessionPromptAsync: async ({ sessionId, messageId, parts, agent, model, config }) => {
-      await fetchJson<void>({
-        url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/prompt_async`, { directory: resolveDirectory() }),
+      await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<void>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/prompt_async`, { directory: resolveDirectory() }),
         method: 'POST',
         headers,
         body: {
@@ -322,7 +383,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
           ...(config ? { config } : {}),
           parts,
         },
-      });
+      }));
     },
     sessionAbort: async ({ sessionId }) => {
       await fetchJson<void>({
@@ -420,7 +481,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
             if (disposed || signal.aborted || localAbort.signal.aborted) break;
             logger.debug('[OpenCodeServer] SSE stream ended; reconnecting (best-effort)', error);
             await refreshBaseUrlIfManagedBestEffort();
-            const delayMs = resolveSseReconnectDelayMs(attempt);
+            const delayMs = resolveSseReconnectDelayMs(attempt, env);
             attempt += 1;
             await sleepUntilOrAbort(delayMs, combinedAbort.signal);
           } finally {

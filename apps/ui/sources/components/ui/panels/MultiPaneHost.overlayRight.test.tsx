@@ -1,18 +1,17 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 import { MultiPaneHost } from './MultiPaneHost';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (overlayRight)', () => {
-    it('renders a scrim for overlay right and closes on scrim press', () => {
+    it('renders a scrim for overlay right and closes on scrim press', async () => {
         vi.useFakeTimers();
         const onCloseRight = vi.fn();
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHost
+        const screen = await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={null}
@@ -23,15 +22,19 @@ describe('MultiPaneHost (overlayRight)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />
-            );
-        });
+                />);
 
-        const overlay = tree!.root.findByProps({ testID: 'multi-pane-right-overlay' });
-        const overlayWrapper = overlay.parent;
+        const overlay = screen.findByTestId('multi-pane-right-overlay');
+        if (!overlay) {
+            throw new Error('Expected right overlay to be present');
+        }
+        const overlayWrapper = overlay.parent?.parent;
         expect(readZIndex(overlayWrapper?.props?.style)).toBeGreaterThan(0);
 
-        const scrim = tree!.root.findByProps({ testID: 'multi-pane-right-scrim' });
+        const scrim = screen.findByTestId('multi-pane-right-scrim');
+        if (!scrim) {
+            throw new Error('Expected right scrim to be present');
+        }
         act(() => {
             scrim.props.onPress();
         });
@@ -42,7 +45,7 @@ describe('MultiPaneHost (overlayRight)', () => {
         expect(onCloseRight).toHaveBeenCalledTimes(1);
     });
 
-    it('closes overlay right on Escape key press (web)', () => {
+    it('closes overlay right on Escape key press (web)', async () => {
         vi.useFakeTimers();
         const onCloseRight = vi.fn();
         const fakeWindow = new (globalThis as any).EventTarget();
@@ -55,10 +58,7 @@ describe('MultiPaneHost (overlayRight)', () => {
             }
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHost
+        const screen = await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={null}
@@ -69,11 +69,9 @@ describe('MultiPaneHost (overlayRight)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />
-            );
-        });
+                />);
 
-        expect(tree!.root.findByProps({ testID: 'multi-pane-right-scrim' })).toBeTruthy();
+        expect(screen.findByTestId('multi-pane-right-scrim')).toBeTruthy();
         act(() => {
             (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
         });

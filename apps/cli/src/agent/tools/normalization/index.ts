@@ -25,6 +25,10 @@ import { normalizeWebFetchInput, normalizeWebFetchResult, normalizeWebSearchInpu
 import { normalizeTaskInput, normalizeTaskResult } from './families/task';
 import { normalizeChangeTitleResult } from './families/changeTitle';
 import { normalizeMcpInput, normalizeMcpResult } from './families/mcp';
+import {
+    extractCanonicalInputFromHappierToolsShellBridge,
+    resolveCanonicalToolNameFromHappierToolsShellBridge,
+} from './happierToolsShellBridgeCanonicalization';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -64,7 +68,9 @@ function withCommonErrorMessage(normalized: UnknownRecord): UnknownRecord {
         (normalized as any).isError === true ||
         (normalized as any).ok === false ||
         (normalized as any).success === false ||
-        (normalized as any).applied === false;
+        (normalized as any).applied === false ||
+        (typeof (normalized as any).exit_code === 'number' && Number.isFinite((normalized as any).exit_code) && (normalized as any).exit_code !== 0) ||
+        (typeof (normalized as any).exitCode === 'number' && Number.isFinite((normalized as any).exitCode) && (normalized as any).exitCode !== 0);
 
     // Only promote message/text as an errorMessage when the result indicates failure.
     if (!isError && chosen === (normalized as any).message) chosen = null;
@@ -82,6 +88,8 @@ export function canonicalizeToolNameV2(opts: {
 }): string {
     const name = opts.toolName;
     const lower = name.toLowerCase();
+    const shellBridgeCanonical = resolveCanonicalToolNameFromHappierToolsShellBridge(opts.toolInput);
+    if (shellBridgeCanonical) return shellBridgeCanonical;
     const record = asRecord(opts.toolInput) ?? {};
     const titleCandidate =
         typeof (record as any).title === 'string'
@@ -100,6 +108,8 @@ export function canonicalizeToolNameV2(opts: {
         for (const candidate of candidates) {
             const t = candidate.trim().toLowerCase();
             if (!t) continue;
+            if (/^web(?:[\s_-]*fetch)\b/.test(t) || t === 'webfetch') return 'WebFetch';
+            if (/^web(?:[\s_-]*search)\b/.test(t) || t === 'websearch') return 'WebSearch';
             if (/^read(?:[\s_-]*file)?\b/.test(t) || t === 'readfile') return 'Read';
             if (/^write(?:[\s_-]*file)?\b/.test(t) || t === 'writefile') return 'Write';
             if (/^edit(?:[\s_-]*file)?\b/.test(t) || t === 'editfile') return 'Edit';
@@ -229,6 +239,7 @@ export function canonicalizeToolNameV2(opts: {
     }
     if (lower === 'grep') return 'Grep';
     if (lower === 'ls') return 'LS';
+    if (lower === 'search' && inferredFromTitle === 'WebSearch') return inferredFromTitle;
     if (lower === 'search') return 'CodeSearch';
 
     // Web.
@@ -267,7 +278,8 @@ export function canonicalizeToolNameV2(opts: {
 
     // Tasks / notebooks.
     // Claude emits TaskCreate/TaskList/TaskUpdate; keep them unified for rendering.
-    if (lower === 'task' || lower.startsWith('task')) return 'Task';
+    if (lower === 'task' || lower.startsWith('task')) return 'SubAgent';
+    if (name === 'Agent') return 'SubAgent';
     if (lower === 'todowrite') return 'TodoWrite';
     if (lower === 'todoread') return 'TodoRead';
 
@@ -288,8 +300,10 @@ export function normalizeToolCallInputV2(opts: {
     canonicalToolName: string;
     rawInput: unknown;
 }): unknown {
+    const effectiveRawInput = extractCanonicalInputFromHappierToolsShellBridge(opts.rawInput) ?? opts.rawInput;
+
     if (opts.canonicalToolName.startsWith('mcp__')) {
-        const normalized = normalizeMcpInput(opts.canonicalToolName, opts.rawInput);
+        const normalized = normalizeMcpInput(opts.canonicalToolName, effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -366,8 +380,8 @@ export function normalizeToolCallInputV2(opts: {
         return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
     }
 
-    if (opts.canonicalToolName === 'Task') {
-        const normalized = normalizeTaskInput(opts.toolName, opts.rawInput);
+    if (opts.canonicalToolName === 'SubAgent' || opts.canonicalToolName === 'Task') {
+        const normalized = normalizeTaskInput(opts.toolName, effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -380,7 +394,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Write') {
-        const normalized = normalizeWriteInput(opts.rawInput);
+        const normalized = normalizeWriteInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -393,7 +407,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Edit') {
-        const normalized = normalizeEditInput(opts.rawInput);
+        const normalized = normalizeEditInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -406,7 +420,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'MultiEdit') {
-        const normalized = normalizeMultiEditInput(opts.rawInput);
+        const normalized = normalizeMultiEditInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -419,7 +433,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Diff') {
-        const normalized = normalizeDiffInput(opts.rawInput);
+        const normalized = normalizeDiffInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -432,7 +446,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Patch') {
-        const normalized = normalizePatchInput(opts.rawInput);
+        const normalized = normalizePatchInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -445,7 +459,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Reasoning') {
-        const normalized = normalizeReasoningInput(opts.rawInput);
+        const normalized = normalizeReasoningInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -458,7 +472,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Glob') {
-        const normalized = normalizeGlobInput(opts.rawInput);
+        const normalized = normalizeGlobInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -471,7 +485,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'CodeSearch') {
-        const normalized = normalizeCodeSearchInput(opts.rawInput);
+        const normalized = normalizeCodeSearchInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -484,7 +498,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Grep') {
-        const normalized = normalizeGrepInput(opts.rawInput);
+        const normalized = normalizeGrepInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -497,7 +511,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'LS') {
-        const normalized = normalizeLsInput(opts.rawInput);
+        const normalized = normalizeLsInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -510,7 +524,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'WebFetch') {
-        const normalized = normalizeWebFetchInput(opts.rawInput);
+        const normalized = normalizeWebFetchInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -523,7 +537,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'WebSearch') {
-        const normalized = normalizeWebSearchInput(opts.rawInput);
+        const normalized = normalizeWebSearchInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -542,7 +556,7 @@ export function normalizeToolCallInputV2(opts: {
         rawToolName: opts.toolName,
         canonicalToolName: opts.canonicalToolName,
     };
-    const record = asRecord(opts.rawInput) ?? {};
+    const record = asRecord(effectiveRawInput) ?? {};
     const withHappier = mergeHappierMeta(record, meta);
     return { ...withHappier, _raw: truncateDeep(opts.rawInput) };
 }
@@ -631,7 +645,7 @@ export function normalizeToolResultV2(opts: {
         if (opts.canonicalToolName === 'Reasoning') {
             return normalizeReasoningResult(opts.rawOutput);
         }
-        if (opts.canonicalToolName === 'Task') {
+        if (opts.canonicalToolName === 'SubAgent' || opts.canonicalToolName === 'Task') {
             return normalizeTaskResult(opts.rawOutput);
         }
         if (opts.canonicalToolName === 'change_title') {

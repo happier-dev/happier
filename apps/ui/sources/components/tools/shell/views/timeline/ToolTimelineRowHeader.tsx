@@ -17,6 +17,7 @@ export type ToolTimelineRowHeaderDisclosure =
 
 export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(props: {
     testID?: string;
+    openActionTestID?: string;
     density: ToolTimelineRowDensity;
     icon: React.ReactNode;
     title: string;
@@ -125,6 +126,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                     ]}
                 >
                     <Pressable
+                        testID={props.openActionTestID}
                         onPress={handleOpenPress}
                         onHoverIn={trackHoverState ? handleHoverIn : undefined}
                         onHoverOut={trackHoverState ? handleHoverOut : undefined}

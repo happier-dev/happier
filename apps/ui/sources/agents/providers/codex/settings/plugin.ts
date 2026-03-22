@@ -1,6 +1,6 @@
 import { CODEX_PROVIDER_FIELDS } from '@happier-dev/agents';
 
-import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
+import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
 
 export const CODEX_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     providerId: 'codex',
@@ -19,6 +19,11 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                     title: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.title' },
                     subtitle: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.subtitle' },
                     enumOptions: [
+                        {
+                            id: 'appServer',
+                            title: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.appServer.title' },
+                            subtitle: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.appServer.subtitle' },
+                        },
                         {
                             id: 'acp',
                             title: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.acp.title' },

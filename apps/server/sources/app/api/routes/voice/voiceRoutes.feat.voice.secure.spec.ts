@@ -1,58 +1,32 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
+import { createEnvReset } from "../../testkit/env";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-const leaseCount = vi.fn();
-const leaseCreate = vi.fn();
-const leaseFindMany = vi.fn();
-const leaseDelete = vi.fn();
-const leaseDeleteMany = vi.fn();
-const conversationAggregate = vi.fn();
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        $transaction: async (fn: any) => fn({
-            voiceSessionLease: {
-                count: (...args: any[]) => leaseCount(...args),
-                create: (...args: any[]) => leaseCreate(...args),
-                findMany: (...args: any[]) => leaseFindMany(...args),
-                delete: (...args: any[]) => leaseDelete(...args),
-                deleteMany: (...args: any[]) => leaseDeleteMany(...args),
-            },
-            voiceConversation: {
-                aggregate: (...args: any[]) => conversationAggregate(...args),
-            },
-        }),
-        voiceSessionLease: {
-            count: (...args: any[]) => leaseCount(...args),
-            create: (...args: any[]) => leaseCreate(...args),
-            findMany: (...args: any[]) => leaseFindMany(...args),
-            delete: (...args: any[]) => leaseDelete(...args),
-            deleteMany: (...args: any[]) => leaseDeleteMany(...args),
-        },
-        voiceConversation: {
-            aggregate: (...args: any[]) => conversationAggregate(...args),
-        },
-    },
+const dbMocks = createDbMocks({
+    voiceSessionLease: ["count", "create", "findMany", "delete", "deleteMany"],
+    voiceConversation: ["aggregate"],
+} as const);
+const leaseCount = dbMocks.db.voiceSessionLease.count;
+const leaseCreate = dbMocks.db.voiceSessionLease.create;
+const leaseFindMany = dbMocks.db.voiceSessionLease.findMany;
+const leaseDelete = dbMocks.db.voiceSessionLease.delete;
+const leaseDeleteMany = dbMocks.db.voiceSessionLease.deleteMany;
+const conversationAggregate = dbMocks.db.voiceConversation.aggregate;
+const dbTransaction = createDbTransactionMock(() => ({
+    voiceSessionLease: dbMocks.db.voiceSessionLease,
+    voiceConversation: dbMocks.db.voiceConversation,
 }));
 
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get() { }
-    post(path: string, _opts: any, handler: any) {
-        this.routes.set(`POST ${path}`, handler);
-    }
-}
-
-function replyStub() {
-    const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
-    return reply;
-}
+installDbModuleMock(() => ({
+    db: dbTransaction.wrapDb(dbMocks.db),
+}));
 
 describe("voiceRoutes (secure)", () => {
-    const originalEnv = process.env;
+    const resetVoiceEnv = createEnvReset();
     const originalFetch = globalThis.fetch;
 
     beforeEach(() => {
@@ -60,15 +34,9 @@ describe("voiceRoutes (secure)", () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-02-03T12:00:00.000Z"));
         vi.clearAllMocks();
-        leaseCount.mockResolvedValue(0);
-        leaseCreate.mockResolvedValue({ id: "lease_1" });
-        leaseFindMany.mockResolvedValue([{ id: "lease_1" }]);
-        leaseDelete.mockResolvedValue({});
-        leaseDeleteMany.mockResolvedValue({ count: 0 });
-        conversationAggregate.mockResolvedValue({ _sum: { durationSeconds: 0 } });
-
-        process.env = {
-            ...originalEnv,
+        dbMocks.reset();
+        dbTransaction.transaction.mockClear();
+        resetVoiceEnv({
             NODE_ENV: "production",
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
@@ -77,60 +45,98 @@ describe("voiceRoutes (secure)", () => {
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
-        };
+        });
+        leaseCount.mockResolvedValue(0);
+        leaseCreate.mockResolvedValue({ id: "lease_1" });
+        leaseFindMany.mockResolvedValue([{ id: "lease_1" }]);
+        leaseDelete.mockResolvedValue({});
+        leaseDeleteMany.mockResolvedValue({ count: 0 });
+        conversationAggregate.mockResolvedValue({ _sum: { durationSeconds: 0 } });
 
         globalThis.fetch = vi.fn() as any;
     });
 
     afterEach(() => {
         vi.useRealTimers();
-        process.env = originalEnv;
+        resetVoiceEnv();
         globalThis.fetch = originalFetch;
     });
 
     it("returns 403 when voice is disabled", async () => {
-        process.env.HAPPIER_FEATURE_VOICE__ENABLED = "0";
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "0",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "voice_disabled" }));
     });
 
     it("returns 403 when build policy denies voice even if voice is requested but misconfigured", async () => {
-        process.env.HAPPIER_FEATURE_POLICY_ENV = "preview";
-        process.env.HAPPIER_EMBEDDED_POLICY_ENV = "preview";
-        delete process.env.ELEVENLABS_API_KEY;
-        delete process.env.ELEVENLABS_AGENT_ID_PROD;
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            HAPPIER_FEATURE_POLICY_ENV: "preview",
+            HAPPIER_EMBEDDED_POLICY_ENV: "preview",
+            ELEVENLABS_API_KEY: undefined,
+            ELEVENLABS_AGENT_ID_PROD: undefined,
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "voice_disabled" }));
     });
 
     it("returns 503 when ElevenLabs is not configured", async () => {
-        delete process.env.ELEVENLABS_API_KEY;
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: undefined,
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(503);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false }));
@@ -143,12 +149,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "subscription_required" }));
@@ -156,8 +164,17 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 403 quota_exceeded when user is not subscribed and free minutes are exhausted", async () => {
-        process.env.VOICE_FREE_MINUTES_PER_MONTH = "1";
-        process.env.VOICE_FREE_SESSIONS_PER_MONTH = "0";
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            VOICE_FREE_MINUTES_PER_MONTH: "1",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 60 } });
 
         (globalThis.fetch as any).mockResolvedValueOnce({
@@ -166,12 +183,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "quota_exceeded" }));
@@ -184,12 +203,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(503);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
@@ -202,12 +223,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(503);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
@@ -221,12 +244,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(503);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
@@ -242,12 +267,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(429);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "too_many_sessions" }));
@@ -267,12 +294,14 @@ describe("voiceRoutes (secure)", () => {
             });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        const res = await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { response: res, reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).not.toHaveBeenCalled();
         expect(res).toEqual(expect.objectContaining({ allowed: true, token: "conv_token", leaseId: "lease_1", expiresAtMs: expect.any(Number) }));
@@ -293,14 +322,15 @@ describe("voiceRoutes (secure)", () => {
             });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/lease/mint",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("POST /v1/voice/lease/mint");
-        expect(handler).toBeTruthy();
-
-        const reply = replyStub();
-        const res = await handler({ userId: "u1", body: {} }, reply);
+        const { response: res, reply } = await route.invoke({ userId: "u1", body: {} });
 
         expect(reply.code).not.toHaveBeenCalled();
         expect(res).toEqual(
@@ -325,12 +355,14 @@ describe("voiceRoutes (secure)", () => {
             });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "   " } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "   " } });
 
         expect(reply.code).not.toHaveBeenCalled();
         expect(leaseCreate).toHaveBeenCalledWith(
@@ -341,8 +373,18 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 403 when max minutes per day is exceeded", async () => {
-        process.env.HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION = "0";
-        process.env.VOICE_MAX_MINUTES_PER_DAY = "1";
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "0",
+            VOICE_MAX_MINUTES_PER_DAY: "1",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 60 } });
         (globalThis.fetch as any).mockResolvedValueOnce({
             ok: true,
@@ -350,12 +392,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "quota_exceeded" }));
@@ -363,18 +407,30 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 403 when max minutes per day is exceeded by pending leases", async () => {
-        process.env.HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION = "0";
-        process.env.VOICE_MAX_MINUTES_PER_DAY = "1";
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "0",
+            VOICE_MAX_MINUTES_PER_DAY: "1",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 0 } });
         leaseCount.mockResolvedValueOnce(1);
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "quota_exceeded" }));
@@ -382,8 +438,17 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 403 quota_exceeded when free minutes are exhausted by pending leases", async () => {
-        process.env.VOICE_FREE_MINUTES_PER_MONTH = "1";
-        process.env.VOICE_FREE_SESSIONS_PER_MONTH = "0";
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            REVENUECAT_SECRET_KEY: "rc_secret",
+            VOICE_FREE_MINUTES_PER_MONTH: "1",
+            VOICE_FREE_SESSIONS_PER_MONTH: "0",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 0 } });
         leaseCount.mockResolvedValueOnce(1);
 
@@ -393,12 +458,14 @@ describe("voiceRoutes (secure)", () => {
         });
 
         const { voiceRoutes } = await import("./voiceRoutes");
-        const app = new FakeApp();
-        voiceRoutes(app as any);
-
-        const handler = app.routes.get("POST /v1/voice/token");
-        const reply = replyStub();
-        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
 
         expect(reply.code).toHaveBeenCalledWith(403);
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "quota_exceeded" }));

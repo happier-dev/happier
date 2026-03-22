@@ -1,11 +1,11 @@
 import type { AgentBackend } from '@/agent/core';
-import { AGENTS, type CatalogAgentId } from '@/backends/catalog';
+import { requireCatalogEntry, type CatalogAgentId } from '@/backends/catalog';
 import type { CatalogAcpBackendCreateResult, CatalogAcpBackendFactory } from '@/backends/types';
 
 const cachedFactoryPromises = new Map<CatalogAgentId, Promise<CatalogAcpBackendFactory>>();
 
 async function loadCatalogAcpFactory(agentId: CatalogAgentId): Promise<CatalogAcpBackendFactory> {
-  const entry = AGENTS[agentId];
+  const entry = requireCatalogEntry(agentId);
   if (!entry.getAcpBackendFactory) {
     throw new Error(`Agent '${agentId}' does not support ACP backends`);
   }

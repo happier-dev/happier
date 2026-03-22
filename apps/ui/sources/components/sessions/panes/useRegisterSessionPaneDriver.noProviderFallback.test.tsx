@@ -1,17 +1,23 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: { ...rn.Platform, OS: 'web', select: (value: any) => value?.default ?? null },
-        View: (props: any) => React.createElement('View', props, props.children),
-        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            Platform: {
+                                                            OS: 'web',
+                                                            select: (value: any) => value?.default ?? null,
+                                                        },
+                                                            View: (props: any) => React.createElement('View', props, props.children),
+                                                            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
+                                                        }
+    );
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -22,9 +28,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('./SessionRightPanel', () => ({
     SessionRightPanel: () => React.createElement('SessionRightPanel'),
@@ -48,9 +55,7 @@ describe('useRegisterSessionPaneDriver (no provider fallback)', () => {
             return React.createElement('Probe');
         };
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
         expect(capturedScopeId).toBe('session:s1');
     });

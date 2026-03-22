@@ -25,11 +25,14 @@ function parsePositiveInt(params: {
         if (typeof params.fallback === 'number') return params.fallback;
         throw new Error(`${params.key} must be set`);
     }
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value < 1) {
+    if (!/^\d+$/.test(raw)) {
         throw new Error(`${params.key} must be a positive integer`);
     }
-    return Math.floor(value);
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw new Error(`${params.key} must be a positive integer`);
+    }
+    return value;
 }
 
 function readAgePolicy(params: {

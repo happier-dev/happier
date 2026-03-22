@@ -1,8 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import { createRootLayoutFeaturesResponse, renderSettingsView } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -13,15 +13,20 @@ vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Platform: {
-        OS: 'ios',
-        select: (spec: Record<string, unknown>) =>
-            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Text: 'Text',
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: (spec: Record<string, unknown>) =>
+                                            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+                                    },
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', async () => {
     const Ionicons = Object.assign(
@@ -31,15 +36,19 @@ vi.mock('@expo/vector-icons', async () => {
     return { Ionicons };
 });
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: vi.fn(async () => false),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -55,6 +64,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
 const useServerFeaturesMainSelectionSnapshotMock = vi.fn();
@@ -78,13 +91,20 @@ function createNoopMutable<T>(value: T): MutableHookResult<T> {
     return [value, vi.fn()] as const;
 }
 
+function listTitles(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
+    return screen.findAll((node) => typeof node.props?.title === 'string').map((node) => node.props.title as string);
+}
+
 const useSettingMutableMock = vi.fn();
 const useLocalSettingMutableMock = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSettingMutable: (key: string) => useSettingMutableMock(key),
     useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
-}));
+});
+});
 
 describe('FeaturesSettingsScreen gating', () => {
     beforeEach(() => {
@@ -126,16 +146,10 @@ describe('FeaturesSettingsScreen gating', () => {
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const allTitles = items.map((i) => i.props.title);
-        const featureGroup = tree!.root.findAllByType('ItemGroup' as any).find((g) => g.props.title === 'Features') ?? null;
-        const featureItems = featureGroup ? featureGroup.findAllByType('Item' as any) : [];
-        const titles = featureItems.map((i) => i.props.title);
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const allTitles = listTitles(screen);
+        const featureGroup = screen.findGroup('settingsFeatures.experiments');
+        const titles = featureGroup ? featureGroup.findAllByType('Item' as any).map((i) => i.props.title) : [];
 
         expect(allTitles).not.toContain('settingsFeatures.hideInactiveSessions');
         expect(allTitles).not.toContain('settingsFeatures.sessionListActiveGrouping');
@@ -166,16 +180,10 @@ describe('FeaturesSettingsScreen gating', () => {
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const allTitles = items.map((i) => i.props.title);
-        const featureGroup = tree!.root.findAllByType('ItemGroup' as any).find((g) => g.props.title === 'Features') ?? null;
-        const featureItems = featureGroup ? featureGroup.findAllByType('Item' as any) : [];
-        const titles = featureItems.map((i) => i.props.title);
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const allTitles = listTitles(screen);
+        const featureGroup = screen.findGroup('settingsFeatures.experiments');
+        const titles = featureGroup ? featureGroup.findAllByType('Item' as any).map((i) => i.props.title) : [];
 
         expect(allTitles).not.toContain('settingsFeatures.hideInactiveSessions');
         expect(allTitles).not.toContain('settingsFeatures.sessionListActiveGrouping');
@@ -202,13 +210,8 @@ describe('FeaturesSettingsScreen gating', () => {
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const voiceAgentItem = items.find((i) => i.props.title === 'settingsFeatures.expVoiceAgent') ?? null;
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const voiceAgentItem = screen.findRowByTitle('settingsFeatures.expVoiceAgent');
         expect(voiceAgentItem).toBeTruthy();
     });
 
@@ -233,13 +236,8 @@ describe('FeaturesSettingsScreen gating', () => {
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const connectedServicesItem = items.find((i) => i.props.title === 'settingsFeatures.expConnectedServices') ?? null;
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const connectedServicesItem = screen.findRowByTitle('settingsFeatures.expConnectedServices');
         expect(connectedServicesItem).toBeTruthy();
 
         await act(async () => {
@@ -273,15 +271,42 @@ describe('FeaturesSettingsScreen gating', () => {
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const quotasItem = items.find((i) => i.props.title === 'settingsFeatures.expConnectedServicesQuotas') ?? null;
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const quotasItem = screen.findRowByTitle('settingsFeatures.expConnectedServicesQuotas');
         expect(quotasItem).toBeTruthy();
         expect(quotasItem!.props.rightElement.props.disabled).toBe(true);
         expect(quotasItem!.props.rightElement.props.value).toBe(false);
+    });
+
+    it('shows embedded terminal dock location setting when terminal.embeddedPty is enabled', async () => {
+        vi.resetModules();
+
+        useSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'experiments') return createNoopMutable(true);
+            if (key === 'featureToggles') return createNoopMutable({ 'terminal.embeddedPty': true });
+            if (key === 'useProfiles') return createNoopMutable(false);
+            if (key === 'agentInputEnterToSend') return createNoopMutable(false);
+            if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
+            if (key === 'hideInactiveSessions') return createNoopMutable(false);
+            if (key === 'groupInactiveSessionsByProject') return createNoopMutable(false);
+            if (key === 'showEnvironmentBadge') return createNoopMutable(false);
+            if (key === 'useEnhancedSessionWizard') return createNoopMutable(false);
+            if (key === 'useMachinePickerSearch') return createNoopMutable(false);
+            if (key === 'usePathPickerSearch') return createNoopMutable(false);
+            return createNoopMutable(null);
+        });
+
+        useLocalSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'commandPaletteEnabled') return createNoopMutable(false);
+            if (key === 'devModeEnabled') return createNoopMutable(false);
+            if (key === 'embeddedTerminalDockLocation') return createNoopMutable('sidebar');
+            return createNoopMutable(false);
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
+
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const menu = screen.findAll((node) => node.props?.itemTrigger?.title === 'terminalEmbedded.settings.locationTitle')[0] ?? null;
+        expect(menu).toBeTruthy();
     });
 });

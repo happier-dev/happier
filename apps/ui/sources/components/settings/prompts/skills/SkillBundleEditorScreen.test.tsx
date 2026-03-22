@@ -1,6 +1,8 @@
+import { createPartialStorageModuleMock, flushHookEffects } from '@/dev/testkit';
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +13,7 @@ const createSkillPromptBundleSpy = vi.fn(async () => 'new-bundle');
 const updateSkillPromptBundleSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
 let latestFocusEffect: (() => void) | undefined;
+const fetchArtifactWithBodySpy = vi.fn(async () => null);
 const promptExternalLinksState = vi.hoisted(() => ({
     value: {
         v: 1,
@@ -25,6 +28,14 @@ const promptExternalLinksState = vi.hoisted(() => ({
                 externalRef: { skillName: 'reviewer' },
                 lastExternalDigest: 'digest-1',
             },
+        ],
+    },
+}));
+const promptFoldersState = vi.hoisted(() => ({
+    value: {
+        v: 1,
+        folders: [
+            { id: 'folder-1', name: 'Ops', parentId: null },
         ],
     },
 }));
@@ -54,46 +65,38 @@ const artifactBodiesState = vi.hoisted(() => ({
     } as Record<string, unknown>,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'web', select: ({ web, default: defaultValue }: any) => web ?? defaultValue },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) =>
-            factory({
-                colors: {
-                    groupped: { background: '#000' },
-                    input: { background: '#111', text: '#fff', placeholder: '#777' },
-                    divider: '#333',
-                    accent: { blue: '#00f' },
-                    textSecondary: '#999',
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                View: 'View',
+                TextInput: 'TextInput',
+                ScrollView: 'ScrollView',
+                Platform: {
+                    OS: 'web',
+                    select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
                 },
-            }),
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { placeholder: '#777' },
-                accent: { blue: '#00f' },
-                textSecondary: '#999',
-            },
-        },
-    }),
-}));
+            }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    Stack: { Screen: 'StackScreen' },
-    useNavigation: () => ({ canGoBack: () => false }),
-    useRouter: () => ({
-        back: routerBackSpy,
-        replace: routerReplaceSpy,
-        push: routerPushSpy,
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            back: routerBackSpy,
+            replace: routerReplaceSpy,
+            push: routerPushSpy,
+        },
+        navigation: { canGoBack: () => false },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (callback: () => void) => {
@@ -104,9 +107,10 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
@@ -141,14 +145,15 @@ vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
     SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', props),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
         getCredentials: () => ({ ok: true }),
-        fetchArtifactWithBody: vi.fn(async () => null),
+        fetchArtifactWithBody: fetchArtifactWithBodySpy,
     },
 }));
 
@@ -179,7 +184,7 @@ description: Describe when this skill should be used.
     updateSkillPromptBundle: updateSkillPromptBundleSpy,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useAllMachines: () => ([
         {
             id: 'machine-1',
@@ -195,12 +200,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
     useSettingMutable: (key: string) => {
         if (key === 'promptFoldersV1') {
-            return [{
-                v: 1,
-                folders: [
-                    { id: 'folder-1', name: 'Ops', parentId: null },
-                ],
-            }, setPromptFoldersSpy];
+            return [promptFoldersState.value, setPromptFoldersSpy];
         }
         return [null, vi.fn()];
     },
@@ -212,6 +212,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
 }));
 
+async function renderSkillBundleEditor(artifactId: string | null) {
+    const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
+    return renderScreen(React.createElement(SkillBundleEditorScreen, { artifactId }));
+}
+
 describe('SkillBundleEditorScreen', () => {
     beforeEach(() => {
         routerBackSpy.mockReset();
@@ -219,6 +224,7 @@ describe('SkillBundleEditorScreen', () => {
         routerPushSpy.mockReset();
         createSkillPromptBundleSpy.mockClear();
         updateSkillPromptBundleSpy.mockClear();
+        fetchArtifactWithBodySpy.mockClear();
         setPromptFoldersSpy.mockClear();
         latestFocusEffect = undefined;
         artifactBodiesState.value = {
@@ -247,15 +253,8 @@ describe('SkillBundleEditorScreen', () => {
     });
 
     it('falls back to the skills list when saving from a deep-linked skill editor without back history', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let tree!: ReactTestRenderer;
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
-            await Promise.resolve();
-        });
-
-        const saveFooter = tree.root.findByType('SettingsActionFooter');
+        const screen = await renderSkillBundleEditor('bundle-1');
+        const saveFooter = screen.findByType('SettingsActionFooter');
 
         await act(async () => {
             await saveFooter.props.onPrimaryPress();
@@ -273,40 +272,26 @@ describe('SkillBundleEditorScreen', () => {
     });
 
     it('navigates to the external export screen for an existing skill bundle', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderSkillBundleEditor('bundle-1');
 
-        await act(async () => {
-            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
-            await Promise.resolve();
-        });
-
-        const manageItem = tree.root.findByProps({ testID: 'skillBundle.manageExternalAssets' });
-        await act(async () => {
-            manageItem.props.onPress();
-        });
+        await screen.pressByTestIdAsync('skillBundle.manageExternalAssets');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1/export');
     });
 
     it('starts new skills with starter markdown and saves it when only the title changes', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let tree!: ReactTestRenderer;
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: null }));
-            await Promise.resolve();
-        });
-
-        const editor = tree.root.findByProps({ testID: 'skillBundle.editor' });
+        const screen = await renderSkillBundleEditor(null);
+        const editor = screen.findByTestId('skillBundle.editor');
+        if (!editor) {
+            throw new Error('skillBundle.editor not found');
+        }
         expect(editor.props.value).toContain('## When to use');
 
-        const titleInput = tree.root.findByProps({ testID: 'skillBundle.title' });
         await act(async () => {
-            titleInput.props.onChangeText('New skill');
+            screen.changeTextByTestId('skillBundle.title', 'New skill');
         });
 
-        const saveButton = tree.root.findByType('SettingsActionFooter');
+        const saveButton = screen.findByType('SettingsActionFooter');
         await act(async () => {
             await saveButton.props.onPrimaryPress();
         });
@@ -320,74 +305,67 @@ describe('SkillBundleEditorScreen', () => {
         expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/prompts/skills');
     });
 
+    it('keeps existing skill editors locked when the requested artifact body does not load', async () => {
+        artifactBodiesState.value = {
+            'bundle-1': {
+                id: 'bundle-1',
+                header: { title: 'Skill title' },
+                body: undefined,
+            },
+        };
+        fetchArtifactWithBodySpy.mockResolvedValueOnce(null);
+
+        const screen = await renderSkillBundleEditor('bundle-1');
+
+        const titleInput = screen.findByTestId('skillBundle.title');
+        const editor = screen.findByTestId('skillBundle.editor');
+        const footer = screen.findByType('SettingsActionFooter');
+        if (!titleInput || !editor) {
+            throw new Error('skill bundle inputs not found');
+        }
+
+        expect(titleInput.props.editable).toBe(false);
+        expect(editor.props.readOnly).toBe(true);
+        expect(footer.props.primaryDisabled).toBe(true);
+    });
+
     it('renders linked exports and a settings footer for existing skills', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderSkillBundleEditor('bundle-1');
 
-        await act(async () => {
-            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
-            await Promise.resolve();
-        });
+        expect(screen.findByTestId('skillBundle.link.0')?.props.subtitle).toContain('Laptop');
+        expect(screen.findByTestId('skillBundle.folderName')?.props.value).toBe('Ops');
+        expect(screen.findByTestId('skillBundle.tags')?.props.value).toBe('alpha');
 
-        expect(tree.root.findByProps({ testID: 'skillBundle.link.0' }).props.subtitle).toContain('Laptop');
-        expect(tree.root.findByProps({ testID: 'skillBundle.folderName' }).props.value).toBe('Ops');
-        expect(tree.root.findByProps({ testID: 'skillBundle.tags' }).props.value).toBe('alpha');
-
-        const footer = tree.root.findByType('SettingsActionFooter');
+        const footer = screen.findByType('SettingsActionFooter');
         expect(footer.props.primaryTestID).toBe('skillBundle.save');
         expect(footer.props.secondaryTestID).toBe('skillBundle.cancel');
     });
 
     it('renders a title input, markdown editor, and save action for new skills', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderSkillBundleEditor(null);
 
-        await act(async () => {
-            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: null }));
-            await Promise.resolve();
-        });
-
-        expect(tree.root.findByProps({ testID: 'skillBundle.title' })).toBeTruthy();
-        expect(tree.root.findByProps({ testID: 'skillBundle.editor' })).toBeTruthy();
-        expect(tree.root.findByType('SettingsActionFooter').props.primaryTestID).toBe('skillBundle.save');
-        expect(tree.root.findAllByProps({ testID: 'skillBundle.manageExternalAssets' })).toHaveLength(0);
+        expect(screen.findByTestId('skillBundle.title')).toBeTruthy();
+        expect(screen.findByTestId('skillBundle.editor')).toBeTruthy();
+        expect(screen.findByType('SettingsActionFooter').props.primaryTestID).toBe('skillBundle.save');
+        expect(screen.findAllByTestId('skillBundle.manageExternalAssets')).toHaveLength(0);
     });
 
     it('shows supporting files for existing skills and a save-first hint for new skills', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let existingTree!: ReactTestRenderer;
+        const existingTree = await renderSkillBundleEditor('bundle-1');
 
-        await act(async () => {
-            existingTree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
-            await Promise.resolve();
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
+        expect(existingTree.findByTestId('skillBundle.supportingFile.0')?.props.title).toBe('templates/review.md');
+        expect(existingTree.findByTestId('skillBundle.addSupportingFile')).toBeTruthy();
 
-        expect(existingTree.root.findByProps({ testID: 'skillBundle.supportingFile.0' }).props.title).toBe('templates/review.md');
-        expect(existingTree.root.findByProps({ testID: 'skillBundle.addSupportingFile' })).toBeTruthy();
+        const newTree = await renderSkillBundleEditor(null);
 
-        let newTree!: ReactTestRenderer;
-        await act(async () => {
-            newTree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: null }));
-            await Promise.resolve();
-        });
-
-        expect(newTree.root.findByProps({ testID: 'skillBundle.supportingFilesSaveFirst' }).props.title)
+        expect(newTree.findByTestId('skillBundle.supportingFilesSaveFirst')?.props.title)
             .toBe('promptLibrary.supportingFilesSaveFirstTitle');
     });
 
     it('refreshes supporting files when the skill screen regains focus after bundle updates', async () => {
-        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
-        let tree!: ReactTestRenderer;
+        const screen = await renderSkillBundleEditor('bundle-1');
 
-        await act(async () => {
-            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
-            await Promise.resolve();
-        });
-
-        expect(tree.root.findAllByProps({ testID: 'skillBundle.supportingFile.1' })).toHaveLength(0);
+        expect(screen.findAllByTestId('skillBundle.supportingFile.1')).toHaveLength(0);
 
         artifactBodiesState.value = {
             ...artifactBodiesState.value,
@@ -421,9 +399,9 @@ describe('SkillBundleEditorScreen', () => {
 
         await act(async () => {
             latestFocusEffect?.();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(tree.root.findByProps({ testID: 'skillBundle.supportingFile.1' }).props.title).toBe('templates/checklist.md');
+        expect(screen.findByTestId('skillBundle.supportingFile.1')?.props.title).toBe('templates/checklist.md');
     });
 });

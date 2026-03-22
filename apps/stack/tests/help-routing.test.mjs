@@ -46,7 +46,7 @@ const helpScenarios = [
   {
     title: 'hstack stack build -h prints build help (not root help)',
     args: ['stack', 'build', '-h'],
-    includes: ['hstack stack build <name>', '--tauri'],
+    includes: ['hstack stack build <name>', '--tauri', '--server', '--daemon', '--activate-runtime'],
     excludes: ['hstack stack new <name>'],
   },
   {
@@ -58,7 +58,7 @@ const helpScenarios = [
   {
     title: 'hstack stack build <stack> -h prints build help (not root help)',
     args: ['stack', 'build', 'dev', '-h'],
-    includes: ['hstack stack build <name>', '--tauri'],
+    includes: ['hstack stack build <name>', '--tauri', '--server', '--daemon', '--activate-runtime'],
     excludes: ['hstack stack new <name>'],
   },
   {

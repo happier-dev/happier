@@ -72,6 +72,59 @@ describe('normalizeToolCallForRendering (names)', () => {
         }
     });
 
+    it('prefers ACP titles for wrapped web tools over generic ACP kinds', () => {
+        const webFetch = normalizeToolCallForRendering(
+            makeTool({
+                name: 'read',
+                input: { _acp: { title: 'web_fetch' }, title: 'web_fetch' },
+            }),
+        );
+        expect(webFetch.name).toBe('WebFetch');
+
+        const webSearch = normalizeToolCallForRendering(
+            makeTool({
+                name: 'search',
+                input: { _acp: { title: 'web_search' }, title: 'web_search' },
+            }),
+        );
+        expect(webSearch.name).toBe('WebSearch');
+    });
+
+    it('maps Claude teammate Agent tool calls to the canonical SubAgent renderer name', () => {
+        const normalized = normalizeToolCallForRendering(
+            makeTool({
+                name: 'Agent',
+                input: {
+                    name: 'alpha',
+                    team_name: 'qa-team',
+                    description: 'Inspect repo, report one fact',
+                },
+                result: null,
+                state: 'running',
+                completedAt: null,
+            }),
+        );
+
+        expect(normalized.name).toBe('SubAgent');
+    });
+
+    it('maps generic Task tool calls to the canonical SubAgent renderer name', () => {
+        const normalized = normalizeToolCallForRendering(
+            makeTool({
+                name: 'Task',
+                input: {
+                    description: 'Inspect the repo and report back',
+                    prompt: 'Inspect the repo and report back',
+                },
+                result: null,
+                state: 'running',
+                completedAt: null,
+            }),
+        );
+
+        expect(normalized.name).toBe('SubAgent');
+    });
+
     it('maps workspace indexing permission prompts to known tool name', () => {
         const normalized = normalizeToolCallForRendering(
             makeTool({
@@ -96,14 +149,14 @@ describe('normalizeToolCallForRendering (names)', () => {
                 name: 'TaskUpdate',
                 state: 'running',
                 input: {
-                    _happier: { canonicalToolName: 'Task' },
+                    _happier: { canonicalToolName: 'SubAgent' },
                     subject: 'x',
                 },
                 result: null,
                 completedAt: null,
             }),
         );
-        expect(happier.name).toBe('Task');
+        expect(happier.name).toBe('SubAgent');
 
         const happy = normalizeToolCallForRendering(
             makeTool({
@@ -114,5 +167,17 @@ describe('normalizeToolCallForRendering (names)', () => {
             }),
         );
         expect(happy.name).toBe('FutureTool');
+    });
+
+    it('does not map contradictory change_title aliases to the change title renderer', () => {
+        const normalized = normalizeToolCallForRendering(
+            makeTool({
+                name: 'happier/change_title',
+                input: {},
+                description: 'Tool: playwright/browser_navigate',
+            }),
+        );
+
+        expect(normalized.name).toBe('unknown');
     });
 });

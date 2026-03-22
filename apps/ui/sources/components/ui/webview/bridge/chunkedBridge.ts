@@ -79,6 +79,17 @@ type PendingChunks = {
 const pendingByMessageId: Map<string, PendingChunks> = new Map();
 const DEFAULT_PENDING_TTL_MS = 30_000;
 const DEFAULT_MAX_PENDING_MESSAGES = 32;
+const MAX_CHUNK_COUNT = 4_096;
+const MAX_CHUNK_DATA_LENGTH = 256 * 1024;
+
+function isValidEnvelopeV1(message: unknown): message is WebViewBridgeEnvelopeV1 {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return false;
+    }
+
+    const candidate = message as Partial<WebViewBridgeEnvelopeV1>;
+    return candidate.v === 1 && typeof candidate.type === 'string' && 'payload' in candidate;
+}
 
 function resolveNowMs(nowMs: number | undefined): number {
     return typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : Date.now();
@@ -112,11 +123,8 @@ function tryFinalize(messageId: string, pending: PendingChunks): WebViewBridgeEn
 
     try {
         const json = decodeUtf8Base64(merged);
-        const parsed = JSON.parse(json) as WebViewBridgeEnvelopeV1;
-        if (!parsed || typeof parsed !== 'object') return null;
-        if ((parsed as any).v !== 1) return null;
-        if (typeof (parsed as any).type !== 'string') return null;
-        return parsed;
+        const parsed = JSON.parse(json);
+        return isValidEnvelopeV1(parsed) ? parsed : null;
     } catch {
         return null;
     }
@@ -136,7 +144,7 @@ export function decodeChunkedEnvelope(params: Readonly<{
     const message = params.message;
 
     if (message.type !== 'chunk') {
-        return message;
+        return isValidEnvelopeV1(message) ? message : null;
     }
 
     const payload = (message as any).payload as { messageId?: unknown; index?: unknown; total?: unknown; data?: unknown } | undefined;
@@ -145,11 +153,11 @@ export function decodeChunkedEnvelope(params: Readonly<{
     const messageId = typeof payload.messageId === 'string' ? payload.messageId : null;
     if (!messageId) return null;
     const total = typeof payload.total === 'number' ? payload.total : NaN;
-    if (!Number.isFinite(total) || total <= 0) return null;
+    if (!Number.isFinite(total) || total <= 0 || total > MAX_CHUNK_COUNT) return null;
     const index = typeof payload.index === 'number' ? payload.index : NaN;
     if (!Number.isFinite(index) || index < 0 || index >= total) return null;
     const data = typeof payload.data === 'string' ? payload.data : null;
-    if (data === null) return null;
+    if (data === null || data.length > MAX_CHUNK_DATA_LENGTH) return null;
     const nowMs = resolveNowMs(params.nowMs);
     const pendingTtlMs = params.pendingTtlMs ?? DEFAULT_PENDING_TTL_MS;
     const maxPendingMessages = params.maxPendingMessages ?? DEFAULT_MAX_PENDING_MESSAGES;

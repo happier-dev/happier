@@ -1,4 +1,4 @@
-import { createStreamedTranscriptWriter, type StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 
@@ -34,21 +34,17 @@ export function createOpenCodeTranscriptStreamBridge(params: {
   session: Pick<ApiSessionClient, 'sendAgentMessage' | 'sendAgentMessageCommitted' | 'sendTranscriptDraftDelta'>;
   draftFlushIntervalMs: number;
 }) {
-  const writerByStreamKey = new Map<string, StreamedTranscriptWriter>();
-
-  const getOrCreateWriter = (args: {
+  return createKeyedStreamedTranscriptBridge<{
     streamKey: string;
     remoteSessionId: string;
     messageId: string;
     sidechainId: string | null;
-  }): StreamedTranscriptWriter => {
-    const existing = writerByStreamKey.get(args.streamKey);
-    if (existing) return existing;
-
-    const baseMeta = buildSidechainMeta(args);
-    const writer = createStreamedTranscriptWriter({
-      provider: params.provider,
-      session: {
+  }>({
+    provider: params.provider,
+    draftFlushIntervalMs: params.draftFlushIntervalMs,
+    createSessionForStream: (args) => {
+      const baseMeta = buildSidechainMeta(args);
+      return {
         sendTranscriptDraftDelta: (provider, draftParams) => params.session.sendTranscriptDraftDelta(provider, draftParams),
         sendAgentMessage: (provider, body, opts) =>
           params.session.sendAgentMessage(provider, body, {
@@ -66,42 +62,7 @@ export function createOpenCodeTranscriptStreamBridge(params: {
               ...(opts.meta ?? {}),
             },
           }),
-      },
-      draftFlushIntervalMs: params.draftFlushIntervalMs,
-    });
-
-    writerByStreamKey.set(args.streamKey, writer);
-    return writer;
-  };
-
-  return {
-    appendAssistantDelta(args: {
-      deltaText: string;
-      streamKey: string;
-      remoteSessionId: string;
-      messageId: string;
-      sidechainId: string | null;
-    }) {
-      getOrCreateWriter(args).appendAssistantDelta(args.deltaText, { sidechainId: args.sidechainId });
+      };
     },
-
-    appendThinkingDelta(args: {
-      deltaText: string;
-      streamKey: string;
-      remoteSessionId: string;
-      messageId: string;
-      sidechainId: string | null;
-    }) {
-      getOrCreateWriter(args).appendThinkingDelta(args.deltaText, { sidechainId: args.sidechainId });
-    },
-
-    async flushAll(args: { reason: FlushReason; interruptedReason?: string }) {
-      await Promise.all(Array.from(writerByStreamKey.values(), (writer) => writer.flushAll(args)));
-      writerByStreamKey.clear();
-    },
-
-    clear() {
-      writerByStreamKey.clear();
-    },
-  };
+  });
 }

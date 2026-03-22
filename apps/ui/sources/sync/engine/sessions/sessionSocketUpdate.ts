@@ -2,6 +2,7 @@ import type { NormalizedMessage } from '@/sync/typesRaw';
 import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 
 type SessionMessageEncryption = {
@@ -20,7 +21,7 @@ function inferTaskLifecycleFromMessageContent(content: unknown, createdAt: numbe
     return { isTaskComplete, isTaskStarted, lifecycleEvent };
 }
 
-export async function handleNewMessageSocketUpdate(params: {
+type HandleSessionMessageSocketUpdateParams = {
     updateData: any;
     getSessionEncryption: (sessionId: string) => SessionMessageEncryption | null;
     getSession: (sessionId: string) => Session | undefined;
@@ -36,6 +37,10 @@ export async function handleNewMessageSocketUpdate(params: {
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
     onMessageGapDetected: (sessionId: string, info: { prevMaterializedMaxSeq: number; messageSeq: number | null }) => void;
     onTaskLifecycleEvent?: (sessionId: string, event: TaskLifecycleEvent) => void;
+};
+
+async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSocketUpdateParams & {
+    inferLifecycle: boolean;
 }): Promise<void> {
     const {
         updateData,
@@ -51,6 +56,7 @@ export async function handleNewMessageSocketUpdate(params: {
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
         onMessageGapDetected,
+        inferLifecycle,
     } = params;
 
     const body = updateData?.body;
@@ -65,20 +71,19 @@ export async function handleNewMessageSocketUpdate(params: {
 
     const messageSeq = (body as any).message?.seq;
     const prevMaterializedMaxSeq = getSessionMaterializedMaxSeq(sessionId);
-
+    const session = getSession(sessionId);
     const encryption = getSessionEncryption(sessionId);
-    if (!encryption) {
-        const session = getSession(sessionId);
-        if (session) {
-            console.error(`Session encryption not found for ${sessionId} - this should never happen`);
-        }
-        fetchSessions();
-        return;
+    const expectsEncryptedMessages = session?.encryptionMode !== 'plain';
+    if (!encryption && expectsEncryptedMessages && session) {
+        console.error(`Session encryption not found for ${sessionId} - this should never happen`);
     }
 
     let lastMessage: NormalizedMessage | null = null;
     if ((body as any).message) {
-        const decrypted = await encryption.decryptMessage((body as any).message);
+        const decrypted = await readStoredSessionMessage({
+            message: (body as any).message,
+            decryptMessage: encryption ? (message) => encryption.decryptMessage(message) : undefined,
+        });
         if (decrypted) {
             const normalizedSeq =
                 typeof messageSeq === 'number' && Number.isFinite(messageSeq)
@@ -90,12 +95,13 @@ export async function handleNewMessageSocketUpdate(params: {
                     );
             lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: normalizedSeq });
 
-            const { isTaskComplete, isTaskStarted, lifecycleEvent } = inferTaskLifecycleFromMessageContent(decrypted.content, decrypted.createdAt);
+            const { isTaskComplete, isTaskStarted, lifecycleEvent } = inferLifecycle
+                ? inferTaskLifecycleFromMessageContent(decrypted.content, decrypted.createdAt)
+                : { isTaskComplete: false, isTaskStarted: false, lifecycleEvent: null };
             if (lifecycleEvent) {
                 params.onTaskLifecycleEvent?.(sessionId, lifecycleEvent);
             }
 
-            const session = getSession(sessionId);
             if (session) {
                 const nextSessionSeq = computeNextSessionSeqFromUpdate({
                     currentSessionSeq: session.seq ?? 0,
@@ -109,8 +115,8 @@ export async function handleNewMessageSocketUpdate(params: {
                         ...session,
                         updatedAt: updateData.createdAt,
                         seq: nextSessionSeq,
-                        ...(isTaskComplete ? { thinking: false } : {}),
-                        ...(isTaskStarted ? { thinking: true } : {}),
+                        ...(inferLifecycle && isTaskComplete ? { thinking: false } : {}),
+                        ...(inferLifecycle && isTaskStarted ? { thinking: true } : {}),
                     },
                 ]);
             } else {
@@ -152,11 +158,21 @@ export async function handleNewMessageSocketUpdate(params: {
                 onMessageGapDetected(sessionId, { prevMaterializedMaxSeq, messageSeq });
             }
         } else {
-            if (isSessionMessagesLoaded(sessionId)) {
+            if (!session) {
+                fetchSessions();
+            } else if (isSessionMessagesLoaded(sessionId)) {
                 onMessageGapDetected(sessionId, { prevMaterializedMaxSeq, messageSeq: typeof messageSeq === 'number' ? messageSeq : null });
             } else {
                 fetchSessions();
             }
         }
     }
+}
+
+export async function handleNewMessageSocketUpdate(params: HandleSessionMessageSocketUpdateParams): Promise<void> {
+    return handleSessionMessageSocketUpdate({ ...params, inferLifecycle: true });
+}
+
+export async function handleMessageUpdatedSocketUpdate(params: HandleSessionMessageSocketUpdateParams): Promise<void> {
+    return handleSessionMessageSocketUpdate({ ...params, inferLifecycle: false });
 }

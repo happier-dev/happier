@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
+import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
 import { interactiveNew } from './utils/stack/interactive_stack_config.mjs';
 
 function mkRl() {
@@ -23,27 +25,21 @@ function createInteractiveDeps({ prompted = [], selectedRepo = 'tmp/mono-wt' } =
   };
 }
 
-test('interactive stack new in monorepo mode prompts once for shared repo source', async () => {
+test('interactive stack new in monorepo mode prompts once for shared repo source', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-interactive-new-mono-'));
   const prompted = [];
 
-  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
-  const prevOwner = process.env.HAPPIER_STACK_OWNER;
   try {
     const workspaceDir = join(tmp, 'workspace');
-    process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
-    process.env.HAPPIER_STACK_OWNER = 'test';
+    const restore = withPatchedProcessEnv(t, {
+      HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+      HAPPIER_STACK_OWNER: 'test',
+    });
 
     const monoRoot = join(workspaceDir, 'tmp', 'test', 'mono-wt');
-    await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-    await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-    await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-    await writeFile(join(monoRoot, '.git'), 'gitdir: dummy\n', 'utf-8');
-    await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+    await ensureMinimalMonorepoLayout(monoRoot, { writeGitDirMarker: true });
 
     const out = await interactiveNew({
       rootDir,
@@ -60,42 +56,27 @@ test('interactive stack new in monorepo mode prompts once for shared repo source
 
     assert.deepEqual(prompted, ['happier-ui']);
     assert.equal(out.repo, 'tmp/mono-wt');
+    restore();
   } finally {
-    if (prevWorkspace == null) {
-      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
-    } else {
-      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
-    }
-    if (prevOwner == null) {
-      delete process.env.HAPPIER_STACK_OWNER;
-    } else {
-      process.env.HAPPIER_STACK_OWNER = prevOwner;
-    }
     await rm(tmp, { recursive: true, force: true });
   }
 });
 
-test('interactive stack new skips worktree prompt when repo is already provided', async () => {
+test('interactive stack new skips worktree prompt when repo is already provided', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-interactive-new-mono-preseed-'));
   const prompted = [];
 
-  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
-  const prevOwner = process.env.HAPPIER_STACK_OWNER;
   try {
     const workspaceDir = join(tmp, 'workspace');
-    process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
-    process.env.HAPPIER_STACK_OWNER = 'test';
+    const restore = withPatchedProcessEnv(t, {
+      HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+      HAPPIER_STACK_OWNER: 'test',
+    });
 
     const monoRoot = join(workspaceDir, 'tmp', 'test', 'mono-wt');
-    await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-    await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-    await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-    await writeFile(join(monoRoot, '.git'), 'gitdir: dummy\n', 'utf-8');
-    await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+    await ensureMinimalMonorepoLayout(monoRoot, { writeGitDirMarker: true });
 
     const out = await interactiveNew({
       rootDir,
@@ -112,17 +93,8 @@ test('interactive stack new skips worktree prompt when repo is already provided'
 
     assert.deepEqual(prompted, []);
     assert.equal(out.repo, 'dev');
+    restore();
   } finally {
-    if (prevWorkspace == null) {
-      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
-    } else {
-      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
-    }
-    if (prevOwner == null) {
-      delete process.env.HAPPIER_STACK_OWNER;
-    } else {
-      process.env.HAPPIER_STACK_OWNER = prevOwner;
-    }
     await rm(tmp, { recursive: true, force: true });
   }
 });

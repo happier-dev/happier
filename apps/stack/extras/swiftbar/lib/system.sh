@@ -36,6 +36,78 @@ get_port_listener_pid() {
 # Cached launchctl output for speed across many stacks.
 LAUNCHCTL_LIST_CACHE=""
 
+resolve_daemon_state_helper_module() {
+  local repo_root="${HAPPIER_STACK_CLI_ROOT_DIR:-}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="${HAPPIER_STACK_REPO_DIR:-}"
+  fi
+  if [[ -z "$repo_root" ]] && [[ -n "${HAPPIER_STACK_ENV_FILE:-}" ]] && [[ -f "${HAPPIER_STACK_ENV_FILE:-}" ]]; then
+    repo_root="$(dotenv_get "${HAPPIER_STACK_ENV_FILE:-}" "HAPPIER_STACK_REPO_DIR")"
+  fi
+
+  local install_root
+  install_root="$(resolve_hstack_root_dir)"
+
+  local helper=""
+  local candidates=()
+  if [[ -n "$repo_root" ]]; then
+    candidates+=("$repo_root/apps/stack/scripts/utils/auth/credentials_paths.mjs")
+    candidates+=("$repo_root/scripts/utils/auth/credentials_paths.mjs")
+  fi
+  if [[ -n "$install_root" ]]; then
+    candidates+=("$install_root/scripts/utils/auth/credentials_paths.mjs")
+    candidates+=("$install_root/runtime/node_modules/@happier-dev/stack/scripts/utils/auth/credentials_paths.mjs")
+    candidates+=("$install_root/node_modules/@happier-dev/stack/scripts/utils/auth/credentials_paths.mjs")
+  fi
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      helper="$candidate"
+      break
+    fi
+  done
+
+  [[ -n "$helper" ]] || return
+  echo "$helper"
+}
+
+resolve_preferred_daemon_state_pair() {
+  local cli_home_dir="$1"
+  if [[ -z "$cli_home_dir" ]]; then
+    return
+  fi
+
+  local node_bin
+  node_bin="$(resolve_node_bin)"
+  if [[ -z "$node_bin" ]] || [[ ! -x "$node_bin" ]]; then
+    echo "$cli_home_dir/daemon.state.json|$cli_home_dir/daemon.state.json.lock"
+    return
+  fi
+
+  local helper
+  helper="$(resolve_daemon_state_helper_module)"
+  if [[ ! -f "$helper" ]]; then
+    echo "$cli_home_dir/daemon.state.json|$cli_home_dir/daemon.state.json.lock"
+    return
+  fi
+
+  local resolved
+  resolved="$("$node_bin" --input-type=module -e '
+    const { pathToFileURL } = await import("node:url");
+    const helperUrl = pathToFileURL(process.argv[1]).href;
+    const { resolvePreferredStackDaemonStatePaths } = await import(helperUrl);
+    const out = resolvePreferredStackDaemonStatePaths({ cliHomeDir: process.argv[2], env: process.env });
+    process.stdout.write(`${out.statePath}|${out.lockPath}`);
+  ' "$helper" "$cli_home_dir" 2>/dev/null || true)"
+  if [[ -n "$resolved" ]]; then
+    echo "$resolved"
+    return
+  fi
+
+  echo "$cli_home_dir/daemon.state.json|$cli_home_dir/daemon.state.json.lock"
+}
+
 ensure_launchctl_cache() {
   if [[ -n "$LAUNCHCTL_LIST_CACHE" ]]; then
     return
@@ -105,13 +177,15 @@ check_server_health() {
 
 check_daemon_status() {
   local cli_home_dir="$1"
-  local state_file="$cli_home_dir/daemon.state.json"
+  local resolved state_file lock_file
+  resolved="$(resolve_preferred_daemon_state_pair "$cli_home_dir")"
+  state_file="${resolved%%|*}"
+  lock_file="${resolved#*|}"
   local t0 t1
   t0="$(swiftbar_now_ms 2>/dev/null || echo 0)"
   if [[ -z "$cli_home_dir" ]] || [[ ! -f "$state_file" ]]; then
     # If the daemon is starting but hasn't written daemon.state.json yet, we can still detect it
     # via the lock file PID.
-    local lock_file="$cli_home_dir/daemon.state.json.lock"
     if [[ -f "$lock_file" ]]; then
       local lock_pid
       lock_pid="$(cat "$lock_file" 2>/dev/null | tr -d '[:space:]')"
@@ -180,7 +254,9 @@ check_daemon_status() {
 
 get_daemon_uptime() {
   local cli_home_dir="$1"
-  local state_file="$cli_home_dir/daemon.state.json"
+  local resolved state_file
+  resolved="$(resolve_preferred_daemon_state_pair "$cli_home_dir")"
+  state_file="${resolved%%|*}"
   if [[ -z "$cli_home_dir" ]] || [[ ! -f "$state_file" ]]; then
     return
   fi
@@ -194,7 +270,9 @@ get_daemon_uptime() {
 
 get_last_heartbeat() {
   local cli_home_dir="$1"
-  local state_file="$cli_home_dir/daemon.state.json"
+  local resolved state_file
+  resolved="$(resolve_preferred_daemon_state_pair "$cli_home_dir")"
+  state_file="${resolved%%|*}"
   if [[ -z "$cli_home_dir" ]] || [[ ! -f "$state_file" ]]; then
     return
   fi

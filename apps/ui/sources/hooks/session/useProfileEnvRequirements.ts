@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
-import { getProfileEnvironmentVariables } from '@/sync/domains/settings/settings';
+import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 
 export interface ProfileEnvRequirement {
@@ -79,4 +78,3 @@ export function useProfileEnvRequirements(
         meta: metaSummary,
     };
 }
-

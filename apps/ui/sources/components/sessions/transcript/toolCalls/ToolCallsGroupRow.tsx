@@ -17,6 +17,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     toolCallsGroupId: string;
     toolMessageIds: readonly string[];
     metadata: Metadata | null;
+    forcePermissionPromptsInTranscript?: boolean;
     getMessageById?: (messageId: string) => Message | null;
     expanded: boolean;
     onSetExpanded: (params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => void;
@@ -72,6 +73,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
                             toolMessages={toolMessages}
                             metadata={props.metadata}
                             sessionId={props.sessionId}
+                            forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
                             expanded={props.expanded}
                             setExpanded={setExpanded}
                             interaction={props.interaction}

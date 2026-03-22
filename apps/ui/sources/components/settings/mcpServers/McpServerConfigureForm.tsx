@@ -30,6 +30,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { parseMcpCommandLine } from '@/sync/domains/settings/mcpServers/parseMcpCommandLine';
 import { t } from '@/text';
 import { McpWorkspaceRootPickerModal } from './McpWorkspaceRootPickerModal';
+import { createDefaultMcpBindingTarget, resolveMcpBindingTargetTypeChange } from './resolveMcpBindingTarget';
 
 function createDraftBinding(serverId: string, machines: readonly Machine[]): McpServerBindingV1 {
     const now = Date.now();
@@ -37,10 +38,7 @@ function createDraftBinding(serverId: string, machines: readonly Machine[]): Mcp
         id: randomUUID(),
         serverId,
         enabled: true,
-        target: {
-            t: 'machine',
-            machineId: machines[0]?.id ?? 'unknown',
-        },
+        target: createDefaultMcpBindingTarget(machines),
         createdAt: now,
         updatedAt: now,
     };
@@ -127,21 +125,15 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
     const setDraftBindingTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t']) => {
         updateDraftBinding((current) => {
             const now = Date.now();
-            if (nextType === 'allMachines') {
-                return { ...current, target: { t: 'allMachines' }, updatedAt: now };
-            }
-
-            const fallbackMachineId = current.target.t === 'allMachines'
-                ? (props.machines[0]?.id ?? 'unknown')
-                : current.target.machineId;
-
-            if (nextType === 'machine') {
-                return { ...current, target: { t: 'machine', machineId: fallbackMachineId }, updatedAt: now };
+            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines);
+            if (!nextTarget) {
+                Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
+                return current;
             }
 
             return {
                 ...current,
-                target: { t: 'workspace', machineId: fallbackMachineId, workspaceRoot: '/' },
+                target: nextTarget,
                 updatedAt: now,
             };
         });

@@ -1,28 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { ensureMinimalMonorepoLayout } from '../../testkit/core/minimal_monorepo_layout.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './cwd_scope.mjs';
-
-async function withTempRoot(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-stacks-cwd-scope-'));
-  t.after(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-  return dir;
-}
 
 async function createMonorepoCheckout({ rootDir, checkoutPath }) {
   const repoRoot = join(rootDir, checkoutPath);
-  await mkdir(join(repoRoot, 'apps', 'ui'), { recursive: true });
+  await ensureMinimalMonorepoLayout(repoRoot, { writeGitDirMarker: true });
   await mkdir(join(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
-  await mkdir(join(repoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(repoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
   return repoRoot;
 }
 
@@ -43,7 +31,8 @@ function withMockedProcessCwd(t, value) {
 }
 
 test('inferComponentFromCwd resolves the stable monorepo checkout under <workspace>/main', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const repoRoot = await createMonorepoCheckout({ rootDir, checkoutPath: 'main' });
   const inferred = inferComponentFromCwd({
     rootDir,
@@ -55,7 +44,8 @@ test('inferComponentFromCwd resolves the stable monorepo checkout under <workspa
 });
 
 test('inferComponentFromCwd resolves happier monorepo subpackages under <workspace>/main', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const repoRoot = await createMonorepoCheckout({ rootDir, checkoutPath: 'main' });
   const inferred = inferComponentFromCwd({
     rootDir,
@@ -67,7 +57,8 @@ test('inferComponentFromCwd resolves happier monorepo subpackages under <workspa
 });
 
 test('inferComponentFromCwd resolves happier monorepo worktree roots under <workspace>/pr', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const repoRoot = await createMonorepoCheckout({ rootDir, checkoutPath: join('pr', '123-fix') });
   await mkdir(join(repoRoot, 'apps', 'cli', 'nested'), { recursive: true });
   const inferred = inferComponentFromCwd({
@@ -80,7 +71,8 @@ test('inferComponentFromCwd resolves happier monorepo worktree roots under <work
 });
 
 test('inferComponentFromCwd returns null outside known component roots', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const invokedCwd = join(rootDir, 'somewhere', 'else');
   await mkdir(invokedCwd, { recursive: true });
   const inferred = inferComponentFromCwd({
@@ -93,7 +85,8 @@ test('inferComponentFromCwd returns null outside known component roots', async (
 });
 
 test('inferComponentFromCwd uses the provided env (does not depend on process.env)', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const repoRoot = await createMonorepoCheckout({ rootDir, checkoutPath: 'main' });
   const inferred = inferComponentFromCwd({
     rootDir,
@@ -105,7 +98,8 @@ test('inferComponentFromCwd uses the provided env (does not depend on process.en
 });
 
 test('getInvokedCwd falls back to process.cwd() when PWD is not set (Windows)', async (t) => {
-  const dir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const dir = fixture.root;
   const expected = await realpath(dir).catch(() => dir);
   withMockedProcessCwd(t, dir);
 
@@ -114,12 +108,13 @@ test('getInvokedCwd falls back to process.cwd() when PWD is not set (Windows)', 
 });
 
 test('getInvokedCwd prefers OLDPWD when it looks like the real repo/worktree root', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const oldPwd = join(rootDir, 'dev');
   const pwd = join(rootDir, 'main');
   await mkdir(oldPwd, { recursive: true });
   await mkdir(pwd, { recursive: true });
-  await writeFile(join(oldPwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+  await ensureMinimalMonorepoLayout(oldPwd, { writeGitDirMarker: true });
 
   withMockedProcessCwd(t, pwd);
   const actual = getInvokedCwd({ PWD: pwd, OLDPWD: oldPwd });
@@ -127,13 +122,12 @@ test('getInvokedCwd prefers OLDPWD when it looks like the real repo/worktree roo
 });
 
 test('getInvokedCwd prefers PWD when both PWD and OLDPWD look like repo/worktree roots', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const oldPwd = join(rootDir, 'dev');
   const pwd = join(rootDir, 'main');
-  await mkdir(oldPwd, { recursive: true });
-  await mkdir(pwd, { recursive: true });
-  await writeFile(join(oldPwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
-  await writeFile(join(pwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+  await ensureMinimalMonorepoLayout(oldPwd, { writeGitDirMarker: true });
+  await ensureMinimalMonorepoLayout(pwd, { writeGitDirMarker: true });
 
   withMockedProcessCwd(t, pwd);
   const actual = getInvokedCwd({ PWD: pwd, OLDPWD: oldPwd });
@@ -141,12 +135,13 @@ test('getInvokedCwd prefers PWD when both PWD and OLDPWD look like repo/worktree
 });
 
 test('getInvokedCwd falls back to OLDPWD when PWD does not look like a checkout/worktree root', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
+  const rootDir = fixture.root;
   const oldPwd = join(rootDir, 'dev');
   const pwd = join(rootDir, 'not-a-worktree');
   await mkdir(oldPwd, { recursive: true });
   await mkdir(pwd, { recursive: true });
-  await writeFile(join(oldPwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+  await ensureMinimalMonorepoLayout(oldPwd, { writeGitDirMarker: true });
 
   withMockedProcessCwd(t, pwd);
   const actual = getInvokedCwd({ PWD: pwd, OLDPWD: oldPwd });

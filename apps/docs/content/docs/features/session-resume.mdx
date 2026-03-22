@@ -123,17 +123,18 @@ The `RESUME` column is a quick summary:
 
 ## Codex-specific behavior
 
-Codex resume in Happier is **ACP-only**.
+Codex resume in Happier normally uses the default App Server path. ACP resume is still available when you explicitly choose ACP.
 
 Important points:
 
-- Codex now defaults to **ACP** in Happier
+- Codex now defaults to **App Server** in Happier
 - legacy `mcp_resume` behavior is gone
-- if you opt Codex back to plain **MCP**, Codex sessions are no longer resumable
-- for new Codex sessions, Happier may fall back from ACP to MCP if ACP is unavailable
+- if you opt Codex back to plain **MCP**, fresh sessions can still start there, but vendor resume is not available on that path
+- for new Codex sessions, Happier does not silently fall back from the default App Server path; choose ACP or MCP explicitly if you want a different backend
+- App Server is the default resumable path; ACP still works when you explicitly select it
 - for an explicit **resume**, Happier stays strict and errors instead of falling back
 
-So for Codex, “can I resume this session?” depends both on the session metadata and on whether Codex ACP is enabled in your settings.
+So for Codex, “can I resume this session?” depends on the session metadata and on whether the current backend path supports resume for that session.
 
 ## Resume vs attach
 
@@ -174,7 +175,7 @@ If a session does not resume, check:
 - is it archived?
 - does it belong to the provider/backend you think it does?
 - are you on the correct Happier server/account profile?
-- for Codex, is **ACP** enabled?
+- for Codex, is the selected resume path available (App Server by default, or ACP when explicitly selected)?
 - is the owning machine online and reachable from Happier?
 
 ## Related guides

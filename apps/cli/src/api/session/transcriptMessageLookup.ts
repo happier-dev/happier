@@ -51,11 +51,11 @@ function parseTranscriptLookupMessageFromUnknown(found: any): TranscriptMessageL
     const sidechainIdRaw = found.sidechainId;
     const sidechainId = typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
     const createdAtRaw = found.createdAt;
-    const createdAt =
-        typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0 ? Math.trunc(createdAtRaw) : Date.now();
+    if (!(typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0)) return null;
+    const createdAt = Math.trunc(createdAtRaw);
     const updatedAtRaw = found.updatedAt;
-    const updatedAt =
-        typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw >= 0 ? Math.trunc(updatedAtRaw) : createdAt;
+    if (!(typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw >= 0)) return null;
+    const updatedAt = Math.trunc(updatedAtRaw);
     return { id: found.id, seq: found.seq, localId: foundLocalId, sidechainId, createdAt, updatedAt, content: content.data };
 }
 

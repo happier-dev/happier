@@ -3,8 +3,10 @@ import { resolve } from 'path';
 import type { ScmBackendPreference } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { createScmBackendCatalog } from '@/scm/backends/catalog';
-import { createScmBackendRegistry, type ScmBackendSelection } from '@/scm/registry';
+import { defaultScmBackendRegistry } from '@/scm/defaultRegistry';
+import type { ScmBackendRegistry } from '@/scm/registry';
+import type { ScmBackendSelection } from '@/scm/registry';
+import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import { createNonRepositorySnapshot, resolveCwd, resolveTildePath } from '@/scm/runtime';
 import type { ScmBackendContext } from '@/scm/types';
 
@@ -18,15 +20,6 @@ type ScmErrorResponse = {
     error?: string;
     errorCode?: string;
 };
-
-type ScmSelectionResult = {
-    selection: ScmBackendSelection;
-    context: ScmBackendContext;
-};
-
-type ScmBackendRegistry = ReturnType<typeof createScmBackendRegistry>;
-
-const scmRegistry: ScmBackendRegistry = createScmBackendRegistry(createScmBackendCatalog());
 
 function fallbackError<TResponse extends ScmErrorResponse>(error: unknown): TResponse {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -66,28 +59,6 @@ export function notRepositoryResponse<TResponse extends ScmErrorResponse>(
     } as TResponse;
 }
 
-async function resolveSelection(input: {
-    workingDirectory: string;
-    cwd: string;
-    backendPreference?: ScmBackendPreference;
-    registry: ScmBackendRegistry;
-}): Promise<ScmSelectionResult | null> {
-    const selection = await input.registry.selectBackend({
-        cwd: input.cwd,
-        workingDirectory: input.workingDirectory,
-        backendPreference: input.backendPreference,
-    });
-    if (!selection) return null;
-    return {
-        selection,
-        context: {
-            cwd: input.cwd,
-            projectKey: `${resolve(input.workingDirectory)}:${input.cwd}`,
-            detection: selection.detection,
-        } satisfies ScmBackendContext,
-    };
-}
-
 export async function runScmRoute<TRequest extends ScmRequestBase, TResponse extends ScmErrorResponse>(input: {
     request: TRequest;
     workingDirectory: string;
@@ -105,11 +76,11 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             return invalidPathResponse<TResponse>(cwdResult.error);
         }
 
-        const resolved = await resolveSelection({
+        const resolved = await resolveScmSelection({
             workingDirectory: normalizedWorkingDirectory,
             cwd: cwdResult.cwd,
             backendPreference: input.request.backendPreference,
-            registry: input.registry ?? scmRegistry,
+            registry: input.registry ?? defaultScmBackendRegistry,
         });
         if (!resolved) {
             return await input.onNonRepository({

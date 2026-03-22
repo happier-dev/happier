@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 
 import type {
   PromptBundleBodyV1,
@@ -119,4 +119,18 @@ export function computePromptBundleDigest(bundleBody: PromptBundleBodyV1): strin
     entries: normalizedEntries,
   }));
   return `sha256:${hash.digest('hex')}`;
+}
+
+export function materializePromptBundleBodyToDirectory(params: Readonly<{
+  rootDirectory: string;
+  bundleBody: PromptBundleBodyV1;
+}>): void {
+  for (const entry of params.bundleBody.entries) {
+    const absolutePath = join(params.rootDirectory, entry.path.split('/').join(sep));
+    mkdirSync(dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, Buffer.from(entry.contentBase64, 'base64'));
+    if (typeof entry.unixMode === 'number') {
+      chmodSync(absolutePath, entry.unixMode);
+    }
+  }
 }

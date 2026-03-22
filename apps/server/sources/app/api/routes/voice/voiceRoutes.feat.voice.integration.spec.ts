@@ -1,36 +1,15 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
-import { initEncrypt } from "@/modules/encrypt";
+import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { voiceRoutes } from "./voiceRoutes";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
 
 function createTestApp() {
     const app = Fastify();
@@ -50,60 +29,30 @@ function createTestApp() {
 }
 
 describe("voiceRoutes (integration, sqlite)", () => {
-    const envBackup = { ...process.env };
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-voice-routes-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-            HAPPIER_FEATURE_VOICE__ENABLED: "true",
-            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "false",
-            VOICE_MAX_CONCURRENT_SESSIONS: "1",
-            VOICE_MAX_SESSION_SECONDS: "60",
-            ELEVENLABS_API_KEY: "elevenlabs-key",
-            ELEVENLABS_AGENT_ID: "agent_dev",
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await initEncrypt();
-        await auth.init();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-voice-routes-",
+            initAuth: true,
+            initEncrypt: true,
+            env: {
+                HAPPIER_FEATURE_VOICE__ENABLED: "true",
+                HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "false",
+                VOICE_MAX_CONCURRENT_SESSIONS: "1",
+                VOICE_MAX_SESSION_SECONDS: "60",
+                ELEVENLABS_API_KEY: "elevenlabs-key",
+                ELEVENLABS_AGENT_ID: "agent_dev",
+            },
+        });
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await db.voiceConversation.deleteMany().catch(() => {});
         await db.voiceSessionLease.deleteMany().catch(() => {});
@@ -146,7 +95,7 @@ describe("voiceRoutes (integration, sqlite)", () => {
     it("respects ELEVENLABS_API_BASE_URL when minting a conversation token", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-voice-baseurl-u1" }, select: { id: true } });
 
-        process.env.ELEVENLABS_API_BASE_URL = "http://elevenlabs.example.test/";
+        harness.resetEnv({ ELEVENLABS_API_BASE_URL: "http://elevenlabs.example.test/" });
         const expected = "http://elevenlabs.example.test/v1/convai/conversation/token?agent_id=agent_dev";
 
         vi.stubGlobal("fetch", vi.fn(async (url: any) => {

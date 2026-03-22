@@ -86,3 +86,29 @@ export function buildAcpConfigOptionOverridesV1(params: Readonly<{
     overrides: params.overrides,
   };
 }
+
+export function createCodexRuntimeDescriptorV1Schema(zod: typeof z) {
+  return zod
+    .object({
+      v: zod.literal(1),
+      backendMode: zod.enum(['mcp', 'acp', 'appServer']),
+    })
+    .passthrough();
+}
+
+export const CodexRuntimeDescriptorV1Schema = createCodexRuntimeDescriptorV1Schema(z);
+export type CodexRuntimeDescriptorV1 = z.infer<typeof CodexRuntimeDescriptorV1Schema>;
+
+export function buildCodexRuntimeDescriptorV1(params: Readonly<{
+  backendMode: 'mcp' | 'acp' | 'appServer';
+}>): CodexRuntimeDescriptorV1 {
+  return {
+    v: 1,
+    backendMode: params.backendMode,
+  };
+}
+
+export function readCodexRuntimeDescriptorV1BackendMode(value: unknown): 'mcp' | 'acp' | 'appServer' | null {
+  const parsed = CodexRuntimeDescriptorV1Schema.safeParse(value);
+  return parsed.success ? parsed.data.backendMode : null;
+}

@@ -1,29 +1,21 @@
 import chalk from 'chalk';
-import React from 'react';
-import { render } from 'ink';
 
 import { readCredentials, type Credentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
-import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
-import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
-import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
-import { SessionResumeSelector, type SessionResumeSelectorRow } from '@/ui/ink/SessionResumeSelector';
-import { buildCliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
+import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
+import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
+import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
-
-type InkInstance = {
-  unmount: () => void;
-};
 
 type FetchSessionByIdFn = (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
 type FetchSessionsPageFn = (params: { token: string; cursor?: string; limit?: number; activeOnly?: boolean; archivedOnly?: boolean }) => Promise<{
@@ -38,14 +30,6 @@ type ResumableSessionSelection =
   | { type: 'selected'; sessionId: string }
   | { type: 'cancelled' }
   | { type: 'none' };
-
-function hasSetRawMode(stream: NodeJS.ReadStream): stream is NodeJS.ReadStream & { setRawMode: (mode: boolean) => void } {
-  return typeof (stream as { setRawMode?: unknown }).setRawMode === 'function';
-}
-
-function canUseInkSelector(): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY && hasSetRawMode(process.stdin));
-}
 
 async function resolveAgentHandler(agentId: CatalogAgentId): Promise<CommandHandler> {
   const entry = AGENTS[agentId];
@@ -76,51 +60,19 @@ async function selectResumableSessionId(params: Readonly<{
 
   if (rows.length === 0) return { type: 'none' };
 
-  const selectorRows: SessionResumeSelectorRow[] = rows.map((row) => ({
+  const selectorRows: SessionActionSelectorRow[] = rows.map((row) => ({
     sessionId: row.id,
     agentId: row.agentId,
     updatedAt: row.updatedAt,
     title: [row.tag, row.title].filter((v) => typeof v === 'string' && v.trim().length > 0).join(' · '),
     path: row.path ?? '',
   }));
-
-  let inkInstance: InkInstance | null = null;
-  let resolveSelection: ((value: ResumableSessionSelection) => void) | null = null;
-  const selectionPromise = new Promise<ResumableSessionSelection>((resolve) => {
-    resolveSelection = resolve;
+  const selection = await runSessionActionSelector({
+    title: 'Resume a session',
+    actionVerb: 'resume',
+    rows: selectorRows,
   });
-  try {
-    console.clear();
-    inkInstance = render(
-      React.createElement(SessionResumeSelector, {
-        rows: selectorRows,
-        onSelect: (value) => resolveSelection?.({ type: 'selected', sessionId: value }),
-        onCancel: () => resolveSelection?.({ type: 'cancelled' }),
-      }),
-      {
-        exitOnCtrlC: false,
-        patchConsole: false,
-        stdout: createNonBlockingStdout(process.stdout),
-      },
-    );
-
-    process.stdin.resume();
-    if (process.stdin.isTTY && hasSetRawMode(process.stdin)) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.setEncoding('utf8');
-
-    const selection = await selectionPromise;
-    return selection;
-  } finally {
-    try {
-      inkInstance?.unmount();
-    } catch {
-      // ignore
-    }
-    await cleanupStdinAfterInk({ stdin: process.stdin, drainMs: 75 });
-    restoreStdinBestEffort({ stdin: process.stdin });
-  }
+  return selection.type === 'selected' ? selection : { type: 'cancelled' };
 }
 
 export async function handleResumeCommand(

@@ -6,7 +6,7 @@ import React from "react";
 import { claudeRemoteDispatch } from "./remote/claudeRemoteDispatch";
 import { PermissionHandler } from "./utils/permissionHandler";
 import { Future } from "@/utils/future";
-import { AbortError, SDKAssistantMessage, SDKMessage, SDKUserMessage } from "./sdk";
+import { AbortError, type SDKAssistantMessage, type SDKMessage, type SDKUserMessage } from "./sdk/types";
 import { formatClaudeMessageForInk } from "@/ui/messageFormatterInk";
 import { logger } from "@/ui/logger";
 import { SDKToLogConverter } from "./utils/sdkToLogConverter";
@@ -30,6 +30,7 @@ import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
@@ -39,6 +40,10 @@ import { readClaudeSessionJsonlMessages } from './utils/readClaudeSessionJsonlMe
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './utils/normalizeClaudeToolUseNames';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import type { AccountSettings } from '@happier-dev/protocol';
+import { buildTurnChangeSetDiffInput } from '@/agent/tools/diff/buildTurnChangeSetDiffInput';
+import { ClaudeTurnChangeTracker } from './utils/ClaudeTurnChangeTracker';
+import { isClaudeExplicitDiffToolInput } from './utils/isClaudeExplicitDiffToolInput';
 
 interface PermissionsField {
     date: number;
@@ -142,6 +147,7 @@ function resolveClaudeProjectDir(session: Session): string {
 type ClaudeRemoteReadySession = Readonly<{
     sessionId: string;
     sendSessionEvent: (event: { type: 'ready' }) => void;
+    getMetadataSnapshot?: () => unknown;
 }>;
 
 type ClaudeRemotePushSender = Readonly<{
@@ -153,9 +159,13 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
     pushSender: ClaudeRemotePushSender | null;
     waitingForCommandLabel: string;
     logPrefix: string;
+    messageBuffer?: Pick<MessageBuffer, 'getMessages'>;
     getPending: () => unknown;
     getQueueSize: () => number;
+    includeAssistantPreviewText?: boolean;
     shouldSendPush?: () => boolean;
+    accountSettings?: AccountSettings | null;
+    settingsSecretsReadKeys?: readonly Uint8Array[];
 }>): () => void {
     return () => {
         if (params.getPending()) return;
@@ -169,6 +179,15 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
             pushSender: params.pushSender,
             waitingForCommandLabel: params.waitingForCommandLabel,
             logPrefix: params.logPrefix,
+            sessionTitle: getSessionNotificationTitle(
+                typeof params.session.getMetadataSnapshot === 'function'
+                    ? () => params.session.getMetadataSnapshot?.()
+                    : null,
+            ),
+            assistantPreviewText: params.messageBuffer ? getLatestAssistantMessagePreview(params.messageBuffer) : null,
+            accountSettings: params.accountSettings ?? null,
+            settingsSecretsReadKeys: params.settingsSecretsReadKeys,
+            includeAssistantPreviewText: params.includeAssistantPreviewText,
             shouldSendPush: params.shouldSendPush,
         });
     };
@@ -229,6 +248,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     let abortController: AbortController | null = null;
     let abortFuture: Future<void> | null = null;
     let didSendChangeTitleInstructionForSession = false;
+    const turnChangeTracker = new ClaudeTurnChangeTracker();
+    const suppressedExplicitDiffCallIds = new Set<string>();
 
     async function abort() {
         if (abortController && !abortController.signal.aborted) {
@@ -258,7 +279,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         // Newer clients send a target mode. Older clients send no params.
         // Remote launcher is already in remote mode, so {to:'remote'} is a no-op.
         const to = resolveSwitchRequestTarget(params);
-        if (to === 'remote') return false;
+        if (to === 'remote') return true;
         await doSwitch();
         return true;
     }); // When switch clicked
@@ -354,6 +375,109 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     function onMessage(message: SDKMessage) {
         let releaseIds: string[] = [];
 
+        if (message.type === 'assistant') {
+            const content = Array.isArray((message as SDKAssistantMessage).message?.content)
+                ? (message as SDKAssistantMessage).message.content
+                : [];
+            for (const block of content) {
+                if (!block || typeof block !== 'object') continue;
+                if (block.type !== 'tool_use') continue;
+                const callId = typeof block.id === 'string' ? block.id : '';
+                const toolName = typeof block.name === 'string' ? block.name : '';
+                const rawInput = block.input;
+                const args = rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
+                    ? rawInput as Record<string, unknown>
+                    : {};
+                if (!callId || !toolName) continue;
+                turnChangeTracker.observeToolCall({
+                    callId,
+                    toolName,
+                    args,
+                    parentToolUseId: (message as SDKAssistantMessage).parent_tool_use_id,
+                });
+                if (isClaudeExplicitDiffToolInput(toolName, args)) {
+                    suppressedExplicitDiffCallIds.add(callId);
+                }
+            }
+        }
+
+        if (message.type === 'user') {
+            const content = Array.isArray((message as SDKUserMessage).message?.content)
+                ? (message as SDKUserMessage).message.content
+                : [];
+            for (const block of content) {
+                if (!block || typeof block !== 'object') continue;
+                if (block.type !== 'tool_result') continue;
+                const callId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+                if (!callId) continue;
+                turnChangeTracker.observeToolResult({
+                    callId,
+                    isError: block.is_error === true,
+                });
+                if (block.is_error === true) {
+                    suppressedExplicitDiffCallIds.delete(callId);
+                }
+            }
+        }
+
+        if (message.type === 'result') {
+            if (message.subtype === 'success') {
+                const turnChangeSet = turnChangeTracker.completeTurn({
+                    sessionId: session.sessionId ?? session.client.sessionId ?? 'unknown',
+                    status: 'completed',
+                });
+                if (turnChangeSet) {
+                    const diffCallId = `claude-diff-${turnChangeSet.turnId}`;
+                    const syntheticMessages: SDKMessage[] = [
+                        {
+                            type: 'assistant',
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'assistant',
+                                content: [
+                                    {
+                                        type: 'tool_use',
+                                        id: diffCallId,
+                                        name: 'Diff',
+                                        input: buildTurnChangeSetDiffInput({
+                                            turnChangeSet,
+                                            protocol: 'claude',
+                                            rawToolName: 'ClaudeTurnDiff',
+                                        }),
+                                    },
+                                ],
+                            },
+                        },
+                        {
+                            type: 'user',
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'user',
+                                content: [
+                                    {
+                                        type: 'tool_result',
+                                        tool_use_id: diffCallId,
+                                        content: { status: 'completed' },
+                                    },
+                                ],
+                            },
+                        },
+                    ];
+
+                    for (const syntheticMessage of syntheticMessages) {
+                        const converted = sdkToLogConverter.convert(syntheticMessage);
+                        if (converted) {
+                            messageQueue.enqueue(converted);
+                        }
+                    }
+                }
+                suppressedExplicitDiffCallIds.clear();
+            } else {
+                turnChangeTracker.resetTurn();
+                suppressedExplicitDiffCallIds.clear();
+            }
+        }
+
         if (message && message.type === 'assistant') {
             const parentToolUseId =
                 typeof (message as any).parent_tool_use_id === 'string' ? (message as any).parent_tool_use_id.trim() : '';
@@ -397,6 +521,47 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         // Convert SDK message to log format and send to client
         let msg = message;
+
+        if (message.type === 'assistant') {
+            const assistantContent = Array.isArray((message as SDKAssistantMessage).message?.content)
+                ? (message as SDKAssistantMessage).message.content
+                : [];
+            const filteredContent = assistantContent.filter((block) => {
+                if (!block || typeof block !== 'object') return false;
+                if (block.type !== 'tool_use') return true;
+                const callId = typeof block.id === 'string' ? block.id : '';
+                return !callId || !suppressedExplicitDiffCallIds.has(callId);
+            });
+            if (filteredContent.length !== assistantContent.length) {
+                msg = {
+                    ...(message as SDKAssistantMessage),
+                    message: {
+                        ...(message as SDKAssistantMessage).message,
+                        content: filteredContent,
+                    },
+                };
+            }
+        }
+
+        if (message.type === 'user') {
+            const rawUserContent = (message as SDKUserMessage).message?.content;
+            const userContent = Array.isArray(rawUserContent) ? rawUserContent : [];
+            const filteredContent = userContent.filter((block) => {
+                if (!block || typeof block !== 'object') return false;
+                if (block.type !== 'tool_result') return true;
+                const callId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+                return !callId || !suppressedExplicitDiffCallIds.has(callId);
+            });
+            if (filteredContent.length !== userContent.length) {
+                msg = {
+                    ...(message as SDKUserMessage),
+                    message: {
+                        ...(message as SDKUserMessage).message,
+                        content: filteredContent,
+                    },
+                };
+            }
+        }
 
         const logMessage = sdkToLogConverter.convert(msg);
         if (logMessage) {
@@ -503,11 +668,13 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 for (let c of umessage.message.content) {
                     if (
                         c.type === 'tool_use' &&
-                        (c.name === 'Task' || c.name === 'Agent') &&
+                        typeof c.name === 'string' &&
+                        typeof c.id === 'string' &&
+                        isGenericSubAgentToolName(c.name) &&
                         c.input &&
                         typeof (c.input as any).prompt === 'string'
                     ) {
-                        const logMessage2 = sdkToLogConverter.convertSidechainUserMessage(c.id!, (c.input as any).prompt);
+                        const logMessage2 = sdkToLogConverter.convertSidechainUserMessage(c.id, (c.input as any).prompt);
                         if (logMessage2) {
                             messageQueue.enqueue(logMessage2);
                         }
@@ -530,6 +697,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         // See: https://github.com/anthropics/happy-cli/issues/143
         let previousSessionId: string | null | undefined = undefined;
         let forceNewSession = false;
+        let waitForMessageBeforeNextLaunch = false;
         while (!exitReason) {
             logger.debug('[remote]: launch');
             messageBuffer.addMessage('═'.repeat(40), 'status');
@@ -541,6 +709,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 permissionHandler.reset(); // Reset permissions before starting new session
                 sdkToLogConverter.resetParentChain(); // Reset parent chain for new conversation
                 subagentFileCollector.cleanup(); // Stop any watchers from prior sessions (subagent JSONL lives under session id).
+                turnChangeTracker.resetTurn();
+                suppressedExplicitDiffCallIds.clear();
                 didSendChangeTitleInstructionForSession = false;
                 logger.debug(`[remote]: New session detected (previous: ${previousSessionId}, current: ${session.sessionId})`);
                 forceNewSession = false;
@@ -557,13 +727,58 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             let mode: EnhancedMode | null = null;
             let didReplaySeedBootstrap = false;
             try {
+                const waitForNextBatch = async (): Promise<any | null> => {
+                    return await waitForMessagesOrPending({
+                        messageQueue: session.queue,
+                        abortSignal: controller.signal,
+                        popPendingMessage: async () => {
+                            // Only materialize pending items when there are no committed transcript messages
+                            // queued locally; committed messages must be processed first.
+                            if (session.queue.size() > 0) return false;
+                            return await session.client.popPendingMessage();
+                        },
+                        waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
+                        onMetadataUpdate: () => {
+                            const updated = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
+                            if (updated) {
+                                logger.debug(`[remote]: Permission mode updated from metadata to: ${updated}`);
+                            }
+                        },
+                    });
+                };
+
+                if (waitForMessageBeforeNextLaunch) {
+                    waitForMessageBeforeNextLaunch = false;
+                    messageBuffer.addMessage('Claude Code exited unexpectedly. Waiting for the next message to retry...', 'status');
+                    const msg = await waitForNextBatch();
+                    if (!msg) {
+                        if (exitReason) {
+                            continue;
+                        }
+                        if (session.queue.isClosed()) {
+                            exitReason = 'exit';
+                            continue;
+                        }
+                        // If we were aborted without an explicit exit/switch request (e.g. detached client),
+                        // stay parked to avoid a tight retry loop.
+                        waitForMessageBeforeNextLaunch = true;
+                        continue;
+                    }
+                    pending = msg;
+                }
+
                 const readyHandler = createClaudeRemoteReadyHandler({
                     session: session.client,
                     pushSender: session.pushSender,
                     waitingForCommandLabel: 'Claude',
                     logPrefix: '[remote]',
+                    messageBuffer,
                     getPending: () => pending,
                     getQueueSize: () => session.queue.size(),
+                    accountSettings: session.accountSettings ?? null,
+                    settingsSecretsReadKeys: session.accountSettingsSecretsReadKeys,
+                    includeAssistantPreviewText:
+                        session.accountSettings?.notificationsSettingsV1?.readyIncludeMessageText !== false,
                     shouldSendPush: () => shouldSendReadyPushNotification(session.accountSettings ?? null),
                 });
 
@@ -600,34 +815,21 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                                 return p;
                             }
 
-                                const msg = await waitForMessagesOrPending({
-                                    messageQueue: session.queue,
-                                    abortSignal: controller.signal,
-                                    popPendingMessage: async () => {
-                                        // Only materialize pending items when there are no committed transcript messages
-                                        // queued locally; committed messages must be processed first.
-                                        if (session.queue.size() > 0) return false;
-                                        return await session.client.popPendingMessage();
-                                    },
-                                    waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
-                                    onMetadataUpdate: () => {
-                                        const updated = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
-                                        if (updated) {
-                                            logger.debug(`[remote]: Permission mode updated from metadata to: ${updated}`);
-                                        }
-                                    },
-                                });
+                                const msg = await waitForNextBatch();
+                                if (!msg) {
+                                    return null;
+                                }
 
                             // Check if mode has changed
-                            if (msg) {
-                                if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
-                                    logger.debug('[remote]: mode has changed, pending message');
+                            if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
+                                logger.debug('[remote]: mode has changed, pending message');
                                 pending = msg;
                                 return null;
                             }
                             modeHash = msg.hash;
-                            mode = msg.mode;
-                            permissionHandler.handleModeChange(mode.permissionMode);
+                            const nextMode = msg.mode;
+                            mode = nextMode;
+                            permissionHandler.handleModeChange(nextMode.permissionMode);
                             const replaySeedResolution = await resolveClaudeRemoteQueuedPromptWithReplaySeed({
                                 sessionClient: session.client,
                                 batch: { message: msg.message, mode: msg.mode },
@@ -660,10 +862,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                                 message: effectiveMessage,
                                 mode: msg.mode,
                             }
-                        }
-
-                        // Exit
-                        return null;
                     },
                     onSessionFound: (sessionId: string, data: unknown) => {
                         // Update converter's session ID when new session is found
@@ -745,7 +943,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             ? `${base}\n\n${tailText}`
                             : base;
                         session.client.sendSessionEvent({ type: 'message', message });
-                        exitReason = 'exit';
+                        waitForMessageBeforeNextLaunch = true;
+                        continue;
                     } else {
                         session.client.sendSessionEvent({ type: 'message', message: `Claude process error: ${formatErrorForUi(e)}` });
                         continue;
@@ -767,6 +966,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 abortFuture = null;
                 logger.debug('[remote]: launch done');
                 permissionHandler.reset();
+                turnChangeTracker.resetTurn();
+                suppressedExplicitDiffCallIds.clear();
                 modeHash = null;
                 mode = null;
                 // Session IDs can change during a remote run (system init / resume / fork / compact).
@@ -779,6 +980,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         // Clean up permission handler
         permissionHandler.reset();
+        permissionHandler.dispose();
         subagentFileCollector.cleanup();
         clearInterval(teamInboxIntervalId);
         teamInboxBridge.cleanup();
@@ -802,3 +1004,4 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     return exitReason || 'exit';
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';

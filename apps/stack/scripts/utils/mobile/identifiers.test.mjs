@@ -30,7 +30,7 @@ test('defaultDevClientIdentity is stable and safe', () => {
   const id = defaultDevClientIdentity({ user: 'Leeroy' });
   assert.equal(id.iosAppName, 'Happier Dev');
   assert.equal(id.scheme, 'happier-dev');
-  assert.equal(id.iosBundleId, 'dev.happier.app.dev');
+  assert.equal(id.iosBundleId, 'dev.happier.app.development');
 });
 
 test('defaultStackReleaseIdentity is per-stack', () => {

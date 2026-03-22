@@ -1,5 +1,3 @@
-import { log } from '@/utils/logging/log';
-
 export class SessionDeleteConditionLostError extends Error {
     constructor() {
         super('Session no longer matches delete conditions');
@@ -20,42 +18,40 @@ export async function deleteSessionTree(
         reason: 'user_request' | 'retention_policy';
         sessionDeleteWhere?: Record<string, unknown>;
     },
-): Promise<void> {
+): Promise<{
+    deletedMessages: number;
+    deletedReports: number;
+    deletedAccessKeys: number;
+}> {
     const deletedMessages = await tx.sessionMessage.deleteMany({
         where: { sessionId: params.sessionId },
     });
-    log(
-        { module: 'session-delete', userId: params.actorAccountId, sessionId: params.sessionId, deletedCount: deletedMessages.count, reason: params.reason },
-        `Deleted ${deletedMessages.count} session messages`,
-    );
 
     const deletedReports = await tx.usageReport.deleteMany({
         where: { sessionId: params.sessionId },
     });
-    log(
-        { module: 'session-delete', userId: params.actorAccountId, sessionId: params.sessionId, deletedCount: deletedReports.count, reason: params.reason },
-        `Deleted ${deletedReports.count} usage reports`,
-    );
 
     const deletedAccessKeys = await tx.accessKey.deleteMany({
         where: { sessionId: params.sessionId },
     });
-    log(
-        { module: 'session-delete', userId: params.actorAccountId, sessionId: params.sessionId, deletedCount: deletedAccessKeys.count, reason: params.reason },
-        `Deleted ${deletedAccessKeys.count} access keys`,
-    );
 
     const deletedSession = await tx.session.deleteMany({
-        where: {
-            id: params.sessionId,
-            ...(params.sessionDeleteWhere ?? null),
-        },
+        where: params.sessionDeleteWhere
+            ? {
+                AND: [
+                    { id: params.sessionId },
+                    params.sessionDeleteWhere,
+                ],
+            }
+            : { id: params.sessionId },
     });
     if (deletedSession.count !== 1) {
         throw new SessionDeleteConditionLostError();
     }
-    log(
-        { module: 'session-delete', userId: params.actorAccountId, sessionId: params.sessionId, reason: params.reason },
-        'Session deleted successfully',
-    );
+
+    return {
+        deletedMessages: deletedMessages.count,
+        deletedReports: deletedReports.count,
+        deletedAccessKeys: deletedAccessKeys.count,
+    };
 }

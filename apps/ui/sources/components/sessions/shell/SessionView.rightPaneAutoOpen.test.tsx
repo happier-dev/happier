@@ -1,13 +1,46 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as any).__DEV__ = false;
 
+const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const openRightSpy = vi.hoisted(() => vi.fn());
 const setRightTabSpy = vi.hoisted(() => vi.fn());
+const themeColors = vi.hoisted(() => ({
+    text: '#000',
+    textSecondary: '#666',
+    textLink: '#00f',
+    surface: '#fff',
+    surfaceHigh: '#f5f5f5',
+    surfaceSelected: '#eef4ff',
+    divider: '#ddd',
+    border: '#ddd',
+    indigo: '#5856D6',
+    radio: { active: '#007AFF' },
+    accent: {
+        blue: '#007AFF',
+        green: '#34C759',
+        orange: '#FF9500',
+        yellow: '#FFCC00',
+        red: '#FF3B30',
+        indigo: '#5856D6',
+        purple: '#AF52DE',
+    },
+    modal: { border: '#ddd' },
+    input: { background: '#f5f5f5' },
+    header: { tint: '#000' },
+    status: { error: '#f00' },
+    shadow: { color: '#000', opacity: 0.2 },
+    groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
+    box: {
+        warning: { background: '#fff4cc', border: '#f0d98a', text: '#000' },
+    },
+}));
 
 let sessionsRightPaneDefaultOpen = false;
 let editorFocusModeEnabled = false;
@@ -18,404 +51,364 @@ let lastUrlSyncEnabled: boolean | null = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
-  LinearGradient: 'LinearGradient',
+    LinearGradient: 'LinearGradient',
 }));
 vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-  Octicons: 'Octicons',
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
 }));
-vi.mock('react-native', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: {
-      ...actual.Platform,
-      OS: 'web',
-      select: (spec: Record<string, unknown>) =>
-        spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
-    },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                View: 'View',
+                                Text: 'Text',
+                                Pressable: 'Pressable',
+                                ActivityIndicator: 'ActivityIndicator',
+                                Platform: {
+                                    OS: 'web',
+                                    select: (spec: Record<string, unknown>) =>
+                                        spec && Object.prototype.hasOwnProperty.call(spec, 'web')
+                                            ? (spec as any).web
+                                            : (spec as any).default,
+                                },
+                                useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                            }
+    );
 });
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-
-const themeColors = {
-  text: '#000',
-  textSecondary: '#666',
-  textLink: '#00f',
-  surface: '#fff',
-  surfaceHigh: '#f5f5f5',
-  divider: '#ddd',
-  border: '#ddd',
-  indigo: '#5856D6',
-  accent: {
-    blue: '#007AFF',
-    green: '#34C759',
-    orange: '#FF9500',
-    yellow: '#FFCC00',
-    red: '#FF3B30',
-    indigo: '#5856D6',
-    purple: '#AF52DE',
-  },
-  modal: { border: '#ddd' },
-  input: { background: '#f5f5f5' },
-  header: { tint: '#000' },
-  status: { error: '#f00' },
-  shadow: { color: '#000', opacity: 0.2 },
-  groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-  box: {
-    warning: { background: '#fff4cc', border: '#f0d98a', text: '#000' },
-  },
-};
-
-vi.mock('react-native-unistyles', () => ({
-  __esModule: true,
-  useUnistyles: () => ({
-    theme: {
-      dark: false,
-      colors: themeColors,
-    },
-  }),
-  StyleSheet: {
-    create: (styles: any) =>
-      typeof styles === 'function'
-        ? styles({ colors: themeColors }, {})
-        : styles,
-    absoluteFillObject: {},
-    hairlineWidth: 1,
-  },
-}));
-
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: themeColors,
+        runtime: {
+            hairlineWidth: 1,
+        },
+    });
+});
 vi.mock('@react-navigation/native', () => ({
-  useFocusEffect: () => {},
+    useFocusEffect: () => {},
+    useIsFocused: () => true,
 }));
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
-  usePathname: () => '/',
-}));
-
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        pathname: '/',
+        router: {
+            push: vi.fn(),
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
+        },
+    }).module;
+});
 vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: authCredentials }),
+    useAuth: () => ({ credentials: authCredentials }),
 }));
-
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
-  AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
+    AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
 }));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
-  AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
+    AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
 }));
 vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
-  useRegisterSessionPaneDriver: () => 'session:s1',
+    useRegisterSessionPaneDriver: () => 'session:s1',
 }));
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-  useAppPaneScope: () => ({
-    openRight: openRightSpy,
-    setRightTab: setRightTabSpy,
-    closeRight: vi.fn(),
-    openDetailsTab: vi.fn(),
-    closeDetails: vi.fn(),
-    pinDetailsTab: vi.fn(),
-    closeDetailsTab: vi.fn(),
-    setActiveDetailsTab: vi.fn(),
-    setRightTabState: vi.fn(),
-    scopeState: rightScopeState,
-  }),
+    useAppPaneScope: () => ({
+        openRight: openRightSpy,
+        setRightTab: setRightTabSpy,
+        closeRight: vi.fn(),
+        openDetailsTab: vi.fn(),
+        closeDetails: vi.fn(),
+        pinDetailsTab: vi.fn(),
+        closeDetailsTab: vi.fn(),
+        setActiveDetailsTab: vi.fn(),
+        setRightTabState: vi.fn(),
+        scopeState: rightScopeState,
+    }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
-  useSessionPaneUrlSync: (input: any) => {
-    lastUrlSyncEnabled = Boolean(input?.enabled);
-  },
+    useSessionPaneUrlSync: (input: any) => {
+        lastUrlSyncEnabled = Boolean(input?.enabled);
+    },
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-  ChatHeaderView: () => null,
+    ChatHeaderView: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
-  ChatList: () => React.createElement('ChatList'),
+    ChatList: () => React.createElement('ChatList'),
 }));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
-  EmptyMessages: () => React.createElement('EmptyMessages'),
+    EmptyMessages: () => React.createElement('EmptyMessages'),
 }));
 vi.mock('@/components/ui/forms/Deferred', () => ({
-  Deferred: (props: any) => React.createElement(React.Fragment, null, props.children),
+    Deferred: (props: any) => React.createElement(React.Fragment, null, props.children),
 }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
-  SessionHeaderActionMenu: () => null,
+    SessionHeaderActionMenu: () => null,
 }));
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
-  VoiceSurface: () => null,
+    VoiceSurface: () => null,
 }));
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
-  AttachmentFilePicker: () => null,
+    AttachmentFilePicker: () => null,
 }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: () => false,
+    useFeatureEnabled: () => false,
 }));
 vi.mock('@/utils/platform/responsive', () => ({
-  getDeviceType: () => 'tablet',
-  useDeviceType: () => 'tablet',
-  useHeaderHeight: () => 0,
-  useIsLandscape: () => false,
-  useIsTablet: () => true,
+    getDeviceType: () => 'tablet',
+    useDeviceType: () => 'tablet',
+    useHeaderHeight: () => 0,
+    useIsLandscape: () => false,
+    useIsTablet: () => true,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: () => ({ clearDraft: vi.fn() }),
+    useDraft: () => ({ clearDraft: vi.fn() }),
 }));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
-  getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
+    getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
-  resolveSessionMachineReachability: () => true,
+    resolveSessionMachineReachability: () => true,
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
-  getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+    getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+    subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/voice/session/voiceSession', () => ({
-  useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
-  voiceSessionManager: {},
+    useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
+    voiceSessionManager: {},
 }));
-
 vi.mock('@/sync/sync', () => ({
-  sync: {
-    markSessionViewed: async () => {},
-    fetchPendingMessages: async () => {},
-    publishSessionPermissionModeToMetadata: async () => {},
-    publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-    publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-    publishSessionModelOverrideToMetadata: async () => {},
-    refreshSessions: async () => {},
-    onSessionVisible: () => () => {},
-    sendMessage: async () => {},
-    enqueuePendingMessage: async () => {},
-    submitMessage: async () => {},
-    encryption: { getMachineEncryption: () => null },
-  },
+    sync: {
+        markSessionViewed: async () => {},
+        fetchPendingMessages: async () => {},
+        publishSessionPermissionModeToMetadata: async () => {},
+        publishSessionAcpSessionModeOverrideToMetadata: async () => {},
+        publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
+        publishSessionModelOverrideToMetadata: async () => {},
+        refreshSessions: async () => {},
+        onSessionVisible: () => () => {},
+        sendMessage: async () => {},
+        enqueuePendingMessage: async () => {},
+        submitMessage: async () => {},
+        encryption: { getMachineEncryption: () => null },
+    },
 }));
-vi.mock('@/sync/ops', () => ({
-  continueSessionWithReplay: vi.fn(),
-  sessionAbort: vi.fn(),
-  resumeSession: vi.fn(),
-  sessionAttachmentsUploadFile: vi.fn(),
-  sessionSwitch: vi.fn(),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            continueSessionWithReplay: vi.fn(),
+            sessionAbort: vi.fn(),
+            resumeSession: vi.fn(),
+            sessionAttachmentsUploadFile: vi.fn(),
+            sessionSwitch: vi.fn(),
+        },
+    });
+});
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-  createDefaultActionExecutor: () => ({ execute: vi.fn() }),
+    createDefaultActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-  AgentInput: () => null,
+    AgentInput: () => null,
 }));
-vi.mock('@/modal', () => ({
-  Modal: { alert: vi.fn(), confirm: vi.fn(), prompt: vi.fn(), show: vi.fn() },
-}));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    const session: any = {
+        id: 's1',
+        seq: 1,
+        presence: 'online',
+        active: true,
+        accessLevel: 'edit',
+        metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
+        agentState: {},
+    };
 
-vi.mock('@/sync/domains/state/storage', () => {
-  const session: any = {
-    id: 's1',
-    seq: 1,
-    presence: 'online',
-    active: true,
-    accessLevel: 'edit',
-    metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
-    agentState: {},
-  };
-  return {
-    storage: { getState: () => ({ sessions: { s1: session }, settings: {}, sessionListViewDataByServerId: {} }) },
-    useSession: () => session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useLocalSetting: (key: string) => {
-      if (key === 'acknowledgedCliVersions') return {};
-      if (key === 'uiMultiPanePanelsEnabled') return uiMultiPanePanelsEnabledSetting;
-      if (key === 'editorFocusModeEnabled') return editorFocusModeEnabled;
-      if (key === 'detailsPaneTabsBehavior') return 'preview';
-      if (key === 'rightPaneWidthPx') return 360;
-      if (key === 'rightPaneWidthBasisPx') return 1200;
-      if (key === 'detailsPaneWidthPx') return 520;
-      if (key === 'detailsPaneWidthBasisPx') return 1200;
-      if (key === 'sessionsRightPaneDefaultOpen') return sessionsRightPaneDefaultOpen;
-      return null;
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
-    useSetting: () => null,
-    useSettings: () => ({ experiments: true, featureToggles: {} }),
-    useAutomations: () => [],
-    useMachine: () => null,
-  };
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            storage: {
+                getState: () => ({
+                    sessions: { s1: session },
+                    settings: {},
+                    sessionListViewDataByServerId: {},
+                }),
+            } as any,
+            useSession: () => session,
+            useIsDataReady: () => true,
+            useRealtimeStatus: () => 'connected',
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionReviewCommentsDrafts: () => [],
+            useSessionUsage: () => null,
+            useLocalSetting: <K extends keyof LocalSettings>(key: K) => {
+                const overrides: Partial<LocalSettings> = {
+                    acknowledgedCliVersions: {},
+                    uiMultiPanePanelsEnabled: uiMultiPanePanelsEnabledSetting,
+                    editorFocusModeEnabled,
+                    detailsPaneTabsBehavior: 'preview',
+                    rightPaneWidthPx: 360,
+                    rightPaneWidthBasisPx: 1200,
+                    detailsPaneWidthPx: 520,
+                    detailsPaneWidthBasisPx: 1200,
+                    sessionsRightPaneDefaultOpen,
+                };
+                return (overrides[key] ?? localSettingsDefaults[key]) as LocalSettings[K];
+            },
+            useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
+                (({
+                    acknowledgedCliVersions: {},
+                    uiMultiPanePanelsEnabled: uiMultiPanePanelsEnabledSetting,
+                    editorFocusModeEnabled,
+                    detailsPaneTabsBehavior: 'preview',
+                    rightPaneWidthPx: 360,
+                    rightPaneWidthBasisPx: 1200,
+                    detailsPaneWidthPx: 520,
+                    detailsPaneWidthBasisPx: 1200,
+                    sessionsRightPaneDefaultOpen,
+                } as Partial<LocalSettings>)[key] ?? localSettingsDefaults[key]) as LocalSettings[K],
+                vi.fn<(value: LocalSettings[K]) => void>(),
+            ],
+            useSetting: <K extends keyof Settings>(key: K) => settingsDefaults[key],
+            useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
+            useAutomations: () => [],
+            useMachine: () => null,
+        },
+    });
 });
-
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
-  useAutomationsSupport: () => ({ enabled: false }),
+    useAutomationsSupport: () => ({ enabled: false }),
 }));
-
 vi.mock('@/scm/scmStatusSync', () => ({
-  scmStatusSync: { run: async () => {}, invalidateFromAutoRefresh: () => {} },
+    scmStatusSync: { run: async () => {}, invalidateFromAutoRefresh: () => {} },
 }));
-
 vi.mock('@/sync/ops/actions/sessionActionExecutor', () => ({
-  createSessionActionExecutor: () => ({ execute: vi.fn() }),
+    createSessionActionExecutor: () => ({ execute: vi.fn() }),
 }));
-
 vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => ({
-  resolveSessionComposerSend: () => ({ kind: 'send', text: '' }),
+    resolveSessionComposerSend: () => ({ kind: 'send', text: '' }),
 }));
-
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
-  applyPermissionModeSelection: async () => {},
+    applyPermissionModeSelection: async () => {},
 }));
-
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-  supportsSessionModeOverrides: () => false,
+    supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-  getSwitchToLocalControlDisabledReason: () => null,
-  shouldRenderChatTimelineForSession: () => true,
-  shouldRequestRemoteControlAfterPendingEnqueue: () => false,
+    shouldRenderChatTimelineForSession: () => true,
+    shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
-
 vi.mock('@/sync/runtime/time', () => ({
-  nowServerMs: () => 0,
+    nowServerMs: () => 0,
 }));
-
 vi.mock('@/utils/system/fireAndForget', () => ({
-  fireAndForget: () => {},
+    fireAndForget: () => {},
 }));
 
 describe('SessionView (right pane auto-open)', () => {
-  beforeEach(() => {
-    sessionsRightPaneDefaultOpen = false;
-    editorFocusModeEnabled = false;
-    rightScopeState = { right: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } };
-    uiMultiPanePanelsEnabledSetting = true;
-    lastUrlSyncEnabled = null;
-    openRightSpy.mockClear();
-    setRightTabSpy.mockClear();
-  });
+    const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
+        <AppPaneProvider>{children ?? null}</AppPaneProvider>
+    );
 
-  it('opens right pane on first visit when sessionsRightPaneDefaultOpen is enabled and no prior tab state exists', async () => {
-    sessionsRightPaneDefaultOpen = true;
-    const { SessionView } = await import('./SessionView');
-    let tree!: renderer.ReactTestRenderer;
+    async function renderSessionView(paneUrlState?: Record<string, unknown>) {
+        const { SessionView } = await import('./SessionView');
+        return renderScreen(
+            <SessionView id="s1" paneUrlState={paneUrlState as any} />,
+            {
+                wrapper: AppPaneProviderWrapper,
+            },
+        );
+    }
 
-    act(() => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>
-      );
+    beforeEach(() => {
+        (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+        sessionsRightPaneDefaultOpen = false;
+        editorFocusModeEnabled = false;
+        rightScopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null },
+        };
+        authCredentials = { token: 't', secret: 's' };
+        uiMultiPanePanelsEnabledSetting = true;
+        lastUrlSyncEnabled = null;
+        openRightSpy.mockReset();
+        setRightTabSpy.mockReset();
     });
-    // Flush effects.
-    await act(async () => {});
 
-    expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
-    act(() => {
-      tree.unmount();
+    afterEach(() => {
+        standardCleanup();
+        vi.clearAllMocks();
+        (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     });
-  }, 60_000);
 
-  it('does not force open right pane when the user previously interacted (activeTabId set)', async () => {
-    sessionsRightPaneDefaultOpen = true;
-    rightScopeState = { right: { isOpen: false, activeTabId: 'git', tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } };
+    it('opens right pane on first visit when sessionsRightPaneDefaultOpen is enabled and no prior tab state exists', async () => {
+        sessionsRightPaneDefaultOpen = true;
 
-    const { SessionView } = await import('./SessionView');
+        const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>
-      );
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
+
+        await screen.unmount();
     });
-    await act(async () => {});
 
-    expect(openRightSpy).toHaveBeenCalledTimes(0);
-    act(() => {
-      tree.unmount();
+    it('does not force open right pane when the user previously interacted (activeTabId set)', async () => {
+        sessionsRightPaneDefaultOpen = true;
+        rightScopeState = {
+            right: { isOpen: false, activeTabId: 'git', tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null },
+        };
+
+        const screen = await renderSessionView();
+
+        expect(openRightSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
     });
-  }, 60_000);
 
-  it('does not open right pane when the setting is disabled', async () => {
-    sessionsRightPaneDefaultOpen = false;
-    const { SessionView } = await import('./SessionView');
+    it('does not open right pane when the setting is disabled', async () => {
+        const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>
-      );
+        expect(openRightSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
     });
-    await act(async () => {});
 
-    expect(openRightSpy).toHaveBeenCalledTimes(0);
-    act(() => {
-      tree.unmount();
+    it('does not blank the main content when editor focus mode is enabled (AppPaneScopeHost handles hiding)', async () => {
+        editorFocusModeEnabled = true;
+        rightScopeState = {
+            right: { isOpen: true, activeTabId: 'files', tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null },
+        };
+
+        const screen = await renderSessionView();
+
+        expect(screen.root.findAllByType('AgentContentView' as any).length).toBeGreaterThan(0);
+
+        await screen.unmount();
     });
-  }, 60_000);
 
-  it('does not blank the main content when editor focus mode is enabled (AppPaneScopeHost handles hiding)', async () => {
-    editorFocusModeEnabled = true;
-    // Ensure at least one pane is open so focus mode is meaningful.
-    rightScopeState = { right: { isOpen: true, activeTabId: 'files', tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } };
+    it('keeps URL pane sync enabled when multi-pane setting is unset', async () => {
+        uiMultiPanePanelsEnabledSetting = undefined;
 
-    const { SessionView } = await import('./SessionView');
+        const screen = await renderSessionView({ rightTabId: 'git' });
 
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>
-      );
+        expect(lastUrlSyncEnabled).toBe(true);
+
+        await screen.unmount();
     });
-    await act(async () => {});
-
-    // Main should still be the normal session content tree (AgentContentView is mocked),
-    // not an empty placeholder view.
-    expect((tree as any).root.findAllByType('AgentContentView').length).toBeGreaterThan(0);
-
-    act(() => {
-      tree.unmount();
-    });
-  }, 60_000);
-
-  it('keeps URL pane sync enabled when multi-pane setting is unset', async () => {
-    uiMultiPanePanelsEnabledSetting = undefined;
-
-    const { SessionView } = await import('./SessionView');
-
-    let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" paneUrlState={{ rightTabId: 'git' } as any} />
-        </AppPaneProvider>
-      );
-    });
-    await act(async () => {});
-
-    expect(lastUrlSyncEnabled).toBe(true);
-    act(() => {
-      tree.unmount();
-    });
-  }, 60_000);
 });

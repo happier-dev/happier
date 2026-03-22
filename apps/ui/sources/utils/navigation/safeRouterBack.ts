@@ -1,6 +1,7 @@
 type RouterLike = Readonly<{
     back: () => void;
     replace: (href: string) => void;
+    canGoBack?: () => boolean;
 }>;
 
 type NavigationLike = Readonly<{
@@ -11,6 +12,8 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
     const canGoBack =
         typeof params.navigation?.canGoBack === 'function'
             ? params.navigation.canGoBack()
+            : typeof params.router.canGoBack === 'function'
+                ? params.router.canGoBack()
             : true;
 
     if (!canGoBack) {
@@ -24,4 +27,3 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
         params.router.replace(params.fallbackHref);
     }
 }
-

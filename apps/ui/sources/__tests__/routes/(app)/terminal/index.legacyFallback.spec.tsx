@@ -1,6 +1,8 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -9,15 +11,23 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 const routerBackMock = vi.fn();
 const localSearchParamsMock = vi.fn((): Record<string, string> => ({ server: 'https://example.test' }));
+const routerMock = createTerminalRouterMock();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+function createTerminalRouterMock() {
+    return createExpoRouterMock({
+        router: { back: routerBackMock },
+        params: () => localSearchParamsMock(),
+    });
+}
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: routerBackMock }),
-    useLocalSearchParams: () => localSearchParamsMock(),
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+
+vi.mock('expo-router', async () => {
+    return routerMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
@@ -37,9 +47,18 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: Record<string, unknown>) => options.web ?? options.default ?? options.ios ?? options.android,
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -54,11 +73,12 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: { colors: { textDestructive: '#f00', textSecondary: '#666', radio: { active: '#0af' }, text: '#000' } },
-    }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: () => null,
@@ -77,6 +97,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 describe('TerminalScreen legacy deep-link fallback', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         vi.resetModules();
         routerBackMock.mockClear();
@@ -86,50 +110,25 @@ describe('TerminalScreen legacy deep-link fallback', () => {
 
     it('does not treat known params like server as a legacy public key', async () => {
         const Screen = (await import('@/app/(app)/terminal/index')).default;
+        routerMock.state.params = localSearchParamsMock();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
-            if (!tree) {
-                throw new Error('Expected terminal index renderer');
-            }
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
 
-            const textValues = tree.root
-                .findAll((node) => typeof node.props?.children === 'string')
-                .map((node) => String(node.props.children));
-            expect(textValues).toContain('terminal.invalidConnectionLink');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(screen.getTextContent()).toContain('terminal.invalidConnectionLink');
     });
 
     it('uses legacy fallback when exactly one unknown search param key is present', async () => {
         localSearchParamsMock.mockReturnValue({ abcdefghijklmnop: '' });
         const Screen = (await import('@/app/(app)/terminal/index')).default;
+        routerMock.state.params = localSearchParamsMock();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
-            if (!tree) {
-                throw new Error('Expected terminal index renderer');
-            }
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
 
-            const renderedItems = tree.root.findAll((node) => (node.type as unknown) === 'Item');
-            const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
-            expect(publicKeyItem).toBeTruthy();
-            expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const renderedItems = screen.root.findAll((node) => (node.type as unknown) === 'Item');
+        const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
+        expect(publicKeyItem).toBeTruthy();
+        expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
     });
 });

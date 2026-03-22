@@ -4,7 +4,7 @@ import os from 'node:os';
 import { readCredentials, readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
-import { printJsonEnvelope, wantsJson } from '@/sessionControl/jsonOutput';
+import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
 
 export async function handleAuthStatus(argv: string[] = []): Promise<void> {
   const json = wantsJson(argv);

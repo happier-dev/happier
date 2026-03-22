@@ -12,5 +12,8 @@ export function readServerRetentionPolicy(features: FeaturesResponse): ServerRet
 export function hasFiniteRetentionPolicy(policy: ServerRetentionPolicy | null | undefined): boolean {
     if (!policy) return false;
     if (!policy.enabled) return false;
-    return SERVER_RETENTION_DOMAIN_METADATA.some(({ key }) => policy[key].mode !== 'keep_forever');
+    return SERVER_RETENTION_DOMAIN_METADATA.some(({ key }) => {
+        const domainPolicy = policy[key];
+        return domainPolicy !== undefined && domainPolicy.mode !== 'keep_forever';
+    });
 }

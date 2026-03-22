@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -12,10 +14,14 @@ vi.mock('react-native-reanimated', () => ({}));
 const routerReplaceSpy = vi.fn();
 let localSearchParams: Record<string, unknown> = {};
 
-vi.mock('expo-router', () => ({
-    router: { replace: routerReplaceSpy },
-    useLocalSearchParams: () => localSearchParams,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { replace: routerReplaceSpy },
+        params: () => localSearchParams as Record<string, string | string[] | undefined>,
+    });
+    return expoRouterMock.module;
+});
 
 afterEach(() => {
     localSearchParams = {};
@@ -30,9 +36,7 @@ describe('Legacy /account route', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
+            tree = (await renderScreen(<Screen />)).tree;
 
             expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/account');
         } finally {
@@ -48,9 +52,7 @@ describe('Legacy /account route', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
+            tree = (await renderScreen(<Screen />)).tree;
 
             expect(routerReplaceSpy).toHaveBeenCalledWith({
                 pathname: '/settings/account',

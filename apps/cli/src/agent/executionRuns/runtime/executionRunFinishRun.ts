@@ -11,6 +11,7 @@ export type FinishExecutionRun = (
     | 'sessionId'
     | 'depth'
     | 'intent'
+    | 'backendTarget'
     | 'backendId'
     | 'instructions'
     | 'permissionMode'

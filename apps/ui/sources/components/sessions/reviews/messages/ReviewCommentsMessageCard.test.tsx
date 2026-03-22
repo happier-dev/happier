@@ -1,8 +1,10 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ReviewCommentsMessageCard } from './ReviewCommentsMessageCard';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,11 +13,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('ReviewCommentsMessageCard', () => {
-    it('renders a header and file paths', () => {
+    it('renders a header and file paths', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ReviewCommentsMessageCard
+        tree = (await renderScreen(<ReviewCommentsMessageCard
                     payload={{
                         sessionId: 's1',
                         comments: [
@@ -40,9 +40,7 @@ describe('ReviewCommentsMessageCard', () => {
                         ],
                     }}
                     onJumpToAnchor={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('Review comments');
@@ -53,5 +51,11 @@ describe('ReviewCommentsMessageCard', () => {
             tree!.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
         expect(findTextNode('Review comments (2)').props.selectable).toBe(true);
         expect(findTextNode('src/a.ts').props.selectable).toBe(true);
+        expect(
+            tree!.root.findByProps({
+                testID: 'review-comments-jump:c1',
+                accessibilityRole: 'button',
+            }),
+        ).toBeDefined();
     });
 });

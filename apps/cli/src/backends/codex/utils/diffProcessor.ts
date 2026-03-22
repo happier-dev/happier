@@ -1,21 +1,12 @@
-/**
- * Diff Processor - Handles turn_diff messages and tracks unified_diff changes
- * 
- * This processor tracks the latest unified_diff snapshot for a turn and emits a
- * single CodexDiff tool call at turn completion.
- */
-
-import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
-import { TurnDiffEmitter } from '@/agent/tools/diff/turnDiffEmitter';
+import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
+import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 
 export interface DiffToolCall {
     type: 'tool-call';
-    name: 'CodexDiff';
+    name: 'Diff';
     callId: string;
-    input: {
-        unified_diff: string;
-    };
+    input: Record<string, unknown>;
     id: string;
 }
 
@@ -29,19 +20,26 @@ export interface DiffToolResult {
 }
 
 export class DiffProcessor {
-    private readonly emitter = new TurnDiffEmitter({ snapshotUnifiedDiff: true });
+    private readonly collector = new TurnChangeSetCollector({
+        provider: 'codex',
+        snapshotUnifiedDiff: true,
+    });
     private onMessage: ((message: any) => void) | null = null;
 
     constructor(onMessage?: (message: any) => void) {
         this.onMessage = onMessage || null;
-        this.emitter.beginTurn();
+        this.collector.beginTurn();
     }
 
     /**
      * Capture the latest unified diff snapshot for the current turn.
      */
     processDiff(unifiedDiff: string): void {
-        this.emitter.observeUnifiedDiffSnapshot({ unifiedDiff });
+        this.collector.observeUnifiedDiffSnapshot({
+            unifiedDiff,
+            source: 'provider_native',
+            confidence: 'exact',
+        });
         logger.debug('[DiffProcessor] Captured unified diff snapshot');
     }
 
@@ -49,27 +47,39 @@ export class DiffProcessor {
      * Emit the aggregated diff tool call for the current turn (if any).
      */
     flushTurn(): void {
-        const input = this.emitter.flushTurn();
-        const unifiedDiff = input.unified_diff;
-        if (!unifiedDiff) return;
+        const turnChangeSet = this.collector.flushTurn({
+            sessionId: 'codex-legacy-session',
+            turnId: `codex-turn-${Date.now()}`,
+            seqRange: { startSeqInclusive: 0, endSeqInclusive: 0 },
+            status: 'completed',
+        });
+        if (!turnChangeSet) return;
 
-        const callId = randomUUID();
-        const toolCall: DiffToolCall = {
-            type: 'tool-call',
-            name: 'CodexDiff',
-            callId,
-            input: { unified_diff: unifiedDiff },
-            id: randomUUID(),
-        };
-        this.onMessage?.(toolCall);
-
-        const toolResult: DiffToolResult = {
-            type: 'tool-call-result',
-            callId,
-            output: { status: 'completed' },
-            id: randomUUID(),
-        };
-        this.onMessage?.(toolResult);
+        emitCanonicalTurnDiffTool({
+            turnChangeSet,
+            protocol: 'codex',
+            rawToolName: 'CodexDiff',
+            sendToolCall: ({ toolName, input, callId }) => {
+                const message: DiffToolCall = {
+                    type: 'tool-call',
+                    name: 'Diff',
+                    callId: callId ?? '',
+                    input: input as Record<string, unknown>,
+                    id: callId ?? '',
+                };
+                this.onMessage?.(message);
+                return message.callId;
+            },
+            sendToolResult: ({ callId, output }) => {
+                const message: DiffToolResult = {
+                    type: 'tool-call-result',
+                    callId,
+                    output: output as { status: 'completed' },
+                    id: callId,
+                };
+                this.onMessage?.(message);
+            },
+        });
     }
 
     /**
@@ -77,7 +87,7 @@ export class DiffProcessor {
      */
     reset(): void {
         logger.debug('[DiffProcessor] Resetting diff state');
-        this.emitter.beginTurn();
+        this.collector.beginTurn();
     }
 
     /**

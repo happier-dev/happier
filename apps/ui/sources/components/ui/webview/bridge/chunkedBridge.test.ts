@@ -91,4 +91,34 @@ describe('chunkedBridge', () => {
             .find((item) => item !== null) ?? null;
         expect(firstDecoded).toBeNull();
     });
+
+    it('rejects malformed non-chunk envelopes instead of returning them as-is', () => {
+        expect(
+            decodeChunkedEnvelope({
+                message: { v: 1, type: 42 as unknown as string, payload: null },
+            }),
+        ).toBeNull();
+        expect(
+            decodeChunkedEnvelope({
+                message: { v: 2 as 1, type: 'init', payload: {} },
+            }),
+        ).toBeNull();
+    });
+
+    it('rejects chunk envelopes that declare too many parts', () => {
+        expect(() =>
+            decodeChunkedEnvelope({
+                message: {
+                    v: 1,
+                    type: 'chunk',
+                    payload: {
+                        messageId: 'too-many',
+                        index: 0,
+                        total: 2 ** 32,
+                        data: 'YQ==',
+                    },
+                },
+            }),
+        ).not.toThrow();
+    });
 });

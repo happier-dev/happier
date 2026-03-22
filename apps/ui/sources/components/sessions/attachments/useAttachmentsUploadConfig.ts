@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useSetting } from '@/sync/domains/state/storage';
-import type { AttachmentsUploadConfig } from '@/sync/ops/sessionAttachmentsUpload';
+import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 
 export function useAttachmentsUploadConfig(): AttachmentsUploadConfig {
     const attachmentsUploadsUploadLocation = useSetting('attachmentsUploadsUploadLocation');
@@ -9,8 +9,6 @@ export function useAttachmentsUploadConfig(): AttachmentsUploadConfig {
     const attachmentsUploadsVcsIgnoreStrategy = useSetting('attachmentsUploadsVcsIgnoreStrategy');
     const attachmentsUploadsVcsIgnoreWritesEnabled = useSetting('attachmentsUploadsVcsIgnoreWritesEnabled');
     const attachmentsUploadsMaxFileBytes = useSetting('attachmentsUploadsMaxFileBytes');
-    const attachmentsUploadsUploadTtlMs = useSetting('attachmentsUploadsUploadTtlMs');
-    const attachmentsUploadsChunkSizeBytes = useSetting('attachmentsUploadsChunkSizeBytes');
 
     return React.useMemo(() => {
         const uploadLocation = attachmentsUploadsUploadLocation === 'os_temp' ? 'os_temp' : 'workspace';
@@ -27,14 +25,6 @@ export function useAttachmentsUploadConfig(): AttachmentsUploadConfig {
             typeof attachmentsUploadsMaxFileBytes === 'number' && Number.isFinite(attachmentsUploadsMaxFileBytes)
                 ? Math.max(1024, Math.floor(attachmentsUploadsMaxFileBytes))
                 : 25 * 1024 * 1024;
-        const uploadTtlMs =
-            typeof attachmentsUploadsUploadTtlMs === 'number' && Number.isFinite(attachmentsUploadsUploadTtlMs)
-                ? Math.max(5000, Math.floor(attachmentsUploadsUploadTtlMs))
-                : 5 * 60 * 1000;
-        const chunkSizeBytes =
-            typeof attachmentsUploadsChunkSizeBytes === 'number' && Number.isFinite(attachmentsUploadsChunkSizeBytes)
-                ? Math.max(4096, Math.floor(attachmentsUploadsChunkSizeBytes))
-                : 256 * 1024;
 
         return {
             uploadLocation,
@@ -42,17 +32,12 @@ export function useAttachmentsUploadConfig(): AttachmentsUploadConfig {
             vcsIgnoreStrategy,
             vcsIgnoreWritesEnabled,
             maxFileBytes,
-            uploadTtlMs,
-            chunkSizeBytes,
         };
     }, [
-        attachmentsUploadsChunkSizeBytes,
         attachmentsUploadsMaxFileBytes,
         attachmentsUploadsUploadLocation,
-        attachmentsUploadsUploadTtlMs,
         attachmentsUploadsVcsIgnoreStrategy,
         attachmentsUploadsVcsIgnoreWritesEnabled,
         attachmentsUploadsWorkspaceRelativeDir,
     ]);
 }
-

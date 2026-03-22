@@ -34,8 +34,13 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     const voiceEnabled = useFeatureEnabled('voice');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const actionExecutor = useMemo(
-        () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
-        [],
+        () => createDefaultActionExecutor({
+            resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
+            openSession: (sessionId) => {
+                router.push((`/session/${sessionId}`) as any);
+            },
+        }),
+        [router],
     );
 
     // Define available commands

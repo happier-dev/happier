@@ -6,6 +6,17 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { accountRoutes } from "./accountRoutes";
 
+function applyAccountUsernameFriendsEnv(
+    harness: LightSqliteHarness,
+    overrides: Record<string, string | undefined> = {},
+): void {
+    harness.resetEnv({
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "1",
+        ...overrides,
+    });
+}
+
 describe("Account username update (integration)", () => {
     let harness: LightSqliteHarness;
 
@@ -19,7 +30,7 @@ describe("Account username update (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await harness.resetDbTables([
             () => db.repeatKey.deleteMany(),
@@ -29,8 +40,7 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username sets the current user's username", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        applyAccountUsernameFriendsEnv(harness);
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -60,8 +70,7 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 409 username-taken when the username is already used", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        applyAccountUsernameFriendsEnv(harness);
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -93,8 +102,7 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 400 invalid-username for invalid usernames", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        applyAccountUsernameFriendsEnv(harness);
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -121,11 +129,13 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 400 username-disabled when username updates are disabled", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
-        process.env.GITHUB_CLIENT_ID = "test_client_id";
-        process.env.GITHUB_CLIENT_SECRET = "test_client_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        applyAccountUsernameFriendsEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "0",
+            GITHUB_CLIENT_ID: "test_client_id",
+            GITHUB_CLIENT_SECRET: "test_client_secret",
+            GITHUB_REDIRECT_URL: "https://api.example.test/v1/oauth/github/callback",
+        });
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -152,12 +162,14 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 400 friends-disabled when Friends requires GitHub but GitHub OAuth is not configured", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
-        delete process.env.GITHUB_CLIENT_ID;
-        delete process.env.GITHUB_CLIENT_SECRET;
-        delete process.env.GITHUB_REDIRECT_URL;
-        delete process.env.GITHUB_REDIRECT_URI;
+        applyAccountUsernameFriendsEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "0",
+            GITHUB_CLIENT_ID: undefined,
+            GITHUB_CLIENT_SECRET: undefined,
+            GITHUB_REDIRECT_URL: undefined,
+            GITHUB_REDIRECT_URI: undefined,
+        });
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -198,11 +210,13 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username allows setting a username when Friends requires GitHub and the user has GitHub connected", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
-        process.env.GITHUB_CLIENT_ID = "test_client_id";
-        process.env.GITHUB_CLIENT_SECRET = "test_client_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        applyAccountUsernameFriendsEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "0",
+            GITHUB_CLIENT_ID: "test_client_id",
+            GITHUB_CLIENT_SECRET: "test_client_secret",
+            GITHUB_REDIRECT_URL: "https://api.example.test/v1/oauth/github/callback",
+        });
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -246,9 +260,10 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 400 friends-disabled when Friends requires an unregistered identity provider", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER = "custom";
+        applyAccountUsernameFriendsEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "0",
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER: "custom",
+        });
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -287,8 +302,9 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 400 friends-disabled when friends feature is off", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        applyAccountUsernameFriendsEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "0",
+        });
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),

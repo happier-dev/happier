@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
+import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 
 function stackPaths() {
     const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -68,8 +69,7 @@ async function createFakeMonorepo(rootDir) {
 }
 
 function spawnOtherServerDaemon(cliHomeDir) {
-    return spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], {
-        detached: true,
+    return spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1e6)', {
         stdio: ['ignore', 'ignore', 'ignore'],
         env: {
             ...process.env,

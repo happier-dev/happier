@@ -2,7 +2,9 @@ import { vi } from "vitest";
 
 type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
 type RouteHandler = (request: any, reply: any) => unknown | Promise<unknown>;
-type RouteOpts = Readonly<{ preHandler?: unknown }> & Record<string, unknown>;
+type RouteRateLimit = Readonly<{ keyGenerator?: (...args: any[]) => unknown }> & Record<string, unknown>;
+type RouteConfig = Readonly<{ rateLimit?: RouteRateLimit }> & Record<string, unknown>;
+type RouteOpts = Readonly<{ preHandler?: unknown; config?: RouteConfig }> & Record<string, unknown>;
 type RouteEntry = Readonly<{ opts: RouteOpts; handler: RouteHandler }>;
 
 export type FakeRouteApp = {
@@ -81,10 +83,7 @@ export function getRouteHandler(
     method: RouteMethod,
     path: string,
 ): RouteHandler {
-    const entry = app.routes.get(`${method} ${path}`);
-    if (!entry) {
-        throw new Error(`Missing route handler for ${method} ${path}`);
-    }
+    const entry = getRouteEntry(app, method, path);
 
     const resolvePreHandlers = (raw: unknown): Array<(request: any, reply: any) => unknown | Promise<unknown>> => {
         if (typeof raw === "function") return [raw as any];
@@ -108,14 +107,30 @@ export function getRouteHandler(
     };
 }
 
+export function getRouteEntry(
+    app: FakeRouteApp,
+    method: RouteMethod,
+    path: string,
+): RouteEntry {
+    const entry = app.routes.get(`${method} ${path}`);
+    if (!entry) {
+        throw new Error(`Missing route handler for ${method} ${path}`);
+    }
+    return entry;
+}
+
 export function createReplyStub() {
     const reply: any = {
         sent: false,
+        statusCode: 200,
         send: vi.fn((payload: any) => {
             reply.sent = true;
             return payload;
         }),
-        code: vi.fn(() => reply),
+        code: vi.fn((statusCode: number) => {
+            reply.statusCode = statusCode;
+            return reply;
+        }),
     };
     return reply;
 }

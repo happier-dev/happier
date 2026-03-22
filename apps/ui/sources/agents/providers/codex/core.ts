@@ -1,5 +1,9 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const CODEX_CORE: AgentCoreConfig = {
@@ -15,16 +19,7 @@ export const CODEX_CORE: AgentCoreConfig = {
     },
     // Persisted metadata has used a few aliases over time.
     flavorAliases: ['codex', 'openai', 'gpt'],
-    cli: {
-        detectKey: 'codex',
-        machineLoginKey: 'codex',
-        installBanner: {
-            installKind: 'command',
-            installCommand: 'npm install -g codex-cli',
-            guideUrl: 'https://github.com/openai/openai-codex',
-        },
-        spawnAgent: 'codex',
-    },
+    cli: buildCatalogProviderCliUiConfig('codex'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -38,12 +33,12 @@ export const CODEX_CORE: AgentCoreConfig = {
         uiVendorResumeIdLabelKey: 'sessionInfo.codexSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.codexSessionIdCopied',
     }),
-    localControl: {
-        supported: true,
-    },
+    localControl: buildAgentLocalControlUiConfig({ agentId: 'codex' }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'codex' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'codex' }),
     ui: {
         agentPickerIconName: 'terminal-outline',
         cliGlyphScale: 0.92,

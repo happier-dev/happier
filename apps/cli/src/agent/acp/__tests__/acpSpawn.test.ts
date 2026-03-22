@@ -1,31 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildAcpSpawnSpec } from '../acpSpawn';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('buildAcpSpawnSpec', () => {
   const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
-  const originalPath = process.env.PATH;
-  const originalPathext = process.env.PATHEXT;
-  const tempDirs = new Set<string>();
+  const envScope = createEnvKeyScope(['PATH', 'PATHEXT']);
 
   afterEach(async () => {
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
-
-    if (originalPath === undefined) delete process.env.PATH;
-    else process.env.PATH = originalPath;
-
-    if (originalPathext === undefined) delete process.env.PATHEXT;
-    else process.env.PATHEXT = originalPathext;
-
-    for (const dir of tempDirs) {
-      await rm(dir, { recursive: true, force: true });
-    }
-    tempDirs.clear();
+    envScope.restore();
   });
 
   it('preserves args as separate entries (no string join)', () => {
@@ -45,24 +34,23 @@ describe('buildAcpSpawnSpec', () => {
 
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
 
-    const binDir = await mkdtemp(join(tmpdir(), 'happier-acpSpawn-'));
-    tempDirs.add(binDir);
-    await writeFile(join(binDir, 'npx.CMD'), '@echo off\r\necho ok\r\n', 'utf8');
-    process.env.PATH = binDir;
-    process.env.PATHEXT = '.CMD';
+    await withTempDir('happier-acpSpawn-', async (binDir) => {
+      await writeFile(join(binDir, 'npx.CMD'), '@echo off\r\necho ok\r\n', 'utf8');
+      envScope.patch({ PATH: binDir, PATHEXT: '.CMD' });
 
-    const spec = buildAcpSpawnSpec({
-      command: 'npx',
-      args: ['-y', '@zed-industries/codex-acp'],
-      env: { ...process.env },
+      const spec = buildAcpSpawnSpec({
+        command: 'npx',
+        args: ['-y', '@zed-industries/codex-acp'],
+        env: { ...process.env },
+      });
+
+      expect(spec.command.toLowerCase()).toContain('cmd');
+      expect(spec.args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+      expect(spec.args[3]).toContain('npx.CMD');
+      expect(spec.args[3]).toContain('@zed-industries/codex-acp');
+      expect(spec.options.windowsVerbatimArguments).toBe(true);
+      expect(spec.options.windowsHide).toBe(true);
     });
-
-    expect(spec.command.toLowerCase()).toContain('cmd');
-    expect(spec.args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
-    expect(spec.args[3]).toContain('npx.CMD');
-    expect(spec.args[3]).toContain('@zed-industries/codex-acp');
-    expect(spec.options.windowsVerbatimArguments).toBe(true);
-    expect(spec.options.windowsHide).toBe(true);
   });
 
   it('does not detach ACP agents by default (posix)', () => {

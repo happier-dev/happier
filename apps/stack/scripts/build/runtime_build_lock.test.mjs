@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { acquireRuntimeBuildLock } from './runtime_build_lock.mjs';
+import { spawnTestProcess } from '../testkit/core/spawn_test_process.mjs';
 
 function isPidAlive(pid) {
   try {
@@ -79,7 +79,7 @@ test('acquireRuntimeBuildLock fails closed when a live pid owns the lock', async
     await rm(runtimeDir, { recursive: true, force: true });
   });
 
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const child = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   assert.ok(child.pid && child.pid > 1);
 
   try {

@@ -4,21 +4,25 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: {
-        select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
-    },
-    Dimensions: {
-        get: () => ({ width: 1440, height: 900 }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Platform: {
+                select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
+            },
+            Dimensions: {
+                get: () => ({ width: 1440, height: 900 }),
+            },
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => styles,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),

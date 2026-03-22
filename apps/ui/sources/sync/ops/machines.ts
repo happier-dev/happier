@@ -10,7 +10,8 @@ import { apiSocket } from '../api/session/apiSocket';
 import type { MachineMetadata } from '../domains/state/storageTypes';
 import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
-import { isPlainObject, isSocketIoAckTimeoutError, normalizeSpawnSessionResult } from './_shared';
+import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
+import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -82,6 +83,13 @@ export type MachineStopSessionResult =
     | { ok: true }
     | { ok: false; error: string; errorCode?: string };
 
+export type MachineBashRequest =
+    | string
+    | Readonly<{
+        command?: string;
+        argv?: readonly string[];
+    }>;
+
 /**
  * Stop an existing remote session process on a specific machine.
  *
@@ -118,7 +126,7 @@ export async function machineStopSession(
  */
 export async function machineBash(
     machineId: string,
-    command: string,
+    command: MachineBashRequest,
     cwd: string,
     options?: { serverId?: string | null }
 ): Promise<{
@@ -128,18 +136,20 @@ export async function machineBash(
     exitCode: number;
 }> {
     try {
+        const payload = typeof command === 'string' ? { command, cwd } : { ...command, cwd };
         const result = await machineRpcWithServerScope<{
             success: boolean;
             stdout: string;
             stderr: string;
             exitCode: number;
         }, {
-            command: string;
+            command?: string;
+            argv?: readonly string[];
             cwd: string;
         }>({
             machineId,
             method: 'bash',
-            payload: { command, cwd },
+            payload,
             serverId: options?.serverId,
         });
         return result;
@@ -149,6 +159,30 @@ export async function machineBash(
             stdout: '',
             stderr: error instanceof Error ? error.message : 'Unknown error',
             exitCode: -1
+        };
+    }
+}
+
+export async function machineCreateDirectory(
+    machineId: string,
+    path: string,
+    options?: { serverId?: string | null },
+): Promise<
+    | { success: true }
+    | { success: false; error: string; errorCode?: string }
+> {
+    try {
+        return await machineRpcWithServerScope<{ success: true } | { success: false; error: string }, { path: string }>({
+            machineId,
+            method: RPC_METHODS.CREATE_DIRECTORY,
+            payload: { path },
+            serverId: options?.serverId,
+        });
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorCode: readRpcErrorCode(error),
         };
     }
 }

@@ -79,6 +79,12 @@ describe('applyDaemonAutostartEnvForInvocation', () => {
     expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('1');
   });
 
+  it('does not set HAPPIER_SESSION_AUTOSTART_DAEMON for daemon-started session commands', () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyDaemonAutostartEnvForInvocation({ args: ['claude', '--started-by', 'daemon'], env });
+    expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
+  });
+
   it('does not override an explicit HAPPIER_SESSION_AUTOSTART_DAEMON=0', () => {
     const env: NodeJS.ProcessEnv = { HAPPIER_SESSION_AUTOSTART_DAEMON: '0' };
     applyDaemonAutostartEnvForInvocation({ args: ['codex'], env });

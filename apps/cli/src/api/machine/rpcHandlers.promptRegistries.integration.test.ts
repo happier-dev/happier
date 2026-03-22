@@ -6,6 +6,10 @@ import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import {
+  createTransferRecipientKeyPair,
+  decryptEncryptedTransferChunkEnvelope,
+} from '@/machines/transfer/transferChunkEncryption';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';
 
@@ -64,9 +68,14 @@ describe('rpcHandlers (prompt registries)', () => {
       const listAdapters = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_ADAPTERS);
       const listSources = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_SOURCES);
       const scanSource = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE);
-      const fetchItem = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_FETCH_ITEM);
+      const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT);
+      const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK);
+      const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE);
       const installItem = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL);
-      if (!listAdapters || !listSources || !scanSource || !fetchItem || !installItem) throw new Error('expected prompt registry handlers');
+      if (!listAdapters || !listSources || !scanSource || !downloadInit || !downloadChunk || !downloadFinalize || !installItem) {
+        throw new Error('expected prompt registry handlers');
+      }
+      expect(mgr.handlers.has('daemon.promptRegistry.fetchItem')).toBe(false);
 
       const adapters = await listAdapters({});
       expect(adapters.ok).toBe(true);
@@ -110,15 +119,57 @@ describe('rpcHandlers (prompt registries)', () => {
         }),
       ]);
 
-      const fetched = await fetchItem({
+      const startedDownload = await downloadInit({
         sourceId: 'git:local-skills',
         itemId: scan.items[0]?.itemId,
         configuredSources,
+        recipientPublicKeyBase64: createTransferRecipientKeyPair().recipientPublicKeyBase64,
       });
-      expect(fetched.ok).toBe(true);
-      expect(fetched.item.title).toBe('reviewer');
-      expect(fetched.item.bundleSchemaId).toBe('skills.skill_md_v1');
-      expect(fetched.item.bundleBody.entries.map((entry: any) => entry.path)).toEqual(['SKILL.md', 'notes.txt']);
+      expect(startedDownload).toMatchObject({
+        success: true,
+        name: 'reviewer.prompt-registry-item.json',
+      });
+      const recipientKeyPair = createTransferRecipientKeyPair();
+      const restartedDownload = await downloadInit({
+        sourceId: 'git:local-skills',
+        itemId: scan.items[0]?.itemId,
+        configuredSources,
+        recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+      });
+      expect(restartedDownload).toMatchObject({
+        success: true,
+        name: 'reviewer.prompt-registry-item.json',
+      });
+
+      const downloadedChunk = await downloadChunk({
+        downloadId: (restartedDownload as { downloadId: string }).downloadId,
+        index: 0,
+      });
+      expect(downloadedChunk).toMatchObject({
+        success: true,
+        isLast: true,
+      });
+
+      const downloadedPayload = JSON.parse(
+        decryptEncryptedTransferChunkEnvelope({
+          transferId: (restartedDownload as { downloadId: string }).downloadId,
+          sequence: 0,
+          payloadBase64: (downloadedChunk as { payloadBase64: string }).payloadBase64,
+          encryptedDataKeyEnvelopeBase64: (downloadedChunk as { encryptedDataKeyEnvelopeBase64: string }).encryptedDataKeyEnvelopeBase64,
+          recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+        }).toString('utf8'),
+      );
+      expect(downloadedPayload).toMatchObject({
+        sourceId: 'git:local-skills',
+        itemId: scan.items[0]?.itemId,
+        title: 'reviewer',
+        bundleSchemaId: 'skills.skill_md_v1',
+      });
+      expect(downloadedPayload.bundleBody.entries.map((entry: { path: string }) => entry.path)).toEqual(['SKILL.md', 'notes.txt']);
+
+      await expect(downloadFinalize({
+        downloadId: (restartedDownload as { downloadId: string }).downloadId,
+      })).resolves.toEqual({ success: true });
 
       const installed = await installItem({
         sourceId: 'git:local-skills',

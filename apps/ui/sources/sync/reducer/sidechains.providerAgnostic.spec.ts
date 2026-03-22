@@ -139,6 +139,69 @@ describe('sidechains (provider-agnostic)', () => {
     expect(toolMessage.children[1].kind).toBe('agent-text');
   });
 
+  it('attaches sidechain thread to SubAgent tool-call via tool-call id sidechainId', () => {
+    const state = createReducer();
+
+    const subAgentTool: NormalizedMessage = {
+      id: 'msg_subagent',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'tool_subagent_1',
+          name: 'SubAgent',
+          input: { prompt: 'Search for files' },
+          description: null,
+          uuid: 'uuid_subagent',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const sidechainRoot: NormalizedMessage = {
+      id: 'msg_sc_root',
+      localId: null,
+      createdAt: 1100,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'sidechain',
+          uuid: 'uuid_sc_root',
+          prompt: 'Search for files',
+        },
+      ],
+    } as any;
+    (sidechainRoot as any).sidechainId = 'tool_subagent_1';
+
+    const sidechainText: NormalizedMessage = {
+      id: 'msg_sc_text',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'text',
+          text: 'done',
+          uuid: 'uuid_sc_text',
+          parentUUID: 'uuid_sc_root',
+        },
+      ],
+    };
+
+    const result = reducer(state, [subAgentTool, sidechainRoot, sidechainText]);
+
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgent') as any;
+    expect(toolMessage).toBeTruthy();
+    expect(toolMessage.children).toHaveLength(2);
+    expect(toolMessage.children[0]?.kind).toBe('user-text');
+    expect(toolMessage.children[1]?.kind).toBe('agent-text');
+  });
+
   it('attaches sidechain thread to SubAgentRun tool-call via tool-call id sidechainId', () => {
     const state = createReducer();
 
@@ -538,7 +601,7 @@ describe('sidechains (provider-agnostic)', () => {
     expect(thinkingChildren[0]?.text).toBe('Responding');
   });
 
-  it('emits orphan sidechain messages as root transcript when the parent tool-call is missing', () => {
+  it('keeps orphan sidechain messages out of the root transcript when the parent tool-call is missing', () => {
     const state = createReducer();
 
     const sidechainRoot: NormalizedMessage = {
@@ -579,6 +642,7 @@ describe('sidechains (provider-agnostic)', () => {
 
     const result = reducer(state, [sidechainRoot, sidechainTool]);
 
-    expect(result.messages.some((m) => m.kind === 'tool-call' && m.tool?.name === 'Read')).toBe(true);
+    expect(result.messages).toEqual([]);
+    expect(state.sidechains.get('tool_task_1')?.some((m) => m.tool?.name === 'Read')).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { t } from '@/text';
 import { TextInput } from '@/components/ui/text/Text';
 
@@ -87,12 +88,14 @@ export function SearchHeader({
         <View style={[styles.container, containerStyle]}>
             <View style={styles.content}>
                 <View style={styles.inputWrapper}>
-                    <Ionicons
-                        name="search-outline"
-                        size={20}
-                        color={theme.colors.textSecondary}
-                        style={{ marginRight: 8 }}
-                    />
+                    {normalizeNodeForView(
+                        <Ionicons
+                            name="search-outline"
+                            size={20}
+                            color={theme.colors.textSecondary}
+                            style={{ marginRight: 8 }}
+                        />,
+                    )}
                     <TextInput
                         ref={inputRef}
                         value={value}
@@ -112,12 +115,14 @@ export function SearchHeader({
                             accessibilityRole="button"
                             accessibilityLabel={t('common.clearSearch')}
                         >
-                            <Ionicons
-                                name="close-circle"
-                                size={20}
-                                color={theme.colors.textSecondary}
-                                style={styles.clearIcon}
-                            />
+                            {normalizeNodeForView(
+                                <Ionicons
+                                    name="close-circle"
+                                    size={20}
+                                    color={theme.colors.textSecondary}
+                                    style={styles.clearIcon}
+                                />,
+                            )}
                         </Pressable>
                     )}
                 </View>

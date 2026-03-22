@@ -11,7 +11,10 @@ import { SelectableMenuResults } from '@/components/ui/forms/dropdown/Selectable
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdown/useSelectableMenu';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
+import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 
 
 export type DropdownMenuItem = Readonly<{
@@ -134,6 +137,10 @@ export type DropdownMenuProps = Readonly<{
     showCategoryTitles?: boolean;
     /** Render rows using the app `Item` component for perfect icon/typography parity. */
     rowKind?: 'selectableRow' | 'item';
+    /** Pass-through props for `rowKind="item"` menu rows (excluding computed fields). */
+    itemRowProps?: Partial<
+        Omit<ItemProps, 'title' | 'subtitle' | 'icon' | 'rightElement' | 'selected' | 'disabled' | 'showChevron' | 'showDivider' | 'onPress'>
+    >;
     /**
      * Make the menu visually connect to the trigger (no gap; squared top corners; no top border).
      * Intended for "dropdown" inputs where the menu should feel like a single control.
@@ -157,6 +164,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const anchorRef = React.useRef<View>(null);
 
     const rowVariant: SelectableRowVariant = props.variant ?? 'slim';
+    const resolvedTriggerDensity = useResolvedItemDensity(props.itemTrigger?.itemProps?.density);
     const createItemDisplay = props.createItemDisplay ?? null;
     const matchTriggerWidth = props.matchTriggerWidth ?? true;
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : 320);
@@ -242,13 +250,20 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 <Item
                     title={cfg.title}
                     subtitle={subtitle ?? undefined}
-                    detail={detail ?? undefined}
                     icon={cfg.icon}
-                    rightElement={<Ionicons name={props.open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                    detail={undefined}
+                    rightElement={renderDropdownItemTriggerRightElement({
+                        detail,
+                        open: props.open,
+                        detailColor: theme.colors.textSecondary,
+                        chevronColor: theme.colors.textSecondary,
+                        detailDensity: resolvedTriggerDensity,
+                    })}
                     onPress={toggle}
                     showChevron={false}
                     selected={false}
                     {...(cfg.itemProps ?? {})}
+                    density={resolvedTriggerDensity}
                 />
             );
         }
@@ -263,7 +278,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             });
         }
         return props.trigger;
-    }, [closeMenu, openMenu, props.itemTrigger, props.open, props.trigger, selectedItemForTrigger, theme.colors.textSecondary, toggle]);
+    }, [closeMenu, openMenu, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.textSecondary, toggle]);
 
     const {
         searchQuery,
@@ -416,6 +431,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     emptyLabel={emptyLabel}
                                     showCategoryTitles={props.showCategoryTitles}
                                     rowKind={props.rowKind}
+                                    itemProps={props.itemRowProps}
                                 />
                             </View>
                         </FloatingOverlay>

@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
 import { makeCompletedTool, normalizedHostText } from '../core/truncationView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,7 +20,7 @@ vi.mock('@/utils/path/pathUtils', () => ({
     resolvePath: (p: string) => p,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useSetting: () => true,
 }));
 
@@ -35,14 +36,10 @@ describe('PatchView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { PatchView } = await import('./PatchView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     PatchView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 
@@ -97,6 +94,41 @@ describe('PatchView', () => {
         expect(diffSpy).toHaveBeenCalledWith(expect.objectContaining({ filePath: '/tmp/a.txt' }));
     });
 
+    it('renders a diff preview in full mode using result.metadata.files before/after when input content is unavailable', async () => {
+        diffSpy.mockClear();
+        const tree = await renderView(
+            makeCompletedTool(
+                'Patch',
+                {
+                    changes: {
+                        'qa/opencode_permission_inside.txt': { type: 'add' },
+                    },
+                },
+                {
+                    metadata: {
+                        files: [
+                            {
+                                relativePath: 'qa/opencode_permission_inside.txt',
+                                before: '',
+                                after: 'INSIDE_WRITE_TEST_V1\n',
+                            },
+                        ],
+                    },
+                },
+            ),
+            'full',
+        );
+
+        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(1);
+        expect(diffSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                filePath: 'qa/opencode_permission_inside.txt',
+                oldText: '',
+                newText: 'INSIDE_WRITE_TEST_V1\n',
+            }),
+        );
+    });
+
     it('falls back to summary rendering in full mode when diff extraction is not possible', async () => {
         const tree = await renderView(
             makeCompletedTool(
@@ -134,5 +166,27 @@ describe('PatchView', () => {
         const text = normalizedHostText(tree);
         expect(text).toContain('Applied');
         expect(text).not.toContain('Deleted');
+    });
+
+    it('renders a human-readable error when tool.state=error', async () => {
+        const tree = await renderView(
+            makeToolCall({
+                name: 'Patch',
+                state: 'error',
+                input: {
+                    changes: {
+                        '/tmp/happier_multi_hunk_test.txt': { type: 'update' },
+                    },
+                },
+                result: {
+                    status: 'failed',
+                    errorMessage: 'Error: The user rejected permission to use this specific tool call.',
+                },
+            }),
+            'full',
+        );
+
+        const text = normalizedHostText(tree);
+        expect(text).toContain('rejected permission');
     });
 });

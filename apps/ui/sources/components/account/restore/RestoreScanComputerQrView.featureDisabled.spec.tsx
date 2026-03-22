@@ -9,19 +9,28 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: {
-        OS: 'ios',
-        select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            ScrollView: 'ScrollView',
+                            ActivityIndicator: 'ActivityIndicator',
+                            Platform: {
+                                OS: 'ios',
+                                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+                            },
+                        }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'disabled' }),
@@ -31,13 +40,20 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ login: vi.fn(async () => {}), refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alertAsync: vi.fn(async () => {}), prompt: vi.fn(async () => null) },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alertAsync: vi.fn(async () => {}),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -78,8 +94,9 @@ vi.mock('@/encryption/base64', () => ({
     encodeBase64: () => 'x',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -94,9 +111,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
+    });
+});
 
 let scannerRendered = false;
 vi.mock('@/components/qr/QrCodeScannerView', () => ({

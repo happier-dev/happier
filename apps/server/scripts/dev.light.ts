@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { applyLightDefaultEnv } from '@/flavors/light/env';
+import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { buildLightDevPlan } from './dev.lightPlan';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {

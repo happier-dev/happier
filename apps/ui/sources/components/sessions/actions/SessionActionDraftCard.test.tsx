@@ -1,7 +1,9 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,21 +13,32 @@ const updateSessionActionDraftInput = vi.fn();
 const setSessionActionDraftStatus = vi.fn();
 const deleteSessionActionDraft = vi.fn();
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Text: 'Text',
-  Pressable: 'Pressable',
-  TextInput: 'TextInput',
-  Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
-  AppState: { addEventListener: () => ({ remove: () => {} }) },
-  Dimensions: {
-    get: () => ({ width: 1200, height: 800 }),
-  },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Text: 'Text',
+                    Pressable: 'Pressable',
+                    TextInput: 'TextInput',
+                    Platform: {
+                        OS: 'web',
+                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null,
+                    },
+                    AppState: {
+                        addEventListener: () => ({ remove: () => {} }),
+                    },
+                    Dimensions: {
+                        get: () => ({ width: 1200, height: 800 }),
+                    },
+                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         surface: '#111',
         text: '#eee',
@@ -35,15 +48,23 @@ vi.mock('react-native-unistyles', () => ({
         button: { primary: { background: '#0a0', tint: '#000' } },
       },
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
   Text: 'Text',
   TextInput: 'TextInput',
 }));
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, params?: any) => {
+    if (key === 'session.actionsDraft.validation.requiredField') {
+      return `${String(params?.field ?? 'Field')} is required.`;
+    }
+    return key;
+  } });
+});
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['claude'],
@@ -76,25 +97,19 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSession: () => ({ id: 's1', metadata: {} }),
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useSession: () => ({ id: 's1', metadata: {} }),
+    storage: {
     getState: () => ({
       updateSessionActionDraftInput,
       setSessionActionDraftStatus,
       deleteSessionActionDraft,
     }),
   },
-}));
-
-function findPressableByText(tree: renderer.ReactTestRenderer, label: string) {
-  const pressables = tree.root.findAllByType('Pressable');
-  for (const node of pressables as any[]) {
-    const texts = node.findAllByType?.('Text') ?? [];
-    if (texts.some((t: any) => t.props?.children === label)) return node;
-  }
-  return null;
-}
+});
+});
 
 describe('SessionActionDraftCard', () => {
   beforeEach(() => {
@@ -105,33 +120,27 @@ describe('SessionActionDraftCard', () => {
     deleteSessionActionDraft.mockClear();
   });
 
-  it('submits a valid plan.start draft via the default action executor', async () => {
+  it('submits a valid subagents.plan.start draft via the default action executor', async () => {
     const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
 
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'plan.start',
+      actionId: 'subagents.plan.start',
       createdAt: 1,
       status: 'editing',
-      input: { backendIds: ['claude'], instructions: 'Plan this.' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
     } as const;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
-    });
-
-    const start = findPressableByText(tree!, 'common.start');
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
     expect(start).toBeTruthy();
 
-    await act(async () => {
-      await start!.props.onPress?.();
-    });
+    await pressTestInstanceAsync(start, 'common.start');
 
     expect(executeSpy).toHaveBeenCalledWith(
-      'plan.start',
-      { sessionId: 's1', backendIds: ['claude'], instructions: 'Plan this.' },
+      'subagents.plan.start',
+      { sessionId: 's1', backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
       { defaultSessionId: 's1', surface: 'ui_button', placement: 'session_action_menu' },
     );
 
@@ -149,27 +158,65 @@ describe('SessionActionDraftCard', () => {
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'delegate.start',
+      actionId: 'subagents.delegate.start',
       createdAt: 1,
       status: 'editing',
-      input: { backendIds: ['claude'], instructions: 'Delegate this.' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Delegate this.' },
     } as const;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
-    });
-
-    const start = findPressableByText(tree!, 'common.start');
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
     expect(start).toBeTruthy();
 
-    await act(async () => {
-      await start!.props.onPress?.();
-    });
+    await pressTestInstanceAsync(start, 'common.start');
 
     expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'running', null);
     expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', 'RPC method not available');
     expect(deleteSessionActionDraft).not.toHaveBeenCalled();
+  });
+
+  it('ignores duplicate start presses while an action launch is already in flight', async () => {
+    let resolveExecute: ((value: ExecuteResult) => void) | null = null;
+    executeSpy.mockImplementationOnce(
+      () =>
+        new Promise<ExecuteResult>((resolve) => {
+          resolveExecute = resolve;
+        }),
+    );
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: {
+        engineIds: ['coderabbit'],
+        instructions: 'Review this repository.',
+        changeType: 'all',
+        base: { kind: 'none' },
+      },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
+    expect(start).toBeTruthy();
+
+    await act(async () => {
+      start!.props.onPress?.();
+      await pressTestInstanceAsync(start!);
+    });
+
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveExecute?.({ ok: true, result: {} });
+    });
+
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'running', null);
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'succeeded', null);
   });
 
   it('allows retrying a failed draft without recreating it', async () => {
@@ -178,24 +225,20 @@ describe('SessionActionDraftCard', () => {
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'delegate.start',
+      actionId: 'subagents.delegate.start',
       createdAt: 1,
       status: 'failed',
       error: 'RPC method not available',
-      input: { backendIds: ['claude'], instructions: 'Delegate this.' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Delegate this.' },
     } as const;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
-    });
-
-    const start = findPressableByText(tree!, 'common.start');
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
     expect(start).toBeTruthy();
     expect(start!.props.disabled).toBe(false);
   });
 
-  it('shows a validation error and does not execute when required inputs are missing', async () => {
+  it('disables start and shows a field-aware validation error when required inputs are missing', async () => {
     executeSpy.mockClear();
     setSessionActionDraftStatus.mockClear();
 
@@ -204,27 +247,74 @@ describe('SessionActionDraftCard', () => {
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'plan.start',
+      actionId: 'subagents.plan.start',
       createdAt: 1,
       status: 'editing',
-      input: { backendIds: ['claude'], instructions: '   ' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: '   ' },
     } as const;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
-    });
-
-    const start = findPressableByText(tree!, 'common.start');
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
     expect(start).toBeTruthy();
+    expect(start!.props.disabled).toBe(true);
 
+    const texts = screen.tree.findAllByType('Text');
+    expect(texts.some((node: any) => node.props?.children === 'Instructions is required.')).toBe(true);
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(setSessionActionDraftStatus).not.toHaveBeenCalled();
+  });
+
+  it('maps missing review engine selection to a required-field validation message', async () => {
+    executeSpy.mockClear();
+    setSessionActionDraftStatus.mockClear();
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { instructions: '', changeType: 'committed', base: { kind: 'none' } },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const start = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'common.start');
+    expect(start).toBeTruthy();
+    expect(start!.props.disabled).toBe(true);
+
+    const texts = screen.tree.findAllByType('Text');
+    expect(texts.some((node: any) => node.props?.children === 'Review engines is required.')).toBe(true);
+    expect(
+      texts.some((node: any) => String(node.props?.children ?? '').includes('Invalid input: expected array, received undefined')),
+    ).toBe(false);
+  });
+
+  it('clears stale draft errors when the user edits an input', async () => {
+    updateSessionActionDraftInput.mockClear();
+    setSessionActionDraftStatus.mockClear();
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      error: 'Instructions is required.',
+      input: { engineIds: ['claude'], instructions: '', changeType: 'committed', base: { kind: 'none' } },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    const input = screen.tree.findAllByType('TextInput')[0]!;
     await act(async () => {
-      await start!.props.onPress?.();
+      changeTextTestInstance(input, 'Review this.');
     });
 
-    expect(executeSpy).not.toHaveBeenCalled();
-    // Error message is schema-driven; don't pin exact wording.
-    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', expect.any(String));
+    expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { instructions: 'Review this.' });
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', null);
   });
 
   it('hides conditional review base fields when base.kind is none', async () => {
@@ -249,13 +339,10 @@ describe('SessionActionDraftCard', () => {
       input: { engineIds: ['claude'], instructions: 'Review', changeType: 'committed', base: { kind: 'none' } },
     } as const;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
-    });
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
 
     // Only the instructions field should render a TextInput when base.kind=none.
-    const inputs = tree!.root.findAllByType('TextInput');
+    const inputs = screen.tree.findAllByType('TextInput');
     expect(inputs.length).toBe(1);
   });
 
@@ -279,18 +366,15 @@ describe('SessionActionDraftCard', () => {
       },
     } as const;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
-    });
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
 
-    const inputs = tree!.root.findAllByType('TextInput');
+    const inputs = screen.tree.findAllByType('TextInput');
     // instructions + configFiles list
     expect(inputs.length).toBe(2);
 
     const listInput = inputs.find((i: any) => typeof i.props?.onChangeText === 'function' && i.props?.multiline !== true) ?? inputs[1]!;
     await act(async () => {
-      listInput.props.onChangeText?.('a.yml, b.yml');
+      changeTextTestInstance(listInput, 'a.yml, b.yml');
     });
 
     expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { engines: { coderabbit: { configFiles: ['a.yml', 'b.yml'] } } });

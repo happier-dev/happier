@@ -1,41 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
-function restoreEnv(envBackup: NodeJS.ProcessEnv): void {
-  for (const key of Object.keys(process.env)) {
-    if (!(key in envBackup)) delete process.env[key];
-  }
-  Object.assign(process.env, envBackup);
-}
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDirSync } from '@/testkit/fs/tempDir';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 describe('resolveDaemonServiceCliRuntimeFromEnv entrypoint resolution', () => {
-  const envBackup = { ...process.env };
-  const tempHomes: string[] = [];
+  const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_SERVICE_NODE_PATH'] as const;
+  let envScope = createEnvKeyScope(envKeys);
 
   afterEach(() => {
-    for (const homeDir of tempHomes.splice(0)) {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
-    restoreEnv(envBackup);
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
   });
 
   it('derives the bundled entrypoint for an explicit managed js runtime wrapper path', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-service-entry-'));
-    tempHomes.push(homeDir);
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH = '/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime';
+    withTempDirSync('happier-cli-daemon-service-entry-', (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_NODE_PATH: '/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime',
+      });
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const { resolveDaemonServiceCliRuntimeFromEnv } = await import('./cli.js');
-      const runtime = resolveDaemonServiceCliRuntimeFromEnv();
-      expect(runtime.nodePath).toBe('/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime');
-      expect(runtime.entryPath).toContain('/apps/cli/bin/happier.mjs');
-    } finally {
-      warn.mockRestore();
-    }
+      const output = captureConsoleText();
+      return import('./cli.js')
+        .then(({ resolveDaemonServiceCliRuntimeFromEnv }) => {
+          const runtime = resolveDaemonServiceCliRuntimeFromEnv();
+          expect(runtime.nodePath).toBe('/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime');
+          expect(runtime.entryPath).toContain('/apps/cli/package-dist/index.mjs');
+        })
+        .finally(() => {
+          output.restore();
+        });
+    });
   });
 });

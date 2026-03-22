@@ -1,8 +1,12 @@
 import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,15 +17,17 @@ const sendMessage = vi.fn();
 const modalAlert = vi.fn();
 const safeParsePlan = vi.fn();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', () => {
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: (...args: any[]) => modalAlert(...args),
-    },
-}));
+vi.mock('@/modal', () => {
+    return createModalModuleMock({
+        spies: {
+            alert: (...args: any[]) => modalAlert(...args),
+        },
+    }).module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -73,14 +79,10 @@ describe('ExitPlanToolView', () => {
 
     async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}) {
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     ExitPlanToolView,
                     makeToolViewProps(tool, { sessionId: 's1', ...overrides }),
-                ),
-            );
-        });
+                ))).tree;
         return tree!;
     }
 
@@ -103,7 +105,7 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-approve' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-approve');
         });
 
         expect(sessionAllow).toHaveBeenCalledTimes(1);
@@ -117,7 +119,7 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-approve-menu' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-approve-menu');
         });
 
         const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
@@ -144,7 +146,7 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-approve-menu' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-approve-menu');
         });
 
         const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
@@ -176,7 +178,7 @@ describe('ExitPlanToolView', () => {
         );
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-approve-menu' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-approve-menu');
         });
 
         const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
@@ -202,7 +204,7 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-reject' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-reject');
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(1);
@@ -215,15 +217,15 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-request-changes');
         });
 
         await act(async () => {
-            tree.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
+            tree.changeTextByTestId('exit-plan-request-changes-input', 'Please change step 2');
         });
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-request-changes-send');
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(1);
@@ -239,15 +241,15 @@ describe('ExitPlanToolView', () => {
             const tree = await renderView(makeRunningTool());
 
             await act(async () => {
-                await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+                await tree.pressByTestIdAsync('exit-plan-request-changes');
             });
 
             await act(async () => {
-                tree.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
+                tree.changeTextByTestId('exit-plan-request-changes-input', 'Please change step 2');
             });
 
             await act(async () => {
-                await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
+                await tree.pressByTestIdAsync('exit-plan-request-changes-send');
             });
 
             expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesFailed');
@@ -259,10 +261,10 @@ describe('ExitPlanToolView', () => {
     it('shows an error when requesting changes is attempted without text', async () => {
         const tree = await renderView(makeRunningTool());
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-request-changes');
         });
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-request-changes-send');
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(0);
@@ -273,7 +275,7 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool({ permission: undefined }));
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-approve' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-approve');
         });
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
@@ -287,7 +289,7 @@ describe('ExitPlanToolView', () => {
         const tree = await renderView(makeRunningTool({ permission: undefined }));
 
         await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-reject' }).props.onPress();
+            await tree.pressByTestIdAsync('exit-plan-reject');
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(0);
@@ -306,8 +308,8 @@ describe('ExitPlanToolView', () => {
             },
         });
 
-        expect(tree.root.findAllByProps({ testID: 'exit-plan-approve' })).toHaveLength(0);
-        expect(tree.root.findAllByProps({ testID: 'exit-plan-reject' })).toHaveLength(0);
+        expect(tree.findAllByTestId('exit-plan-approve')).toHaveLength(0);
+        expect(tree.findAllByTestId('exit-plan-reject')).toHaveLength(0);
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);

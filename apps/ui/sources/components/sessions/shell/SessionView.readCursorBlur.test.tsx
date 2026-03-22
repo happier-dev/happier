@@ -2,6 +2,8 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -30,73 +32,20 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-        Text: 'Text',
-        Pressable: 'Pressable',
-        ActivityIndicator: 'ActivityIndicator',
-        Platform: {
-            ...actual.Platform,
-            OS: 'web',
-            select: (spec: Record<string, unknown>) =>
-                spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
-        },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         useWindowDimensions: () => ({ width: 1200, height: 800 }),
-    };
+    });
 });
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-const themeColors = {
-    text: '#000',
-    textSecondary: '#666',
-    textLink: '#00f',
-    surface: '#fff',
-    surfaceHigh: '#f5f5f5',
-    divider: '#ddd',
-    border: '#ddd',
-    indigo: '#5856D6',
-    accent: {
-        blue: '#007AFF',
-        green: '#34C759',
-        orange: '#FF9500',
-        yellow: '#FFCC00',
-        red: '#FF3B30',
-        indigo: '#5856D6',
-        purple: '#AF52DE',
-    },
-    modal: { border: '#ddd' },
-    input: { background: '#f5f5f5', placeholder: '#999' },
-    header: { tint: '#000' },
-    status: { error: '#f00' },
-    shadow: { color: '#000', opacity: 0.2 },
-    groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-    box: {
-        warning: { background: '#fff4cc', border: '#f0d98a', text: '#000' },
-    },
-};
-
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: themeColors,
-        },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({ colors: themeColors }, {})
-                : styles,
-        absoluteFillObject: {},
-        hairlineWidth: 1,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (effect: () => void | (() => void)) => {
@@ -106,18 +55,23 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
-    usePathname: () => '/',
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn(), back: vi.fn(), setParams: vi.fn() },
+        pathname: '/',
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
@@ -235,9 +189,17 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: () => null,
 }));
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), confirm: vi.fn(), prompt: vi.fn(), show: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+            show: vi.fn(),
+        },
+    }).module;
+});
 vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
     runAfterInteractionsWithFallback: (callback: () => void) => {
         scheduledInteractionCallbacks.push(callback);
@@ -245,7 +207,9 @@ vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => ({
             sessions: { s1: sessionState.current },
@@ -277,17 +241,22 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'editorFocusModeEnabled') return false;
         return null;
     },
-}));
+});
+});
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => vi.fn(),
 }));
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['default'],
-    DEFAULT_AGENT_ID: 'default',
-    buildResumeSessionExtrasFromUiState: () => null,
-    getAgentCore: () => ({ title: 'Agent', modelMode: { defaultMode: 'build' } }),
-    resolveAgentIdFromFlavor: () => 'default',
-}));
+vi.mock('@/agents/catalog/catalog', async () => {
+    const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
+    return {
+        ...actual,
+        AGENT_IDS: ['default'],
+        DEFAULT_AGENT_ID: 'default',
+        buildResumeSessionExtrasFromUiState: () => null,
+        getAgentCore: () => ({ title: 'Agent', model: { defaultMode: 'build' } }),
+        resolveAgentIdFromFlavor: () => 'default',
+    };
+});
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canResumeSessionWithOptions: () => false,
 }));
@@ -360,10 +329,10 @@ vi.mock('@/sync/domains/permissions/permissionModeOverride', () => ({
 vi.mock('@/sync/domains/models/modelOverride', () => ({
     getModelOverrideForSpawn: () => null,
 }));
-vi.mock('@/components/sessions/agentInput/recipient/RecipientChip', () => ({
+vi.mock('@/components/sessions/agentInput/routing/RecipientChip', () => ({
     RecipientChip: () => null,
 }));
-vi.mock('@/components/sessions/agentInput/recipient/useSessionRecipientState', () => ({
+vi.mock('@/components/sessions/agentInput/routing/useSessionRecipientState', () => ({
     useSessionRecipientState: () => ({
         recipientId: null,
         recipientChipProps: null,
@@ -371,12 +340,18 @@ vi.mock('@/components/sessions/agentInput/recipient/useSessionRecipientState', (
         selectedParticipant: null,
     }),
 }));
-vi.mock('@/components/sessions/agentInput/recipient/ExecutionRunDeliveryChip', () => ({
+vi.mock('@/components/sessions/agentInput/routing/ExecutionRunDeliveryChip', () => ({
     ExecutionRunDeliveryChip: () => null,
 }));
-vi.mock('@/sync/domains/input/participants/resolveParticipantRoutedSend', () => ({
-    resolveParticipantRoutedSend: () => null,
-}));
+vi.mock('@/sync/domains/input/participants/resolveParticipantRoutedSend', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/domains/input/participants/resolveParticipantRoutedSend')>(
+        '@/sync/domains/input/participants/resolveParticipantRoutedSend',
+    );
+    return {
+        ...actual,
+        resolveParticipantRoutedSend: () => null,
+    };
+});
 vi.mock('@/hooks/session/useEnsureSidechainsLoaded', () => ({
     useEnsureSidechainsLoaded: () => {},
 }));
@@ -406,6 +381,9 @@ vi.mock('@/sync/domains/session/control/sessionLocalControl', () => ({
     getSessionLocalControlState: () => null,
     isSessionLocallyAttached: () => true,
 }));
+vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
+    supportsEffectiveLocalControlForSession: () => true,
+}));
 vi.mock('@/sync/domains/session/subagents/deriveSessionSubagentCounts', () => ({
     deriveSessionSubagentCounts: () => ({ total: 0, active: 0 }),
 }));
@@ -432,13 +410,9 @@ describe('SessionView read cursor on blur', () => {
         const { SessionView } = await import('./SessionView');
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <AppPaneProvider>
+        tree = (await renderScreen(<AppPaneProvider>
                     <SessionView id="s1" />
-                </AppPaneProvider>,
-            );
-        });
+                </AppPaneProvider>)).tree;
 
         expect(focusCleanupState.current).toBeTypeOf('function');
 

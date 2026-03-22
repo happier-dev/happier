@@ -66,7 +66,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -91,7 +91,8 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(marker).not.toBeNull();
     expect(marker?.status).toBe('succeeded');
     expect(marker?.intent).toBe('review');
-    expect(marker?.backendId).toBe('claude');
+    expect(marker?.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+    expect(marker?.permissionMode).toBe('read_only');
     expect(typeof marker?.startedAtMs).toBe('number');
     expect(typeof marker?.updatedAtMs).toBe('number');
   });
@@ -112,7 +113,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'delegate',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: '',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -128,6 +129,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const marker = markers.find((m) => m.runId === started.runId) ?? null;
     expect(marker).not.toBeNull();
     expect(marker?.status).toBe('running');
+    expect(marker?.permissionMode).toBe('read_only');
     expect(marker?.lastActivityAtMs).toBe(nowMs);
     expect(marker?.updatedAtMs).toBe(nowMs);
   });

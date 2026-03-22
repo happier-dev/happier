@@ -8,15 +8,18 @@ import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Text } from '@/components/ui/text/Text';
+import { useFriendRequests } from '@/sync/domains/state/storage';
+import type { TabType } from './tabTypes';
+import { resolveTabBarTabs } from './resolveTabBarTabs';
 
 
-export type TabType = 'zen' | 'inbox' | 'sessions' | 'settings';
+export type { TabType };
 
 interface TabBarProps {
     activeTab: TabType;
     onTabPress: (tab: TabType) => void;
-    inboxBadgeCount?: number;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -83,23 +86,30 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }: TabBarProps) => {
+export const TabBar = React.memo(({ activeTab, onTabPress }: TabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
-    const inboxFriendsEnabled = useFriendsEnabled();
+    const friendsEnabled = useFriendsEnabled();
+    const friendRequests = useFriendRequests();
+    const inboxEnabled = useFeatureEnabled('inbox.global') || useFeatureEnabled('actions.approvals');
     const inboxHasContent = useInboxHasContent();
 
     const tabs: { key: TabType; icon: any; label: string }[] = React.useMemo(() => {
-        // NOTE: Zen tab removed - the feature never got to a useful state
-        const base: { key: TabType; icon: any; label: string }[] = [
-            { key: 'sessions', icon: require('@/assets/images/brutalist/Brutalism 15.png'), label: t('tabs.sessions') },
-            { key: 'settings', icon: require('@/assets/images/brutalist/Brutalism 9.png'), label: t('tabs.settings') },
-        ];
-        if (inboxFriendsEnabled) {
-            base.unshift({ key: 'inbox', icon: require('@/assets/images/brutalist/Brutalism 27.png'), label: t('tabs.inbox') });
-        }
-        return base;
-    }, [inboxFriendsEnabled]);
+        const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
+        return tabKeys.map((key) => {
+            switch (key) {
+                case 'inbox':
+                    return { key, icon: require('@/assets/images/brutalist/Brutalism 27.png'), label: t('tabs.inbox') };
+                case 'friends':
+                    return { key, icon: require('@/assets/images/brutalist/Brutalism 28.png'), label: t('tabs.friends') };
+                case 'settings':
+                    return { key, icon: require('@/assets/images/brutalist/Brutalism 9.png'), label: t('tabs.settings') };
+                case 'sessions':
+                default:
+                    return { key: 'sessions', icon: require('@/assets/images/brutalist/Brutalism 15.png'), label: t('tabs.sessions') };
+            }
+        });
+    }, [friendsEnabled, inboxEnabled]);
 
     return (
         <View style={[styles.outerContainer, { paddingBottom: insets.bottom }]}>
@@ -121,14 +131,14 @@ export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }
                                     style={[{ width: 24, height: 24 }]}
                                     tintColor={isActive ? theme.colors.text : theme.colors.textSecondary}
                                 />
-                                {tab.key === 'inbox' && inboxBadgeCount > 0 && (
+                                {tab.key === 'friends' && friendRequests.length > 0 && (
                                     <View style={styles.badge}>
                                         <Text style={styles.badgeText}>
-                                            {inboxBadgeCount > 99 ? '99+' : inboxBadgeCount}
+                                            {friendRequests.length > 99 ? '99+' : friendRequests.length}
                                         </Text>
                                     </View>
                                 )}
-                                {tab.key === 'inbox' && inboxHasContent && inboxBadgeCount === 0 && (
+                                {tab.key === 'inbox' && inboxHasContent && (
                                     <View style={styles.indicatorDot} />
                                 )}
                             </View>

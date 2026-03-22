@@ -1,9 +1,11 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 
 import { makeToolCall } from '@/components/tools/shell/views/ToolView.testHelpers';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,9 +31,12 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => settings[key] ?? false,
-}));
+});
+});
 
 vi.mock('@shopify/flash-list', () => ({
     FlashList: (props: any) => {
@@ -118,17 +123,12 @@ describe('ChainTranscriptList presentation parity', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
+        tree = (await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
                     messages: [toolMessageOne, toolMessageTwo],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+                }))).tree;
 
         expect(toolCallsGroupRowSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -161,17 +161,12 @@ describe('ChainTranscriptList presentation parity', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
+        tree = (await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
                     messages: [userMessage, toolMessage],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+                }))).tree;
 
         expect(turnViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -182,13 +177,41 @@ describe('ChainTranscriptList presentation parity', () => {
         );
     });
 
-    it('renders draft transcript messages after committed messages in the same chain', async () => {
+    it('passes forced transcript permission prompts through to turn layouts', async () => {
+        settings.transcriptGroupingMode = 'turns';
+
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+
+        const userMessage: Message = {
+            kind: 'user-text',
+            id: 'user-1',
+            localId: null,
+            createdAt: 1,
+            text: 'Start a subagent',
+        };
+
+        await renderScreen(React.createElement(ChainTranscriptList, {
+                    sessionId: 's1',
+                    messages: [userMessage],
+                    metadata: null,
+                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                    forcePermissionPromptsInTranscript: true,
+                }));
+
+        expect(turnViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                forcePermissionPromptsInTranscript: true,
+            }),
+        );
+    });
+
+    it('overlays draft transcript text onto the matching committed message in the same chain', async () => {
         const { ChainTranscriptList } = await import('./ChainTranscriptList');
 
         const committedMessage: Message = {
             kind: 'agent-text',
             id: 'msg-1',
-            localId: null,
+            localId: 'local-1',
             createdAt: 1,
             text: 'Committed',
         };
@@ -197,24 +220,20 @@ describe('ChainTranscriptList presentation parity', () => {
             id: 'draft:local-1',
             localId: 'local-1',
             createdAt: 2,
-            text: 'Draft tail',
-            isThinking: true,
+            text: 'Committed with live draft tail',
+            isThinking: false,
         };
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ChainTranscriptList, {
+        await renderScreen(React.createElement(ChainTranscriptList, {
                     sessionId: 's1',
                     messages: [committedMessage],
                     draftMessages: [draftMessage],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                }),
-            );
-            await Promise.resolve();
-        });
+                }));
 
-        expect(messageViewSpy.mock.calls.map((call) => call[0]?.message?.id)).toEqual(['msg-1', 'draft:local-1']);
-        expect(messageViewSpy.mock.calls.at(-1)?.[0]?.message?.text).toBe('Draft tail');
+        expect(messageViewSpy.mock.calls.map((call) => call[0]?.message?.id)).toEqual(['msg-1']);
+        expect(messageViewSpy.mock.calls.at(-1)?.[0]?.message?.text).toBe('Committed with live draft tail');
     });
+
 });

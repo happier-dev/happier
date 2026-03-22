@@ -36,15 +36,6 @@ const getSessionParticipantUserIds = vi.fn(async () => ["user-1"]);
 vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
-
-const dbSessionFindUnique = vi.fn(async () => ({ encryptionMode: "plain" }));
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findUnique: dbSessionFindUnique,
-        },
-    },
-}));
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 describe("sessionUpdateHandler", () => {
@@ -60,7 +51,6 @@ describe("sessionUpdateHandler", () => {
         checkSessionAccess.mockClear();
         requireAccessLevel.mockClear();
         getSessionParticipantUserIds.mockClear();
-        dbSessionFindUnique.mockClear();
     });
 
     it("does not crash on invalid message payloads and acks with invalid-params when callback is provided", async () => {

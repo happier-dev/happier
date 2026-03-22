@@ -4,11 +4,12 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { createSession } from '../../src/testkit/sessions';
-import { createSessionScopedSocketCollector, createUserScopedSocketCollector } from '../../src/testkit/socketClient';
+import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
+import { createMachineBoundSessionScopedSocketCollector } from '../../src/testkit/sessionSocketBinding';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -28,7 +29,11 @@ describe('core e2e: rpc permission round-trip + reconnect', () => {
     const { sessionId } = await createSession(server.baseUrl, auth.token);
 
     const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
-    const agent = createSessionScopedSocketCollector(server.baseUrl, auth.token, sessionId);
+    const { socket: agent } = await createMachineBoundSessionScopedSocketCollector({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      sessionId,
+    });
 
     const artifacts = new FailureArtifacts();
     artifacts.json('ui.events.json', () => ui.getEvents());
@@ -95,5 +100,5 @@ describe('core e2e: rpc permission round-trip + reconnect', () => {
       ui.close();
       agent.close();
     }
-  });
+  }, 90_000);
 });

@@ -1,36 +1,16 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { authRoutes } from "./authRoutes";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { readAuthMtlsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -41,60 +21,28 @@ function createTestApp() {
 }
 
 describe("authRoutes (mTLS) (integration)", () => {
-    const envBackup = { ...process.env };
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-auth-mtls-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-auth-mtls-",
+            initAuth: true,
+        });
     }, 120_000);
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await db.accountIdentity.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
 
     afterAll(async () => {
-        await db.$disconnect();
-        restoreEnv(envBackup);
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
 
     it("auto-provisions a keyless account and returns a bearer token (forwarded mode)", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -148,7 +96,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("returns restore-required when the mTLS identity maps to an e2ee account", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -207,7 +155,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("rejects a forwarded identity when an issuer allowlist is configured and the issuer does not match", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -246,7 +194,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("accepts an issuer allowlist match when the forwarded issuer is a full DN (CN extracted)", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -284,7 +232,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("rejects issuer allowlist entries that are full DNs when the forwarded issuer has the same CN but a different DN", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -325,7 +273,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("enforces allowed email domains when identitySource=san_upn", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -365,7 +313,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("supports browser handoff via /start -> /complete -> /claim (forwarded mode)", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -439,7 +387,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("allows only one successful /claim even under concurrent attempts", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -496,7 +444,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("rejects returnTo values that only match by string prefix but do not match the allowed origin", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -535,7 +483,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("does not register mTLS routes when server storagePolicy=required_e2ee", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -573,7 +521,7 @@ describe("authRoutes (mTLS) (integration)", () => {
     });
 
     it("rejects identities that do not match allowed email domains", async () => {
-        Object.assign(process.env, {
+        harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",

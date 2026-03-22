@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core/AgentBackend';
 import { createExecutionRunBackend } from '@/agent/executionRuns/runtime/createExecutionRunBackend';
 import { configuration } from '@/configuration';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 export type EphemeralExecutionRunTextPromptBackendFactory = (opts: Readonly<{
   cwd: string;
   runId: string;
   backendId: string;
+  backendTarget?: BackendTargetRefV1;
   modelId?: string;
   permissionMode: string;
   start: Readonly<{ sessionId: string; intent: string; retentionPolicy: 'ephemeral' }>;
@@ -19,6 +21,7 @@ function createDefaultBackendFactory(): EphemeralExecutionRunTextPromptBackendFa
       cwd: opts.cwd,
       runId: opts.runId,
       backendId: opts.backendId,
+      ...(opts.backendTarget ? { backendTarget: opts.backendTarget } : {}),
       modelId: opts.modelId,
       permissionMode: opts.permissionMode,
       start: opts.start,
@@ -29,11 +32,13 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
   cwd: string;
   sessionId: string;
   backendId: string;
+  backendTarget?: BackendTargetRefV1;
   modelId?: string;
   permissionMode: string;
   intent: string;
   prompt: string;
   createBackend?: EphemeralExecutionRunTextPromptBackendFactory;
+  configureSession?: (sessionId: string) => Promise<void>;
   timeoutMs?: number | null;
 }>): Promise<string> {
   const intent = String(params.intent ?? '').trim() || 'execution_run';
@@ -44,6 +49,7 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
     cwd: params.cwd,
     runId,
     backendId: params.backendId,
+    ...(params.backendTarget ? { backendTarget: params.backendTarget } : {}),
     modelId: params.modelId,
     permissionMode: params.permissionMode,
     start: {
@@ -72,6 +78,9 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
 
   try {
     const started = await backend.startSession();
+    if (params.configureSession) {
+      await params.configureSession(started.sessionId);
+    }
     await backend.sendPrompt(started.sessionId, params.prompt);
 
     const timeoutMs =

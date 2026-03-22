@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useSessionPaneUrlSync } from './useSessionPaneUrlSync';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -149,18 +151,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:test-session"
                     scopeState={closedScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         expect(pushStateMock).toHaveBeenCalledTimes(0);
         expect(setParams).toHaveBeenCalledTimes(0);
@@ -215,18 +213,14 @@ describe('useSessionPaneUrlSync', () => {
             details: { isOpen: false, tabs: [], activeTabKey: null },
         };
 
-        await act(async () => {
-            renderer.create(
-                <Harness
+        await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:test-session"
                     scopeState={openBottomScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />);
 
         expect(pushStateMock).toHaveBeenCalledTimes(0);
         expect(setParams).toHaveBeenCalledWith({
@@ -265,18 +259,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:restore-me"
                     scopeState={openScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         await act(async () => {
             tree.unmount();
@@ -285,18 +275,14 @@ describe('useSessionPaneUrlSync', () => {
         pane.openBottom.mockClear();
         pane.setBottomTab.mockClear();
 
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:restore-me"
                     scopeState={closedScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         expect(pane.openBottom).toHaveBeenCalledWith({ tabId: 'terminal' });
         expect(pane.setBottomTab).toHaveBeenCalledWith('terminal');
@@ -329,18 +315,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:close-me"
                     scopeState={openScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         await act(async () => {
             tree.update(
@@ -363,18 +345,14 @@ describe('useSessionPaneUrlSync', () => {
         pane.openBottom.mockClear();
         pane.setBottomTab.mockClear();
 
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:close-me"
                     scopeState={closedScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         expect(pane.openBottom).toHaveBeenCalledTimes(0);
         expect(pane.setBottomTab).toHaveBeenCalledTimes(0);
@@ -409,18 +387,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:restore-me"
                     scopeState={openScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         await act(async () => {
             tree.unmount();
@@ -437,18 +411,14 @@ describe('useSessionPaneUrlSync', () => {
             },
         };
 
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:restore-me"
                     scopeState={closedScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         expect(pane.openBottom).toHaveBeenCalledTimes(0);
         expect(pane.setBottomTab).toHaveBeenCalledTimes(0);
@@ -481,18 +451,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:history-preference"
                     scopeState={openScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         await act(async () => {
             tree.update(
@@ -553,9 +519,7 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <React.StrictMode>
+        tree = (await renderScreen(<React.StrictMode>
                     <Harness
                         enabled={true}
                         scopeState={closedScopeState}
@@ -563,9 +527,7 @@ describe('useSessionPaneUrlSync', () => {
                         pane={pane}
                         setParams={setParams}
                     />
-                </React.StrictMode>
-            );
-        });
+                </React.StrictMode>)).tree;
 
         expect(pane.openRight).toHaveBeenCalledWith({ tabId: 'files' });
         expect(pane.openBottom).toHaveBeenCalledWith({ tabId: 'terminal' });
@@ -659,18 +621,14 @@ describe('useSessionPaneUrlSync', () => {
             },
         };
 
-        await act(async () => {
-            renderer.create(
-                <Harness
+        await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:one"
                     scopeState={openScopeState}
                     urlState={{ rightTabId: 'files' }}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />);
 
         expect(pane.openRight).toHaveBeenCalledWith({ tabId: 'files' });
         expect(pane.setRightTab).toHaveBeenCalledWith('files');
@@ -712,18 +670,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:history"
                     scopeState={openScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
         await flushDeferredSessionPaneHistoryStateWrite();
 
         expect(setParams).toHaveBeenCalledWith({
@@ -826,18 +780,14 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeKey="session:one"
                     scopeState={openScopeState}
                     urlState={{ rightTabId: 'files', bottomTabId: 'terminal', details: { kind: 'file', path: 'src/app.ts' } }}
                     pane={pane1}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         // Simulate navigation to a different session route where URL params no longer describe panes.
         // The hook should treat this as a fresh mount for the new scope and must not call close* on
@@ -893,17 +843,13 @@ describe('useSessionPaneUrlSync', () => {
             },
         };
 
-        await act(async () => {
-            renderer.create(
-                <Harness
+        await renderScreen(<Harness
                     enabled={true}
                     scopeState={openScopeState}
                     urlState={{ rightTabId: 'files', bottomTabId: 'terminal', details: { kind: 'file', path: 'src/app.ts' } }}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />);
 
         expect(setParams).toHaveBeenCalledTimes(0);
     });
@@ -928,17 +874,13 @@ describe('useSessionPaneUrlSync', () => {
         };
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Harness
+        tree = (await renderScreen(<Harness
                     enabled={true}
                     scopeState={closedScopeState}
                     urlState={null}
                     pane={pane}
                     setParams={setParams}
-                />
-            );
-        });
+                />)).tree;
 
         expect(pane.openRight).toHaveBeenCalledTimes(0);
         expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);

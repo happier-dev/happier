@@ -1,14 +1,16 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromptRegistryFetchItemResponseV1 } from '@happier-dev/protocol';
+import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
-const machinePromptRegistriesFetchItemMock = vi.hoisted(() => vi.fn<() => Promise<PromptRegistryFetchItemResponseV1>>(async () => ({
+const machinePromptRegistriesDownloadItemMock = vi.hoisted(() => vi.fn<() => Promise<PromptRegistryFetchItemResponseV1>>(async () => ({
   ok: true,
   item: {
     sourceId: 'skills_sh:featured',
@@ -83,26 +85,24 @@ const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn(async () => ({
   ],
 })));
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  ScrollView: 'ScrollView',
-  Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            ScrollView: 'ScrollView',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                            },
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (fn: any) => fn({
-      colors: {
-        groupped: { background: 'white' },
-        textSecondary: '#999',
-        divider: '#ddd',
-        input: { background: '#fff', text: '#111', placeholder: '#666' },
-        accent: { indigo: '#60f', purple: '#90f', blue: '#00f' },
-      },
-    }),
-  },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         groupped: { background: 'white' },
         textSecondary: '#999',
@@ -111,17 +111,20 @@ vi.mock('react-native-unistyles', () => ({
         accent: { indigo: '#60f', purple: '#90f', blue: '#00f' },
       },
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: routerPushSpy }),
-  Stack: { Screen: () => null },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 1000 },
@@ -171,15 +174,18 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
   }, [action])],
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlertSpy,
-    confirm: modalConfirmSpy,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            confirm: modalConfirmSpy,
+        },
+    }).module;
+});
 
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
-  machinePromptRegistriesFetchItem: machinePromptRegistriesFetchItemMock,
+  machinePromptRegistriesDownloadItem: machinePromptRegistriesDownloadItemMock,
 }));
 
 vi.mock('@/sync/ops/machinePromptAssets', () => ({
@@ -194,8 +200,10 @@ vi.mock('@/sync/ops/promptLibrary/installPromptRegistryItem', () => ({
   installPromptRegistryItem: installPromptRegistryItemMock,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useAllMachines: () => [
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useAllMachines: () => [
     {
       id: 'machine-1',
       metadata: {
@@ -204,23 +212,25 @@ vi.mock('@/sync/domains/state/storage', () => ({
       },
     },
   ],
-  useSettingMutable: (key: string) => {
+    useSettingMutable: (key: string) => {
     if (key === 'promptRegistrySourcesV1') return [{ v: 1, sources: [] }, vi.fn()];
     if (key === 'promptExternalLinksV1') return [{ v: 1, links: [] }, vi.fn()];
     return [undefined, vi.fn()];
   },
-}));
+});
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('PromptRegistryItemDetailsScreen', () => {
   beforeEach(() => {
     routerPushSpy.mockReset();
     modalAlertSpy.mockReset();
     modalConfirmSpy.mockReset();
-    machinePromptRegistriesFetchItemMock.mockClear();
+    machinePromptRegistriesDownloadItemMock.mockClear();
     createPromptRegistrySkillArtifactFromFetchedItemMock.mockClear();
     installPromptRegistryItemMock.mockClear();
     machinePromptAssetsListTypesMock.mockClear();
@@ -230,19 +240,15 @@ describe('PromptRegistryItemDetailsScreen', () => {
     const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(PromptRegistryItemDetailsScreen, {
+    tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
           machineId: 'machine-1',
           sourceId: 'skills_sh:featured',
           itemId: 'skills_sh:featured:item-1',
           configuredSources: [],
-        }),
-      );
-    });
+        }))).tree;
     await act(async () => {});
 
-    expect(machinePromptRegistriesFetchItemMock).toHaveBeenCalledWith(
+    expect(machinePromptRegistriesDownloadItemMock).toHaveBeenCalledWith(
       'machine-1',
       expect.objectContaining({
         sourceId: 'skills_sh:featured',
@@ -250,11 +256,11 @@ describe('PromptRegistryItemDetailsScreen', () => {
       }),
     );
 
-    const importRow = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptRegistries.details.import');
+    const importRow = tree.findByTestId('promptRegistries.details.import');
     expect(importRow).toBeTruthy();
 
     await act(async () => {
-      importRow?.props?.onPress?.();
+      await pressTestInstanceAsync(importRow);
     });
 
     expect(createPromptRegistrySkillArtifactFromFetchedItemMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -267,23 +273,19 @@ describe('PromptRegistryItemDetailsScreen', () => {
     const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(PromptRegistryItemDetailsScreen, {
+    tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
           machineId: 'machine-1',
           sourceId: 'skills_sh:featured',
           itemId: 'skills_sh:featured:item-1',
           configuredSources: [],
           workspacePath: '/tmp/project',
-        }),
-      );
-    });
+        }))).tree;
     await act(async () => {});
 
-    const footer = tree.root.findByType('SettingsActionFooter');
+    const footer = tree.findByType('SettingsActionFooter');
 
     await act(async () => {
-      await footer.props.onPrimaryPress();
+      invokeTestInstanceHandler(await footer, 'onPrimaryPress', );
     });
 
     expect(installPromptRegistryItemMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -313,21 +315,17 @@ describe('PromptRegistryItemDetailsScreen', () => {
     const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
 
     let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(PromptRegistryItemDetailsScreen, {
+    tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
           machineId: 'machine-1',
           sourceId: 'skills_sh:featured',
           itemId: 'skills_sh:featured:item-1',
           configuredSources: [],
           workspacePath: '/tmp/project',
-        }),
-      );
-    });
+        }))).tree;
     await act(async () => {});
 
     await act(async () => {
-      await tree.root.findByType('SettingsActionFooter').props.onPrimaryPress();
+      invokeTestInstanceHandler(await tree.findByType('SettingsActionFooter'), 'onPrimaryPress', );
     });
 
     expect(installPromptRegistryItemMock).toHaveBeenCalledWith(expect.objectContaining({

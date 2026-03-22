@@ -52,7 +52,11 @@ function sha256Hex(bytes) {
 
 test('downloadVerifiedReleaseAssetBundle downloads archive and verifies checksums + signature', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happier-release-runtime-verified-'));
+  const originalFetch = globalThis.fetch;
   try {
+    globalThis.fetch = async () => {
+      throw new Error('global fetch should not be used');
+    };
     const { pubkeyFile, keyId, privateKey } = createMinisignKeyPair();
     const archiveName = 'happier-server-v1.2.3-preview.1-linux-x64.tar.gz';
     const archiveBytes = Buffer.from('hello archive', 'utf-8');
@@ -88,6 +92,7 @@ test('downloadVerifiedReleaseAssetBundle downloads archive and verifies checksum
     const downloaded = await readFile(result.archivePath);
     assert.equal(downloaded.toString('utf-8'), archiveBytes.toString('utf-8'));
   } finally {
+    globalThis.fetch = originalFetch;
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -120,4 +125,3 @@ test('downloadVerifiedReleaseAssetBundle rejects checksum mismatches', async () 
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

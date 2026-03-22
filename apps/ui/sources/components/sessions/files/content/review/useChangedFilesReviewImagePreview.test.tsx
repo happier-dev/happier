@@ -1,15 +1,20 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
-vi.mock('@/sync/domains/state/storage', () => ({
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'filesImagePreviewCacheMaxEntries') return 10;
         if (key === 'filesImagePreviewCacheMaxTotalBytes') return 1_000_000;
         if (key === 'filesImagePreviewMaxBytes') return 1_000_000;
         return undefined;
     },
-}));
+});
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionReadFile: vi.fn(async () => ({ success: true, content: 'YWJj' })), // "abc" base64
@@ -46,10 +51,7 @@ describe('useChangedFilesReviewImagePreview', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Test enabled={true} />);
-            await flushAsync(8);
-        });
+        tree = (await renderScreen(<Test enabled={true} />)).tree;
 
         expect(vi.mocked(sessionReadFile)).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');
@@ -85,10 +87,7 @@ describe('useChangedFilesReviewImagePreview', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Test enabled={true} />);
-            await flushAsync(8);
-        });
+        tree = (await renderScreen(<Test enabled={true} />)).tree;
 
         expect(vi.mocked(sessionReadFile)).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');

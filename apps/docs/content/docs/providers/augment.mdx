@@ -26,6 +26,21 @@ npm install -g @augmentcode/auggie
 auggie --version
 ```
 
+## Local authentication in Happier
+
+Auggie supports launching its native login flow from:
+
+- **Settings → AI provider settings → Augment (Auggie)**
+
+Use that page to:
+
+- open `auggie login` directly inside Happier
+- re-run auth checks on the selected machine with **Check now**
+
+Auth-status detection for Auggie is currently conservative. Happier may still show **Unknown** even though the login flow is available.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
 ## Start Augment/Auggie with Happier
 
 ```bash
@@ -34,7 +49,8 @@ happier auggie
 
 ## Notes
 
-- Capability exposure (resume/modes/permissions/model behavior) depends on the installed runtime.
+- Resume availability is session-specific in Happier and depends on valid resume metadata plus the current backend/settings.
+- Modes, permissions, and model behavior can still vary by the installed runtime.
 - Session tools are normalized into canonical Happier timeline tools.
 
 ## Troubleshooting

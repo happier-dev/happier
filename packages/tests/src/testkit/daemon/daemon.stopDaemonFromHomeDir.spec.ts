@@ -1,13 +1,14 @@
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { stopDaemonFromHomeDir } from './daemon';
 import { terminateProcessTreeByPid, isProcessAlive } from '../process/processTree';
+import { spawnDetachedInlineNodeTestProcess, spawnTestProcess } from '../process/testSpawn';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -88,14 +89,13 @@ describe('stopDaemonFromHomeDir', () => {
     let daemonPid: number | null = null;
     let sessionPid: number | null = null;
     try {
-      const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      const daemon = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
       daemonPid = daemon.pid ?? null;
       expect(typeof daemonPid).toBe('number');
       expect(daemonPid && daemonPid > 1).toBe(true);
 
-      const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      const session = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
         stdio: 'ignore',
-        detached: true,
       });
       sessionPid = session.pid ?? null;
       expect(typeof sessionPid).toBe('number');
@@ -126,6 +126,74 @@ describe('stopDaemonFromHomeDir', () => {
 
       await stopDaemonFromHomeDir(homeDir, {
         gracefulTimeoutMs: 0,
+        hardKill: true,
+        inspectProcess: () => ({ ok: true, command: 'node dist/index.mjs daemon start-sync', looksLikeDaemon: true }),
+      });
+
+      expect(isProcessAlive(sessionPid!)).toBe(false);
+    } finally {
+      if (sessionPid) await terminateProcessTreeByPid(sessionPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      if (daemonPid) await terminateProcessTreeByPid(daemonPid, { graceMs: 0, pollMs: 25 }).catch(() => {});
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('kills leaked daemon-started sessions from disk markers after a graceful daemon stop', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-stop-graceful-orphans-'));
+    let daemonPid: number | null = null;
+    let sessionPid: number | null = null;
+    try {
+      const daemon = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      daemonPid = daemon.pid ?? null;
+      expect(typeof daemonPid).toBe('number');
+      expect(daemonPid && daemonPid > 1).toBe(true);
+
+      const session = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
+        stdio: 'ignore',
+      });
+      sessionPid = session.pid ?? null;
+      expect(typeof sessionPid).toBe('number');
+      expect(sessionPid && sessionPid > 1).toBe(true);
+
+      const ps = spawnSync('ps', ['-o', 'args=', '-p', String(sessionPid), '-ww'], { encoding: 'utf8' });
+      expect(ps.status).toBe(0);
+      const command = String(ps.stdout || '').trim();
+      expect(command).toContain('setInterval');
+      const processCommandHash = createHash('sha256').update(command).digest('hex');
+
+      const markerDir = join(homeDir, 'tmp', 'daemon-sessions');
+      await mkdir(markerDir, { recursive: true });
+      await writeFile(
+        join(markerDir, `pid-${sessionPid}.json`),
+        JSON.stringify({ pid: sessionPid, happyHomeDir: homeDir, processCommandHash, startedBy: 'daemon' }),
+        'utf8',
+      );
+
+      await writeFile(join(homeDir, 'daemon.state.json'), JSON.stringify({ pid: daemonPid, httpPort: 31_999 }), 'utf8');
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          if (daemonPid) {
+            try {
+              process.kill(daemonPid, 'SIGTERM');
+            } catch {
+              // ignore shutdown races
+            }
+          }
+          return new Response(JSON.stringify({ status: 'stopping' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }),
+      );
+
+      await stopDaemonFromHomeDir(homeDir, {
+        gracefulTimeoutMs: 5_000,
         hardKill: true,
         inspectProcess: () => ({ ok: true, command: 'node dist/index.mjs daemon start-sync', looksLikeDaemon: true }),
       });

@@ -1,21 +1,36 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let snapshotMock: any = null;
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
     useSessionProjectScmSnapshot: () => snapshotMock,
-}));
+});
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Text: 'Text',
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null,
+                            },
+                            AppState: {
+                                addEventListener: () => ({ remove: () => {} }),
+                            },
+                        }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -43,9 +58,7 @@ describe('ProjectSourceControlStatus', () => {
         };
         const { ProjectSourceControlStatus } = await import('./ProjectSourceControlStatus');
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ProjectSourceControlStatus sessionId="session-1" />);
-        });
+        tree = (await renderScreen(<ProjectSourceControlStatus sessionId="session-1" />)).tree;
         const labels = tree!.root.findAllByType('Text' as any).map((node) => String(node.props.children));
         expect(labels).toContain('2 files');
     });

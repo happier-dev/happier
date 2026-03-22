@@ -6,6 +6,8 @@ import { runRetentionSweep } from './runRetentionSweep';
 import { logRetentionSweepCompleted, logRetentionSweepFailed } from './retentionRunLogging';
 import { acquireRetentionSweepLock } from './retentionSweepLock';
 
+const RETENTION_SWEEP_LOCK_TTL_FLOOR_MS = 30 * 60 * 1000;
+
 export function startRetentionWorker(): { stop: () => void } | null {
     const policy = readRetentionPolicyFromEnv(process.env);
     if (!resolveEffectiveRetentionEnabled(policy)) {
@@ -18,7 +20,9 @@ export function startRetentionWorker(): { stop: () => void } | null {
     const run = async (reason: 'startup' | 'interval') => {
         if (running || stopped) return;
         running = true;
-        const lock = await acquireRetentionSweepLock({ ttlMs: policy.intervalMs });
+        const lock = await acquireRetentionSweepLock({
+            ttlMs: Math.max(RETENTION_SWEEP_LOCK_TTL_FLOOR_MS, policy.intervalMs),
+        });
         if (!lock) {
             running = false;
             return;
@@ -31,7 +35,12 @@ export function startRetentionWorker(): { stop: () => void } | null {
                 intervalMs: policy.intervalMs,
                 run: async () => {
                     const result = await runRetentionSweep({ policy });
-                    logRetentionSweepCompleted({ reason, deleted: result.deleted, byRule: result.byRule, dryRun: policy.dryRun });
+                    logRetentionSweepCompleted({
+                        reason,
+                        deleted: result.deleted,
+                        byRule: result.byRule,
+                        dryRun: policy.dryRun,
+                    });
                 },
             });
         } catch (error) {

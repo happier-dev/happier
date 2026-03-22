@@ -62,6 +62,55 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonExecutionRunListResponseSchema?.safeParse).toBe('function');
     });
 
+    it('exports daemon terminal schemas for embedded terminal surfaces', () => {
+        expect(typeof (protocol as any).DaemonTerminalEnsureRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonTerminalStreamReadResponseSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonTerminalStreamEventSchema?.safeParse).toBe('function');
+    });
+
+    it('exports daemon MCP servers schemas', () => {
+        expect(typeof (protocol as any).DaemonMcpServersTestRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonMcpServersTestResponseSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonMcpServersDetectRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonMcpServersDetectResponseSchema?.safeParse).toBe('function');
+    });
+
+    it('exports direct sessions daemon RPC schemas', () => {
+        expect(typeof (protocol as any).DirectSessionsProviderIdSchema?.safeParse).toBe('function');
+        expect((protocol as any).DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
+        expect((protocol as any).DirectSessionsProviderIdSchema.parse('claude')).toBe('claude');
+        expect((protocol as any).DirectSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
+        expect(typeof (protocol as any).DirectSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DirectSessionLinkEnsureRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DirectSessionTakeoverRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DirectSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
+    });
+
+    it('exports session handoff schemas', () => {
+        expect(typeof (protocol as any).SessionHandoffStartRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionHandoffPrepareTargetRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SessionHandoffStatusSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).TransferChunkEnvelopeSchema?.safeParse).toBe('function');
+    });
+
+    it('does not export the removed sync-only workspace replication RPC surface', () => {
+        expect((protocol as any).WorkspaceReplicationEndpointSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationDiffSummarySchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationRemoteStagingModeSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationOperationIdSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceSyncModeSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationScanRequestSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationDiffResponseSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationBaselineReadResponseSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationStageRequestSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationApplyResponseSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationCommitResponseSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationAbortRequestSchema).toBeUndefined();
+        expect((protocol as any).WorkspaceReplicationCoordinatorDiagnosticReasonSchema).toBeUndefined();
+    });
+
     it('exports connected service profile id schema', () => {
         expect(protocol.ConnectedServiceProfileIdSchema.parse('work')).toBe('work');
     });
@@ -73,5 +122,35 @@ describe('protocol package root exports', () => {
             reason: 'key_proof_required',
         });
         expect(parsed.error).toBe('invalid-params');
+    });
+
+    it('exports backend profile schemas and helpers', () => {
+        expect(typeof (protocol as any).AIBackendProfileSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SavedSecretSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).getBuiltInBackendProfile).toBe('function');
+        expect(Array.isArray((protocol as any).DEFAULT_BUILT_IN_BACKEND_PROFILES)).toBe(true);
+        expect(typeof (protocol as any).resolveBackendProfile).toBe('function');
+        expect(typeof (protocol as any).isProfileCompatibleWithAgent).toBe('function');
+        expect(typeof (protocol as any).getRequiredSecretEnvVarNames).toBe('function');
+        expect(typeof (protocol as any).getRequiredConfigEnvVarNames).toBe('function');
+        expect(typeof (protocol as any).getMissingRequiredConfigEnvVarNames).toBe('function');
+        expect(typeof (protocol as any).getProfileEnvironmentVariables).toBe('function');
+    });
+
+    it('exports ACP catalog settings schemas', () => {
+        expect(typeof (protocol as any).AcpCatalogSettingsV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).AcpBackendDefinitionV1Schema?.safeParse).toBe('function');
+    });
+
+    it('exports configured ACP backend legacy aliases', () => {
+        expect(typeof (protocol as any).AcpConfiguredBackendV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).buildAcpConfiguredBackendV1).toBe('function');
+        expect(typeof (protocol as any).readAcpConfiguredBackendV1FromMetadata).toBe('function');
+    });
+
+    it('exports backend target schemas and helpers', () => {
+        expect(typeof (protocol as any).BackendTargetRefSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).buildBackendTargetKey).toBe('function');
+        expect((protocol as any).buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review' })).toBe('acpBackend:review');
     });
 });

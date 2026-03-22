@@ -1,42 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { ensureMinimalMonorepoLayout } from '../../testkit/core/minimal_monorepo_layout.mjs';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { getComponentDir, getComponentRepoDir, getRepoDir } from './paths.mjs';
-
-async function withTempRoot(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-stacks-paths-monorepo-'));
-  t.after(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-  return dir;
-}
 
 async function writeHappyMonorepoStub({ rootDir }) {
   const monoRoot = join(rootDir, 'main');
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  await ensureMinimalMonorepoLayout(monoRoot);
   return monoRoot;
 }
 
 async function writeHappyMonorepoStubAt({ monoRoot }) {
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  await ensureMinimalMonorepoLayout(monoRoot);
   return monoRoot;
 }
 
 test('getComponentDir derives monorepo component package dirs from workspace/main', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-paths-monorepo-' });
+  const rootDir = fixture.root;
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 
   const monoRoot = await writeHappyMonorepoStub({ rootDir });
@@ -47,7 +30,8 @@ test('getComponentDir derives monorepo component package dirs from workspace/mai
 });
 
 test('getComponentRepoDir returns the shared monorepo root for monorepo components', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-paths-monorepo-' });
+  const rootDir = fixture.root;
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 
   const monoRoot = await writeHappyMonorepoStub({ rootDir });
@@ -58,7 +42,8 @@ test('getComponentRepoDir returns the shared monorepo root for monorepo componen
 });
 
 test('getComponentDir normalizes HAPPIER_STACK_REPO_DIR that points inside the monorepo', async (t) => {
-  const rootDir = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-paths-monorepo-' });
+  const rootDir = fixture.root;
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 
   const monoRoot = await writeHappyMonorepoStub({ rootDir });
@@ -68,7 +53,8 @@ test('getComponentDir normalizes HAPPIER_STACK_REPO_DIR that points inside the m
 });
 
 test('getRepoDir falls back to the monorepo containing the CLI root when HAPPIER_STACK_REPO_DIR is unset', async (t) => {
-  const tmpRoot = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-paths-monorepo-' });
+  const tmpRoot = fixture.root;
 
   const workspaceDir = join(tmpRoot, 'workspace');
   const monoRoot = join(tmpRoot, 'happier');
@@ -83,7 +69,8 @@ test('getRepoDir falls back to the monorepo containing the CLI root when HAPPIER
 });
 
 test('getRepoDir ignores the monorepo containing the CLI root in sandbox mode', async (t) => {
-  const tmpRoot = await withTempRoot(t);
+  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-paths-monorepo-' });
+  const tmpRoot = fixture.root;
 
   const workspaceDir = join(tmpRoot, 'workspace');
   const monoRoot = join(tmpRoot, 'happier');

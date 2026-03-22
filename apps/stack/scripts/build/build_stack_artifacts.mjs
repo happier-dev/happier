@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { commandExists, resolveYarnCommand } from '@happier-dev/cli-common/componentArtifacts';
+import { commandExists, resolveBunCommand, resolveYarnCommand } from '@happier-dev/cli-common/componentArtifacts';
 
 import { resolveStackBaseDir } from '../utils/paths/paths.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
@@ -27,11 +27,12 @@ function assertNamedStack(env) {
 export function assertSelectedBuildPrerequisites({
   selection,
   commandProbe = commandExists,
+  env = process.env,
 }) {
   const needsServerBinary = Boolean(selection?.components?.server);
   const needsDaemonBinary = Boolean(selection?.components?.daemon);
   if (needsServerBinary || needsDaemonBinary) {
-    if (!commandProbe('bun')) {
+    if (!resolveBunCommand({ commandProbe, processEnv: env })) {
       const targetLabel = needsServerBinary && needsDaemonBinary
         ? 'server and daemon'
         : needsServerBinary
@@ -52,7 +53,7 @@ export async function buildStackArtifacts({ rootDir, argv = [], env = process.en
   if (flags.has('--tauri')) {
     throw new Error('[build] tauri artifact builds are not supported in stack-local runtime snapshots in v1.');
   }
-  assertSelectedBuildPrerequisites({ selection });
+  assertSelectedBuildPrerequisites({ selection, env });
 
   const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, env);

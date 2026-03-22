@@ -52,7 +52,8 @@ const DEFAULTS = {
 
 // Allow opt-in overrides for local dev tooling without changing upstream defaults.
 const nameOverride = (process.env.EXPO_APP_NAME || process.env.HAPPY_STACKS_IOS_APP_NAME || '').trim();
-const bundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || process.env.HAPPY_STACKS_IOS_BUNDLE_ID || '').trim();
+const iosBundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || process.env.HAPPY_STACKS_IOS_BUNDLE_ID || '').trim();
+const androidPackageOverride = (process.env.EXPO_ANDROID_PACKAGE || process.env.EXPO_APP_BUNDLE_ID || '').trim();
 const ownerOverride = (process.env.EXPO_APP_OWNER || '').trim();
 const slugOverride = (process.env.EXPO_APP_SLUG || '').trim();
 const versionOverride = (process.env.EXPO_APP_VERSION || '').trim();
@@ -74,7 +75,12 @@ const namesByVariant = {
     preview: "Happier (preview)",
     production: "Happier"
 };
-const bundleIdsByVariant = {
+const iosBundleIdsByVariant = {
+    development: "dev.happier.app.development",
+    preview: "dev.happier.app.preview",
+    production: DEFAULTS.iosBundleId
+};
+const androidPackagesByVariant = {
     development: "dev.happier.app.dev",
     preview: "dev.happier.app.preview",
     production: DEFAULTS.iosBundleId
@@ -82,9 +88,10 @@ const bundleIdsByVariant = {
 const appVariant = namesByVariant[variant] ? variant : 'development';
 
 // If APP_ENV is unknown, fall back to development-safe defaults to avoid generating
-// an invalid Expo config with undefined name/bundle id.
+// an invalid Expo config with undefined identifiers.
 const name = nameOverride || namesByVariant[appVariant] || namesByVariant.development;
-const bundleId = bundleIdOverride || bundleIdsByVariant[appVariant] || bundleIdsByVariant.development;
+const iosBundleId = iosBundleIdOverride || iosBundleIdsByVariant[appVariant] || iosBundleIdsByVariant.development;
+const androidPackage = androidPackageOverride || androidPackagesByVariant[appVariant] || androidPackagesByVariant.development;
 const owner = ownerOverride || DEFAULTS.owner;
 const slug = slugOverride || DEFAULTS.slug;
 
@@ -99,13 +106,29 @@ const easProjectId =
         ''
     ).trim() || DEFAULTS.easProjectId;
 
+const parseOptionalBoolean = (raw) => {
+    const value = (raw ?? '').toString().trim().toLowerCase();
+    if (!value) return null;
+    if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
+    if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
+    return null;
+};
+
+const devClientLaunchMode = (process.env.HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE || '').trim();
+const devClientSilentLaunch = parseOptionalBoolean(process.env.HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH);
+const updatesNativeDebugEnabled =
+    parseOptionalBoolean(process.env.HAPPIER_EXPO_USE_NATIVE_DEBUG) ??
+    parseOptionalBoolean(process.env.EX_UPDATES_NATIVE_DEBUG) ??
+    null;
+
 const updatesUrl = (process.env.EXPO_UPDATES_URL || '').trim() || `https://u.expo.dev/${easProjectId}`;
 const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || (appVariant === 'production' ? DEFAULTS.updatesChannel : appVariant);
 const updatesConfig = {
     url: updatesUrl,
     requestHeaders: {
         "expo-channel-name": updatesChannel
-    }
+    },
+    ...(updatesNativeDebugEnabled === true ? { useNativeDebug: true } : {})
 };
 
 const normalizeCiFlag = (raw) => {
@@ -137,14 +160,6 @@ const iosAssociatedDomains = iosAssociatedDomainsRaw
 // Keep the default stable for upstream users, but allow opt-in overrides for local dev variants
 // (e.g. to avoid iOS scheme collisions between multiple installs).
 const scheme = (process.env.EXPO_APP_SCHEME || process.env.HAPPY_STACKS_MOBILE_SCHEME || '').trim() || DEFAULTS.scheme;
-
-const parseOptionalBoolean = (raw) => {
-    const value = (raw ?? '').toString().trim().toLowerCase();
-    if (!value) return null;
-    if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
-    if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
-    return null;
-};
 
 const mergeDeep = (base, override) => {
     if (override == null) return base;
@@ -197,7 +212,7 @@ const baseExpoConfig = {
         },
         ios: {
             supportsTablet: true,
-            bundleIdentifier: bundleId,
+            bundleIdentifier: iosBundleId,
             config: {
                 usesNonExemptEncryption: false
             },
@@ -234,7 +249,7 @@ const baseExpoConfig = {
                 "android.permission.ACTIVITY_RECOGNITION"
             ],
             edgeToEdgeEnabled: true,
-            package: bundleId,
+            package: androidPackage,
             googleServicesFile: "./google-services.json",
             intentFilters: appVariant === 'production' ? [
                 {
@@ -272,6 +287,12 @@ const baseExpoConfig = {
                     root: "./sources/app"
                 }
             ],
+            ...(devClientLaunchMode ? [[
+                "expo-dev-client",
+                {
+                    launchMode: devClientLaunchMode
+                }
+            ]] : []),
             "expo-updates",
             "expo-asset",
             "expo-localization",
@@ -330,6 +351,7 @@ const baseExpoConfig = {
             ]
         ],
         updates: updatesConfig,
+        ...(devClientSilentLaunch === true ? { developmentClient: { silentLaunch: true } } : {}),
         experiments: {
             typedRoutes: true
         },

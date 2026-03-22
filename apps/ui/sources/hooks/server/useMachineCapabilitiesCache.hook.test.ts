@@ -2,8 +2,11 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
+import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { flushHookEffects } from './serverFeatureHookHarness.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,6 +23,23 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 describe('useMachineCapabilitiesCache (hook)', () => {
     const newSessionRequest = (): CapabilitiesDetectRequest => ({ checklistId: CHECKLIST_IDS.NEW_SESSION });
+
+    it('extends the detect timeout when cli login status overrides are requested', async () => {
+        vi.resetModules();
+
+        const { resolveMachineCapabilitiesTimeoutMs } = await import('./useMachineCapabilitiesCache');
+
+        expect(resolveMachineCapabilitiesTimeoutMs({
+            checklistId: CHECKLIST_IDS.NEW_SESSION,
+            overrides: {
+                'cli.codex': {
+                    params: {
+                        includeLoginStatus: true,
+                    },
+                },
+            },
+        }, 2_500)).toBe(20_000);
+    });
 
     it('scopes cache entries by active server when serverId is omitted', async () => {
         vi.resetModules();
@@ -90,9 +110,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(latest?.status).toBe('error');
     });
@@ -129,6 +147,77 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         resolvers[0]!({ supported: true, response: { protocolVersion: 1, results: {} } });
         await expect(Promise.all([p1, p2])).resolves.toBeDefined();
+    });
+
+    it('refetches when a later request needs a capability missing from the cached snapshot', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn()
+            .mockResolvedValueOnce({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.claude': { ok: true, data: { available: true } },
+                    },
+                },
+            })
+            .mockResolvedValueOnce({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'tool.executionRuns': { ok: true, data: { backends: { codex: { available: true, intents: ['delegate'] } } } },
+                    },
+                },
+            });
+
+        vi.doMock('@/sync/ops', () => ({
+            machineCapabilitiesDetect,
+        }));
+
+        const { prefetchMachineCapabilities, useMachineCapabilitiesCache } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: { requests: [{ id: 'cli.claude' }] as any },
+            timeoutMs: 1,
+        });
+
+        let latestState: {
+            status: string;
+            snapshot?: {
+                response: {
+                    results: Record<string, unknown>;
+                };
+            };
+        } | null = null;
+
+        function Test() {
+            latestState = useMachineCapabilitiesCache({
+                machineId: 'm1',
+                enabled: true,
+                request: { requests: [{ id: 'tool.executionRuns' }] as any },
+                timeoutMs: 1,
+            }).state;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+            await flushHookEffects();
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+        expect(machineCapabilitiesDetect.mock.calls[1]?.[1]).toEqual({ requests: [{ id: 'tool.executionRuns' }] });
+        expect(latestState).toMatchObject({ status: 'loaded' });
+        expect(latestState).toEqual(expect.objectContaining({
+            snapshot: expect.objectContaining({
+                response: expect.objectContaining({
+                    results: expect.objectContaining({
+                        'tool.executionRuns': expect.anything(),
+                    }),
+                }),
+            }),
+        }));
     });
 
     it('retries error states after a short backoff even when staleMs is large', async () => {
@@ -179,6 +268,51 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         }
     });
 
+    it('retries immediately after a server-switch-abort detect result', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn()
+            .mockResolvedValueOnce({ supported: false, reason: 'server-switch-abort' })
+            .mockResolvedValueOnce({ supported: true, response: { protocolVersion: 1, results: {} } });
+
+        vi.doMock('@/sync/ops', () => {
+            return { machineCapabilitiesDetect };
+        });
+
+        const { prefetchMachineCapabilitiesIfStale, useMachineCapabilitiesCache } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilitiesIfStale({
+            machineId: 'm1',
+            staleMs: 24 * 60 * 60 * 1000,
+            request: newSessionRequest(),
+            timeoutMs: 1,
+        });
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+
+        await prefetchMachineCapabilitiesIfStale({
+            machineId: 'm1',
+            staleMs: 24 * 60 * 60 * 1000,
+            request: newSessionRequest(),
+            timeoutMs: 1,
+        });
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+
+        let latest: any = null;
+        function Test() {
+            latest = useMachineCapabilitiesCache({
+                machineId: 'm1',
+                enabled: false,
+                request: newSessionRequest(),
+                timeoutMs: 1,
+            }).state;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(latest?.status).toBe('loaded');
+    });
+
     it('keeps refresh stable when request identity changes and uses latest request', async () => {
         vi.resetModules();
 
@@ -211,9 +345,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         }
 
         let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(React.createElement(Test, { request: requestA }));
-        });
+        tree = (await renderScreen(React.createElement(Test, { request: requestA }))).tree;
         const refreshA = latestRefresh!;
 
         act(() => {
@@ -255,7 +387,68 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
         const opts = machineCapabilitiesDetect.mock.calls[0][2];
         expect(typeof opts?.timeoutMs).toBe('number');
-        expect(opts.timeoutMs).toBeGreaterThanOrEqual(8000);
+        expect(opts.timeoutMs).toBeGreaterThanOrEqual(12_000);
+    });
+
+    it('uses a longer default timeout for execution-runs detection', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: CapabilitiesDetectRequest, _opts: { timeoutMs?: number }) => {
+            return { supported: true, response: { protocolVersion: 1, results: {} } };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { prefetchMachineCapabilities } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: { requests: [{ id: 'tool.executionRuns' }] },
+        });
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+        const opts = machineCapabilitiesDetect.mock.calls[0][2];
+        expect(typeof opts?.timeoutMs).toBe('number');
+        expect(opts.timeoutMs).toBeGreaterThanOrEqual(12_000);
+    });
+
+    it('uses a longer default timeout for cli login-status detection', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: CapabilitiesDetectRequest, _opts: { timeoutMs?: number }) => {
+            return { supported: true, response: { protocolVersion: 1, results: {} } };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { prefetchMachineCapabilities } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: {
+                checklistId: CHECKLIST_IDS.NEW_SESSION,
+                overrides: {
+                    'cli.codex': {
+                        params: {
+                            includeLoginStatus: true,
+                        },
+                    },
+                },
+            },
+        });
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+        const opts = machineCapabilitiesDetect.mock.calls[0][2];
+        expect(typeof opts?.timeoutMs).toBe('number');
+        expect(opts.timeoutMs).toBeGreaterThanOrEqual(20_000);
     });
 
     it('exposes the latest snapshot after a prefetch', async () => {
@@ -389,6 +582,253 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             timeoutMs: 1,
         });
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+    });
+
+    it('refetches a fresh cache entry when login-status data was not included in the cached snapshot', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, request: CapabilitiesDetectRequest) => {
+            const wantsLoginStatus = Boolean(request.overrides?.['cli.codex']?.params?.includeLoginStatus);
+            return {
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.codex': wantsLoginStatus
+                            ? {
+                                ok: true,
+                                checkedAt: 2,
+                                data: {
+                                    available: true,
+                                    isLoggedIn: false,
+                                    authStatus: {
+                                        state: 'logged_out',
+                                        reason: 'missing_credentials',
+                                        checkedAt: 2,
+                                    },
+                                },
+                            }
+                            : {
+                                ok: true,
+                                checkedAt: 1,
+                                data: {
+                                    available: true,
+                                },
+                            },
+                    },
+                },
+            };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { prefetchMachineCapabilitiesIfStale, getMachineCapabilitiesSnapshot } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilitiesIfStale({
+            machineId: 'm1',
+            staleMs: 60_000,
+            request: newSessionRequest(),
+            timeoutMs: 1,
+        });
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+        expect(getMachineCapabilitiesSnapshot('m1')?.response.results['cli.codex']).toEqual({
+            ok: true,
+            checkedAt: 1,
+            data: { available: true },
+        });
+
+        await prefetchMachineCapabilitiesIfStale({
+            machineId: 'm1',
+            staleMs: 60_000,
+            request: {
+                checklistId: CHECKLIST_IDS.NEW_SESSION,
+                overrides: {
+                    'cli.codex': {
+                        params: {
+                            includeLoginStatus: true,
+                        },
+                    },
+                },
+            },
+            timeoutMs: 1,
+        });
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+        expect(getMachineCapabilitiesSnapshot('m1')?.response.results['cli.codex']).toEqual({
+            ok: true,
+            checkedAt: 2,
+            data: {
+                available: true,
+                isLoggedIn: false,
+                authStatus: {
+                    state: 'logged_out',
+                    reason: 'missing_credentials',
+                    checkedAt: 2,
+                },
+            },
+        });
+    });
+
+    it('preserves latest-version freshness when a dep cache merge reuses an older version-check payload', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi
+            .fn()
+            .mockResolvedValueOnce({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        [CODEX_ACP_DEP_ID]: {
+                            ok: true,
+                            checkedAt: 1,
+                            data: {
+                                installed: true,
+                                installDir: '/tmp',
+                                binPath: '/tmp/codex-acp',
+                                installedVersion: '1.0.0',
+                                sourceKind: 'github_release_binary',
+                                lastInstallLogPath: null,
+                                lastBackgroundUpdateCheckAtMs: null,
+                                latestVersionCheck: {
+                                    ok: true,
+                                    latestVersion: '1.0.1',
+                                    label: 'v1.0.1',
+                                },
+                            },
+                        },
+                    },
+                },
+            })
+            .mockResolvedValueOnce({
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        [CODEX_ACP_DEP_ID]: {
+                            ok: true,
+                            checkedAt: 2,
+                            data: {
+                                installed: true,
+                                installDir: '/tmp',
+                                binPath: '/tmp/codex-acp',
+                                installedVersion: '1.0.0',
+                                sourceKind: 'github_release_binary',
+                                lastInstallLogPath: null,
+                                lastBackgroundUpdateCheckAtMs: null,
+                            },
+                        },
+                    },
+                },
+            });
+
+        vi.doMock('@/sync/ops', () => ({
+            machineCapabilitiesDetect,
+        }));
+
+        const { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: {
+                requests: [{ id: CODEX_ACP_DEP_ID, params: { includeLatestVersion: true, onlyIfInstalled: true } }],
+            },
+            timeoutMs: 1,
+        });
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: {
+                requests: [{ id: CODEX_ACP_DEP_ID, params: { onlyIfInstalled: true } }],
+            },
+            timeoutMs: 1,
+        });
+
+        expect(getMachineCapabilitiesSnapshot('m1')?.response.results[CODEX_ACP_DEP_ID]).toEqual({
+            ok: true,
+            checkedAt: 2,
+            data: {
+                installed: true,
+                installDir: '/tmp',
+                binPath: '/tmp/codex-acp',
+                installedVersion: '1.0.0',
+                sourceKind: 'github_release_binary',
+                lastInstallLogPath: null,
+                lastBackgroundUpdateCheckAtMs: null,
+                latestVersionCheck: {
+                    ok: true,
+                    latestVersion: '1.0.1',
+                    label: 'v1.0.1',
+                    checkedAt: 1,
+                },
+            },
+        });
+    });
+
+    it('does not refetch a fresh cache entry when login-status data is already present', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn(async () => {
+            return {
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.codex': {
+                            ok: true,
+                            checkedAt: 2,
+                            data: {
+                                available: true,
+                                isLoggedIn: false,
+                                authStatus: {
+                                    state: 'logged_out',
+                                    reason: 'missing_credentials',
+                                    checkedAt: 2,
+                                },
+                            },
+                        },
+                    },
+                },
+            };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { prefetchMachineCapabilitiesIfStale } = await import('./useMachineCapabilitiesCache');
+
+        const requestWithLoginStatus: CapabilitiesDetectRequest = {
+            checklistId: CHECKLIST_IDS.NEW_SESSION,
+            overrides: {
+                'cli.codex': {
+                    params: {
+                        includeLoginStatus: true,
+                    },
+                },
+            },
+        };
+
+        await prefetchMachineCapabilitiesIfStale({
+            machineId: 'm1',
+            staleMs: 60_000,
+            request: requestWithLoginStatus,
+            timeoutMs: 1,
+        });
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+
+        await prefetchMachineCapabilitiesIfStale({
+            machineId: 'm1',
+            staleMs: 60_000,
+            request: requestWithLoginStatus,
+            timeoutMs: 1,
+        });
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
     });
 
     it('does not refetch when cache age is exactly the stale threshold', async () => {

@@ -335,7 +335,7 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
-    it('dedupes localhost and 127.0.0.1 loopback URLs into one profile', async () => {
+    it('dedupes localhost and 127.0.0.1 loopback URLs into one profile without rewriting the stored host form', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
@@ -345,7 +345,7 @@ describe('serverProfiles', () => {
 
         expect(second.id).toBe(first.id);
         expect(second.name).toBe('local-a');
-        expect(second.serverUrl).toBe('http://127.0.0.1:3012');
+        expect(second.serverUrl).toBe('http://localhost:3012');
         expect(profiles.listServerProfiles().filter((p) => p.id === first.id)).toHaveLength(1);
     });
 

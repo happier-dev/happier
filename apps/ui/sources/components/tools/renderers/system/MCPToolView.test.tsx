@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,14 +30,10 @@ describe('MCPToolView', () => {
     async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { MCPToolView } = await import('./MCPToolView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     MCPToolView,
                     makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
-                ),
-            );
-        });
+                ))).tree;
         return tree;
     }
 

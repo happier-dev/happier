@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromptRegistryListAdaptersResponseV1, PromptRegistryScanSourceResponseV1 } from '@happier-dev/protocol';
 import type { PromptRegistrySkillImportResult } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
+import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,46 +100,37 @@ function createDeferred<T>() {
     return { promise, resolve, reject };
 }
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    TextInput: 'TextInput',
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            ScrollView: 'ScrollView',
+                                            TextInput: 'TextInput',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                            },
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                groupped: { background: 'white' },
-                textSecondary: '#999',
-                divider: '#ddd',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-            },
-        }),
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { background: 'white' },
-                textSecondary: '#999',
-                divider: '#ddd',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-    Stack: { Screen: () => null },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -182,18 +175,23 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     }, [action])],
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        confirm: vi.fn(async () => true),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            confirm: vi.fn(async () => true),
+        },
+    }).module;
+});
 
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'registry-source-1',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAllMachines: () => machinesState.value,
     useSettingMutable: (key: string) => {
         if (key === 'promptRegistrySourcesV1') {
@@ -204,7 +202,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         }
         return [null, vi.fn()];
     },
-}));
+});
+});
 
 vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
     usePrimaryMachineFromActiveSelection: () => machinesState.value[0]?.id ?? null,
@@ -220,9 +219,10 @@ vi.mock('@/sync/ops/promptLibrary/promptRegistrySkillImports', () => ({
     importPromptRegistrySkillItem: importPromptRegistrySkillItemMock,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('PromptRegistriesScreen', () => {
     beforeEach(() => {
@@ -306,9 +306,7 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
         expect(machinePromptRegistriesListAdaptersMock).toHaveBeenCalledWith('machine-1');
@@ -325,7 +323,7 @@ describe('PromptRegistriesScreen', () => {
             }),
         );
 
-        const addSourceExpander = tree.root.findByType('InlineAddExpander');
+        const addSourceExpander = tree.findByType('InlineAddExpander');
         expect(addSourceExpander.props?.title).toBe('promptLibrary.registriesAddGitSource');
         expect(addSourceExpander.props?.triggerTestID).toBe('promptRegistries.addGitSource');
 
@@ -333,8 +331,8 @@ describe('PromptRegistriesScreen', () => {
             addSourceExpander.props?.onOpenChange?.(true);
         });
 
-        const sourceTitleInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.sourceTitle');
-        const sourceUrlInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.sourceUrl');
+        const sourceTitleInput = tree.findByTestId('promptRegistries.sourceTitle');
+        const sourceUrlInput = tree.findByTestId('promptRegistries.sourceUrl');
         expect(sourceTitleInput).toBeTruthy();
         expect(sourceUrlInput).toBeTruthy();
 
@@ -362,11 +360,11 @@ describe('PromptRegistriesScreen', () => {
             ],
         });
 
-        const sourceItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptRegistries.source.0');
+        const sourceItem = tree.findByTestId('promptRegistries.source.0');
         expect(sourceItem).toBeTruthy();
 
         await act(async () => {
-            sourceItem?.props?.onPress?.();
+            await pressTestInstanceAsync(sourceItem);
         });
 
         expect(machinePromptRegistriesScanSourceMock).toHaveBeenCalledWith(
@@ -376,10 +374,10 @@ describe('PromptRegistriesScreen', () => {
             }),
         );
 
-        const registryItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptRegistries.item.0');
+        const registryItem = tree.findByTestId('promptRegistries.item.0');
         expect(registryItem).toBeTruthy();
         await act(async () => {
-            registryItem?.props?.onPress?.();
+            await pressTestInstanceAsync(registryItem);
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('/(app)/settings/prompts/registries/item?'));
@@ -408,17 +406,15 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
         machinePromptRegistriesScanSourceMock.mockClear();
-        const searchInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.searchQuery');
+        const searchInput = tree.findByTestId('promptRegistries.searchQuery');
         expect(searchInput).toBeTruthy();
 
         await act(async () => {
-            searchInput?.props?.onChangeText?.('design');
+            changeTextTestInstance(searchInput, 'design');
         });
         await act(async () => {});
         await act(async () => {
@@ -451,15 +447,13 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
         machinePromptRegistriesListSourcesMock.mockClear();
         machinePromptRegistriesScanSourceMock.mockClear();
 
-        const searchInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.searchQuery');
+        const searchInput = tree.findByTestId('promptRegistries.searchQuery');
         expect(searchInput).toBeTruthy();
 
         await act(async () => {
@@ -494,19 +488,17 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
         machinePromptRegistriesListSourcesMock.mockClear();
         machinePromptRegistriesScanSourceMock.mockClear();
 
-        const searchInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.searchQuery');
+        const searchInput = tree.findByTestId('promptRegistries.searchQuery');
         expect(searchInput).toBeTruthy();
 
         await act(async () => {
-            searchInput?.props?.onChangeText?.('ux');
+            changeTextTestInstance(searchInput, 'ux');
         });
 
         expect(machinePromptRegistriesListSourcesMock).not.toHaveBeenCalled();
@@ -541,19 +533,17 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
         machinePromptRegistriesScanSourceMock.mockClear();
         modalAlertSpy.mockClear();
 
-        const searchInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.searchQuery');
+        const searchInput = tree.findByTestId('promptRegistries.searchQuery');
         expect(searchInput).toBeTruthy();
 
         await act(async () => {
-            searchInput?.props?.onChangeText?.('u');
+            changeTextTestInstance(searchInput, 'u');
         });
         await act(async () => {});
         let firstSubmit: Promise<void> | undefined;
@@ -563,7 +553,7 @@ describe('PromptRegistriesScreen', () => {
         await act(async () => {});
 
         await act(async () => {
-            searchInput?.props?.onChangeText?.('ux');
+            changeTextTestInstance(searchInput, 'ux');
         });
         await act(async () => {});
         let secondSubmit: Promise<void> | undefined;
@@ -598,7 +588,7 @@ describe('PromptRegistriesScreen', () => {
         });
 
         expect(modalAlertSpy).not.toHaveBeenCalled();
-        const registryItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptRegistries.item.0');
+        const registryItem = tree.findByTestId('promptRegistries.item.0');
         expect(registryItem?.props?.title).toBe('ux-skill');
     });
 
@@ -606,15 +596,13 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
-        const searchInput = tree.root.findAllByType('TextInput').find((node) => node.props?.testID === 'promptRegistries.searchQuery');
+        const searchInput = tree.findByTestId('promptRegistries.searchQuery');
         expect(searchInput).toBeTruthy();
 
-        const textNodes = tree.root.findAllByType('Text');
+        const textNodes = tree.findAllByType('Text');
         expect(textNodes.some((node) => node.props?.children === 'promptLibrary.registriesSearchLabel')).toBe(false);
     });
 
@@ -641,18 +629,16 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
-        const sourceItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptRegistries.source.0');
+        const sourceItem = tree.findByTestId('promptRegistries.source.0');
         expect(sourceItem).toBeTruthy();
         await act(async () => {
-            sourceItem?.props?.onPress?.();
+            await pressTestInstanceAsync(sourceItem);
         });
 
-        const registryItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptRegistries.item.0');
+        const registryItem = tree.findByTestId('promptRegistries.item.0');
         expect(registryItem).toBeTruthy();
         const rowActions = registryItem?.props?.rightElement;
         const importAction = rowActions?.props?.actions?.find((action: { id: string }) => action.id === 'import');
@@ -678,9 +664,7 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
         expect(machinePromptRegistriesListSourcesMock).toHaveBeenCalledWith(
@@ -695,12 +679,10 @@ describe('PromptRegistriesScreen', () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
-        const contextBar = tree.root.findByType('ContextBar' as any);
+        const contextBar = tree.findByType('ContextBar' as any);
         expect(contextBar.props.machine.selectedId).toBe('machine-1');
 
         await act(async () => {
@@ -721,9 +703,7 @@ describe('PromptRegistriesScreen', () => {
 
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
-        await act(async () => {
-            renderer.create(React.createElement(PromptRegistriesScreen));
-        });
+        await renderScreen(React.createElement(PromptRegistriesScreen));
 
         expect(setContextSelectionsMock).not.toHaveBeenCalled();
     });

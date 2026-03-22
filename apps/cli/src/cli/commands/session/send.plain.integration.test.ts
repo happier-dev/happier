@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
@@ -15,15 +16,14 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('happier session send plaintext sessions (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
   const receivedMessages: any[] = [];
 
   beforeEach(async () => {
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-send-plain-'));
+    happyHomeDir = await createTempDir('happier-cli-session-send-plain-');
     receivedMessages.length = 0;
 
     const sessionId = 'sess_integration_send_plain_123';
@@ -83,41 +83,18 @@ describe('happier session send plaintext sessions (integration)', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    mockIo.mockReset();
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        handlers.set(event, list.filter((v) => v !== cb));
-      });
-      const connect = vi.fn(() => {
-        setTimeout(() => {
-          const list = handlers.get('connect') ?? [];
-          for (const cb of list) cb();
-        }, 0);
-      });
-      const emit = vi.fn((event: string, payload: any, ack?: (answer: any) => void) => {
+    const socket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [payload, ack] = args as [any, ((answer: any) => void) | undefined];
         if (event === 'message') {
           receivedMessages.push(payload?.message);
           ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
           return;
         }
         ack?.({ ok: false, error: 'unsupported' });
-      });
-      return {
-        on,
-        off,
-        connect,
-        emit,
-        disconnect: vi.fn(),
-        close: vi.fn(),
-      };
+      },
     });
+    bindApiSessionSocketMock(mockIo, socket);
   });
 
   afterEach(async () => {
@@ -125,14 +102,13 @@ describe('happier session send plaintext sessions (integration)', () => {
       await new Promise<void>((resolve, reject) => server!.close((e) => (e ? reject(e) : resolve())));
     }
     server = null;
-    if (happyHomeDir) await rm(happyHomeDir, { recursive: true, force: true });
+    if (happyHomeDir) {
+      await removeTempDir(happyHomeDir);
+      happyHomeDir = '';
+    }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -141,8 +117,7 @@ describe('happier session send plaintext sessions (integration)', () => {
   it('emits a plaintext message envelope over the socket and includes meta defaults from plaintext metadata', async () => {
     const { handleSessionCommand } = await import('./index');
 
-    const stdout: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+    const output = captureConsoleJsonOutput();
 
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
@@ -157,7 +132,7 @@ describe('happier session send plaintext sessions (integration)', () => {
         }),
       });
 
-      const parsed = JSON.parse(stdout.join('\n').trim());
+      const parsed = output.json();
       if (parsed.ok !== true) {
         throw new Error(`Unexpected session_send envelope: ${JSON.stringify(parsed)}`);
       }
@@ -169,8 +144,7 @@ describe('happier session send plaintext sessions (integration)', () => {
       expect(last?.v?.meta?.permissionMode).toBe('safe-yolo');
       expect(last?.v?.meta?.model).toBe('claude-sonnet-4-0');
     } finally {
-      logSpy.mockRestore();
+      output.restore();
     }
   });
 });
-

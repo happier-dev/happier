@@ -1,35 +1,58 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    AppState: {
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
+const shared = vi.hoisted(() => ({
+    settingsState: {
+        agentInputEnterToSend: false,
+        agentInputHistoryScope: 'perSession',
+        sessionMessageSendMode: 'agent_queue',
+        sessionBusySteerSendPolicy: 'steer_immediately',
+        terminalConnectLegacySecretExportEnabled: false,
+        sessionReplayEnabled: false,
+        sessionReplayStrategy: 'recent_messages',
+        sessionReplayRecentMessagesCount: 100,
+        sessionUseTmux: false,
+        sessionTmuxSessionName: null,
+        sessionTmuxIsolated: false,
+        sessionTmuxTmpDir: null,
+        sessionsRightPaneDefaultOpen: false,
+        uiMultiPanePanelsEnabled: true,
+    } as Record<string, unknown>,
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                useWindowDimensions: () => ({ width: 1280, height: 800 }),
+                            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
+    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -41,17 +64,16 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) =>
-        React.createElement(
-            'DropdownMenu',
-            props,
-            typeof props.trigger === 'function' ? props.trigger({ open: false, toggle: () => {} }) : null,
-        ),
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
+}));
+
+vi.mock('@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker', () => ({
+    LlmTaskRunnerConfigV1BackendModelPicker: 'LlmTaskRunnerConfigV1BackendModelPicker',
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -60,74 +82,50 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => {
-        if (key === 'agentInputEnterToSend') return [false, vi.fn()] as const;
-        if (key === 'agentInputHistoryScope') return ['perSession', vi.fn()] as const;
-        if (key === 'sessionMessageSendMode') return ['agent_queue', vi.fn()] as const;
-        if (key === 'sessionBusySteerSendPolicy') return ['steer_immediately', vi.fn()] as const;
-        if (key === 'terminalConnectLegacySecretExportEnabled') return [false, vi.fn()] as const;
-        if (key === 'sessionReplayEnabled') return [false, vi.fn()] as const;
-        if (key === 'sessionReplayStrategy') return ['recent_messages', vi.fn()] as const;
-        if (key === 'sessionReplayRecentMessagesCount') return [100, vi.fn()] as const;
-        if (key === 'sessionUseTmux') return [false, vi.fn()] as const;
-        if (key === 'sessionTmuxSessionName') return [null, vi.fn()] as const;
-        if (key === 'sessionTmuxIsolated') return [false, vi.fn()] as const;
-        if (key === 'sessionTmuxTmpDir') return [null, vi.fn()] as const;
-        return [null, vi.fn()] as const;
-    },
-}));
-
-vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => [],
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    getAgentCore: () => ({ displayNameKey: 'agent.name' }),
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeLabelForAgentType: () => 'default',
-    getPermissionModeOptionsForAgentType: () => [],
-}));
-
-vi.mock('./sessionI18n', () => ({
-    getPermissionApplyTimingSubtitleKey: () => 'x',
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSettingMutable: ((key: string) => [key in shared.settingsState ? shared.settingsState[key] : null, vi.fn()]) as any,
+            useLocalSettingMutable: ((key: string) => [key in shared.settingsState ? shared.settingsState[key] : null, vi.fn()]) as any,
+        },
+    });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
+afterEach(() => {
+    standardCleanup();
+});
+
 describe('Session settings (web features moved)', () => {
     it('shows Enter-to-send and Message history inside Session settings (web)', async () => {
         const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const titles = items.map((i: any) => i.props.title);
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
+        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
         const dropdownTriggerTitles = dropdowns
-            .map((d: any) => d.props?.itemTrigger?.title)
-            .filter((t: any) => typeof t === 'string');
+            .map((dropdown) => dropdown.props?.itemTrigger?.title)
+            .filter((title): title is string => typeof title === 'string');
 
         expect(titles).toContain('settingsFeatures.enterToSend');
         expect([...titles, ...dropdownTriggerTitles]).toContain('settingsFeatures.historyScope');
 
-        const historyDropdown = dropdowns.find((d: any) => {
-            const ids = (d.props.items ?? []).map((it: any) => it.id);
+        const historyDropdown = dropdowns.find((dropdown) => {
+            const ids = (dropdown.props.items ?? []).map((item: { id?: string }) => item.id);
             return ids.includes('global') && ids.includes('perSession');
         });
+
         expect(historyDropdown).toBeTruthy();
     });
 });

@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Ionicons } from '@expo/vector-icons';
 
+import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
@@ -38,7 +39,11 @@ export function getMachineDropdownMenuItems(params: Readonly<{
             id: 'auto',
             title: 'Auto',
             subtitle: params.autoSubtitle ?? 'Automatically choose a stable machine.',
-            icon: <Ionicons name="sparkles-outline" size={iconSize} color={params.iconColor} />,
+            icon: renderDropdownItemIcon({
+                name: 'sparkles-outline',
+                color: params.iconColor,
+                size: iconSize,
+            }),
         });
     }
 
@@ -48,10 +53,13 @@ export function getMachineDropdownMenuItems(params: Readonly<{
             id: machine.id,
             title: getMachineLabel(machine),
             subtitle: getMachineSubtitle(machine),
-            icon: <Ionicons name="desktop-outline" size={iconSize} color={params.iconColor} />,
+            icon: renderDropdownItemIcon({
+                name: 'desktop-outline',
+                color: params.iconColor,
+                size: iconSize,
+            }),
         });
     }
 
     return items;
 }
-

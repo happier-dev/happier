@@ -1,8 +1,11 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,11 +51,14 @@ vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => stableAuth,
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: alertSpy,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: alertSpy,
+        },
+    }).module;
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: refreshProfileSpy },
@@ -97,16 +103,14 @@ describe('OpenAiCodexDeviceAuthView', () => {
     const onDone = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<OpenAiCodexDeviceAuthView serviceId="openai-codex" profileId="work" onDone={onDone} />);
-    });
+    tree = (await renderScreen(<OpenAiCodexDeviceAuthView serviceId="openai-codex" profileId="work" onDone={onDone} />)).tree;
 
     // Flush effects (start).
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
     expect(startSpy).toHaveBeenCalled();
@@ -137,21 +141,19 @@ describe('OpenAiCodexDeviceAuthView', () => {
     const { OpenAiCodexDeviceAuthView } = await import('./OpenAiCodexDeviceAuthView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<OpenAiCodexDeviceAuthView serviceId="openai-codex" profileId="work" onDone={() => {}} />);
-    });
+    tree = (await renderScreen(<OpenAiCodexDeviceAuthView serviceId="openai-codex" profileId="work" onDone={() => {}} />)).tree;
 
     // Flush effects (start).
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
-    const copyButton = tree.root.find((n) => n.props?.testID === 'connectedServices.deviceAuth.copyCodeButton');
+    const copyButton = tree.find((n) => n.props?.testID === 'connectedServices.deviceAuth.copyCodeButton');
     await act(async () => {
-      await copyButton.props.onPress?.();
+      await pressTestInstanceAsync(copyButton);
     });
 
     expect(clipboardSetSpy).toHaveBeenCalledWith('ABCD-EFGH');
@@ -167,26 +169,22 @@ describe('OpenAiCodexDeviceAuthView', () => {
     const { OpenAiCodexDeviceAuthView } = await import('./OpenAiCodexDeviceAuthView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <OpenAiCodexDeviceAuthView
+    tree = (await renderScreen(<OpenAiCodexDeviceAuthView
           serviceId="openai-codex"
           profileId="work"
           onDone={() => {}}
           fallbackAction={{ title: 'Use paste instead', onPress: () => {} }}
-        />,
-      );
-    });
+        />)).tree;
 
     // Flush effects (start).
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
-    const fallbackItem = tree.root.find((n) => n.props?.testID === 'connectedServices.deviceAuth.switchMethodItem');
+    const fallbackItem = tree.find((n) => n.props?.testID === 'connectedServices.deviceAuth.switchMethodItem');
     expect(fallbackItem.props?.title).toBe('Use paste instead');
 
     await act(async () => {

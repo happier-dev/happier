@@ -12,8 +12,8 @@ describe('mapToClaudeMode', () => {
             expect(mapToClaudeMode('safe-yolo')).toBe('acceptEdits');
         });
 
-        it('maps read-only → default', () => {
-            expect(mapToClaudeMode('read-only')).toBe('default');
+        it('maps read-only → dontAsk', () => {
+            expect(mapToClaudeMode('read-only')).toBe('dontAsk');
         });
     });
 
@@ -42,7 +42,7 @@ describe('mapToClaudeMode', () => {
         ];
 
         it('returns a valid Claude mode for every PermissionMode', () => {
-            const validClaudeModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
+            const validClaudeModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk'];
 
             allModes.forEach(mode => {
                 const result = mapToClaudeMode(mode);

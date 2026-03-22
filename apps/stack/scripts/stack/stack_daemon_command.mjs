@@ -17,6 +17,7 @@ import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
 import { cyan, green } from '../utils/ui/ansi.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 
 export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) {
   const { flags, kv } = parseArgs(argv);
@@ -104,6 +105,11 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
             }
           : {}),
       };
+      const scopedEnvForIdentity = applyStackActiveServerScopeEnv({
+        env: envForIdentity,
+        stackName,
+        cliIdentity: identity,
+      });
       await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
 
       if (action === 'start' || action === 'restart') {
@@ -114,7 +120,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
         const hasCreds = Boolean(findExistingStackCredentialPath({
           cliHomeDir,
           serverUrl: internalServerUrl,
-          env: envForIdentity,
+          env: scopedEnvForIdentity,
         }));
 
         if (!hasCreds) {
@@ -145,7 +151,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
               ];
               await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), ...authArgs], {
                 cwd: rootDir,
-                env: envForIdentity,
+                env: scopedEnvForIdentity,
                 stdio: 'inherit',
               });
             } else {

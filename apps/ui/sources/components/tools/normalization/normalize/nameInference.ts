@@ -1,5 +1,5 @@
 import { asRecord, firstNonEmptyString, hasNonEmptyRecord } from './_shared';
-import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import { canonicalizeGenericSubAgentToolName, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
 function isLegacySlashChangeTitleName(name: string): boolean {
     const normalized = typeof name === 'string' ? name.trim().toLowerCase() : '';
@@ -43,7 +43,8 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown, description
     if (toolName === 'CodexPatch' || toolName === 'GeminiPatch') return 'Patch';
     if (toolName === 'CodexDiff' || toolName === 'GeminiDiff') return 'Diff';
     if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
-    if (toolName === 'Agent') return 'Task';
+    const genericSubAgentToolName = canonicalizeGenericSubAgentToolName(toolName);
+    if (genericSubAgentToolName) return genericSubAgentToolName;
     if (toolName === 'exit_plan_mode') return 'ExitPlanMode';
 
     if (isUiChangeTitleAlias(toolName)) {

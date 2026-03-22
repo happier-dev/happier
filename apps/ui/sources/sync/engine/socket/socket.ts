@@ -10,6 +10,7 @@ import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
+import { voiceHooks } from '@/voice/context/voiceHooks';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 import { deriveNewAgentRequests } from '@/sync/domains/permissions/deriveNewAgentRequests';
 import { notifyActivityAgentRequest } from '@/activity/notifications/runtime/activityLocalNotificationBus';
@@ -117,6 +118,7 @@ export async function handleSocketUpdate(params: {
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
     invalidateAutomations: () => void;
+    invalidateAutomationsCoalesced?: () => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
@@ -142,6 +144,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -171,6 +174,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -198,6 +202,7 @@ export async function handleUpdateContainer(params: {
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
     invalidateAutomations: () => void;
+    invalidateAutomationsCoalesced?: () => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
@@ -223,6 +228,7 @@ export async function handleUpdateContainer(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -263,6 +269,8 @@ export async function handleUpdateContainer(params: {
                 socketMessageApplyCoalescer.getQueuedMaxSeq(sessionId),
             );
 
+        socketMessageApplyCoalescer.dropQueuedMessageIds(updateData.body.sid, [updateData.body.message.id]);
+
         await handleMessageUpdatedSocketUpdate({
             updateData,
             getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
@@ -294,8 +302,22 @@ export async function handleUpdateContainer(params: {
         });
     } else if (updateData.body.t === 'pending-changed') {
         const sessionId = updateData.body.sid;
-        const session = storage.getState().sessions[sessionId];
+        const state = storage.getState();
+        const session = state.sessions[sessionId];
         if (!session) {
+            const cachedRenderable = state.sessionListRenderables[sessionId];
+            if (cachedRenderable) {
+                state.replaceSessionListRenderables([
+                    ...Object.values(state.sessionListRenderables).filter((entry) => entry.id !== sessionId),
+                    {
+                        ...cachedRenderable,
+                        pendingCount: updateData.body.pendingCount,
+                        pendingVersion: updateData.body.pendingVersion,
+                    },
+                ]);
+                return;
+            }
+
             // If we don't have the session locally yet, sessions sync will pick it up later.
             invalidateSessions();
             return;
@@ -308,52 +330,57 @@ export async function handleUpdateContainer(params: {
         }]);
     } else if (updateData.body.t === 'update-session') {
         const session = storage.getState().sessions[updateData.body.id];
-        if (session) {
-            // Get session encryption
-            const sessionEncryption = encryption.getSessionEncryption(updateData.body.id);
-            if (!sessionEncryption) {
-                console.error(`Session encryption not found for ${updateData.body.id} - this should never happen`);
-                return;
+        if (!session) {
+            invalidateSessions();
+            return;
+        }
+
+        const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+        const sessionEncryption = sessionEncryptionMode === 'plain'
+            ? null
+            : encryption.getSessionEncryption(updateData.body.id);
+        if (sessionEncryptionMode === 'e2ee' && !sessionEncryption) {
+            console.error(`Session encryption not found for ${updateData.body.id} - this should never happen`);
+            return;
+        }
+
+        const { nextSession, agentState } = await buildUpdatedSessionFromSocketUpdate({
+            session,
+            updateBody: updateData.body,
+            updateSeq: updateData.seq,
+            updateCreatedAt: updateData.createdAt,
+            sessionEncryption,
+        });
+
+        applySessions([nextSession]);
+
+        // Agent state updates can be very frequent and are not a reliable proxy for SCM changes.
+        // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
+        // by explicit invalidations after SCM mutations.
+        if (updateData.body.agentState) {
+            for (const nextRequest of deriveNewAgentRequests(session.agentState?.requests, agentState?.requests)) {
+                notifyActivityAgentRequest({
+                    sessionId: updateData.body.id,
+                    requestId: nextRequest.requestId,
+                    requestKind: nextRequest.requestKind,
+                    toolName: nextRequest.toolName,
+                    toolArgs: nextRequest.toolArgs,
+                });
             }
 
-            const { nextSession, agentState } = await buildUpdatedSessionFromSocketUpdate({
-                session,
-                updateBody: updateData.body,
-                updateSeq: updateData.seq,
-                updateCreatedAt: updateData.createdAt,
-                sessionEncryption,
-            });
+            // Check for new permission requests and notify voice assistant
+            reportNewAgentRequestsFromSessionTransition(
+                { id: updateData.body.id, agentState: session.agentState ?? null } as Session,
+                { id: updateData.body.id, agentState: agentState ?? null } as Session,
+            );
 
-            applySessions([nextSession]);
-
-            // Agent state updates can be very frequent and are not a reliable proxy for SCM changes.
-            // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
-            // by explicit invalidations after SCM mutations.
-            if (updateData.body.agentState) {
-                for (const nextRequest of deriveNewAgentRequests(session.agentState?.requests, agentState?.requests)) {
-                    notifyActivityAgentRequest({
-                        sessionId: updateData.body.id,
-                        requestId: nextRequest.requestId,
-                        requestKind: nextRequest.requestKind,
-                        toolName: nextRequest.toolName,
-                        toolArgs: nextRequest.toolArgs,
-                    });
-                }
-
-                // Check for new permission requests and notify voice assistant
-                reportNewAgentRequestsFromSessionTransition(
-                    { id: updateData.body.id, agentState: session.agentState ?? null } as Session,
-                    { id: updateData.body.id, agentState: agentState ?? null } as Session,
-                );
-
-                // Re-fetch messages when control returns to mobile (local -> remote mode switch)
-                // This catches up on any messages that were exchanged while desktop had control
-                const wasControlledByUser = session.agentState?.controlledByUser;
-                const isNowControlledByUser = agentState?.controlledByUser;
-                if (didControlReturnToMobile(wasControlledByUser, isNowControlledByUser)) {
-                    log.log(`🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
-                    onSessionVisible(updateData.body.id);
-                }
+            // Re-fetch messages when control returns to mobile (local -> remote mode switch)
+            // This catches up on any messages that were exchanged while desktop had control
+            const wasControlledByUser = session.agentState?.controlledByUser;
+            const isNowControlledByUser = agentState?.controlledByUser;
+            if (didControlReturnToMobile(wasControlledByUser, isNowControlledByUser)) {
+                log.log(`🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
+                onSessionVisible(updateData.body.id);
             }
         }
     } else if (updateData.body.t === 'update-account') {
@@ -527,6 +554,7 @@ export async function handleUpdateContainer(params: {
     } else if (applyAutomationSocketUpdate({
         updateType: updateData.body.t,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
     })) {
         // handled by automation domain
     } else if (

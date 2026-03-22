@@ -9,12 +9,15 @@ export function resolveForkFromMessageSemantics(params: Readonly<{
     return { upToSeqInclusive: seq, restoredDraftText: null };
   }
 
-  // OpenCode-style "branch and edit": fork from the state before the user message and restore it as an editable draft.
-  // Only apply when there's at least one prior committed message.
+  // Generic "branch and edit" semantics: fork from the state before the clicked user message and
+  // restore that user message as an editable draft when there is earlier committed context.
+  //
+  // Important: keep `upToSeqInclusive` equal to the clicked message seq so provider-native forks can resolve
+  // vendor message ids precisely. The daemon will compute the effective replay cutoff (seq - 1) for user messages.
   if (seq >= 2) {
     const text = typeof params.message.text === 'string' ? params.message.text : '';
     const restoredDraftText = text.trim().length > 0 ? text : null;
-    return { upToSeqInclusive: Math.max(0, seq - 1), restoredDraftText };
+    return { upToSeqInclusive: seq, restoredDraftText };
   }
 
   return { upToSeqInclusive: seq, restoredDraftText: null };

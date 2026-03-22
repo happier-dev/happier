@@ -209,9 +209,21 @@ export function normalizeAcpSessionMessageBody(params: {
     const record = maybePatchedOutput as Record<string, unknown>;
     const status = typeof record.status === 'string' ? record.status : null;
     const error = typeof record.error === 'string' ? record.error : null;
+    const exitCode =
+      typeof record.exit_code === 'number'
+        ? record.exit_code
+        : typeof record.exitCode === 'number'
+          ? record.exitCode
+          : null;
     const isError =
       Boolean(error && error.length > 0) || status === 'failed' || status === 'cancelled' || status === 'error';
-    return isError
+    const inferredIsError =
+      isError ||
+      (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) ||
+      record.ok === false ||
+      record.success === false ||
+      record.applied === false;
+    return inferredIsError
       ? ({ ...(body as any), output: record, isError: true } as ACPMessageData)
       : ({ ...(body as any), output: record } as ACPMessageData);
   }

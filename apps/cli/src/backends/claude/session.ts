@@ -5,20 +5,69 @@ import type { JsRuntime } from "./runClaude";
 import type { SessionHookData } from "./utils/startHookServer";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
+import { join, relative, sep } from 'node:path';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import { configuration } from '@/configuration';
 import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import type { Metadata } from '@/api/types';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PushNotificationClient } from '@/api/pushNotifications';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { McpServerConfig } from '@/agent';
 import type { AccountSettings } from '@happier-dev/protocol';
+import { resolveConfiguredClaudeConfigDir } from './directSessions/resolveClaudeConfigDir';
 
 export type SessionFoundInfo = {
     sessionId: string;
     transcriptPath: string | null;
 };
+
+function resolveClaudeProjectIdFromTranscriptPath(params: Readonly<{
+    transcriptPath: string | null;
+    configDir: string;
+}>): string | null {
+    if (!params.transcriptPath) return null;
+    const projectsDir = join(params.configDir, 'projects');
+    const relativePath = relative(projectsDir, params.transcriptPath);
+    if (!relativePath || relativePath.startsWith('..') || relativePath.startsWith(`..${sep}`)) return null;
+    const [projectId] = relativePath.split(/[\\/]/);
+    const trimmedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+    return trimmedProjectId || null;
+}
+
+function buildClaudeDirectSessionMetadata(params: Readonly<{
+    metadata: Metadata;
+    sessionId: string;
+    transcriptPath: string | null;
+}>): Metadata {
+    if (process.env.HAPPIER_TRANSCRIPT_STORAGE !== 'direct') return params.metadata;
+
+    const machineId = typeof params.metadata.machineId === 'string' ? params.metadata.machineId.trim() : '';
+    if (!machineId) return params.metadata;
+
+    const configDir = resolveConfiguredClaudeConfigDir({ env: process.env });
+    const projectId = resolveClaudeProjectIdFromTranscriptPath({
+        transcriptPath: params.transcriptPath,
+        configDir,
+    });
+
+    return {
+        ...params.metadata,
+        directSessionV1: {
+            v: 1,
+            providerId: 'claude',
+            machineId,
+            remoteSessionId: params.sessionId,
+            source: {
+                kind: 'claudeConfig',
+                configDir,
+                ...(projectId ? { projectId } : {}),
+            },
+            linkedAtMs: Date.now(),
+        },
+    };
+}
 
 export class Session {
     readonly path: string;
@@ -26,6 +75,7 @@ export class Session {
     readonly client: SessionClientPort;
     pushSender: PushNotificationClient | null;
     accountSettings: AccountSettings | null;
+    accountSettingsSecretsReadKeys: readonly Uint8Array[];
     readonly queue: MessageQueue2<EnhancedMode>;
     claudeArgs?: string[];  // Made mutable to allow filtering
     readonly _onModeChange: (mode: 'local' | 'remote') => void;
@@ -35,6 +85,7 @@ export class Session {
     readonly jsRuntime: JsRuntime;
     /** How this session was started (affects TTY/UI behavior). */
     readonly startedBy: 'daemon' | 'terminal';
+    readonly defaultSystemPromptText: string | undefined;
 
     sessionId: string | null;
     transcriptPath: string | null = null;
@@ -85,6 +136,7 @@ export class Session {
         client: SessionClientPort,
         pushSender?: PushNotificationClient | null,
         accountSettings?: AccountSettings | null,
+        accountSettingsSecretsReadKeys?: readonly Uint8Array[],
         path: string,
         logPath: string,
         sessionId: string | null,
@@ -96,11 +148,14 @@ export class Session {
         /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
         jsRuntime?: JsRuntime,
         startedBy?: 'daemon' | 'terminal',
+        defaultSystemPromptText?: string,
+        precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null,
     }) {
         this.path = opts.path;
         this.client = opts.client;
         this.pushSender = opts.pushSender ?? null;
         this.accountSettings = opts.accountSettings ?? null;
+        this.accountSettingsSecretsReadKeys = opts.accountSettingsSecretsReadKeys ?? [];
         this.logPath = opts.logPath;
         this.sessionId = opts.sessionId;
         this.queue = opts.messageQueue;
@@ -109,6 +164,10 @@ export class Session {
         this.hookSettingsPath = opts.hookSettingsPath;
         this.jsRuntime = opts.jsRuntime ?? 'node';
         this.startedBy = opts.startedBy ?? 'terminal';
+        this.defaultSystemPromptText =
+            typeof opts.defaultSystemPromptText === 'string' && opts.defaultSystemPromptText.trim().length > 0
+                ? opts.defaultSystemPromptText.trim()
+                : undefined;
 
         this.keepAliveIdleMs = configuration.sessionKeepAliveIdleMs;
         this.keepAliveThinkingMs = configuration.sessionKeepAliveThinkingMs;
@@ -116,6 +175,17 @@ export class Session {
         // Start keep alive
         this.client.keepAlive(this.thinking, this.mode);
         this.scheduleNextKeepAlive();
+
+        if (opts.precomputedMcpBridge) {
+            const mcpConfigJson = JSON.stringify({ mcpServers: opts.precomputedMcpBridge.mcpServers });
+            const stored = {
+                mcpServers: opts.precomputedMcpBridge.mcpServers,
+                mcpConfigJson,
+                stop: opts.precomputedMcpBridge.stop,
+            };
+            this.happierMcpBridge = stored;
+            this.happierMcpBridgePromise = Promise.resolve(stored);
+        }
     }
 
     noteUserAbortRequested(): void {
@@ -306,10 +376,14 @@ export class Session {
         if (prevSessionId !== sessionId) {
             updateMetadataBestEffort(
                 this.client,
-                (metadata) => ({
+                (metadata) => buildClaudeDirectSessionMetadata({
+                    metadata: {
                     ...metadata,
                     claudeSessionId: sessionId,
                     claudeTranscriptPath: this.transcriptPath,
+                    },
+                    sessionId,
+                    transcriptPath: this.transcriptPath,
                 }),
                 '[Session]',
                 'claude_session_found',
@@ -320,9 +394,13 @@ export class Session {
             // Same session, but we learned a more precise transcript path from hooks.
             updateMetadataBestEffort(
                 this.client,
-                (metadata) => ({
+                (metadata) => buildClaudeDirectSessionMetadata({
+                    metadata: {
                     ...metadata,
                     claudeTranscriptPath: this.transcriptPath,
+                    },
+                    sessionId,
+                    transcriptPath: this.transcriptPath,
                 }),
                 '[Session]',
                 'claude_transcript_path_found',

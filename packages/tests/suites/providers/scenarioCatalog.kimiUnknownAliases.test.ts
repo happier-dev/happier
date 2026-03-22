@@ -34,7 +34,7 @@ describe('providers: kimi scenario fixture aliasing', () => {
     const workspaceDir = '/tmp/happier-kimi-read';
     const prompt = scenario.prompt?.({ workspaceDir }) ?? '';
     const filePath = join(workspaceDir, 'e2e-read.txt');
-    expect(prompt).toContain('- Use the read tool to read: e2e-read.txt');
+    expect(prompt).toMatch(/Read tool.*e2e-read\.txt/i);
     expect(prompt).toContain(`cat "${filePath}"`);
     expect(prompt).toContain('If the read tool fails');
     const flat = (scenario.requiredAnyFixtureKeys ?? []).flat();

@@ -134,6 +134,8 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
     }));
 
     const diagnostics = await machineCollectBugReportDiagnostics(params.machineId, { timeoutMs: params.timeoutMs });
+    const fetchedAt = Date.now();
+
     const rawDoctorSnapshot = (diagnostics as { doctorSnapshot?: unknown } | null)?.doctorSnapshot;
     const parsed = DoctorSnapshotSchema.safeParse(rawDoctorSnapshot);
     if (!parsed.success) {
@@ -145,7 +147,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
     }
 
     const snapshot = sanitizeDoctorSnapshotUrls(parsed.data);
-    const cachedAt = Date.now();
+    const cachedAt = fetchedAt;
     writeCachedMachineDoctorSnapshot({ serverId: params.serverId, machineId: params.machineId, cachedAt, snapshot });
 
     setDoctorFetchByMachineId((prev) => ({

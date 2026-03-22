@@ -19,6 +19,7 @@ async function writeYarnEnvDumpStub({ binDir, outputPath }) {
       '  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? null,',
       '  YARN_CACHE_FOLDER: process.env.YARN_CACHE_FOLDER ?? null,',
       '  npm_config_cache: process.env.npm_config_cache ?? null,',
+      '  REDISMS_DISABLE_POSTINSTALL: process.env.REDISMS_DISABLE_POSTINSTALL ?? null,',
       '  HOME: process.env.HOME ?? null,',
       '  NODE_ENV: process.env.NODE_ENV ?? null,',
       '  YARN_PRODUCTION: process.env.YARN_PRODUCTION ?? null,',
@@ -408,6 +409,23 @@ test('ensureDepsInstalled scrubs production-mode env even without a stack env fi
   assert.notEqual(parsed.NPM_CONFIG_PRODUCTION, 'true');
 });
 
+test('ensureDepsInstalled disables redis-memory-server postinstall for stack-managed installs', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-redis-memory-server-postinstall-disable-');
+  const { root, envPath, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'env.json');
+  await writeYarnEnvDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: envPath,
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', { quiet: true, env: process.env });
+  const parsed = JSON.parse(await readFile(outputPath, 'utf-8'));
+  assert.equal(parsed.REDISMS_DISABLE_POSTINSTALL, '1');
+});
+
 test('ensureDepsInstalled honors HAPPIER_STACK_PM_CACHE_BASE_DIR when no stack env file is present', async (t) => {
   const fixture = await createStackCacheFixture(t, 'hs-pm-explicit-cache-base-');
   const { root, componentDir, binDir } = fixture;
@@ -524,6 +542,47 @@ test('ensureDepsInstalled forces non-production yarn installs', async (t) => {
   const installLine = lines.find((l) => l.startsWith('install'));
   assert.ok(installLine, `expected yarn install to be invoked, got:\n${out}`);
   assert.match(installLine, /--production=false\b/);
+});
+
+test('ensureDepsInstalled regenerates server Prisma provider outputs when sqlite generated clients are missing', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-server-generate-providers-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server', 'prisma', 'sqlite'), { recursive: true });
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(
+    join(root, 'apps', 'server', 'package.json'),
+    JSON.stringify({ name: '@happier-dev/server', scripts: { 'generate:providers': 'tsx ./scripts/generateClients.ts' } }, null, 2) + '\n',
+    'utf-8',
+  );
+  await writeFile(join(root, 'apps', 'server', 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" }\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'server', 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
+  await writeFile(join(root, 'package.json'), '{ "name": "monorepo", "private": true }\n', 'utf-8');
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+
+  await mkdir(join(root, 'node_modules', '.prisma', 'client'), { recursive: true });
+  await writeFile(join(root, 'node_modules', '.prisma', 'client', 'default.js'), 'module.exports = {};\n', 'utf-8');
+  await writeFile(join(root, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  const componentDir = join(root, 'apps', 'server');
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnArgDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureDepsInstalled(componentDir, 'happier-server-light', { quiet: true });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.match(out, /\bworkspace @happier-dev\/server generate:providers\b/, `expected provider generation, got:\n${out}`);
 });
 
 test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock changes', async (t) => {

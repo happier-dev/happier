@@ -1,11 +1,13 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type {
     PromptAssetDiscoverResponseV1,
     PromptAssetListTypesResponseV1,
     PromptAssetReadResponseV1,
 } from '@happier-dev/protocol';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,7 +47,7 @@ const machinePromptAssetsDiscoverMock = vi.hoisted(() => vi.fn<() => Promise<Pro
         },
     ],
 })));
-const machinePromptAssetsReadMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetReadResponseV1>>(async () => ({
+const machinePromptAssetsDownloadMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetReadResponseV1>>(async () => ({
     ok: true,
     item: {
         assetTypeId: 'agents.skill',
@@ -122,45 +124,36 @@ const machinesState = vi.hoisted(() => ({
     }>,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                    View: 'View',
+                                                    ScrollView: 'ScrollView',
+                                                    Platform: {
+                                                        OS: 'web',
+                                                        select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                                    },
+                                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                groupped: { background: 'white' },
-                textSecondary: '#999',
-                divider: '#ddd',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-            },
-        }),
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { background: 'white' },
-                textSecondary: '#999',
-                divider: '#ddd',
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-    Stack: { Screen: () => null },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -201,14 +194,19 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     }, [action])],
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => true),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => true),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useArtifacts: () => ([
         { id: 'bundle-1', title: 'Refactor', header: { kind: 'prompt_bundle.v2', title: 'Refactor' } },
         { id: 'doc-1', title: 'review/code', header: { kind: 'prompt_doc.v2', title: 'review/code' } },
@@ -230,13 +228,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
         }
         return [null, vi.fn()];
     },
-}));
+});
+});
 
 vi.mock('@/sync/ops/machinePromptAssets', () => ({
     machinePromptAssetsDelete: machinePromptAssetsDeleteMock,
     machinePromptAssetsListTypes: machinePromptAssetsListTypesMock,
     machinePromptAssetsDiscover: machinePromptAssetsDiscoverMock,
-    machinePromptAssetsRead: machinePromptAssetsReadMock,
+    machinePromptAssetsDownload: machinePromptAssetsDownloadMock,
 }));
 
 vi.mock('@/sync/ops/promptLibrary/promptBundles', () => ({
@@ -255,9 +254,10 @@ vi.mock('@/sync/ops/promptLibrary/promptDocs', () => {
     };
 });
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
     usePrimaryMachineFromActiveSelection: () => machinesState.value[0]?.id ?? null,
@@ -269,7 +269,7 @@ describe('PromptAssetsScreen', () => {
         routerPushSpy.mockReset();
         machinePromptAssetsListTypesMock.mockClear();
         machinePromptAssetsDiscoverMock.mockClear();
-        machinePromptAssetsReadMock.mockClear();
+        machinePromptAssetsDownloadMock.mockClear();
         machinePromptAssetsDeleteMock.mockClear();
         createPromptBundleArtifactMock.mockClear();
         createPromptDocMock.mockClear();
@@ -310,9 +310,7 @@ describe('PromptAssetsScreen', () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
         expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-1', undefined);
@@ -322,14 +320,14 @@ describe('PromptAssetsScreen', () => {
             undefined,
         );
 
-        const importedItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptAssets.item.project.agents.skill.0');
+        const importedItem = tree.findByTestId('promptAssets.item.project.agents.skill.0');
         expect(importedItem).toBeTruthy();
 
         await act(async () => {
-            importedItem?.props?.onPress?.();
+            await pressTestInstanceAsync(importedItem);
         });
 
-        expect(machinePromptAssetsReadMock).toHaveBeenCalledWith(
+        expect(machinePromptAssetsDownloadMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', externalRef: { name: 'refactor' }, directory: '/Users/test/repo' }),
             undefined,
@@ -373,12 +371,10 @@ describe('PromptAssetsScreen', () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        const contextBar = tree.root.findByType('ContextBar' as any);
+        const contextBar = tree.findByType('ContextBar' as any);
         expect(contextBar.props.machine.selectedId).toBe('machine-1');
 
         await act(async () => {
@@ -398,12 +394,10 @@ describe('PromptAssetsScreen', () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        const contextBar = tree.root.findByType('ContextBar' as any);
+        const contextBar = tree.findByType('ContextBar' as any);
         expect(contextBar.props.workspace.browse).toEqual({
             machineId: 'machine-1',
             enabled: true,
@@ -454,7 +448,7 @@ describe('PromptAssetsScreen', () => {
                 },
             ],
         });
-        machinePromptAssetsReadMock.mockResolvedValueOnce({
+        machinePromptAssetsDownloadMock.mockResolvedValueOnce({
             ok: true,
             item: {
                 assetTypeId: 'claude.command',
@@ -471,16 +465,14 @@ describe('PromptAssetsScreen', () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        const importedItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptAssets.item.project.claude.command.0');
+        const importedItem = tree.findByTestId('promptAssets.item.project.claude.command.0');
         expect(importedItem).toBeTruthy();
 
         await act(async () => {
-            importedItem?.props?.onPress?.();
+            await pressTestInstanceAsync(importedItem);
         });
 
         expect(createPromptDocMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -523,16 +515,14 @@ describe('PromptAssetsScreen', () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        const refreshItem = tree.root.findAllByType('Item').find((node) => node.props?.testID === 'promptAssets.refresh');
+        const refreshItem = tree.findByTestId('promptAssets.refresh');
         expect(refreshItem).toBeTruthy();
 
         await act(async () => {
-            refreshItem?.props?.onPress?.();
+            await pressTestInstanceAsync(refreshItem);
         });
 
         expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-2', undefined);
@@ -552,9 +542,7 @@ describe('PromptAssetsScreen', () => {
 
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
-        await act(async () => {
-            renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        await renderScreen(React.createElement(PromptAssetsScreen));
 
         expect(setContextSelectionsMock).not.toHaveBeenCalled();
     });
@@ -588,12 +576,10 @@ describe('PromptAssetsScreen', () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        const actions = tree.root.findByType('ItemRowActions');
+        const actions = tree.findByType('ItemRowActions');
         expect(actions.props.actions.map((action: any) => action.id)).toEqual([
             'open',
             'manage',
@@ -604,9 +590,7 @@ describe('PromptAssetsScreen', () => {
     it('does not discover project-scoped assets until a workspace path is selected', async () => {
         const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
 
-        await act(async () => {
-            renderer.create(React.createElement(PromptAssetsScreen));
-        });
+        await renderScreen(React.createElement(PromptAssetsScreen));
         await act(async () => {});
 
         expect(machinePromptAssetsDiscoverMock).not.toHaveBeenCalled();

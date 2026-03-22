@@ -1,20 +1,25 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setFilesDiffPresentationStyle = vi.fn();
-let styleSettingValue: any = 'unified';
+let styleSettingValue: 'unified' | 'split' | undefined = 'unified';
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit');
+    return await createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -24,25 +29,17 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#666',
             },
         },
-    }),
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                divider: '#ddd',
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                textSecondary: '#666',
-            },
-        }),
-    },
-}));
+    });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => {
-        if (key === 'filesDiffPresentationStyle') return [styleSettingValue, setFilesDiffPresentationStyle];
-        return [null, vi.fn()];
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        useSettingMutable: (key: string) => {
+            if (key === 'filesDiffPresentationStyle') return [styleSettingValue, setFilesDiffPresentationStyle];
+            return [null, vi.fn()];
+        },
+    }),
+);
 
 describe('DiffPresentationStyleToggleButton', () => {
     it('toggles unified -> split', async () => {
@@ -51,16 +48,10 @@ describe('DiffPresentationStyleToggleButton', () => {
         const { DiffPresentationStyleToggleButton } = await import('./DiffPresentationStyleToggleButton');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DiffPresentationStyleToggleButton />);
-        });
+        tree = (await renderScreen(<DiffPresentationStyleToggleButton />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(1);
-
-        await act(async () => {
-            pressables[0]!.props.onPress();
-        });
+        const pressable = tree.findByProps({ accessibilityRole: 'button' });
+        await pressTestInstanceAsync(pressable, 'DiffPresentationStyleToggleButton');
 
         expect(setFilesDiffPresentationStyle).toHaveBeenCalledWith('split');
     });
@@ -71,16 +62,10 @@ describe('DiffPresentationStyleToggleButton', () => {
         const { DiffPresentationStyleToggleButton } = await import('./DiffPresentationStyleToggleButton');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DiffPresentationStyleToggleButton />);
-        });
+        tree = (await renderScreen(<DiffPresentationStyleToggleButton />)).tree;
 
-        const pressables = tree.root.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(1);
-
-        await act(async () => {
-            pressables[0]!.props.onPress();
-        });
+        const pressable = tree.findByProps({ accessibilityRole: 'button' });
+        await pressTestInstanceAsync(pressable, 'DiffPresentationStyleToggleButton');
 
         expect(setFilesDiffPresentationStyle).toHaveBeenCalledWith('split');
     });

@@ -1,36 +1,14 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
-import { initEncrypt } from "@/modules/encrypt";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const prismaCli = join(params.cwd, "..", "..", "node_modules", "prisma", "build", "index.js");
-    const res = spawnSync(
-        process.execPath,
-        [prismaCli, "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -50,62 +28,31 @@ function createTestApp() {
 }
 
 describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
-    const envBackup = { ...process.env };
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
+    let harness: LightSqliteHarness;
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-account-encryption-migrate-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-            HAPPIER_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await initEncrypt();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-account-encryption-migrate-",
+            initEncrypt: true,
+        });
     }, 120_000);
 
     afterEach(async () => {
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.automation.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
 
     afterAll(async () => {
-        await db.$disconnect();
-        restoreEnv(envBackup);
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
 
     it("migrates e2ee -> plain atomically and stores v2 settings in plaintext", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST = "none";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: "none",
+        });
 
         const account = await db.account.create({
             data: { publicKey: "pk-migrate-1", encryptionMode: "e2ee", settings: "ciphertext", settingsVersion: 0 },
@@ -154,9 +101,11 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
     });
 
     it("stores v2 settings sealed at rest for plain accounts when configured", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST = "server_sealed";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: "server_sealed",
+        });
 
         const kp = tweetnacl.sign.keyPair();
         const publicKeyHex = privacyKit.encodeHex(new Uint8Array(kp.publicKey));
@@ -213,8 +162,10 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
     });
 
     it("does not allow rotating the account signing key across encryption-mode toggles", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
 
         const kp1 = tweetnacl.sign.keyPair();
         const kp2 = tweetnacl.sign.keyPair();
@@ -308,8 +259,10 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
     });
 
     it("migrates plain -> e2ee atomically and requires keyProof", async () => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
 
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain", settings: null, settingsVersion: 0 },

@@ -3,39 +3,37 @@ import { describe, expect, it } from 'vitest';
 import { buildFirstTurnPromptText } from './buildFirstTurnPromptText';
 
 describe('buildFirstTurnPromptText', () => {
-  it('prepends the explicit append system prompt on the first turn', () => {
+  it('prepends the resolved system prompt on the first turn', () => {
     const result = buildFirstTurnPromptText({
       isFirstTurn: true,
       userText: 'Hello',
-      appendSystemPrompt: 'APPEND',
+      systemPromptText: 'SYSTEM',
     });
 
     expect(result).toEqual({
-      prompt: 'APPEND\n\nHello',
+      prompt: 'SYSTEM\n\nHello',
       nextIsFirstTurn: false,
     });
   });
 
-  it('uses the fallback append system prompt when no explicit override is present', () => {
+  it('keeps waiting for a system prompt when the first turn has none yet', () => {
     const result = buildFirstTurnPromptText({
       isFirstTurn: true,
       userText: 'Hello',
-      appendSystemPrompt: undefined,
-      fallbackAppendSystemPrompt: 'FALLBACK',
+      systemPromptText: undefined,
     });
 
     expect(result).toEqual({
-      prompt: 'FALLBACK\n\nHello',
-      nextIsFirstTurn: false,
+      prompt: 'Hello',
+      nextIsFirstTurn: true,
     });
   });
 
-  it('treats an explicit null override as disabling the fallback', () => {
+  it('treats blank system prompt text as absent', () => {
     const result = buildFirstTurnPromptText({
       isFirstTurn: true,
       userText: 'Hello',
-      appendSystemPrompt: null,
-      fallbackAppendSystemPrompt: 'FALLBACK',
+      systemPromptText: '   ',
     });
 
     expect(result).toEqual({
@@ -48,8 +46,7 @@ describe('buildFirstTurnPromptText', () => {
     const result = buildFirstTurnPromptText({
       isFirstTurn: false,
       userText: 'Hello',
-      appendSystemPrompt: 'APPEND',
-      fallbackAppendSystemPrompt: 'FALLBACK',
+      systemPromptText: 'SYSTEM',
     });
 
     expect(result).toEqual({

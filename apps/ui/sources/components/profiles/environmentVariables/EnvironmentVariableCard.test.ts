@@ -9,53 +9,28 @@ import { EnvironmentVariableCard } from './EnvironmentVariableCard';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'web',
-        select: (options: { web?: unknown; ios?: unknown; default?: unknown }) =>
-            options.web ?? options.ios ?? options.default,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                Pressable: 'Pressable',
+                TextInput: 'TextInput',
+            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        margins: { md: 8 },
-        iconSize: { small: 12, large: 16 },
-        colors: {
-            surface: '#fff',
-            groupped: { sectionTitle: '#666', background: '#fff' },
-            shadow: { color: '#000', opacity: 0.1 },
-            text: '#000',
-            textSecondary: '#666',
-            textDestructive: '#f00',
-            divider: '#ddd',
-            input: { background: '#fff', text: '#000', placeholder: '#999' },
-            button: {
-                primary: { background: '#000', tint: '#fff' },
-                secondary: { tint: '#000' },
-            },
-            deleteAction: '#f00',
-            warning: '#f90',
-            success: '#0a0',
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme, {}) : input) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/forms/Switch', () => ({

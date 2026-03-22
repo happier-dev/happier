@@ -11,11 +11,11 @@ import type { Credentials } from '@/persistence';
 import type { ApiClient } from '@/api/api';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { ConnectedServiceRefreshCoordinator } from './ConnectedServiceRefreshCoordinator';
-import { normalizeMaterializationKeyForPath } from '../materialize/normalizeMaterializationKeyForPath';
 
 describe('ConnectedServiceRefreshCoordinator', () => {
   it('refreshes an expiring openai-codex credential and re-materializes for active spawn targets', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-'));
 
     const credentials: Credentials = {
       token: 'happy-token',
@@ -74,6 +74,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       api,
       credentials,
       machineIdProvider: () => 'machine-1',
+      activeServerDir,
       baseDir,
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
@@ -95,13 +96,14 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(api.registerConnectedServiceCredentialSealed).toHaveBeenCalledTimes(1);
 
-    const codexHome = join(baseDir, normalizeMaterializationKeyForPath('session-1'), 'codex', 'codex-home');
+    const codexHome = join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', 'work', 'codex', 'codex-home');
     const auth = JSON.parse(await readFile(join(codexHome, 'auth.json'), 'utf8'));
     expect(auth.access_token).toBe('new-access');
   });
 
   it('invokes onAuthUpdated callback with affected targets after refresh', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-'));
 
     const credentials: Credentials = {
       token: 'happy-token',
@@ -157,16 +159,17 @@ describe('ConnectedServiceRefreshCoordinator', () => {
 	    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const onAuthUpdated = vi.fn();
-	    const coordinator = new ConnectedServiceRefreshCoordinator({
-	      api,
-	      credentials,
-	      machineIdProvider: () => 'machine-1',
-	      baseDir,
-	      refreshWindowMs: 60_000,
-	      refreshLeaseMs: 30_000,
-	      now: () => now,
-	      onAuthUpdated,
-	    });
+    const coordinator = new ConnectedServiceRefreshCoordinator({
+      api,
+      credentials,
+      machineIdProvider: () => 'machine-1',
+      activeServerDir,
+      baseDir,
+      refreshWindowMs: 60_000,
+      refreshLeaseMs: 30_000,
+      now: () => now,
+      onAuthUpdated,
+    });
 
     coordinator.registerSpawnTarget({
       pid: 123,
@@ -188,6 +191,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
 
   it('continues refreshing other bindings when one binding refresh fails', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-'));
 
     const credentials: Credentials = {
       token: 'happy-token',
@@ -276,6 +280,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       api,
       credentials,
       machineIdProvider: () => 'machine-1',
+      activeServerDir,
       baseDir,
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,

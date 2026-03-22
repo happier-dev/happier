@@ -6,10 +6,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { formatPathRelativeToHome, getSessionName } from '@/utils/sessions/sessionUtils';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
+import { readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 
 export const ApprovalSessionContextCard = React.memo(function ApprovalSessionContextCard(props: Readonly<{
     session: Session | null;
@@ -20,7 +21,15 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     const router = useRouter();
     const { theme } = useUnistyles();
     const sessionTitle = props.session ? getSessionName(props.session) : null;
-    const pathLabel = props.session?.metadata?.path ? getSessionSubtitle(props.session) : null;
+    const displayPath = props.session
+        ? readDisplayPathForSession({
+            sessionId: props.session.id,
+            metadata: props.session.metadata ?? null,
+        })
+        : '';
+    const pathLabel = displayPath
+        ? formatPathRelativeToHome(displayPath, props.session?.metadata?.homeDir ?? undefined)
+        : null;
     const machineLabel = getMachineDisplayName(props.machine);
 
     if (!sessionTitle && !pathLabel && !machineLabel && !props.requesterAgentId && !props.requesterSurface) {

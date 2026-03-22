@@ -2,6 +2,17 @@ import { createCatalogCliAuthSpec } from '@/capabilities/cliAuth/createCatalogCl
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec } from '@/backends/types';
 
+const DEFAULT_OPENCODE_CLI_AUTH_PROBE_TIMEOUT_MS = 6_000;
+
+function resolveOpenCodeCliAuthProbeTimeoutMs(): number {
+  const raw = process.env.HAPPIER_OPENCODE_CLI_AUTH_PROBE_TIMEOUT_MS;
+  const parsed = typeof raw === 'string' ? Number(raw) : Number.NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_OPENCODE_CLI_AUTH_PROBE_TIMEOUT_MS;
+}
+
 function extractAccountLabel(stdout: string): string | null {
   const normalized = stdout.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -17,7 +28,7 @@ export const opencodeCliAuthSpec: CliAuthSpec = createCatalogCliAuthSpec('openco
     const result = await runCliCommandBestEffort({
       resolvedPath,
       args: ['auth', 'list'],
-      timeoutMs: 1_500,
+      timeoutMs: resolveOpenCodeCliAuthProbeTimeoutMs(),
     });
     const combined = `${result.stdout}\n${result.stderr}`.trim();
     if (result.ok && combined.length > 0) {

@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { Text } from '@/components/ui/text/Text';
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useProjectSessions, useSession, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSetting } from '@/sync/domains/state/storage';
+import { useProjectForSession, useProjectSessions, useSession, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSetting } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -23,6 +24,8 @@ import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '
 import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
+import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
+import { getDefaultChangedFilesViewMode, type ChangedFilesViewMode } from '@/scm/scmAttribution';
 
 export type SessionScmReviewDetailsViewProps = Readonly<{
     sessionId: string;
@@ -112,6 +115,28 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         return buildSnapshotSignature(effectiveSnapshot);
     }, [effectiveSnapshot]);
     const getSnapshotSignature = React.useCallback(() => snapshotSignature, [snapshotSignature]);
+    const { latestTurnScopedChangeSet, latestTurnDiffByPath, sessionChangeSet, providerDiffByPath } = useDerivedSessionChangeSet(props.sessionId);
+    const [changedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>(() => {
+        if (latestTurnScopedChangeSet) return 'turn';
+        if (sessionChangeSet) return 'session';
+        return getDefaultChangedFilesViewMode();
+    });
+
+    React.useEffect(() => {
+        if (changedFilesViewMode === 'turn' && latestTurnScopedChangeSet) return;
+        if (changedFilesViewMode === 'session' && sessionChangeSet) return;
+        if (latestTurnScopedChangeSet) {
+            setChangedFilesViewMode('turn');
+            return;
+        }
+        if (sessionChangeSet) {
+            setChangedFilesViewMode('session');
+            return;
+        }
+        if (changedFilesViewMode !== 'repository') {
+            setChangedFilesViewMode(getDefaultChangedFilesViewMode());
+        }
+    }, [changedFilesViewMode, latestTurnScopedChangeSet, sessionChangeSet]);
 
     useScmAdaptivePolling({
         enabled: Boolean(props.sessionId) && effectiveSnapshot?.repo.isRepo === true,
@@ -139,7 +164,27 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         projectSessionIds,
         searchQuery: '',
         showAllRepositoryFiles: true,
+        latestTurnChangeSet: latestTurnScopedChangeSet,
+        sessionChangeSet,
     });
+
+    const reviewProviderDiffByPath = React.useMemo(() => {
+        if (changedFilesViewMode === 'turn') return latestTurnDiffByPath;
+        if (changedFilesViewMode === 'session') return providerDiffByPath;
+        return null;
+    }, [changedFilesViewMode, latestTurnDiffByPath, providerDiffByPath]);
+
+    const viewModeOptions = React.useMemo(() => {
+        return [
+            { mode: 'repository' as const, label: t('files.toolbar.repositoryView'), icon: 'list-unordered' as const },
+            ...(changed.showTurnViewToggle
+                ? [{ mode: 'turn' as const, label: t('files.toolbar.turnView'), icon: 'clock' as const }]
+                : []),
+            ...(changed.showSessionViewToggle
+                ? [{ mode: 'session' as const, label: t('files.toolbar.sessionView'), icon: 'history' as const }]
+                : []),
+        ];
+    }, [changed.showSessionViewToggle, changed.showTurnViewToggle]);
 
     const maxFiles = typeof scmReviewMaxFiles === 'number' && Number.isFinite(scmReviewMaxFiles) ? scmReviewMaxFiles : 25;
     const maxChangedLines = typeof scmReviewMaxChangedLines === 'number' && Number.isFinite(scmReviewMaxChangedLines) ? scmReviewMaxChangedLines : 2000;
@@ -196,13 +241,57 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
 
     return (
         <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+            <View
+                style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                    paddingHorizontal: 12,
+                    paddingTop: 10,
+                    paddingBottom: 8,
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.colors.divider,
+                    backgroundColor: theme.colors.surfaceHigh,
+                }}
+            >
+                {viewModeOptions.map((option) => {
+                    const active = changedFilesViewMode === option.mode;
+                    return (
+                        <Pressable
+                            key={option.mode}
+                            accessibilityRole="button"
+                            onPress={() => setChangedFilesViewMode(option.mode)}
+                            style={({ pressed }) => ({
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 6,
+                                height: 28,
+                                paddingHorizontal: 10,
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                borderColor: theme.colors.divider,
+                                backgroundColor: active ? theme.colors.surface : theme.colors.surfaceHigh,
+                                opacity: pressed ? 0.78 : 1,
+                            })}
+                        >
+                            <Octicons name={option.icon} size={13} color={theme.colors.textSecondary} />
+                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                                {option.label}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
+            </View>
             <ChangedFilesReview
                 theme={theme}
                 sessionId={props.sessionId}
                 snapshot={effectiveSnapshot ?? null}
-                changedFilesViewMode="repository"
+                changedFilesViewMode={changedFilesViewMode}
                 attributionReliability={changed.attributionReliability}
                 allRepositoryChangedFiles={changed.allRepositoryChangedFiles}
+                turnAttributedFiles={changed.turnAttributedFiles}
+                turnRepositoryOnlyFiles={changed.turnRepositoryOnlyFiles}
                 sessionAttributedFiles={changed.sessionAttributedFiles}
                 repositoryOnlyFiles={changed.repositoryOnlyFiles}
                 suppressedInferredCount={changed.suppressedInferredCount}
@@ -232,6 +321,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 }
                 rowDensity="compact"
                 diffRefreshToken={diffRefreshToken}
+                providerDiffByPath={reviewProviderDiffByPath}
                 onLayout={scrollFades.onViewportLayout}
                 onContentSizeChange={scrollFades.onContentSizeChange}
                 onScroll={scrollFades.onScroll}

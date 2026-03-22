@@ -64,6 +64,61 @@ async function runGitSwitch(input: {
     return { success: false, stdout: switchResult.stdout, stderr: switchResult.stderr };
 }
 
+async function runGitSwitchCreate(input: {
+    cwd: string;
+    name: string;
+    startPoint?: string | null;
+}): Promise<{ success: boolean; stdout: string; stderr: string }> {
+    const startPoint = typeof input.startPoint === 'string' ? input.startPoint.trim() : '';
+    const args = startPoint
+        ? ['switch', '-c', input.name, startPoint]
+        : ['switch', '-c', input.name];
+
+    const switchResult = await runScmCommand({
+        bin: 'git',
+        cwd: input.cwd,
+        args,
+        timeoutMs: GIT_BRANCH_SWITCH_TIMEOUT_MS,
+        env: buildScmNonInteractiveEnv(),
+    });
+
+    if (switchResult.success) {
+        return { success: true, stdout: switchResult.stdout, stderr: switchResult.stderr };
+    }
+
+    // Fallback for older git installs without `switch`.
+    if (/unknown subcommand: switch|is not a git command/i.test(switchResult.stderr)) {
+        const checkoutArgs = startPoint
+            ? ['checkout', '-b', input.name, startPoint]
+            : ['checkout', '-b', input.name];
+        const checkoutResult = await runScmCommand({
+            bin: 'git',
+            cwd: input.cwd,
+            args: checkoutArgs,
+            timeoutMs: GIT_BRANCH_SWITCH_TIMEOUT_MS,
+            env: buildScmNonInteractiveEnv(),
+        });
+        return {
+            success: checkoutResult.success,
+            stdout: checkoutResult.stdout,
+            stderr: checkoutResult.stderr,
+        };
+    }
+
+    return { success: false, stdout: switchResult.stdout, stderr: switchResult.stderr };
+}
+
+function validateStartPoint(startPoint: string | undefined): { ok: true } | { ok: false; error: string } {
+    const normalized = typeof startPoint === 'string' ? startPoint.trim() : '';
+    if (!normalized) {
+        return { ok: true };
+    }
+    if (normalized.startsWith('-')) {
+        return { ok: false, error: 'Invalid startPoint: revision cannot start with "-"' };
+    }
+    return { ok: true };
+}
+
 async function readCurrentBranchName(context: ScmBackendContext): Promise<string | null> {
     const result = await runScmCommand({
         bin: 'git',
@@ -182,9 +237,34 @@ export async function gitBranchCreate(input: {
         };
     }
 
-    const args = input.request.checkout
-        ? ['switch', '-c', input.request.name, ...(input.request.startPoint ? [input.request.startPoint] : [])]
-        : ['branch', '--', input.request.name, ...(input.request.startPoint ? [input.request.startPoint] : [])];
+    const startPointValidation = validateStartPoint(input.request.startPoint);
+    if (!startPointValidation.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: startPointValidation.error,
+        };
+    }
+
+    if (input.request.checkout) {
+        const switched = await runGitSwitchCreate({
+            cwd: input.context.cwd,
+            name: input.request.name,
+            startPoint: input.request.startPoint,
+        });
+
+        return switched.success
+            ? { success: true, stdout: switched.stdout, stderr: switched.stderr }
+            : {
+                success: false,
+                errorCode: mapGitErrorCode(switched.stderr),
+                error: switched.stderr || 'Branch creation failed',
+                stdout: switched.stdout,
+                stderr: switched.stderr,
+            };
+    }
+
+    const args = ['branch', '--', input.request.name, ...(input.request.startPoint ? [input.request.startPoint] : [])];
 
     const result = await runScmCommand({
         bin: 'git',
@@ -348,10 +428,35 @@ export async function gitBranchCheckout(input: {
         };
     }
 
+    // If the stash command reported "no local changes", do not attempt to pop an unrelated stash.
+    if (!created.stashCreated) {
+        return {
+            success: true,
+            stdout: `${created.stdout}\n${switchedAfterStash.stdout}`.trim() || undefined,
+            stderr: `${created.stderr}\n${switchedAfterStash.stderr}`.trim() || undefined,
+            didCreateStash: false,
+            didPopStash: false,
+            stashRef: null,
+        };
+    }
+
+    if (!created.stashRef) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            error: 'Transient stash was created but no stashRef was returned',
+            stdout: `${created.stdout}\n${switchedAfterStash.stdout}`.trim() || undefined,
+            stderr: `${created.stderr}\n${switchedAfterStash.stderr}`.trim() || undefined,
+            didCreateStash: true,
+            didPopStash: false,
+            stashRef: null,
+        };
+    }
+
     const pop = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,
-        args: ['stash', 'pop', created.stashRef ?? 'stash@{0}'],
+        args: ['stash', 'pop', created.stashRef],
         timeoutMs: GIT_BRANCH_SWITCH_TIMEOUT_MS,
         env: buildScmNonInteractiveEnv(),
     });

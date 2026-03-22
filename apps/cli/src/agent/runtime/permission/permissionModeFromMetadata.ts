@@ -1,8 +1,10 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import { isPermissionMode } from '@/api/types';
 import {
+  LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
+  SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 
 export function resolvePermissionIntentFromMetadataSnapshot(opts: {
@@ -15,23 +17,28 @@ export function resolvePermissionIntentFromMetadataSnapshot(opts: {
   return { intent: resolved.intent, updatedAt: resolved.updatedAt };
 }
 
-export function resolveAcpSessionModeOverrideFromMetadataSnapshot(opts: {
+export function resolveSessionModeOverrideFromMetadataSnapshot(opts: {
   metadata: Metadata | null | undefined;
 }): { modeId: string; updatedAt: number } | null {
-  const resolved = resolveMetadataStringOverrideV1(opts.metadata ?? null, 'acpSessionModeOverrideV1', 'modeId');
+  const resolved =
+    resolveMetadataStringOverrideV1(opts.metadata ?? null, SESSION_MODE_OVERRIDE_KEY, 'modeId') ??
+    resolveMetadataStringOverrideV1(opts.metadata ?? null, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY, 'modeId');
   if (!resolved) return null;
   return { modeId: resolved.value, updatedAt: resolved.updatedAt };
 }
 
-export function computePendingAcpSessionModeOverrideApplication(opts: {
+export function computePendingSessionModeOverrideApplication(opts: {
   metadata: Metadata | null | undefined;
   lastAppliedUpdatedAt: number;
 }): { modeId: string; updatedAt: number } | null {
-  const resolved = resolveAcpSessionModeOverrideFromMetadataSnapshot({ metadata: opts.metadata });
+  const resolved = resolveSessionModeOverrideFromMetadataSnapshot({ metadata: opts.metadata });
   if (!resolved) return null;
   if (resolved.updatedAt <= opts.lastAppliedUpdatedAt) return null;
   return resolved;
 }
+
+export const resolveAcpSessionModeOverrideFromMetadataSnapshot = resolveSessionModeOverrideFromMetadataSnapshot;
+export const computePendingAcpSessionModeOverrideApplication = computePendingSessionModeOverrideApplication;
 
 export function resolveModelOverrideFromMetadataSnapshot(opts: {
   metadata: Metadata | null | undefined;

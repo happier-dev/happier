@@ -1,5 +1,9 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const CLAUDE_CORE: AgentCoreConfig = {
@@ -14,15 +18,7 @@ export const CLAUDE_CORE: AgentCoreConfig = {
         connectRoute: '/(app)/settings/connect/claude',
     },
     flavorAliases: ['claude'],
-    cli: {
-        detectKey: 'claude',
-        machineLoginKey: 'claude-code',
-        installBanner: {
-            installKind: 'ifAvailable',
-            guideUrl: 'https://docs.anthropic.com/en/docs/claude-code/getting-started',
-        },
-        spawnAgent: 'claude',
-    },
+    cli: buildCatalogProviderCliUiConfig('claude'),
     permissions: {
         modeGroup: 'claude',
         promptProtocol: 'claude',
@@ -48,12 +44,12 @@ export const CLAUDE_CORE: AgentCoreConfig = {
         uiVendorResumeIdLabelKey: 'sessionInfo.claudeCodeSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.claudeCodeSessionIdCopied',
     }),
-    localControl: {
-        supported: true,
-    },
+    localControl: buildAgentLocalControlUiConfig({ agentId: 'claude' }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'claude' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'claude' }),
     ui: {
         agentPickerIconName: 'sparkles-outline',
         cliGlyphScale: 1.0,

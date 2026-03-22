@@ -13,6 +13,34 @@ export type {
 export { buildSettingArtifacts } from './settingsRegistry/buildSettingArtifacts.js';
 export type { SettingArtifacts } from './settingsRegistry/buildSettingArtifacts.js';
 export { defineSettingDefinitions } from './settingsRegistry/settingDefinition.js';
+export type {
+  SessionAuthoringAutomationV1,
+  SessionAuthoringCheckoutCreationDraftV1,
+  SessionAuthoringCodexBackendMode,
+  SessionAuthoringContextKind,
+  SessionAuthoringFieldArtifacts,
+  SessionAuthoringFieldDefinition,
+  SessionAuthoringFieldDefinitionMap,
+  SessionAuthoringFieldEditability,
+  SessionAuthoringFieldId,
+  SessionAuthoringFieldStorageClass,
+  SessionAuthoringFieldSurface,
+  SessionAuthoringTerminalV1,
+  SessionAuthoringValueV1,
+} from './sessionAuthoring/index.js';
+export {
+  SESSION_AUTHORING_CONTEXT_KINDS,
+  SESSION_AUTHORING_FIELD_CATALOG,
+  SESSION_AUTHORING_FIELD_DESCRIPTORS,
+  SESSION_AUTHORING_FIELD_IDS,
+  SessionAuthoringAutomationV1Schema,
+  SessionAuthoringCheckoutCreationDraftV1Schema,
+  SessionAuthoringCodexBackendModeSchema,
+  SessionAuthoringTerminalV1Schema,
+  SessionAuthoringValueV1Schema,
+  buildSessionAuthoringFieldArtifacts,
+  defineSessionAuthoringFields,
+} from './sessionAuthoring/index.js';
 export {
   BackendTargetKeySchema,
   BackendTargetKindSchema,
@@ -158,39 +186,29 @@ export {
 
 export {
   WorkspaceCheckoutKindSchema,
-  WorkspaceCheckoutSchema,
-  WorkspaceCheckoutStatusSchema,
-  WorkspaceCheckoutSyncPolicySchema,
-  WorkspaceConflictKindSchema,
-  WorkspaceConflictResolutionSchema,
-  WorkspaceConflictSchema,
-  WorkspaceConflictStatusSchema,
-  WorkspaceConflictVersionSchema,
-  WorkspaceLocationCapabilitiesSchema,
-  WorkspaceLocationSchema,
-  WorkspaceSchema,
-  WorkspaceSyncConfigSchema,
-  WorkspaceSyncModeSchema,
-  type Workspace,
-  type WorkspaceCheckout,
+  AbsoluteWorkspacePathSchema,
+  WorkspaceLocationScmSchema,
+  WorkspaceManifestEntryKindSchema,
+  WorkspaceManifestEntrySchema,
+  WorkspaceManifestFingerprintSchema,
+  WorkspaceManifestSchema,
   type WorkspaceCheckoutKind,
-  type WorkspaceCheckoutStatus,
-  type WorkspaceCheckoutSyncPolicy,
-  type WorkspaceConflict,
-  type WorkspaceConflictKind,
-  type WorkspaceConflictResolution,
-  type WorkspaceConflictStatus,
-  type WorkspaceConflictVersion,
-  type WorkspaceLocation,
-  type WorkspaceLocationCapabilities,
-  type WorkspaceSyncConfig,
-  type WorkspaceSyncMode,
-} from './workspaceReplication/index.js';
+  type WorkspaceLocationScm,
+  type WorkspaceManifest,
+  type WorkspaceManifestEntry,
+  type WorkspaceManifestEntryKind,
+  type WorkspaceManifestFingerprint,
+} from './workspaces/index.js';
 
 export {
   SessionStoredMessageContentSchema,
   type SessionStoredMessageContent,
 } from './sessionMessages/sessionStoredMessageContent.js';
+export {
+  SESSION_ATTACH_METADATA_IDENTITY_POLICIES,
+  SessionAttachMetadataIdentityPolicySchema,
+  type SessionAttachMetadataIdentityPolicy,
+} from './session/attachMetadataIdentityPolicy.js';
 
 export {
   StoredJsonContentEnvelopeSchema,
@@ -351,6 +369,19 @@ export {
   type SessionForkStrategy,
 } from './sessionFork.js';
 export {
+  SessionRollbackTargetSchema,
+  SessionRollbackRpcParamsSchema,
+  SessionRollbackRpcResultSchema,
+  type SessionRollbackTarget,
+  type SessionRollbackRpcParams,
+  type SessionRollbackRpcResult,
+} from './sessionRollback.js';
+export {
+  resolveSessionRollbackPlan,
+  type CompletedConversationTurn,
+  type SessionRollbackPlan,
+} from './sessionRollbackPlanning.js';
+export {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
   RPC_METHODS,
@@ -431,7 +462,9 @@ export {
   SessionControlErrorCodeSchema,
   SessionControlErrorSchema,
   SessionActionsDescribeEnvelopeSchema,
+  SessionActionsExecuteEnvelopeSchema,
   SessionActionsDescribeResultSchema,
+  SessionActionsExecuteResultSchema,
   SessionActionsListEnvelopeSchema,
   SessionActionsListResultSchema,
   SessionControlActionSpecSummarySchema,
@@ -532,6 +565,29 @@ export {
 } from './sessionMetadata/acpConfiguredBackendV1.js';
 
 export {
+  SessionRollbackRangeV1Schema,
+  type SessionRollbackRangeV1,
+  createSessionRollbackRangeV1Schema,
+  SessionRollbackRangesV1Schema,
+  type SessionRollbackRangesV1,
+  createSessionRollbackRangesV1Schema,
+  buildSessionRollbackRangesV1,
+  readSessionRollbackRangesV1FromMetadata,
+} from './sessionMetadata/sessionRollbackRangesV1.js';
+
+export {
+  AgentRuntimeDescriptorV1Schema,
+  type AgentRuntimeDescriptorV1,
+  createAgentRuntimeDescriptorV1Schema,
+  buildCodexAgentRuntimeDescriptorV1,
+  buildOpenCodeAgentRuntimeDescriptorV1,
+  buildPiAgentRuntimeDescriptorV1,
+  readAgentRuntimeDescriptorV1,
+  readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  readAgentRuntimeDescriptorV1ForProvider,
+} from './sessionMetadata/agentRuntimeDescriptorV1.js';
+
+export {
   ModelOverrideV1Schema,
   type ModelOverrideV1,
   createModelOverrideV1Schema,
@@ -544,6 +600,11 @@ export {
   type AcpConfigOptionOverridesV1,
   createAcpConfigOptionOverridesV1Schema,
   buildAcpConfigOptionOverridesV1,
+  CodexRuntimeDescriptorV1Schema,
+  type CodexRuntimeDescriptorV1,
+  createCodexRuntimeDescriptorV1Schema,
+  buildCodexRuntimeDescriptorV1,
+  readCodexRuntimeDescriptorV1BackendMode,
 } from './sessionMetadata/metadataOverridesV1.js';
 
 export {
@@ -570,6 +631,31 @@ export {
   type SessionMessageMeta,
   createSessionMessageMetaSchema,
 } from './sessionMessages/sessionMessageMeta.js';
+export {
+  ChangeConfidenceSchema,
+  ChangeEvidenceSourceSchema,
+  ChangeSetConfidenceSummarySchema,
+  FileChangeEvidenceSchema,
+  FileChangeKindSchema,
+  SessionChangeSetFileSchema,
+  SessionChangeSetSchema,
+  SessionWorkingTreeMatchedFileSchema,
+  SessionWorkingTreeProjectionSchema,
+  TurnChangeSetSchema,
+  excludeRolledBackTurns,
+  mergeTurnChangeSets,
+  reconcileWithScmSnapshot,
+  type ChangeConfidence,
+  type ChangeEvidenceSource,
+  type ChangeSetConfidenceSummary,
+  type FileChangeEvidence,
+  type FileChangeKind,
+  type SessionChangeSet,
+  type SessionChangeSetFile,
+  type SessionWorkingTreeMatchedFile,
+  type SessionWorkingTreeProjection,
+  type TurnChangeSet,
+} from './sessionChanges/index.js';
 export {
   ServerAddEnvelopeSchema,
   ServerAddResultSchema,
@@ -642,6 +728,7 @@ export {
   ScmRequestBaseSchema,
   ScmStatusSnapshotRequestSchema,
   ScmStatusSnapshotResponseSchema,
+  ScmWorktreeSchema,
   ScmWorkingEntrySchema,
   ScmWorkingSnapshotSchema,
   type ScmBackendDescribeRequest,
@@ -683,6 +770,7 @@ export {
   type ScmRequestBase,
   type ScmStatusSnapshotRequest,
   type ScmStatusSnapshotResponse,
+  type ScmWorktree,
   type ScmWorkingEntry,
   type ScmWorkingSnapshot,
 } from './scm.js';
@@ -710,6 +798,22 @@ export {
   type ScmRemotePublishRequest,
   type ScmRemotePublishResponse,
 } from './scmBranches.js';
+export {
+  ScmWorktreeCreateRequestSchema,
+  ScmWorktreeCreateResponseSchema,
+  ScmWorktreeCommandResponseSchema,
+  ScmWorktreePruneRequestSchema,
+  ScmWorktreePruneResponseSchema,
+  ScmWorktreeRemoveRequestSchema,
+  ScmWorktreeRemoveResponseSchema,
+  type ScmWorktreeCreateRequest,
+  type ScmWorktreeCreateResponse,
+  type ScmWorktreeCommandResponse,
+  type ScmWorktreePruneRequest,
+  type ScmWorktreePruneResponse,
+  type ScmWorktreeRemoveRequest,
+  type ScmWorktreeRemoveResponse,
+} from './scmWorktrees.js';
 export {
   ScmStashApplyRequestSchema,
   ScmStashApplyResponseSchema,
@@ -767,6 +871,7 @@ export {
   ExecutionRunTransportErrorCodeSchema,
   ExecutionRunDisplaySchema,
   ExecutionRunPublicStateSchema,
+  ExecutionRunReplaySeedRequestSchema,
   ExecutionRunStartRequestSchema,
   ExecutionRunStartResponseSchema,
   ExecutionRunRetentionPolicySchema,
@@ -802,6 +907,7 @@ export {
   type ExecutionRunTransportErrorCode,
   type ExecutionRunDisplay,
   type ExecutionRunPublicState,
+  type ExecutionRunReplaySeedRequest,
   type ExecutionRunStartRequest,
   type ExecutionRunStartResponse,
   type ExecutionRunRetentionPolicy,
@@ -933,16 +1039,23 @@ export {
 export {
   SessionHandoffAbortRequestSchema,
   SessionHandoffAbortResponseSchema,
+  SessionHandoffCodexAffinitySchema,
   SessionHandoffCommitRequestSchema,
   SessionHandoffCommitResponseSchema,
+  SessionHandoffCodexBackendModeSchema,
+  SessionHandoffPrepareTargetResultGetRequestSchema,
+  SessionHandoffPrepareTargetResultGetResponseSchema,
   SessionHandoffPrepareTargetRequestSchema,
   SessionHandoffPrepareTargetResponseSchema,
+  SessionHandoffProgressCheckpointSchema,
+  SessionHandoffProgressWarningCodeSchema,
   SessionHandoffProviderBundleSchema,
   SessionHandoffStartRequestSchema,
   SessionHandoffStartResponseSchema,
   SessionHandoffStatusGetRequestSchema,
   SessionHandoffStatusSchema,
-  SessionHandoffWorkspaceBundleSchema,
+  SessionHandoffTransferredPayloadSchema,
+  SessionHandoffTransferredWorkspaceArtifactsSchema,
   MachineTransferReceiveEnvelopeSchema,
   MachineTransferSendEnvelopeSchema,
   TransferChunkEnvelopeSchema,
@@ -950,11 +1063,17 @@ export {
   TransferStreamEnvelopeSchema,
   type SessionHandoffAbortRequest,
   type SessionHandoffAbortResponse,
+  type SessionHandoffCodexAffinity,
   type SessionHandoffCommitRequest,
   type SessionHandoffCommitResponse,
+  type SessionHandoffCodexBackendMode,
+  type SessionHandoffPrepareTargetResultGetRequest,
+  type SessionHandoffPrepareTargetResultGetResponse,
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffPrepareTargetResponse,
   type SessionHandoffProviderBundle,
+  type SessionHandoffProgressCheckpoint,
+  type SessionHandoffProgressWarningCode,
   type SessionHandoffResumePlan,
   type SessionHandoffStartRequest,
   type SessionHandoffStartResponse,
@@ -962,8 +1081,8 @@ export {
   type SessionHandoffStatusGetRequest,
   type SessionHandoffStorageMode,
   type SessionHandoffTransportStrategy,
-  type SessionHandoffWorkspaceBundle,
-  type SessionHandoffWorkspaceBundleEntry,
+  type SessionHandoffTransferredPayload,
+  type SessionHandoffTransferredWorkspaceArtifacts,
   type SessionHandoffWorkspaceTransferPathSafety,
   type SessionHandoffWorkspaceTransferPathSafetyReasonCode,
   type SessionHandoffWorkspaceTransfer,
@@ -997,6 +1116,18 @@ export {
 } from './reviews/ReviewFinding.js';
 
 export {
+  ReviewQuestionSchema,
+  ReviewQuestionStatusSchema,
+  type ReviewQuestion,
+  type ReviewQuestionStatus,
+} from './reviews/ReviewQuestion.js';
+
+export {
+  ReviewAssumptionSchema,
+  type ReviewAssumption,
+} from './reviews/ReviewAssumption.js';
+
+export {
   ReviewChangeTypeSchema,
   ReviewBaseSchema,
   ReviewEngineIdSchema,
@@ -1010,6 +1141,11 @@ export {
   type ReviewEngineInputs,
   type ReviewStartInput,
 } from './reviews/reviewStart.js';
+
+export {
+  ReviewFollowUpInputSchema,
+  type ReviewFollowUpInput,
+} from './reviews/reviewFollowUp.js';
 
 export {
   NativeReviewEngineIdSchema,
@@ -1034,6 +1170,26 @@ export {
   type ReviewTriageStatus,
   type ReviewTriageOverlay,
 } from './structuredMessages/reviewFindingsV1.js';
+
+export {
+  ReviewFindingsV2Schema,
+  ReviewPublicationOverlaySchema,
+  parseReviewFindingsV2,
+  type ReviewFindingsV2,
+  type ReviewPublicationOverlay,
+} from './structuredMessages/reviewFindingsV2.js';
+
+export {
+  ReviewFollowUpV1Schema,
+  parseReviewFollowUpV1,
+  type ReviewFollowUpV1,
+} from './structuredMessages/reviewFollowUpV1.js';
+
+export {
+  ReviewPublishRequestV1Schema,
+  parseReviewPublishRequestV1,
+  type ReviewPublishRequestV1,
+} from './structuredMessages/reviewPublishRequestV1.js';
 
 export {
   PlanOutputV1Schema,
@@ -1325,7 +1481,17 @@ export {
 } from './promptLibrary/promptInvocationsV1.js';
 
 // System prompt assembly (shared between UI + CLI)
-export { buildAppendSystemPromptV1 } from './prompts/appendSystemPromptV1.js';
+export {
+  buildPromptPlanDiagnosticsV1,
+  buildPromptPlanV1,
+  dedupePromptBlocksV1,
+  renderPromptBlocksV1,
+  renderPromptPlanV1,
+  type PromptBlockScopeV1,
+  type PromptBlockV1,
+  type PromptModalityV1,
+  type PromptPlanV1,
+} from './prompts/promptPlanV1.js';
 export { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './prompts/systemPromptBaseV1.js';
 export {
   CHANGE_TITLE_INSTRUCTION_V1,
@@ -1338,8 +1504,16 @@ export {
   normalizeExecutionRunsGuidanceFingerprintV1,
   type ExecutionRunsGuidanceEntryV1,
 } from './prompts/executionRunsGuidanceV1.js';
-export { buildAppendSystemPromptBaseV1 } from './prompts/buildAppendSystemPromptBaseV1.js';
+export {
+  buildAppendSystemPromptBaseV1,
+  buildCodingSessionPromptPlanBaseV1,
+} from './prompts/buildAppendSystemPromptBaseV1.js';
 export { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from './prompts/memoryRecallGuidanceV1.js';
+export {
+  isMemoryRecallGuidanceSupported,
+  MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
+  type MemoryRecallGuidanceSurface,
+} from './prompts/isMemoryRecallGuidanceSupported.js';
 export { resolvePromptStackSystemAppendBlocksV1 } from './promptLibrary/resolvePromptStackSystemAppendBlocksV1.js';
 
 export * from './actions/index.js';
@@ -1370,16 +1544,25 @@ export {
   BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS,
   BugReportsCapabilitiesSchema,
   DEFAULT_BUG_REPORTS_CAPABILITIES,
+  DEFAULT_MACHINE_TRANSFER_CAPABILITIES,
+  DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_CAPABILITIES,
   FeatureGateSchema,
   FeatureGatesSchema,
   FeaturesResponseSchema,
+  MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
+  MachineTransferCapabilitiesSchema,
+  MachineTransferServerRoutedCapabilitiesSchema,
   OAuthProviderStatusSchema,
   coerceBugReportsCapabilitiesFromFeaturesPayload,
+  normalizeMachineTransferServerRoutedMaxBytes,
+  readMachineTransferServerRoutedMaxBytes,
   type BugReportsCapabilities,
   type Capabilities,
   type FeatureGate,
   type FeatureGates,
   type FeaturesResponse,
+  type MachineTransferCapabilities,
+  type MachineTransferServerRoutedCapabilities,
   type OAuthProviderStatus,
 } from './features.js';
 export {

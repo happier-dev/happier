@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { findTestInstanceByTypeWithProps, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,61 +14,43 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('react-native', async () => ({
-    Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-    View: 'View',
-    Text: 'Text',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-    Animated: {
-        Value: class {
-            constructor(_v: any) {}
-            setValue(_v: any) {}
-            interpolate(_cfg: any) { return 0; }
-        },
-        timing: () => ({ start: (cb?: any) => cb?.({ finished: true }) }),
-        parallel: (xs: any[]) => ({ start: (cb?: any) => { xs.forEach((x) => x?.start?.()); cb?.({ finished: true }); } }),
-        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-    },
-    Easing: {
-        bezier: () => (t: number) => t,
-        linear: (t: number) => t,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                                        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
+                                        Animated: {
+                                            Value: class {
+                                                constructor(_value: unknown) {}
+                                                setValue(_value: unknown) {}
+                                                interpolate(_config: unknown) {
+                                                    return 0;
+                                                }
+                                            },
+                                            timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
+                                            parallel: (steps: Array<{ start?: (cb?: (result: { finished: boolean }) => void) => void }>) => ({
+                                                start: (cb?: (result: { finished: boolean }) => void) => {
+                                                    for (const step of steps) {
+                                                        step?.start?.();
+                                                    }
+                                                    cb?.({ finished: true });
+                                                },
+                                            }),
+                                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+                                        },
+                                        Easing: {
+                                            bezier: () => (t: number) => t,
+                                            linear: (t: number) => t,
+                                        },
+                                    }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#555',
-                surfaceHigh: '#eee',
-                surfaceHighest: '#fff',
-                surfacePressedOverlay: '#ddd',
-                divider: '#ccc',
-                shadow: { color: '#000', opacity: 0.1 },
-                accent: { blue: '#06f' },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    text: '#111',
-                    textSecondary: '#555',
-                    surfaceHigh: '#eee',
-                    surfaceHighest: '#fff',
-                    surfacePressedOverlay: '#ddd',
-                    divider: '#ccc',
-                    shadow: { color: '#000', opacity: 0.1 },
-                    accent: { blue: '#06f' },
-                },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -78,7 +62,7 @@ vi.mock('@/components/tools/catalog', () => ({
 }));
 
 vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
-    normalizeToolCallForRendering: (t: any) => t,
+    normalizeToolCallForRendering: (tool: any) => tool,
 }));
 
 vi.mock('@/components/tools/normalization/policy/toolNameInference', () => ({
@@ -119,30 +103,83 @@ vi.mock('@/components/tools/shell/presentation/ToolError', () => ({
     ToolError: () => React.createElement('ToolError'),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-    TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
-}));
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return {
+        ...createTextModuleMock(),
+        Text: (props: any) => React.createElement('Text', props, props.children),
+        TextInput: (props: any) => React.createElement('TextInput', props),
+        TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
+    };
+});
 
-vi.mock('@/text', () => ({
-    t: (_key: string) => _key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
 const pushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: pushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        router: {
+            push: pushSpy,
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
+        },
+    }).module;
+});
 
-let settings: Record<string, any> = {};
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => settings[key],
-}));
+let settings: Record<string, unknown> = {};
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => settings[key],
+        },
+    });
+});
+
+async function renderToolTimelineRow(overrides: Record<string, unknown> = {}) {
+    const { ToolTimelineRow } = await import('./ToolTimelineRow');
+    const tool = {
+        name: 'read',
+        state: 'completed',
+        input: {},
+        createdAt: 1,
+        startedAt: 1,
+        completedAt: 2,
+        description: null,
+        result: {},
+        ...(overrides.tool as Record<string, unknown> | undefined),
+    } as any;
+
+    return renderScreen(
+        <ToolTimelineRow
+            tool={tool}
+            metadata={null}
+            {...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== 'tool'))}
+        />,
+    );
+}
+
+function findHeaderTitleFontSize(screen: Awaited<ReturnType<typeof renderToolTimelineRow>>) {
+    const titleText = findTestInstanceByTypeWithProps(screen, 'Text' as any, { numberOfLines: 1 });
+    expect(titleText).toBeTruthy();
+    const style = titleText!.props?.style;
+    const styleArray = Array.isArray(style) ? style : [style];
+    const merged = Object.assign({}, ...styleArray.filter(Boolean));
+    return merged.fontSize;
+}
 
 describe('ToolTimelineRow (tap action)', () => {
     beforeEach(() => {
@@ -161,227 +198,138 @@ describe('ToolTimelineRow (tap action)', () => {
         };
     });
 
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('toggles expand when tap action is expand', async () => {
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-        const tool: any = {
-            name: 'read',
-            state: 'completed',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: 2,
-            description: null,
-            result: {},
-        };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        const screen = await renderToolTimelineRow({
+            sessionId: 's1',
+            messageId: 'm1',
         });
 
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
-        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
+        expect(screen.findByTestId('tool-timeline-body')).toBeNull();
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+
         await act(async () => {
-            pressable.props.onPress();
+            screen.pressByTestId('tool-timeline-row');
         });
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+
+        expect(screen.findByTestId('tool-timeline-body')).not.toBeNull();
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
     });
 
     it('keeps the header density stable when toggling expand', async () => {
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-
-        const tool: any = {
-            name: 'read',
-            state: 'completed',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: 2,
-            description: null,
-            result: {},
-        };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        const screen = await renderToolTimelineRow({
+            sessionId: 's1',
+            messageId: 'm1',
         });
 
-        const findHeaderTitleFontSize = () => {
-            const titleText = tree!.root
-                .findAllByType('Text' as any)
-                .find((n: any) => n.props?.numberOfLines === 1);
-            expect(titleText).toBeTruthy();
-            const style = titleText!.props?.style;
-            const styleArray = Array.isArray(style) ? style : [style];
-            const merged = Object.assign({}, ...styleArray.filter(Boolean));
-            return merged.fontSize;
-        };
+        expect(findHeaderTitleFontSize(screen)).toBe(13);
 
-        expect(findHeaderTitleFontSize()).toBe(13);
-
-        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
-            pressable.props.onPress();
+            screen.pressByTestId('tool-timeline-row');
         });
 
-        expect(findHeaderTitleFontSize()).toBe(13);
+        expect(findHeaderTitleFontSize(screen)).toBe(13);
     });
 
     it('prefers a stable server route when tap action is open and the message is already persisted', async () => {
         settings.toolViewTapAction = 'open';
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-        const tool: any = {
-            id: 'call_read_1',
-            name: 'read',
-            state: 'completed',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: 2,
-            description: null,
-            result: {},
-        };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRow
-                    tool={tool}
-                    metadata={null}
-                    sessionId="s1"
-                    messageId="server:server-msg-1"
-                />,
-            );
+        const screen = await renderToolTimelineRow({
+            tool: {
+                id: 'call_read_1',
+            },
+            sessionId: 's1',
+            messageId: 'server:server-msg-1',
         });
 
-        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
-            pressable.props.onPress();
+            screen.pressByTestId('tool-timeline-row');
         });
 
         expect(pushSpy).toHaveBeenCalledTimes(1);
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/server%3Aserver-msg-1');
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);
     });
 
     it('suppresses open-details routing when tool navigation is disabled, even if the tool has its own id', async () => {
         settings.toolViewTapAction = 'open';
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-        const tool: any = {
-            id: 'subagent_run_1',
-            name: 'SubAgentRun',
-            state: 'completed',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: 2,
-            description: null,
-            result: {},
-        };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRow
-                    tool={tool}
-                    metadata={null}
-                    sessionId="s1"
-                    messageId={undefined}
-                    interaction={{ canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true }}
-                />,
-            );
+        const screen = await renderToolTimelineRow({
+            tool: {
+                id: 'subagent_run_1',
+                name: 'SubAgentRun',
+            },
+            sessionId: 's1',
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
         });
 
-        const hostText = tree!.root.findAllByType('Text' as any).map((n: any) => String(n.props?.children ?? '')).join(' ');
-        expect(hostText).not.toContain('toolView.open');
+        expect(screen.getTextContent()).not.toContain('toolView.open');
 
-        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
-            pressable.props.onPress();
+            screen.pressByTestId('tool-timeline-row');
         });
 
         expect(pushSpy).not.toHaveBeenCalled();
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
     });
 
     it('auto-expands and shows action-required status for pending user-action tools', async () => {
-        settings.toolViewTapAction = 'expand';
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-        const tool: any = {
-            name: 'AskUserQuestion',
-            state: 'running',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: null,
-            description: null,
-            permission: {
-                id: 'perm-1',
-                status: 'pending',
-                kind: 'user_action',
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'AskUserQuestion',
+                state: 'running',
+                completedAt: null,
+                permission: {
+                    id: 'perm-1',
+                    status: 'pending',
+                    kind: 'user_action',
+                },
             },
-        };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+            sessionId: 's1',
+            messageId: 'm1',
         });
 
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
-        const hostText = tree!.root.findAllByType('Text' as any).map((n: any) => String(n.props?.children ?? '')).join(' ');
-        expect(hostText).toContain('status.actionRequired');
+        expect(screen.findByTestId('tool-timeline-body')).not.toBeNull();
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.getTextContent()).toContain('status.actionRequired');
     });
 
     it('preloads sidechain messages when a Task tool is expanded', async () => {
-        settings.toolViewTapAction = 'expand';
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-        const tool: any = {
-            id: 'tool_task_1',
-            name: 'Task',
-            state: 'completed',
-            input: {},
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: 2,
-            description: null,
-            result: {},
-        };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        const screen = await renderToolTimelineRow({
+            tool: {
+                id: 'tool_task_1',
+                name: 'Task',
+            },
+            sessionId: 's1',
+            messageId: 'm1',
         });
 
         expect(ensureSidechainMessagesLoadedMock).not.toHaveBeenCalled();
 
-        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
-            pressable.props.onPress();
-            await Promise.resolve();
+            screen.pressByTestId('tool-timeline-row');
         });
+        await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
     });
 
     it('shows a running indicator in the header for Task tools', async () => {
-        const { ToolTimelineRow } = await import('./ToolTimelineRow');
-        const tool: any = {
-            name: 'Task',
-            state: 'running',
-            input: { description: 'Do stuff' },
-            createdAt: 1,
-            startedAt: 1,
-            completedAt: null,
-            description: null,
-            result: null,
-        };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'Task',
+                state: 'running',
+                input: { description: 'Do stuff' },
+                completedAt: null,
+                result: null,
+            },
+            sessionId: 's1',
+            messageId: 'm1',
         });
 
-        const indicators = tree!.root.findAllByType('ActivityIndicator' as any);
-        expect(indicators.length).toBeGreaterThan(0);
+        expect(screen.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
     });
 });

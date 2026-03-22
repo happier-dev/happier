@@ -2,14 +2,11 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { readIntFlagValue } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { readExecutionRunStream } from '@/session/services/executionRuns';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunStreamRead(
   argv: string[],
@@ -38,46 +35,44 @@ export async function cmdSessionRunStreamRead(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_read',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_stream_read', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
+  const { sessionId, ctx, mode } = sessionTarget;
   const request = ExecutionRunTurnStreamReadRequestSchema.parse({
     runId,
     streamId,
     cursor,
     ...(typeof maxEvents === 'number' && Number.isFinite(maxEvents) && maxEvents > 0 ? { maxEvents } : {}),
   });
-  const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ}`;
-  const result = await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
+  const result = await readExecutionRunStream({ token: credentials.token, sessionId, mode, ctx, request });
+
+  if (!result.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_stream_read',
+        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+      });
+      return;
+    }
+    throw new Error(result.message ?? result.code);
+  }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(result as any) } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(result.data as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'run stream read');
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result.data, null, 2));
 }

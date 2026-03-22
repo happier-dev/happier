@@ -1,13 +1,13 @@
 ---
 title: Agents & subagents
-description: Use the Agents surface to launch, monitor, and interact with Happier subagents, Claude teams, and provider-backed agent threads.
+description: Use the Agents surface to launch, monitor, and interact with Subagents, Claude teams, and provider-backed agent threads.
 ---
 
 Happier now treats agent work as a first-class session surface.
 
 In one session, you can have:
 
-- **Happier subagents**: review, plan, and delegate runs started by Happier
+- **Subagents**: review, plan, and delegate runs started by Happier
 - **Claude team agents**: Claude teammates created inside a Claude team
 - **Provider-backed agent threads**: monitor-only task/agent sidechains emitted by providers
 
@@ -68,7 +68,7 @@ The same agent/run should also stay reachable from its original transcript entry
 
 ## Agent types in Happier
 
-### Happier subagents
+### Subagents
 
 These are subagents started by Happier itself.
 
@@ -88,7 +88,7 @@ What each one is for:
 
 User-facing behavior:
 
-- launch from the **Launch Happier subagents** card
+- launch from the **Launch Subagents** card
 - reopen from the Agents list
 - send steering/follow-up messages while the run is still running
 - stop/cancel the run from the Agents list or details view
@@ -108,7 +108,7 @@ You can:
 - terminate a teammate
 - delete a whole team
 
-Claude team agents appear in the same Agents roster as Happier subagents, but their controls are Claude-specific.
+Claude team agents appear in the same Agents roster as Subagents, but their controls are Claude-specific.
 
 ### Provider-backed task sidechains
 
@@ -141,9 +141,9 @@ If a row is controllable, opening either entry point should land you on the same
 
 ## Launching new agent work
 
-### Launch Happier subagents
+### Launch Subagents
 
-Use **Launch Happier subagents** when you want Happier to start a review, plan, or delegate run.
+Use **Launch Subagents** when you want Happier to start a review, plan, or delegate run.
 
 The launcher supports:
 
@@ -196,14 +196,14 @@ When you click an agent row in the Agents list:
 This is important for consistency:
 
 - tool-backed agent transcripts use the same transcript components as normal focused tool details
-- Happier subagent transcripts stream and update through the same session data flow
+- Subagent transcripts stream and update through the same session data flow
 - full-page open is still available when you want more space
 
 ## Sending messages to agents
 
-### Happier subagents
+### Subagents
 
-While a Happier subagent is running, you can send follow-up instructions from:
+While a Subagent is running, you can send follow-up instructions from:
 
 - the main composer, when the agent is selected as the recipient
 - the agent details pane
@@ -300,7 +300,7 @@ These support the full agent control surface.
 If the session is inactive **but resumable** and the machine is reachable:
 
 - Happier can still surface the Happier-subagent launcher
-- starting a Happier subagent resumes the session first, then launches the subagent
+- starting a Subagent resumes the session first, then launches the subagent
 
 That keeps the UI honest: if Happier offers the launcher, the start flow should work.
 
@@ -310,7 +310,7 @@ Linked direct sessions are different.
 
 If the direct session is only being observed and the local runner is **not** active yet:
 
-- Happier treats it as **observe-only** for Happier subagents
+- Happier treats it as **observe-only** for Subagents
 - no Happier-subagent launch
 - no execution-run send/stop controls
 - no execution-run recipient targeting
@@ -321,13 +321,13 @@ Once the direct session is locally controlled again, those controls become avail
 
 ### I want a quick parallel review from the current session
 
-Open **Agents** → **Launch Happier subagents** → **Review**.
+Open **Agents** → **Launch Subagents** → **Review**.
 
 Use this when you want a bounded review pass without losing the main session context.
 
 ### I want a long-running helper that I can steer
 
-Start a delegate-style Happier subagent, then keep using the row or details pane to steer it while it runs.
+Start a delegate-style Subagent, then keep using the row or details pane to steer it while it runs.
 
 ### I want Claude teammates working in parallel
 
@@ -357,5 +357,5 @@ If you keep those three roles separate, the UI becomes predictable even in long 
 
 - [Claude](../providers/claude)
 - [Synced and direct sessions](./direct-sessions)
-- [Steering while busy](./steering)
+- [Steering & interrupting](./steering)
 - [Tool timeline & normalization](./tool-timeline)

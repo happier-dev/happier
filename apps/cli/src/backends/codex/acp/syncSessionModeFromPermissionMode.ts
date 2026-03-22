@@ -35,7 +35,7 @@ export async function syncCodexAcpSessionModeFromPermissionMode(_params: {
   metadata: Metadata | null;
 }): Promise<void> {
   const metadata = _params.metadata;
-  const sessionModes = (metadata as any)?.acpSessionModesV1 as
+  const sessionModes = ((metadata as any)?.sessionModesV1 ?? (metadata as any)?.acpSessionModesV1) as
     | {
         currentModeId: string;
         availableModes: SessionMode[];

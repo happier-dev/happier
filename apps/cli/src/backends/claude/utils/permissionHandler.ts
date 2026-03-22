@@ -27,7 +27,7 @@ import type { AgentState, Metadata } from '@/api/types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
-import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
+import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
 import { isClaudeLocalPermissionBridgeAgentStateRequest } from './permissionRequestSource';
 
 type PermissionResponse = PermissionRpcPayload;
@@ -89,16 +89,22 @@ export class PermissionHandler {
             if (signal.aborted) return;
             if (backoffMs <= 0) return;
             await new Promise<void>((resolve) => {
-                const timer = setTimeout(resolve, backoffMs);
+                let settled = false;
+                const onAbort = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    signal.removeEventListener('abort', onAbort);
+                    resolve();
+                };
+                const timer = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    signal.removeEventListener('abort', onAbort);
+                    resolve();
+                }, backoffMs);
                 timer.unref?.();
-                signal.addEventListener(
-                    'abort',
-                    () => {
-                        clearTimeout(timer);
-                        resolve();
-                    },
-                    { once: true },
-                );
+                signal.addEventListener('abort', onAbort, { once: true });
             });
         };
 
@@ -202,7 +208,7 @@ export class PermissionHandler {
             (metadata): Metadata =>
                 computeNextMetadataStringOverrideV1({
                     metadata: cloneStringKeyedRecordToNullProto(metadata),
-                    overrideKey: 'acpSessionModeOverrideV1',
+                    overrideKey: SESSION_MODE_OVERRIDE_KEY,
                     valueKey: 'modeId',
                     value: '',
                     updatedAt,
@@ -218,6 +224,7 @@ export class PermissionHandler {
         this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
             pushSender: this.session.pushSender,
             getSettings: () => this.session.accountSettings ?? null,
+            getSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
             sessionId: this.session.client.sessionId,
             logPrefix: '[Claude]',
             onNotifiedAt: (permissionId, notifiedAtMs) => {
@@ -388,8 +395,7 @@ export class PermissionHandler {
         const { response, toolName, sourceLocalId } = params;
         if (response.approved) {
             if (response.mode) {
-                this.permissionMode = response.mode;
-                this.session.setLastPermissionMode(response.mode);
+                this.handleModeChange(response.mode);
             }
             const updatedPermissions = response.updatedPermissions;
             this.applyUpdatedPermissionsAllowlist(updatedPermissions);

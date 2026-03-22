@@ -20,6 +20,52 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.voice_tool).toBe(true);
   });
 
+  it('accepts explicit execution.run.list filter fields in the action schema', () => {
+    const spec = getActionSpec('execution.run.list');
+
+    expect(
+      spec.inputSchema.parse({
+        sessionId: 'session_1',
+        backendId: 'claude',
+        status: 'running',
+        limit: 5,
+      }),
+    ).toEqual({
+      sessionId: 'session_1',
+      backendId: 'claude',
+      status: 'running',
+      limit: 5,
+    });
+  });
+
+  it('requires backendTargetKey when listing models for customAcp', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'customAcp',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects mismatched agentId and backendTargetKey when listing models', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'claude',
+        backendTargetKey: 'agent:codex',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('registers both friendly and namespaced slash aliases for review.start', () => {
+    const spec = getActionSpec('review.start');
+    expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
+  });
+
   it('does not expose de-surfaced legacy execution.run.start action', () => {
     expect(() => getActionSpec('execution.run.start' as any)).toThrow();
   });
@@ -50,6 +96,13 @@ describe('Action Spec Registry', () => {
   it('exposes session fork action spec', () => {
     const spec = getActionSpec('session.fork');
     expect(spec.id).toBe('session.fork');
+    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.placements).toContain('session_action_menu');
+  });
+
+  it('exposes session rollback action spec', () => {
+    const spec = getActionSpec('session.rollback' as any);
+    expect(spec.id).toBe('session.rollback');
     expect(spec.surfaces.ui_button).toBe(true);
     expect(spec.placements).toContain('session_action_menu');
   });
@@ -98,8 +151,8 @@ describe('Action Spec Registry', () => {
       },
     });
 
-    expect(exportParsed.installMode).toBe('symlink');
-    expect(registryParsed.installTarget?.installMode).toBe('symlink');
+    expect((exportParsed as any).installMode).toBe('symlink');
+    expect((registryParsed as any).installTarget?.installMode).toBe('symlink');
   });
 
   it('provides input hints for every ActionSpec (single source of truth for elicitation)', () => {
@@ -122,7 +175,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -150,7 +203,7 @@ describe('Action Spec Registry', () => {
         voice_tool: true,
         voice_action_block: true,
         mcp: true,
-        session_control_cli: true,
+        cli: true,
       },
       inputSchema: z.object({}).strict(),
       inputHints: {
@@ -187,7 +240,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -214,7 +267,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -243,7 +296,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -335,7 +388,6 @@ describe('Action Spec Registry', () => {
 
     // Inventory + discovery tools (safe by default; may be gated by user settings in the UI).
     expect(byVoiceToolName.has('spawnSessionPicker')).toBe(true);
-    expect(byVoiceToolName.has('listRecentWorkspaces')).toBe(true);
     expect(byVoiceToolName.has('listRecentPaths')).toBe(true);
     expect(byVoiceToolName.has('listMachines')).toBe(true);
     expect(byVoiceToolName.has('listServers')).toBe(true);

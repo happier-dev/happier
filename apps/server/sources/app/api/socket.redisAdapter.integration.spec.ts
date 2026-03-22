@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createEnvPatcher } from "./socket.env.testHelper";
+import { createEnvReset } from "./testkit/env";
 import type { Fastify as AppFastify } from "./types";
 import { startSocket } from "./socket";
-
 const serverCtor = vi.fn();
 vi.mock("socket.io", () => ({
     Server: function ServerMock(this: any, ...args: any[]) {
@@ -29,14 +28,7 @@ function createFastifyLikeApp(): AppFastify {
 }
 
 describe("startSocket redis adapter config", () => {
-    const env = createEnvPatcher([
-        "HAPPY_SERVER_FLAVOR",
-        "HAPPIER_SOCKET_ADAPTER",
-        "HAPPY_SOCKET_ADAPTER",
-        "HAPPIER_SOCKET_REDIS_ADAPTER",
-        "HAPPY_SOCKET_REDIS_ADAPTER",
-        "REDIS_URL",
-    ]);
+    const resetSocketAdapterEnv = createEnvReset();
 
     beforeEach(() => {
         // NOTE:
@@ -44,15 +36,15 @@ describe("startSocket redis adapter config", () => {
         // Avoid vi.resetModules(): it would re-evaluate modules that register global prom-client metrics.
         vi.clearAllMocks();
         serverCtor.mockReturnValue({ on: vi.fn(), close: vi.fn(), to: vi.fn(), use: vi.fn() });
-        env.restore();
+        resetSocketAdapterEnv();
     });
 
     afterEach(() => {
-        env.restore();
+        resetSocketAdapterEnv();
     });
 
     it("enables redis-streams adapter when explicitly configured in full flavor", async () => {
-        env.setMany({
+        resetSocketAdapterEnv({
             HAPPY_SERVER_FLAVOR: "full",
             HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
@@ -69,7 +61,7 @@ describe("startSocket redis adapter config", () => {
     });
 
     it("enables adapter in light flavor when explicitly configured", async () => {
-        env.setMany({
+        resetSocketAdapterEnv({
             HAPPY_SERVER_FLAVOR: "light",
             HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
@@ -84,7 +76,7 @@ describe("startSocket redis adapter config", () => {
     });
 
     it("keeps memory adapter when redis-streams is requested without REDIS_URL", async () => {
-        env.setMany({
+        resetSocketAdapterEnv({
             HAPPY_SERVER_FLAVOR: "full",
             HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: undefined,
@@ -98,7 +90,7 @@ describe("startSocket redis adapter config", () => {
     });
 
     it("keeps memory adapter when explicit adapter token is unsupported", async () => {
-        env.setMany({
+        resetSocketAdapterEnv({
             HAPPY_SERVER_FLAVOR: "full",
             HAPPIER_SOCKET_ADAPTER: "not-a-real-adapter",
             REDIS_URL: "redis://localhost:6379",
@@ -111,7 +103,7 @@ describe("startSocket redis adapter config", () => {
     });
 
     it("supports the legacy boolean redis adapter flag when REDIS_URL is present", async () => {
-        env.setMany({
+        resetSocketAdapterEnv({
             HAPPY_SERVER_FLAVOR: "full",
             HAPPIER_SOCKET_ADAPTER: undefined,
             HAPPIER_SOCKET_REDIS_ADAPTER: "1",

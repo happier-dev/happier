@@ -4,10 +4,12 @@ import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-rout
 
 import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 type SecretRequirementRoutePayload = Readonly<{
     profileId: string;
@@ -33,21 +35,6 @@ function parseJsonRecord(raw: unknown): Record<string, string | null | undefined
     } catch {
         return {};
     }
-}
-
-function dispatchSetParamsToPreviousRoute(navigation: any, params: Record<string, any>): boolean {
-    const state = navigation?.getState?.();
-    const previousRoute = state?.routes?.[state.index - 1];
-    if (!state || typeof state.index !== 'number' || state.index <= 0 || !previousRoute?.key) {
-        return false;
-    }
-
-    navigation.dispatch({
-        type: 'SET_PARAMS',
-        payload: { params },
-        source: previousRoute.key,
-    });
-    return true;
 }
 
 export default React.memo(function SecretRequirementPickerScreen() {
@@ -104,12 +91,14 @@ export default React.memo(function SecretRequirementPickerScreen() {
         };
         const id = storeTempData(payload);
 
-        const didSet = dispatchSetParamsToPreviousRoute(navigation as any, { secretRequirementResultId: id });
-        if (!didSet) {
-            router.replace({ pathname: '/new', params: { secretRequirementResultId: id } } as any);
-            return;
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation: navigation as any,
+            router,
+            routeParams: { secretRequirementResultId: id },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-        router.back();
     }, [navigation, profileId, revertOnCancel, router]);
 
     const handleCancel = React.useCallback(() => {

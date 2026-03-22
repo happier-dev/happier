@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { AcpBackend } from '../AcpBackend';
-import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
+import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
-  const scriptPath = join(params.dir, 'fake-acp-agent-stderr-fatal.mjs');
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -85,74 +81,73 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
     });
   `;
 
-  writeFileSync(scriptPath, src, 'utf8');
-  return scriptPath;
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-agent-stderr-fatal.mjs',
+    source: src,
+  });
 }
 
 describe('AcpBackend response completion error preservation', () => {
   it('still throws after idle is emitted if a fatal stderr error was recorded', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-stderr-fatal-'));
-    const scriptPath = writeFakeAcpAgentScript({ dir });
-    let backendForCleanup: AcpBackend | undefined;
+    await withTempDir('happier-acp-stderr-fatal-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backendForCleanup: AcpBackend | undefined;
 
-    try {
-      const backend = new AcpBackend({
-        agentName: 'test',
-        cwd: dir,
-        command: process.execPath,
-        args: [scriptPath],
-        transportHandler: {
+      try {
+        const backend = new AcpBackend({
           agentName: 'test',
-          // Some CI machines can be slow to spawn + initialize the fake ACP agent; keep this forgiving.
-          getInitTimeout: () => 5_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-          handleStderr: () => ({
-            message: { type: 'status', status: 'error', detail: 'simulated transport error' },
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({
+            idleTimeoutMs: 1,
+            handleStderr: () => ({
+              message: { type: 'status', status: 'error', detail: 'simulated transport error' },
+            }),
           }),
-        } satisfies TransportHandler,
-        permissionHandler: {
-          async handleToolCall() {
-            return { decision: 'denied' as const };
+          permissionHandler: {
+            async handleToolCall() {
+              return { decision: 'denied' as const };
+            },
           },
-        },
-      });
-      backendForCleanup = backend;
-
-      // In real-world scenarios, stderr and stdout events can be delivered in either order
-      // (especially under parallel test load). We only require that:
-      // - the transport surfaces a fatal stderr error via status:error
-      // - an idle status is eventually emitted after the prompt begins
-      // - waitForResponseComplete still throws (error is preserved) even after idle is observed
-      let promptStarted = false;
-      let sawStderrErrorStatus = false;
-      let sawIdleAfterPrompt = false;
-      const errorAndIdleSeen = new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for error+idle statuses')), 10_000);
-        backend.onMessage((msg) => {
-          if (msg.type !== 'status') return;
-          if (msg.status === 'error' && msg.detail === 'simulated transport error') {
-            sawStderrErrorStatus = true;
-          }
-          if (msg.status === 'idle' && promptStarted) {
-            sawIdleAfterPrompt = true;
-          }
-          if (sawStderrErrorStatus && sawIdleAfterPrompt) {
-            clearTimeout(timeout);
-            resolve();
-          }
         });
-      });
+        backendForCleanup = backend;
 
-      const started = await backend.startSession();
-      promptStarted = true;
-      await backend.sendPrompt(started.sessionId, 'hi');
-      await errorAndIdleSeen;
+        // In real-world scenarios, stderr and stdout events can be delivered in either order
+        // (especially under parallel test load). We only require that:
+        // - the transport surfaces a fatal stderr error via status:error
+        // - an idle status is eventually emitted after the prompt begins
+        // - waitForResponseComplete still throws (error is preserved) even after idle is observed
+        let promptStarted = false;
+        let sawStderrErrorStatus = false;
+        let sawIdleAfterPrompt = false;
+        const errorAndIdleSeen = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Timed out waiting for error+idle statuses')), 10_000);
+          backend.onMessage((msg) => {
+            if (msg.type !== 'status') return;
+            if (msg.status === 'error' && msg.detail === 'simulated transport error') {
+              sawStderrErrorStatus = true;
+            }
+            if (msg.status === 'idle' && promptStarted) {
+              sawIdleAfterPrompt = true;
+            }
+            if (sawStderrErrorStatus && sawIdleAfterPrompt) {
+              clearTimeout(timeout);
+              resolve();
+            }
+          });
+        });
 
-      await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow('simulated transport error');
-    } finally {
-      await backendForCleanup?.dispose().catch(() => {});
-      rmSync(dir, { recursive: true, force: true });
-    }
+        const started = await backend.startSession();
+        promptStarted = true;
+        await backend.sendPrompt(started.sessionId, 'hi');
+        await errorAndIdleSeen;
+
+        await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow('simulated transport error');
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
   }, 20_000);
 });

@@ -8,6 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
@@ -46,36 +47,13 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
   return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
 }
 
-function parseSessionIdFromUrl(url: string): string {
-  const pathname = new URL(url).pathname;
-  const parts = pathname.split('/').filter(Boolean);
-  const sessionId = parts[0] === 'session' ? parts[1] : null;
-  if (!sessionId) {
-    throw new Error(`failed to parse session id from url: ${url}`);
-  }
-  return sessionId;
-}
-
 async function createSessionFromComposer(params: {
   page: Page;
   uiBaseUrl: string;
   machineId: string;
   prompt: string;
 }): Promise<string> {
-  const { page, uiBaseUrl, machineId, prompt } = params;
-  await page.goto(`${uiBaseUrl}/new`, { waitUntil: 'domcontentloaded' });
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-  await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId('agent-input-machine-chip').click();
-  await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId(`new-session-machine:${machineId}`).click();
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-
-  await page.getByTestId('new-session-composer-input').fill(prompt);
-  await page.getByTestId('new-session-composer-input').press('Enter');
-
-  await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-  return parseSessionIdFromUrl(page.url());
+  return createSessionFromNewSessionComposer(params);
 }
 
 test.describe('ui e2e: transcript small reconnect catch-up', () => {

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { getProviderCliInstallGuideUrl, getProviderCliManualInstallSummaryLines } from '@happier-dev/agents'
 import { logger } from '@/ui/logger'
 import { isBun } from '@/utils/runtime'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
@@ -20,6 +21,20 @@ function resolveHomeDir(): string {
             : process.env.HOME
     const trimmed = typeof envHome === 'string' ? envHome.trim() : ''
     return trimmed.length > 0 ? trimmed : homedir()
+}
+
+function buildClaudeCodeInstallHelpMessage(pathHintLine: string): string {
+    const installLines = getProviderCliManualInstallSummaryLines('claude')
+    const setupGuideUrl = getProviderCliInstallGuideUrl('claude')
+    return [
+        'Claude Code is not installed (or not detectable).',
+        '',
+        'Install Claude Code:',
+        ...installLines,
+        '',
+        pathHintLine,
+        ...(setupGuideUrl ? [`Setup guide: ${setupGuideUrl}`] : []),
+    ].join('\n')
 }
 
 /**
@@ -384,17 +399,11 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
     const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir);
     if (nativeInstallPath && isAgentSdkCompatibleClaudeEntrypoint(nativeInstallPath)) return nativeInstallPath;
 
-    const message = [
-        'Claude Code is not installed (or not detectable).',
-        '',
-        'Install Claude Code:',
-        '  macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash',
-        '  Windows (PowerShell): irm https://claude.ai/install.ps1 | iex',
-        '',
-        'Then ensure the Claude Code executable is available on your PATH, or set HAPPIER_CLAUDE_PATH to an absolute executable path.',
-        'Setup guide: https://code.claude.com/docs/en/setup',
-    ].join('\n');
-    throw new Error(message);
+    throw new Error(
+        buildClaudeCodeInstallHelpMessage(
+            'Then ensure the Claude Code executable is available on your PATH, or set HAPPIER_CLAUDE_PATH to an absolute executable path.',
+        ),
+    );
 }
 
 /**
@@ -425,17 +434,11 @@ export function getDefaultClaudeCodePath(): string {
             return nativeInstallPath
         }
 
-        const message = [
-            'Claude Code is not installed (or not detectable).',
-            '',
-            'Install Claude Code:',
-            '  macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash',
-            '  Windows (PowerShell): irm https://claude.ai/install.ps1 | iex',
-            '',
-            'Then ensure `claude` is available on your PATH, or set HAPPIER_CLAUDE_PATH to the executable path.',
-            'Setup guide: https://code.claude.com/docs/en/setup',
-        ].join('\n')
-        throw new Error(message)
+        throw new Error(
+            buildClaudeCodeInstallHelpMessage(
+                'Then ensure `claude` is available on your PATH, or set HAPPIER_CLAUDE_PATH to the executable path.',
+            ),
+        )
     }
 
     // Compare versions and use the newer one

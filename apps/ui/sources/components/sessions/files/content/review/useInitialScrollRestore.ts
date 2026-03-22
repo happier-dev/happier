@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-
 export function useInitialScrollRestore(input: Readonly<{
     initialScrollTop: number | null | undefined;
     latestScrollTopRef: React.RefObject<number>;
@@ -12,6 +10,7 @@ export function useInitialScrollRestore(input: Readonly<{
     const maxAttempts = typeof input.maxAttempts === 'number' && Number.isFinite(input.maxAttempts) ? input.maxAttempts : 12;
     const hasScheduledRef = React.useRef(false);
     const cancelledRef = React.useRef(false);
+    const scheduledHandleRef = React.useRef<number | null>(null);
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
@@ -22,10 +21,20 @@ export function useInitialScrollRestore(input: Readonly<{
         hasScheduledRef.current = true;
         cancelledRef.current = false;
 
-        const raf: (cb: FrameRequestCallback) => number =
+        const schedule: (cb: FrameRequestCallback) => number =
             typeof (globalThis as any).requestAnimationFrame === 'function'
                 ? (globalThis as any).requestAnimationFrame.bind(globalThis)
                 : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+        const cancelScheduled = () => {
+            const handle = scheduledHandleRef.current;
+            if (handle == null) return;
+            if (typeof (globalThis as any).cancelAnimationFrame === 'function') {
+                (globalThis as any).cancelAnimationFrame(handle);
+            } else {
+                globalThis.clearTimeout(handle);
+            }
+            scheduledHandleRef.current = null;
+        };
 
         const attemptApply = (attempt: number) => {
             if (cancelledRef.current) return;
@@ -39,13 +48,21 @@ export function useInitialScrollRestore(input: Readonly<{
 
             const ok = input.applyInitialScrollTop(initial);
             if (ok) return;
-            raf(() => attemptApply(attempt + 1));
+            cancelScheduled();
+            scheduledHandleRef.current = schedule(() => {
+                scheduledHandleRef.current = null;
+                attemptApply(attempt + 1);
+            });
         };
 
-        deferOnWeb(() => attemptApply(0));
+        cancelScheduled();
+        scheduledHandleRef.current = schedule(() => {
+            scheduledHandleRef.current = null;
+            attemptApply(0);
+        });
         return () => {
             cancelledRef.current = true;
+            cancelScheduled();
         };
     }, [input.applyInitialScrollTop, input.initialScrollTop, input.latestScrollTopRef, maxAttempts]);
 }
-

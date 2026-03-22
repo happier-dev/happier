@@ -3,27 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildGitIdentityEnv } from '../../testkit/core/env_scope.mjs';
 import { run, runCapture } from '../proc/proc.mjs';
 import { createHeadSliceCommits, getChangedOps } from './head_slice.mjs';
 
-function gitEnv() {
-  const clean = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('HAPPIER_STACK_')) continue;
-    clean[k] = v;
-  }
-  return {
-    ...clean,
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.com',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.com',
-  };
-}
-
 test('createHeadSliceCommits produces a focused diff while keeping full HEAD code', async (t) => {
   const repo = await mkdtemp(join(tmpdir(), 'happy-review-head-slice-'));
-  const env = gitEnv();
+  const env = buildGitIdentityEnv();
 
   const wt = join(repo, 'wt');
   try {
@@ -92,7 +78,7 @@ test('createHeadSliceCommits produces a focused diff while keeping full HEAD cod
 
 test('getChangedOps tracks rename as remove plus checkout', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'happy-review-head-slice-rename-'));
-  const env = gitEnv();
+  const env = buildGitIdentityEnv();
 
   try {
     await run('git', ['init', '-q'], { cwd: repo, env });

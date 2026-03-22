@@ -1,6 +1,7 @@
 import { BackendTargetRefSchema } from '../backendTargets/backendTargetRef.js';
 import { buildExecutionRunsGuidanceBlockV1, type ExecutionRunsGuidanceEntryV1 } from './executionRunsGuidanceV1.js';
 import { buildMemoryRecallGuidanceBlockV1 } from './memoryRecallGuidanceV1.js';
+import { buildPromptPlanV1, renderPromptPlanV1, type PromptPlanV1 } from './promptPlanV1.js';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './systemPromptBaseV1.js';
 
 function coerceExecutionRunsGuidanceEntriesV1(raw: unknown): ExecutionRunsGuidanceEntryV1[] {
@@ -60,25 +61,37 @@ function coerceExecutionRunsGuidanceEntriesV1(raw: unknown): ExecutionRunsGuidan
   return out;
 }
 
-export function buildAppendSystemPromptBaseV1(args: Readonly<{
+export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   settings: Record<string, unknown> | null | undefined;
   base?: string;
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
-}>): string {
+}>): PromptPlanV1 {
   const base = typeof args.base === 'string' ? args.base : HAPPIER_BASE_SYSTEM_PROMPT_V1;
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
     : null;
 
-  const blocks = [base.trim()];
+  const blocks = [{
+    id: 'coding.base',
+    scope: 'session' as const,
+    text: base.trim(),
+  }];
 
   if (args.memoryRecallGuidanceEnabled === true) {
-    blocks.push(buildMemoryRecallGuidanceBlockV1('generic'));
+    blocks.push({
+      id: 'coding.memory_recall',
+      scope: 'session' as const,
+      text: buildMemoryRecallGuidanceBlockV1('generic'),
+    });
   }
 
-  if (!args.executionRunsFeatureEnabled) return blocks.filter(Boolean).join('\n\n').trim();
-  if (settings?.executionRunsGuidanceEnabled !== true) return blocks.filter(Boolean).join('\n\n').trim();
+  if (!args.executionRunsFeatureEnabled) {
+    return buildPromptPlanV1({ modality: 'coding', blocks });
+  }
+  if (settings?.executionRunsGuidanceEnabled !== true) {
+    return buildPromptPlanV1({ modality: 'coding', blocks });
+  }
 
   const maxCharsRaw = settings?.executionRunsGuidanceMaxChars;
   const maxChars = typeof maxCharsRaw === 'number' && Number.isFinite(maxCharsRaw) && maxCharsRaw >= 200
@@ -88,7 +101,20 @@ export function buildAppendSystemPromptBaseV1(args: Readonly<{
   const guidance = buildExecutionRunsGuidanceBlockV1({ entries, maxChars }).text;
 
   if (guidance) {
-    blocks.push(guidance);
+    blocks.push({
+      id: 'coding.execution_runs',
+      scope: 'session' as const,
+      text: guidance,
+    });
   }
-  return blocks.filter(Boolean).join('\n\n').trim();
+  return buildPromptPlanV1({ modality: 'coding', blocks });
+}
+
+export function buildAppendSystemPromptBaseV1(args: Readonly<{
+  settings: Record<string, unknown> | null | undefined;
+  base?: string;
+  executionRunsFeatureEnabled: boolean;
+  memoryRecallGuidanceEnabled?: boolean;
+}>): string {
+  return renderPromptPlanV1(buildCodingSessionPromptPlanBaseV1(args));
 }

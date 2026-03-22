@@ -5,6 +5,8 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,14 +18,17 @@ async function setupHarness() {
     errorMessage: 'Daemon RPC is not available',
   }));
 
-  vi.doMock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+  vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: Record<string, unknown>) => {
       if (key === 'status.lastSeen') return `status.lastSeen:${String(params?.time ?? '')}`;
       if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
       if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
       return key;
     },
-  }));
+    });
+});
   vi.doMock('@/modal', () => ({ Modal: { alert: modalAlertSpy, confirm: vi.fn(async () => false) } }));
   vi.doMock('@/sync/sync', () => ({
     sync: {
@@ -36,7 +41,12 @@ async function setupHarness() {
       sendMessage: vi.fn(async () => {}),
     },
   }));
-  vi.doMock('@/sync/domains/state/storage', () => ({
+  vi.doMock('@/sync/store/settingsWriters', () => ({
+    useApplySettings: () => vi.fn(),
+  }));
+  vi.doMock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
       getState: () => ({
         settings: {},
@@ -46,8 +56,49 @@ async function setupHarness() {
         updateSessionDraft: vi.fn(),
       }),
     },
+});
+});
+  vi.doMock('@/sync/domains/state/persistence', () => ({
+    clearNewSessionDraft: vi.fn(),
+    loadSettings: () => ({ settings: {}, version: null }),
+    loadDeviceAnalyticsId: () => null,
+    saveDeviceAnalyticsId: vi.fn(),
+    saveSettings: vi.fn(),
+    loadPendingSettings: () => ({}),
+    savePendingSettings: vi.fn(),
+    loadLocalSettings: () => ({}),
+    saveLocalSettings: vi.fn(),
+    loadThemePreference: () => 'adaptive',
+    loadPurchases: () => ({}),
+    savePurchases: vi.fn(),
+    loadSessionDrafts: () => ({}),
+    saveSessionDrafts: vi.fn(),
+    loadSessionReviewCommentsDrafts: () => ({}),
+    saveSessionReviewCommentsDrafts: vi.fn(),
+    loadSessionActionDrafts: () => ({}),
+    saveSessionActionDrafts: vi.fn(),
+    loadNewSessionDraft: () => null,
+    saveNewSessionDraft: vi.fn(),
+    loadSessionPermissionModes: () => ({}),
+    saveSessionPermissionModes: vi.fn(),
+    loadSessionPermissionModeUpdatedAts: () => ({}),
+    saveSessionPermissionModeUpdatedAts: vi.fn(),
+    loadSessionLastViewed: () => ({}),
+    saveSessionLastViewed: vi.fn(),
+    loadSessionModelModes: () => ({}),
+    saveSessionModelModes: vi.fn(),
+    loadSessionModelModeUpdatedAts: () => ({}),
+    saveSessionModelModeUpdatedAts: vi.fn(),
+    loadSessionMaterializedMaxSeqById: () => ({}),
+    saveSessionMaterializedMaxSeqById: vi.fn(),
+    loadChangesCursor: () => null,
+    saveChangesCursor: vi.fn(),
+    loadLastChangesCursorByAccountId: () => ({}),
+    saveLastChangesCursorByAccountId: vi.fn(),
+    loadProfile: () => ({}),
+    saveProfile: vi.fn(),
+    clearPersistence: vi.fn(),
   }));
-  vi.doMock('@/sync/domains/state/persistence', () => ({ clearNewSessionDraft: vi.fn() }));
   vi.doMock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: vi.fn(() => ({
       serverId: 'server-a',
@@ -57,6 +108,15 @@ async function setupHarness() {
     })),
     setActiveServer: vi.fn(),
   }));
+  vi.doMock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
+    resolveNewSessionServerTarget: vi.fn((params: { requestedServerId?: string | null; allowedServerIds: string[] }) => ({
+      targetServerId: params.requestedServerId ?? params.allowedServerIds[0] ?? null,
+      rejectedRequestedServerId: null,
+    })),
+  }));
+  vi.doMock('@/sync/domains/features/featureLocalPolicy', () => ({
+    resolveLocalFeaturePolicyEnabled: vi.fn((featureId: string, settings: { featureToggles?: Record<string, boolean> }) => settings.featureToggles?.[featureId] === true),
+  }));
   vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' })),
   }));
@@ -64,6 +124,9 @@ async function setupHarness() {
   vi.doMock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     getMachineCapabilitiesSnapshot: vi.fn(() => ({ supported: true, response: { protocolVersion: 1, results: {} } })),
     prefetchMachineCapabilities: vi.fn(async () => {}),
+  }));
+  vi.doMock('@/utils/sessions/tempDataStore', () => ({
+    storeTempData: vi.fn(() => 'temp-data-key'),
   }));
   vi.doMock('@/agents/catalog/catalog', async () => {
     const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
@@ -74,11 +137,9 @@ async function setupHarness() {
       buildSpawnSessionExtrasFromUiState: vi.fn(() => ({})),
       getAgentResumeExperimentsFromSettings: vi.fn(() => ({})),
       getNewSessionPreflightIssues: vi.fn(() => []),
-      getResumeRuntimeSupportPrefetchPlan: vi.fn(() => null),
       buildResumeCapabilityOptionsFromUiState: vi.fn(() => ({})),
     };
   });
-  vi.doMock('@/agents/runtime/acpRuntimeResume', () => ({ describeAcpLoadSessionSupport: vi.fn(() => ({ kind: 'unknown' })) }));
   vi.doMock('@/agents/runtime/resumeCapabilities', () => ({ canAgentResume: vi.fn(() => false) }));
   vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({ formatResumeSupportDetailCode: vi.fn(() => '') }));
   vi.doMock('@/sync/ops', () => ({ machineSpawnNewSession: machineSpawnNewSessionSpy }));
@@ -123,7 +184,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachine: { id: 'm1', active: false, activeAt: Date.now() - 5 * 60_000, metadata: { host: 'devbox' } },
         setIsCreating,
         setIsResumeSupportChecking: vi.fn(),
-        sessionType: 'simple',
         settings,
         useProfiles: false,
         selectedProfileId: null,
@@ -135,7 +195,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         sessionPrompt: '',
         resumeSessionId: '',
         agentNewSessionOptions: null,
-        automationDraft: null,
         machineEnvPresence,
         secrets: [],
         secretBindingsByProfileId: {},
@@ -150,9 +209,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test));
-    });
+    tree = (await renderScreen(React.createElement(Test))).tree;
 
     await act(async () => {
       const p = handleCreateSession();
@@ -197,7 +254,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachine: { id: 'm1', active: false, activeAt: Date.now() - 5 * 60_000, metadata: { host: 'devbox' } },
         setIsCreating,
         setIsResumeSupportChecking: vi.fn(),
-        sessionType: 'simple',
         settings,
         useProfiles: false,
         selectedProfileId: null,
@@ -209,7 +265,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         sessionPrompt: '',
         resumeSessionId: '',
         agentNewSessionOptions: null,
-        automationDraft: null,
         machineEnvPresence,
         secrets: [],
         secretBindingsByProfileId: {},
@@ -224,9 +279,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test));
-    });
+    tree = (await renderScreen(React.createElement(Test))).tree;
 
     await act(async () => {
       const p = handleCreateSession();
@@ -282,7 +335,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
         setIsCreating: vi.fn(),
         setIsResumeSupportChecking: vi.fn(),
-        sessionType: 'simple',
         settings,
         useProfiles: false,
         selectedProfileId: null,
@@ -294,7 +346,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         sessionPrompt: '',
         resumeSessionId: '',
         agentNewSessionOptions: null,
-        automationDraft: null,
         machineEnvPresence,
         secrets: [],
         secretBindingsByProfileId: {},
@@ -308,9 +359,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       const p = handleCreateSession();

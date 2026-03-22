@@ -31,6 +31,8 @@ export class FakePermissionClient {
   rpcHandlerManager: FakeRpcHandlerManager;
   agentState: AgentState;
   metadata: Metadata;
+  private metadataWaiters: Array<(updated: boolean) => void> = [];
+  private metadataVersion: number = 0;
 
   constructor(sessionId: string, opts?: { metadata?: Metadata }) {
     this.sessionId = sessionId;
@@ -46,11 +48,40 @@ export class FakePermissionClient {
 
   updateMetadata(updater: (current: Metadata) => Metadata): Metadata {
     this.metadata = updater(this.metadata);
+    this.metadataVersion += 1;
+    const waiters = this.metadataWaiters;
+    this.metadataWaiters = [];
+    for (const waiter of waiters) waiter(true);
     return this.metadata;
   }
 
   getAgentStateSnapshot(): AgentState {
     return this.agentState;
+  }
+
+  getMetadataSnapshot(): Metadata {
+    return this.metadata;
+  }
+
+  waitForMetadataUpdate(abortSignal?: AbortSignal): Promise<boolean> {
+    if (abortSignal?.aborted) return Promise.resolve(false);
+    const startVersion = this.metadataVersion;
+    return new Promise<boolean>((resolve) => {
+      const onAbort = () => resolve(false);
+      abortSignal?.addEventListener('abort', onAbort, { once: true });
+      const waiter = (updated: boolean) => {
+        abortSignal?.removeEventListener('abort', onAbort);
+        resolve(updated);
+      };
+      this.metadataWaiters.push(waiter);
+
+      // Avoid lost wakeups if updateMetadata raced before we registered this waiter.
+      if (this.metadataVersion !== startVersion) {
+        const idx = this.metadataWaiters.indexOf(waiter);
+        if (idx >= 0) this.metadataWaiters.splice(idx, 1);
+        waiter(true);
+      }
+    });
   }
 }
 
@@ -68,6 +99,7 @@ export function createPermissionHandlerSessionStub(sessionId = 'test-session-id'
         return { sendToAllDevices: vi.fn() };
       },
     },
+    adoptLastPermissionModeFromMetadata: vi.fn(() => true),
     setLastPermissionMode: vi.fn(),
     getOrCreatePermissionRpcRouter() {
       if (!router) {
@@ -94,6 +126,7 @@ export function createPermissionHandlerSessionStubWithMetadata(params: {
         return { sendToAllDevices: vi.fn() };
       },
     },
+    adoptLastPermissionModeFromMetadata: vi.fn(() => true),
     setLastPermissionMode: vi.fn(),
     getOrCreatePermissionRpcRouter() {
       if (!router) {

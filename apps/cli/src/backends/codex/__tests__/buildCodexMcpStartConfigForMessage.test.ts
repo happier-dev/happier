@@ -87,4 +87,18 @@ describe('buildCodexMcpStartConfigForMessage', () => {
     expect(nullModel.model).toBeUndefined();
     expect(whitespaceModel.model).toBeUndefined();
   });
+
+  it('threads the resolved workspace directory into the start config', () => {
+    const config = buildCodexMcpStartConfigForMessage({
+      message: 'Hello',
+      first: true,
+      sandbox: 'workspace-write',
+      approvalPolicy: 'untrusted',
+      mcpServers: {},
+      mode: {},
+      cwd: '/repo',
+    });
+
+    expect(config.cwd).toBe('/repo');
+  });
 });

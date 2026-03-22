@@ -36,7 +36,7 @@ describe('scm protocol contracts', () => {
                 writeRemoteFetch: true,
                 writeRemotePull: true,
                 writeRemotePush: true,
-                workspaceWorktreeCreate: false,
+                worktreeCreate: false,
                 changeSetModel: 'working-copy',
                 supportedDiffAreas: ['pending', 'both'],
                 operationLabels: {
@@ -54,6 +54,35 @@ describe('scm protocol contracts', () => {
         expect(parsed.capabilities?.changeSetModel).toBe('working-copy');
         expect(parsed.capabilities?.supportedDiffAreas).toEqual(['pending', 'both']);
         expect(parsed.capabilities?.operationLabels?.commit).toBe('Commit changes');
+    });
+
+    it('accepts the legacy workspaceWorktreeCreate capability alias', () => {
+        const parsed = ScmBackendDescribeResponseSchema.parse({
+            success: true,
+            backendId: 'sapling',
+            repoMode: '.git',
+            isRepo: true,
+            capabilities: {
+                readStatus: true,
+                readDiffFile: true,
+                readDiffCommit: true,
+                readLog: true,
+                writeInclude: false,
+                writeExclude: false,
+                writeCommit: true,
+                writeCommitPathSelection: true,
+                writeCommitLineSelection: false,
+                writeBackout: true,
+                writeRemoteFetch: true,
+                writeRemotePull: true,
+                writeRemotePush: true,
+                workspaceWorktreeCreate: true,
+                changeSetModel: 'working-copy',
+                supportedDiffAreas: ['pending', 'both'],
+            },
+        });
+
+        expect(parsed.capabilities?.worktreeCreate).toBe(true);
     });
 
     it('supports backend preference on status requests', () => {
@@ -77,6 +106,20 @@ describe('scm protocol contracts', () => {
                 rootPath: '/repo',
                 backendId: 'git',
                 mode: '.git',
+                worktrees: [
+                    {
+                        path: '/repo',
+                        branch: 'main',
+                        isCurrent: true,
+                        isMain: true,
+                    },
+                    {
+                        path: '/repo/.worktrees/feature-auth',
+                        branch: 'feature/auth',
+                        isCurrent: false,
+                        isMain: false,
+                    },
+                ],
             },
             capabilities: {
                 readStatus: true,
@@ -92,7 +135,7 @@ describe('scm protocol contracts', () => {
                 writeRemoteFetch: true,
                 writeRemotePull: true,
                 writeRemotePush: true,
-                workspaceWorktreeCreate: true,
+                worktreeCreate: true,
                 changeSetModel: 'index',
                 supportedDiffAreas: ['included', 'pending', 'both'],
             },
@@ -122,6 +165,10 @@ describe('scm protocol contracts', () => {
         });
 
         expect(response.snapshot?.repo.backendId).toBe('git');
+        expect(response.snapshot?.repo.worktrees).toHaveLength(2);
+        expect(response.snapshot?.repo.worktrees?.[1]?.branch).toBe('feature/auth');
+        expect(response.snapshot?.repo.worktrees?.[0]?.isMain).toBe(true);
+        expect(response.snapshot?.repo.worktrees?.[1]?.isMain).toBe(false);
         expect(response.snapshot?.totals.pendingFiles).toBe(0);
         expect(response.snapshot?.capabilities.changeSetModel).toBe('index');
         expect(response.snapshot?.capabilities.supportedDiffAreas).toEqual(['included', 'pending', 'both']);

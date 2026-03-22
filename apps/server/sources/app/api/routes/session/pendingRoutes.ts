@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
+import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import {
     deletePendingMessage,
     discardPendingMessage,
@@ -190,6 +191,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 pendingVersion: res.pendingVersion,
                 participantCursors: res.participantCursors,
             });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: res.participantCursors,
+            });
 
             return reply.send({
                 didWrite: res.didWrite,
@@ -246,6 +251,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 pendingVersion: res.pendingVersion,
                 participantCursors: res.participantCursors,
             });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: res.participantCursors,
+            });
             return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
         },
     );
@@ -276,6 +285,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                participantCursors: res.participantCursors,
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
             return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
@@ -310,6 +323,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 pendingVersion: res.pendingVersion,
                 participantCursors: res.participantCursors,
             });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: res.participantCursors,
+            });
             return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
         },
     );
@@ -335,6 +352,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                participantCursors: res.participantCursors,
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
             return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
@@ -365,6 +386,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
+                participantCursors: res.participantCursors,
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
             return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
@@ -420,6 +445,10 @@ export function sessionPendingRoutes(app: Fastify) {
                 pendingCount: res.pendingCount,
                 pendingVersion: res.pendingVersion,
                 participantCursors: res.participantCursorsPending,
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: [...res.participantCursorsMessage, ...res.participantCursorsPending],
             });
 
             return reply.send({

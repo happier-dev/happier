@@ -1,32 +1,18 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        dark: false,
-        colors: {
-            groupped: { background: '#ffffff', sectionTitle: '#888888' },
-            surface: '#ffffff',
-            text: '#111111',
-        },
-    };
-
-    return {
-        StyleSheet: { create: (factory: any) => factory(theme, {}) },
-        useUnistyles: () => ({ theme, rt: { themeName: 'light' } }),
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'web', select: (m: any) => m?.web ?? m?.default ?? m?.ios },
-        View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-        ScrollView: React.forwardRef((props: any, ref: any) => React.createElement('ScrollView', { ...props, ref }, props.children)),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
 });
 
 vi.mock('@/constants/Typography', () => ({
@@ -55,15 +41,13 @@ describe('ItemList + ItemGroup popover boundary', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(
-                <ItemList ref={listBoundaryRef}>
-                    <ItemGroup title="Group" footer="Footer">
-                        <BoundarySpy />
-                    </ItemGroup>
-                </ItemList>,
-            );
-        });
+        await renderScreen(
+            <ItemList ref={listBoundaryRef}>
+                <ItemGroup title="Group" footer="Footer">
+                    <BoundarySpy />
+                </ItemGroup>
+            </ItemList>,
+        );
 
         expect(seenBoundaryRef).toBe(listBoundaryRef);
     });
@@ -78,13 +62,11 @@ describe('ItemList + ItemGroup popover boundary', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(
-                <ItemGroup title="Group">
-                    <BoundarySpy />
-                </ItemGroup>,
-            );
-        });
+        await renderScreen(
+            <ItemGroup title="Group">
+                <BoundarySpy />
+            </ItemGroup>,
+        );
 
         expect(seenBoundaryRef).not.toBe(null);
         expect(seenBoundaryRef).not.toBe(undefined);

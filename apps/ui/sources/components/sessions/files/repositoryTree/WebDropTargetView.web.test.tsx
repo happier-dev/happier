@@ -16,28 +16,32 @@ function flattenStyle(style: any): React.CSSProperties | undefined {
     return style;
 }
 
-vi.mock('react-native', () => {
-    const View = React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
-        const { children, style, testID, onDragEnter, onDragLeave, onDragOver, onDrop, ...rest } = props;
-        void onDragEnter;
-        void onDragLeave;
-        void onDragOver;
-        void onDrop;
-        return React.createElement('div', {
-            ...rest,
-            ref,
-            style: flattenStyle(style),
-            'data-testid': testID,
-        }, children);
-    });
-
-    return {
-        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-        View,
-        StyleSheet: {
-            flatten: flattenStyle,
-        },
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'web',
+                                                select: (value: any) => value?.web ?? value?.default ?? null,
+                                            },
+                                            View: React.forwardRef<HTMLDivElement, any>(function View(props, ref) {
+                                                const { children, style, testID, onDragEnter, onDragLeave, onDragOver, onDrop, ...rest } = props;
+                                                void onDragEnter;
+                                                void onDragLeave;
+                                                void onDragOver;
+                                                void onDrop;
+                                                return React.createElement('div', {
+                                                    ...rest,
+                                                    ref,
+                                                    style: flattenStyle(style),
+                                                    'data-testid': testID,
+                                                }, children);
+                                            }),
+                                            StyleSheet: {
+                                                flatten: flattenStyle,
+                                            },
+                                        }
+    );
 });
 
 import { WebDropTargetView } from './WebDropTargetView';

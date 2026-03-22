@@ -216,6 +216,10 @@ export function createLocalSessionHarness(): LocalSessionHarness {
 
   const session = {
     sendUserTextMessage: (_text: string) => {},
+    sendAgentMessageCommitted: async (_provider: string, body: unknown) => {
+      codexMessages.push(body as CodexBody);
+    },
+    sendTranscriptDraftDelta: () => {},
     sendCodexMessage: (body: unknown) => {
       codexMessages.push(body as CodexBody);
     },

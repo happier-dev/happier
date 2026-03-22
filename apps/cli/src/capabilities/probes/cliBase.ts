@@ -11,8 +11,11 @@ export function buildCliCapabilityData(opts: {
     const out: DetectCliEntry = {
         available: entry.available,
         ...(entry.resolvedPath ? { resolvedPath: entry.resolvedPath } : {}),
+        ...(entry.resolvedCommand ? { resolvedCommand: entry.resolvedCommand } : {}),
+        ...(entry.resolutionSource ? { resolutionSource: entry.resolutionSource } : {}),
         ...(entry.version ? { version: entry.version } : {}),
         ...(includeLoginStatus ? { isLoggedIn: entry.isLoggedIn ?? null } : {}),
+        ...(includeLoginStatus ? { authStatus: entry.authStatus ?? null } : {}),
     };
 
     return out;

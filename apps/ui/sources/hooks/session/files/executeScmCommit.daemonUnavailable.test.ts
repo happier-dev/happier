@@ -8,15 +8,19 @@ const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: 
   return { started: true, message: '' };
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlert,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/scm/operations/withOperationLock', () => ({
   withSessionProjectScmOperationLock,
@@ -100,5 +104,54 @@ describe('executeScmCommit (daemon unavailable)', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sessionScmCommitCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('omits a broader commit scope when atomic line-selection patches are present', async () => {
+    modalAlert.mockReset();
+    sessionScmCommitCreate.mockReset();
+
+    sessionScmCommitCreate.mockResolvedValueOnce({
+      success: true,
+      commitSha: 'abc123',
+    });
+
+    const { executeScmCommit } = await import('./executeScmCommit');
+
+    const result = await executeScmCommit({
+      sessionId: 's1',
+      commitMessage: 'feat: test',
+      scmCommitStrategy: 'atomic',
+      commitSelectionPaths: ['a.txt'],
+      commitSelectionPatches: [
+        {
+          path: 'a.txt',
+          patch: [
+            'diff --git a/a.txt b/a.txt',
+            'index df967b9..9f0e218 100644',
+            '--- a/a.txt',
+            '+++ b/a.txt',
+            '@@ -1 +1,2 @@',
+            ' base',
+            '+line-one',
+            '',
+          ].join('\n'),
+        },
+      ],
+      loadCommitHistory: vi.fn(async () => {}),
+      setScmOperationBusy: vi.fn(),
+      setScmOperationStatus: vi.fn(),
+      tracking: null,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sessionScmCommitCreate).toHaveBeenCalledTimes(1);
+    expect(sessionScmCommitCreate).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({
+        message: 'feat: test',
+        patches: expect.any(Array),
+      }),
+    );
+    expect(sessionScmCommitCreate.mock.calls[0]?.[1]).not.toHaveProperty('scope');
   });
 });

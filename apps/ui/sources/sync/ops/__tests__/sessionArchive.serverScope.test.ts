@@ -1,9 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockRequest, mockResolveContext, mockRuntimeFetch } = vi.hoisted(() => ({
+const { mockRequest, mockResolveContext, mockRuntimeFetch, mockStorageState } = vi.hoisted(() => ({
   mockRequest: vi.fn(),
   mockResolveContext: vi.fn(),
   mockRuntimeFetch: vi.fn(),
+  mockStorageState: {
+    sessions: {},
+    sessionListViewDataByServerId: {},
+    applySessions: vi.fn(),
+  } as {
+    sessions: Record<string, unknown>;
+    sessionListViewDataByServerId: Record<string, unknown>;
+    applySessions: ReturnType<typeof vi.fn>;
+  },
 }));
 
 vi.mock('../../api/session/apiSocket', () => ({
@@ -22,10 +31,7 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
 
 vi.mock('../../domains/state/storage', () => ({
   storage: {
-    getState: () => ({
-      sessions: {},
-      applySessions: vi.fn(),
-    }),
+    getState: () => mockStorageState,
   },
 }));
 
@@ -46,6 +52,9 @@ describe('sessionArchiveWithServerScope', () => {
     mockRequest.mockReset();
     mockResolveContext.mockReset();
     mockRuntimeFetch.mockReset();
+    mockStorageState.sessions = {};
+    mockStorageState.sessionListViewDataByServerId = {};
+    mockStorageState.applySessions.mockReset();
   });
 
   it('uses active apiSocket.request when scope is active', async () => {
@@ -89,6 +98,31 @@ describe('sessionArchiveWithServerScope', () => {
     );
     expect(mockRequest).not.toHaveBeenCalled();
   });
+
+  it('defaults a null serverId to the preferred owner server from local cache', async () => {
+    mockStorageState.sessionListViewDataByServerId = {
+      'server-owned': [
+        {
+          type: 'session',
+          session: { id: 'sid-owned' },
+        },
+      ],
+    };
+    mockResolveContext.mockResolvedValue({
+      scope: 'active',
+      targetServerUrl: 'https://active.example',
+      targetServerId: 'server-owned',
+      token: 'tok',
+      timeoutMs: 1000,
+      encryption: null,
+    });
+    mockRequest.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: 12 } }));
+
+    const res = await sessionArchiveWithServerScope('sid-owned', { serverId: null });
+
+    expect(res).toEqual({ success: true, archivedAt: 12 });
+    expect(mockResolveContext).toHaveBeenCalledWith({ serverId: 'server-owned' });
+  });
 });
 
 describe('sessionUnarchiveWithServerScope', () => {
@@ -115,4 +149,3 @@ describe('sessionUnarchiveWithServerScope', () => {
     expect(mockRuntimeFetch).not.toHaveBeenCalled();
   });
 });
-

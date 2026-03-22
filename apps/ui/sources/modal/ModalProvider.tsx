@@ -109,7 +109,10 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                             <WebAlertModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                onClose={() => {
+                                    Modal.resolveConfirm(modal.id, false);
+                                    hideModal(modal.id);
+                                }}
                                 onConfirm={(value) => {
                                     Modal.resolveConfirm(modal.id, value);
                                     hideModal(modal.id);
@@ -125,7 +128,10 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                             <WebPromptModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                onClose={() => {
+                                    Modal.resolvePrompt(modal.id, null);
+                                    hideModal(modal.id);
+                                }}
                                 onConfirm={(value) => {
                                     Modal.resolvePrompt(modal.id, value);
                                     hideModal(modal.id);

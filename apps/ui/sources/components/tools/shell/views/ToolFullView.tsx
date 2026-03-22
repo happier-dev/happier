@@ -17,11 +17,12 @@ import { useSessionTranscriptDraftMessages } from '@/sync/domains/state/storage'
 import { useUnistyles } from 'react-native-unistyles';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
-import { shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
 import { sync } from '@/sync/sync';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
+import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 
 
 interface ToolFullViewProps {
@@ -30,6 +31,7 @@ interface ToolFullViewProps {
     metadata?: Metadata | null;
     messages?: Message[];
     jumpChildId?: string | null;
+    forcePermissionFooterInTranscript?: boolean;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
@@ -37,7 +39,7 @@ interface ToolFullViewProps {
     };
 }
 
-export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChildId, interaction }: ToolFullViewProps) {
+export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
 
@@ -55,7 +57,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
         enabled:
             typeof sessionId === 'string' &&
             sessionId.length > 0 &&
-            (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun' || normalizedToolName === 'Agent'),
+            isSubAgentTranscriptToolName(normalizedToolName),
         sessionId,
         sidechainIds: [transcriptSidechainId],
     });
@@ -65,6 +67,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
     const SpecializedFullView = getToolViewComponent(normalizedToolName);
     const screenWidth = useWindowDimensions().width;
     const toolViewShowDebugByDefault = useSetting('toolViewShowDebugByDefault');
+    const permissionPromptSurface = useSetting('permissionPromptSurface');
     const [showDebug, setShowDebug] = React.useState<boolean>(toolViewShowDebugByDefault);
     const isWaitingForPermission =
         toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
@@ -74,8 +77,12 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
     const draftMessages = useSessionTranscriptDraftMessages(normalizedSessionId ?? '', sidechainId);
     const canRenderTaskTranscript =
         normalizedSessionId !== null &&
-        (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun' || normalizedToolName === 'Agent') &&
+        isSubAgentTranscriptToolName(normalizedToolName) &&
         (sidechainId !== null || messages.length > 0);
+    const resolvedPermissionPromptSurface =
+        forcePermissionFooterInTranscript
+            ? 'transcript'
+            : resolvePermissionPromptSurface(permissionPromptSurface);
 
     const transcriptInteraction = React.useMemo(() => {
         return {
@@ -93,10 +100,13 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
         return sync.loadOlderSidechainMessages(normalizedSessionId, sidechainId);
     }, [normalizedSessionId, sidechainId]);
 
+    const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
+
     const permissionFooter =
         isWaitingForPermission &&
         toolForRendering.permission &&
         normalizedSessionId &&
+        showPermissionPromptsInTranscript &&
         shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) ? (
             <PermissionFooter
                 permission={toolForRendering.permission}
@@ -167,6 +177,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             draftMessages={draftMessages}
                             metadata={metadata || null}
                             interaction={transcriptInteraction}
+                            forcePermissionPromptsInTranscript={forcePermissionFooterInTranscript}
                             loadOlder={sidechainId ? loadOlderSidechain : undefined}
                             jumpToMessageId={normalizedJumpChildId}
                             header={transcriptHeader}

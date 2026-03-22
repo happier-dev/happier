@@ -1,13 +1,15 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import {
     createNavigationMock,
     createRouterMock,
     createStackOptionsCapture,
     enableReactActEnvironment,
     PICKER_THEME_COLORS,
-    type PickerStackOptionsInput,
 } from './testHarness';
 
 enableReactActEnvironment();
@@ -16,31 +18,38 @@ const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 type PlatformSelectOptions<T> = { ios?: T; default?: T };
 type ItemGroupProps = React.PropsWithChildren<Record<string, never>>;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Platform: { OS: 'ios', select: <T,>(options: PlatformSelectOptions<T>) => options.ios ?? options.default },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    TurboModuleRegistry: { getEnforcing: () => ({}) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        Platform: { OS: 'ios', select: <T,>(options: PlatformSelectOptions<T>) => options.ios ?? options.default },
+                                        TurboModuleRegistry: { getEnforcing: () => ({}) },
+                                    }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    Stack: {
-        Screen: ({ options }: { options: PickerStackOptionsInput }) => {
-            stackOptionsCapture.record(options);
-            return null;
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        navigation: navigationMock,
+        params: { machineId: 'm1', selectedPath: '/tmp' },
+        router: {
+            push: routerMock.push,
+            back: routerMock.back,
+            replace: routerMock.replace,
+            setParams: routerMock.setParams,
         },
-    },
-    useRouter: () => routerMock,
-    useNavigation: () => navigationMock,
-    useLocalSearchParams: () => ({ machineId: 'm1', selectedPath: '/tmp' }),
-}));
+        stackOptionsCapture,
+    }).module;
+});
 
 vi.mock('@react-navigation/native', () => ({
     CommonActions: {
@@ -48,18 +57,18 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     const colors = { ...PICKER_THEME_COLORS, shadow: { color: '#000', opacity: 0.2 } };
-    const theme = { colors };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-    };
+    return createUnistylesMock({
+        theme: { colors },
+    });
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: ItemGroupProps) => React.createElement(React.Fragment, null, children),
@@ -81,25 +90,34 @@ vi.mock('@/utils/sessions/recentPaths', () => ({
     getRecentPathsForMachine: () => [],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => [{ id: 'm1', metadata: { homeDir: '/home' } }],
-    useSessions: () => [],
-    useSetting: (key: string) => {
-        if (key === 'recentMachinePaths') return [];
-        if (key === 'usePathPickerSearch') return false;
-        return null;
-    },
-    useSettingMutable: () => [[], vi.fn()],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            // Boundary fixture: this picker only needs the selected machine homeDir.
+            useAllMachines: (() => [{ id: 'm1', metadata: { homeDir: '/home' } }]) as any,
+            useSessions: () => [],
+            useSetting: (key: string) => {
+                if (key === 'recentMachinePaths') return [];
+                if (key === 'usePathPickerSearch') return false;
+                return null;
+            },
+            useSettingMutable: () => [[], vi.fn()],
+        },
+    });
+});
 
 describe('PathPickerScreen (iOS presentation)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('presents as containedModal on iOS and provides an explicit header back button', async () => {
         const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
         stackOptionsCapture.reset();
 
-        await act(async () => {
-            renderer.create(React.createElement(PathPickerScreen));
-        });
+        await renderScreen(React.createElement(PathPickerScreen));
 
         const options = stackOptionsCapture.getResolved();
         expect(options?.presentation).toBe('containedModal');

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useAuth } from '@/auth/context/AuthContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
@@ -62,13 +63,26 @@ const stylesheet = StyleSheet.create((theme) => ({
     textInput: {
         backgroundColor: theme.colors.input.background,
         padding: 16,
+        paddingRight: 52,
         borderRadius: 8,
-        marginBottom: 24,
         fontFamily: 'IBMPlexMono-Regular',
         fontSize: 14,
-        minHeight: 120,
-        textAlignVertical: 'top',
+        minHeight: 54,
         color: theme.colors.input.text,
+    },
+    textInputWrapper: {
+        width: '100%',
+        position: 'relative',
+        marginBottom: 24,
+    },
+    revealButton: {
+        position: 'absolute',
+        right: 10,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 8,
     },
 }));
 
@@ -78,6 +92,7 @@ export default function Restore() {
     const auth = useAuth();
     const router = useRouter();
     const [restoreKey, setRestoreKey] = useState('');
+    const [revealed, setRevealed] = useState(false);
 
     const handleRestore = async () => {
         const trimmedKey = restoreKey.trim();
@@ -122,20 +137,37 @@ export default function Restore() {
                         <Text style={styles.noticeText}>{t('connect.restoreWithSecretKeyDescription')}</Text>
                     </View>
 
-                    <TextInput
-                        testID="restore-manual-secret-input"
-                        style={styles.textInput}
-                        placeholder={t('connect.secretKeyPlaceholder')}
-                        placeholderTextColor={theme.colors.input.placeholder}
-                        value={restoreKey}
-                        onChangeText={setRestoreKey}
-                        // Secret keys may be pasted in base64url (case-sensitive) or the grouped base32 backup format.
-                        // Auto-capitalization would corrupt base64url keys, so keep it disabled.
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        multiline={true}
-                        numberOfLines={4}
-                    />
+                    <View style={styles.textInputWrapper}>
+                        <TextInput
+                            testID="restore-manual-secret-input"
+                            style={styles.textInput}
+                            placeholder={t('connect.secretKeyPlaceholder')}
+                            placeholderTextColor={theme.colors.input.placeholder}
+                            value={restoreKey}
+                            onChangeText={setRestoreKey}
+                            secureTextEntry={!revealed}
+                            // Secret keys may be pasted in base64url (case-sensitive) or the grouped base32 backup format.
+                            // Auto-capitalization would corrupt base64url keys, so keep it disabled.
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            multiline={false}
+                        />
+
+                        <Pressable
+                            testID="restore-manual-secret-reveal"
+                            accessibilityRole="button"
+                            accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
+                            onPress={() => setRevealed((v) => !v)}
+                            style={styles.revealButton}
+                            hitSlop={10}
+                        >
+                            <Ionicons
+                                name={revealed ? 'eye-off-outline' : 'eye-outline'}
+                                size={20}
+                                color={theme.colors.textSecondary}
+                            />
+                        </Pressable>
+                    </View>
 
                     <RoundButton
                         testID="restore-manual-submit"

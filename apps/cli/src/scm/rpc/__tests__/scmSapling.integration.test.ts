@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
 
 import { describe, expect, it } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
@@ -15,7 +16,12 @@ function createSaplingWorkspace(): string {
     return workspace;
 }
 
-describe('sapling backend integration', () => {
+function shouldRunSaplingIntegration(): boolean {
+    const probe = spawnSync('sl', ['--version'], { encoding: 'utf8', stdio: 'ignore' });
+    return probe.error == null;
+}
+
+describe.skipIf(!shouldRunSaplingIntegration())('sapling backend integration', () => {
     it('uses sapling backend for .git repos only when explicit preference is set', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-git-'));
         runGit(workspace, ['init']);

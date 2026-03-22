@@ -1,12 +1,13 @@
-import { systemPrompt } from '@/backends/claude/utils/systemPrompt';
-import { trimIdent } from '@/utils/trimIdent';
+import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol';
 
-const DISABLE_TODOS_APPEND = trimIdent(`
-    Do not create TODO items, TODO lists, or task lists in your output. If you would normally create TODOs, instead proceed with the work directly or ask the user for clarification.
-`);
+import { resolveCodingProviderBehaviorBlocks } from '@/agent/prompting/coding/providerPromptBehaviorRegistry';
 
 export function getClaudeRemoteSystemPrompt(args: { disableTodos: boolean }): string {
-    const base = systemPrompt();
-    if (!args.disableTodos) return base;
-    return `${base}\n\n${DISABLE_TODOS_APPEND}`;
+    return renderPromptPlanV1(buildPromptPlanV1({
+        modality: 'coding',
+        blocks: resolveCodingProviderBehaviorBlocks({
+            providerId: 'claude',
+            disableTodos: args.disableTodos,
+        }),
+    }));
 }

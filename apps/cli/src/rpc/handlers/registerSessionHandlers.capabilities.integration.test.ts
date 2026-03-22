@@ -83,8 +83,9 @@ describe('registerCommonHandlers capabilities', () => {
             ]),
         );
         expect(result.checklists[resumeChecklistId('codex')].map((r) => r.id)).toEqual(
-            expect.arrayContaining(['cli.codex', CODEX_ACP_DEP_ID]),
+            expect.arrayContaining(['cli.codex']),
         );
+        expect(result.checklists[resumeChecklistId('codex')].map((r) => r.id)).not.toContain(CODEX_ACP_DEP_ID);
     });
 
     it('detects checklist new-session deterministically from PATH', async () => {

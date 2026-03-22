@@ -25,8 +25,8 @@ describe("automation daemon routes (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
-        process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "1";
+        harness.resetEnv();
+        harness.resetEnv({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: "1" });
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
             () => db.automationRun.deleteMany(),
@@ -287,7 +287,7 @@ describe("automation daemon routes (integration)", () => {
         );
     });
 
-    it("rejects existing_session automation creation when target session is missing or inactive", async () => {
+    it("rejects existing_session automation creation when target session is missing or not resumable", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-automation-existing-session-create-validation" },
             select: { id: true },
@@ -300,12 +300,12 @@ describe("automation daemon routes (integration)", () => {
             },
             select: { id: true },
         });
-        const inactiveSession = await db.session.create({
+        const unsupportedSession = await db.session.create({
             data: {
-                tag: "inactive-target",
+                tag: "unsupported-target",
                 accountId: account.id,
-                metadata: "{}",
-                active: false,
+                metadata: JSON.stringify({ flavor: "pi", piSessionId: "pi-session-1" }),
+                active: true,
             },
             select: { id: true },
         });
@@ -340,16 +340,16 @@ describe("automation daemon routes (integration)", () => {
                         "x-test-user-id": account.id,
                     },
                     payload: {
-                        name: "Existing inactive",
+                        name: "Existing unsupported",
                         enabled: true,
                         schedule: { kind: "interval", everyMs: 60_000 },
                         targetType: "existing_session",
-                        templateCiphertext: buildTemplateEnvelope(inactiveSession.id),
+                        templateCiphertext: buildTemplateEnvelope(unsupportedSession.id),
                         assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
                     },
                 });
                 expect(inactiveResponse.statusCode).toBe(400);
-                expect(String((inactiveResponse.json() as any).error ?? "")).toMatch(/inactive/i);
+                expect(String((inactiveResponse.json() as any).error ?? "")).toMatch(/resume|resum/i);
             },
         );
     });

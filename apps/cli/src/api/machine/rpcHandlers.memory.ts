@@ -3,21 +3,21 @@ import { z } from 'zod';
 import {
   MemorySearchQueryV1Schema,
   type MemorySearchResultV1,
+  MemoryStatusV1Schema,
   MemoryWindowV1Schema,
   type MemoryWindowV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { searchTier1Memory, searchTier2Memory } from '@/daemon/memory/searchMemory';
-import { readMemorySettingsFromDisk, writeMemorySettingsToDisk } from '@/settings/memorySettings';
 import { getMemoryWindow } from '@/daemon/memory/getMemoryWindow';
-import { readCredentials } from '@/persistence';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 import { resolveMemoryIndexPaths } from '@/daemon/memory/memoryIndexPaths';
-import { resolveEmbeddingsProvider } from '@/daemon/memory/deepIndex/embeddings/resolveEmbeddingsProvider';
+import { resolveOperationalMemoryEmbeddingsSettings } from '@/daemon/memory/resolveOperationalMemoryEmbeddingsSettings';
+import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
@@ -54,8 +54,11 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_STATUS, async () => {
     const settings = memoryWorker.getSettings();
+    const embeddingsDiagnostics = memoryWorker.getEmbeddingsDiagnostics();
     const tier1DbPath = memoryWorker.getTier1DbPath();
     const deepDbPath = memoryWorker.getDeepDbPath();
+    const hintsIndexReady = typeof tier1DbPath === 'string' && tier1DbPath.trim().length > 0;
+    const deepIndexReady = typeof deepDbPath === 'string' && deepDbPath.trim().length > 0;
 
     const readBytes = async (path: string | null): Promise<number | null> => {
       if (!path) return null;
@@ -67,22 +70,34 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       }
     };
 
-    return {
+    return MemoryStatusV1Schema.parse({
       v: 1,
       enabled: settings.enabled,
       indexMode: settings.indexMode,
+      hintsIndexReady,
+      deepIndexReady,
+      activeIndexReady: settings.indexMode === 'deep' ? deepIndexReady : hintsIndexReady,
+      embeddingsEnabled: resolveOperationalMemoryEmbeddingsSettings(settings.embeddings)?.enabled === true,
+      embeddingsMode: embeddingsDiagnostics.mode,
+      embeddingsPresetId: embeddingsDiagnostics.presetId,
+      embeddingsProviderKind: embeddingsDiagnostics.providerKind,
+      embeddingsModelId: embeddingsDiagnostics.modelId,
+      embeddingsRuntimeState: embeddingsDiagnostics.runtimeState,
+      embeddingsUsingFallback: embeddingsDiagnostics.usingFallback,
       tier1DbPath,
       deepDbPath,
       tier1DbBytes: await readBytes(tier1DbPath),
       deepDbBytes: await readBytes(deepDbPath),
-    };
+    });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, async () => {
+    const { readMemorySettingsFromDisk } = await import('@/settings/memorySettings');
     return await readMemorySettingsFromDisk();
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET, async (raw: unknown) => {
+    const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
     const next = await writeMemorySettingsToDisk(raw);
     await memoryWorker.reloadSettings();
     return next;
@@ -112,8 +127,10 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
     if (preferDeep) {
       const deepPath = memoryWorker.getDeepDbPath();
       if (!deepPath) return { v: 1, ok: false, errorCode: 'memory_index_missing', error: 'memory_index_missing' };
+      const embeddings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
+      const embeddingsProviderSettings = resolveOperationalMemoryEmbeddingsSettings(settings.embeddings);
       const embedQuery = await (async () => {
-        if (!settings.embeddings.enabled) return undefined;
+        if (!embeddings?.enabled || !embeddingsProviderSettings?.enabled) return undefined;
         const paths = resolveMemoryIndexPaths();
         const cacheDir = join(paths.modelsDir, 'transformers');
         try {
@@ -121,15 +138,22 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
         } catch {
           // best-effort
         }
-        const provider = await resolveEmbeddingsProvider({ settings: settings.embeddings, cacheDir });
-        return provider?.embedQuery;
+        const { readCredentials } = await import('@/persistence');
+        const credentials = await readCredentials();
+        const { resolveEmbeddingsProvider } = await import('@/daemon/memory/deepIndex/embeddings/resolveEmbeddingsProvider');
+        const provider = await resolveEmbeddingsProvider({
+          settings: embeddingsProviderSettings,
+          cacheDir,
+          settingsSecretsReadKeys: credentials ? deriveSettingsSecretsReadKeysForCredentials(credentials) : [],
+        });
+        return provider.provider?.embedQuery;
       })();
       return await searchTier2Memory({
         dbPath: deepPath,
         query: parsed.data,
         previewChars: settings.deep.previewChars,
         candidateLimit: settings.deep.candidateLimit,
-        embeddings: settings.embeddings,
+        ...(embeddings ? { embeddings } : {}),
         ...(embedQuery ? { embedQuery } : {}),
       });
     }
@@ -149,6 +173,7 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [] });
     }
 
+    const { readCredentials } = await import('@/persistence');
     const credentials = await readCredentials();
     if (!credentials) {
       return MemoryWindowV1Schema.parse({

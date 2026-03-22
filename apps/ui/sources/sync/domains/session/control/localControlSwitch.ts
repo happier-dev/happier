@@ -1,63 +1,9 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
-import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { isSessionExclusiveLocalControl } from '@/sync/domains/session/control/sessionLocalControl';
 
 export function shouldRequestRemoteControlAfterPendingEnqueue(session: Session | null): boolean {
     if (!session) return false;
-    return Boolean(session.agentState?.controlledByUser);
-}
-
-export type SwitchToLocalControlDisabledReason = 'machineOffline' | 'daemonStarted' | 'resumeUnsupported';
-
-function resolveSessionLocalControlSupport(session: Session | null): { session: Session; supportsLocalControl: boolean } | null {
-    if (!session) return null;
-    const flavor = (session.metadata as any)?.flavor;
-    const agentId = resolveAgentIdFromFlavor(typeof flavor === 'string' ? flavor : null);
-    if (!agentId) return null;
-    return {
-        session,
-        supportsLocalControl: getAgentCore(agentId).localControl?.supported === true,
-    };
-}
-
-export function getSwitchToLocalControlDisabledReason(opts: {
-    session: Session | null;
-    isMachineOnline: boolean;
-    resumeCapabilityOptions: ResumeCapabilityOptions;
-}): SwitchToLocalControlDisabledReason | null {
-    const resolved = resolveSessionLocalControlSupport(opts.session);
-    if (!resolved || !resolved.supportsLocalControl) return null;
-    const session = resolved.session;
-    if (session.agentState?.controlledByUser === true) return null;
-
-    const startedFromDaemon = Boolean((session.metadata as any)?.startedFromDaemon);
-    if (startedFromDaemon) {
-        const terminal = (session.metadata as any)?.terminal;
-        const tmuxTarget = terminal?.mode === 'tmux' ? terminal?.tmux?.target : null;
-        const hasTmuxTarget = typeof tmuxTarget === 'string' && tmuxTarget.trim().length > 0;
-        if (!hasTmuxTarget) return 'daemonStarted';
-    }
-
-    const isSessionActive = session.presence === 'online';
-    if (!opts.isMachineOnline && !isSessionActive) return 'machineOffline';
-
-    if (!canResumeSessionWithOptions(session.metadata as any, opts.resumeCapabilityOptions)) {
-        return 'resumeUnsupported';
-    }
-
-    return null;
-}
-
-export function shouldOfferSwitchToLocalControl(opts: {
-    session: Session | null;
-    isMachineOnline: boolean;
-    resumeCapabilityOptions: ResumeCapabilityOptions;
-}): boolean {
-    const resolved = resolveSessionLocalControlSupport(opts.session);
-    if (!resolved || !resolved.supportsLocalControl) return false;
-    if (resolved.session.agentState?.controlledByUser === true) return false;
-    return getSwitchToLocalControlDisabledReason(opts) == null;
+    return isSessionExclusiveLocalControl(session);
 }
 
 export function shouldRenderChatTimelineForSession(opts: {
@@ -65,9 +11,11 @@ export function shouldRenderChatTimelineForSession(opts: {
     pendingMessagesCount: number;
     controlledByUser: boolean;
     forceRenderFooter?: boolean;
+    showLocalControlFooter?: boolean;
 }): boolean {
     return opts.committedMessagesCount > 0
         || opts.pendingMessagesCount > 0
         || opts.controlledByUser === true
+        || opts.showLocalControlFooter === true
         || opts.forceRenderFooter === true;
 }

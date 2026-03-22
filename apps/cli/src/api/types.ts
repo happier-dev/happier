@@ -2,7 +2,15 @@ import { z } from 'zod'
 import { UsageSchema } from '@/api/usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
-import type { AcpConfigOptionOverridesV1, AcpSessionModeOverrideV1, ModelOverrideV1, SessionTerminalMetadata } from '@happier-dev/protocol'
+import type { ExecutionRunPublicState } from '@happier-dev/protocol'
+import type {
+  AcpConfigOptionOverridesV1,
+  AcpSessionModeOverrideV1,
+  DirectSessionsSource,
+  ModelOverrideV1,
+  SessionRollbackRangesV1,
+  SessionTerminalMetadata,
+} from '@happier-dev/protocol'
 import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol'
 import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
 
@@ -37,8 +45,8 @@ import type {
  *
  * When calling Claude SDK, Codex modes are mapped at the SDK boundary:
  * - yolo → bypassPermissions
- * - safe-yolo → default
- * - read-only → default
+ * - safe-yolo → acceptEdits
+ * - read-only → dontAsk
  */
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES
 
@@ -97,13 +105,29 @@ export type UpdateMachineBody = Extract<Update['body'], { t: 'update-machine' }>
 export const SessionBroadcastSchema = SessionBroadcastContainerSchema
 export type SessionBroadcast = SessionBroadcastContainer
 
+export interface SocketRpcRequestPayload {
+  method: string
+  params: unknown
+}
+
+export interface SocketRpcCallPayload extends SocketRpcRequestPayload {
+  timeoutMs?: number
+}
+
+export interface SocketRpcCallResponse {
+  ok: boolean
+  result?: unknown
+  error?: string
+  errorCode?: string
+}
+
 /**
  * Socket events from server to client
  */
 export interface ServerToClientEvents {
   update: (data: Update) => void
   session: (data: SessionBroadcast) => void
-  [SOCKET_RPC_EVENTS.REQUEST]: (data: { method: string, params: string }, callback: (response: string) => void) => void
+  [SOCKET_RPC_EVENTS.REQUEST]: (data: SocketRpcRequestPayload, callback: (response: unknown) => void) => void
   [SOCKET_RPC_EVENTS.REGISTERED]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.ERROR]: (data: { type: string, error: string }) => void
@@ -118,9 +142,17 @@ export interface ServerToClientEvents {
  */
 export interface ClientToServerEvents {
   message: (
-    data: { sid: string, message: string | SessionMessageContent, localId?: string | null, echoToSender?: boolean },
+    data: { sid: string, message: string | SessionMessageContent, localId?: string | null, sidechainId?: string | null, echoToSender?: boolean },
     cb?: (answer: MessageAckResponse) => void
   ) => void
+  'transcript-draft': (data: {
+    sid: string;
+    localId: string;
+    segmentKind: 'assistant' | 'thinking';
+    sidechainId?: string | null;
+    delta: string | SessionMessageContent;
+    createdAt?: number;
+  }) => void
   'session-alive': (data: {
     sid: string;
     time: number;
@@ -128,16 +160,28 @@ export interface ClientToServerEvents {
     mode?: 'local' | 'remote';
   }) => void
   'session-end': (data: { sid: string, time: number }) => void,
+  'execution-run-updated': (data: {
+    sid: string;
+    run: ExecutionRunPublicState;
+  }) => void
   'update-metadata': (data: { sid: string, expectedVersion: number, metadata: string }, cb: (answer: UpdateMetadataAckResponse) => void) => void,
-  'update-state': (data: { sid: string, expectedVersion: number, agentState: string | null }, cb: (answer: UpdateStateAckResponse) => void) => void,
+  'update-state': (data: {
+    sid: string,
+    expectedVersion: number,
+    agentState: string | null,
+    activitySummaryV1?: {
+      pendingPermissionRequestCount: number,
+      pendingUserActionRequestCount: number,
+    },
+  }, cb: (answer: UpdateStateAckResponse) => void) => void,
+  'update-read-cursor': (data: {
+    sid: string,
+    lastViewedSessionSeq: number,
+  }, cb: (answer: { result: 'success' | 'forbidden' | 'error', lastViewedSessionSeq?: number }) => void) => void,
   'ping': (callback: () => void) => void
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
-  [SOCKET_RPC_EVENTS.CALL]: (data: { method: string, params: string }, callback: (response: {
-    ok: boolean
-    result?: string
-    error?: string
-  }) => void) => void
+  [SOCKET_RPC_EVENTS.CALL]: (data: SocketRpcCallPayload, callback: (response: SocketRpcCallResponse) => void) => void
   'usage-report': (data: {
     key: string
     sessionId: string
@@ -155,17 +199,18 @@ export interface ClientToServerEvents {
 /**
  * Session information
  */
-export type Session = {
-  id: string,
-  seq: number,
-  encryptionMode: 'e2ee' | 'plain',
-  encryptionKey: Uint8Array;
-  encryptionVariant: 'legacy' | 'dataKey';
-  metadata: Metadata,
-  metadataVersion: number,
-  agentState: AgentState | null,
-  agentStateVersion: number,
-}
+type SessionSharedFields = Readonly<{
+  id: string;
+  seq: number;
+  metadata: Metadata;
+  metadataVersion: number;
+  agentState: AgentState | null;
+  agentStateVersion: number;
+}>;
+
+export type Session =
+  | (SessionSharedFields & Readonly<{ encryptionMode: 'plain' }>)
+  | (SessionSharedFields & Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>);
 
 /**
  * Machine metadata - static information (rarely changes)
@@ -219,7 +264,9 @@ export const SessionMessageSchema = z.object({
   content: SessionMessageContentSchema,
   createdAt: z.number(),
   id: z.string(),
+  localId: z.string().nullable(),
   seq: z.number(),
+  sidechainId: z.string().nullable(),
   updatedAt: z.number()
 })
 
@@ -304,6 +351,36 @@ export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSche
 
 export type MessageContent = z.infer<typeof MessageContentSchema>
 
+export type DirectSessionMetadataV1 = {
+  v: 1,
+  providerId: string,
+  machineId: string,
+  remoteSessionId: string,
+  source: DirectSessionsSource,
+  linkedAtMs: number,
+  codexBackendMode?: 'mcp' | 'acp' | 'appServer',
+  agentRuntimeDescriptorV1?: unknown,
+};
+
+export type ExternalHistoryImportMetadataV1 = {
+  v: 1,
+  providerId: string,
+  remoteSessionId: string,
+  importedAtMs: number,
+  source: DirectSessionsSource,
+};
+
+export type SessionHandoffMetadataV1 = {
+  v: 1,
+  sourceMachineId: string,
+  targetMachineId: string,
+  providerId: string,
+  sessionStorageBefore: 'direct' | 'persisted',
+  sessionStorageAfter: 'direct' | 'persisted',
+  transportStrategy: 'direct_peer' | 'server_routed_stream',
+  completedAtMs: number,
+};
+
 export type Metadata = {
   path: string,
   host: string,
@@ -331,9 +408,16 @@ export type Metadata = {
   claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
   claudeLastAssistantUuid?: string | null, // Claude SDK assistant message UUID (resume anchoring)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
+  codexBackendMode?: 'mcp' | 'acp' | 'appServer',
+  agentRuntimeDescriptorV1?: unknown,
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
   opencodeBackendMode?: 'server' | 'acp',
+  opencodeServerBaseUrl?: string,
+  opencodeServerBaseUrlExplicit?: true,
+  directSessionV1?: DirectSessionMetadataV1,
+  externalHistoryImportV1?: ExternalHistoryImportMetadataV1,
+  handoffV1?: SessionHandoffMetadataV1,
   auggieSessionId?: string, // Auggie ACP session ID (opaque)
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
@@ -354,12 +438,27 @@ export type Metadata = {
     importedAt: number,
     lastImportedFingerprint?: string
   },
+  acpTransportV1?: {
+    v: 1,
+    provider: string
+  },
   /**
    * ACP session modes (if supported by the provider's ACP agent).
    *
    * Used to expose provider-native "plan/code" style runtime modes to the UI.
    */
   acpSessionModesV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModeId: string,
+    availableModes: Array<{
+      id: string,
+      name: string,
+      description?: string,
+    }>,
+  },
+  sessionModesV1?: {
     v: 1,
     provider: string,
     updatedAt: number,
@@ -386,6 +485,41 @@ export type Metadata = {
       id: string,
       name: string,
       description?: string,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+      }>,
+    }>,
+  },
+  sessionModelsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModelId: string,
+    availableModels: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+      }>,
     }>,
   },
   /**
@@ -410,18 +544,37 @@ export type Metadata = {
       }>,
     }>,
   },
+  sessionConfigOptionsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    configOptions: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      type: string,
+      currentValue: string | number | boolean | null,
+      options?: Array<{
+        value: string | number | boolean | null,
+        name: string,
+        description?: string,
+      }>,
+    }>,
+  },
   /**
    * Desired ACP session mode override selected by the user (UI/CLI).
    *
    * Distinct from `acpSessionModesV1` (which mirrors agent-reported current state).
    */
   acpSessionModeOverrideV1?: AcpSessionModeOverrideV1,
+  sessionModeOverrideV1?: AcpSessionModeOverrideV1,
   /**
    * Desired ACP configuration option overrides selected by the user (UI/CLI).
    *
    * This is a best-effort mechanism to keep ACP "configOptions" selections consistent across devices.
    */
   acpConfigOptionOverridesV1?: AcpConfigOptionOverridesV1,
+  sessionConfigOptionOverridesV1?: AcpConfigOptionOverridesV1,
   homeDir: string,
   happyHomeDir: string,
   happyLibDir: string,
@@ -443,6 +596,7 @@ export type Metadata = {
   permissionMode?: PermissionMode,
   /** Timestamp (ms) for permissionMode, used for "latest wins" arbitration across devices. */
   permissionModeUpdatedAt?: number,
+  sessionRollbackRangesV1?: SessionRollbackRangesV1,
   /**
    * Desired model override selected by the user (UI/CLI), if supported by the agent.
    *
@@ -454,6 +608,13 @@ export type Metadata = {
 
 export type AgentState = {
   controlledByUser?: boolean | null | undefined
+  localControl?: {
+    attached?: boolean | null | undefined
+    topology?: 'exclusive' | 'shared' | null | undefined
+    remoteWritable?: boolean | null | undefined
+    canAttach?: boolean | null | undefined
+    canDetach?: boolean | null | undefined
+  } | null | undefined
   capabilities?: {
     askUserQuestionAnswersInPermission?: boolean | null | undefined
     inFlightSteer?: boolean | null | undefined

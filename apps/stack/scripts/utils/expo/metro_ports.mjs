@@ -1,4 +1,4 @@
-import { isTcpPortFree, pickNextFreeTcpPort } from '../net/ports.mjs';
+import { isTcpPortListening, listListenPids, pickNextFreeTcpPort } from '../net/ports.mjs';
 
 function hashStringToInt(s) {
   let h = 0;
@@ -37,8 +37,15 @@ export async function pickMetroPort({
 } = {}) {
   const forced = coercePositiveInt(forcedPort);
   if (forced && !reservedPorts.has(forced)) {
-    const ok = await isTcpPortFree(forced, { host });
-    if (ok) return forced;
+    // Avoid bind-based probing for the forced port path: concurrent probes can temporarily occupy the port
+    // and cause false negatives (flaky forced-port selection).
+    //
+    // Strategy:
+    // - First detect any real listener via lsof (non-invasive; catches IPv6 listeners on macOS).
+    // - Then do a best-effort connect probe (works even when lsof is missing).
+    const pids = await listListenPids(forced);
+    const listening = pids.length ? true : await isTcpPortListening(forced, { host });
+    if (!listening) return forced;
   }
   return await pickNextFreeTcpPort(startPort, { reservedPorts, host });
 }

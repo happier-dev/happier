@@ -81,9 +81,11 @@ test('resolveActiveRuntimeSnapshot rejects pointers that escape the stack runtim
   await mkdir(join(escaped, 'ui'), { recursive: true });
   await mkdir(join(escaped, 'server'), { recursive: true });
   await mkdir(join(escaped, 'cli'), { recursive: true });
+  await mkdir(join(escaped, 'cli', 'package-dist'), { recursive: true });
   await writeFile(join(escaped, 'ui', 'index.html'), '<html></html>\n', 'utf-8');
   await writeFile(join(escaped, 'server', 'happier-server'), 'echo server\n', 'utf-8');
   await writeFile(join(escaped, 'cli', 'happier'), 'echo cli\n', 'utf-8');
+  await writeFile(join(escaped, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
   await writeRuntimeManifest({
     manifestPath: paths.manifestPath,
     manifest: {
@@ -120,9 +122,11 @@ test('resolveActiveRuntimeSnapshot returns validated manifest and pointer data',
   await mkdir(join(paths.snapshotDir, 'ui'), { recursive: true });
   await mkdir(join(paths.snapshotDir, 'server', 'dist', 'runtime'), { recursive: true });
   await mkdir(join(paths.snapshotDir, 'cli', 'dist'), { recursive: true });
+  await mkdir(join(paths.snapshotDir, 'cli', 'package-dist'), { recursive: true });
   await writeFile(join(paths.snapshotDir, 'ui', 'index.html'), '<html></html>\n', 'utf-8');
   await writeFile(join(paths.snapshotDir, 'server', 'dist', 'runtime', 'main.js'), 'export {};\n', 'utf-8');
   await writeFile(join(paths.snapshotDir, 'cli', 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
+  await writeFile(join(paths.snapshotDir, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
   await writeRuntimeManifest({
     manifestPath: paths.manifestPath,
     manifest: {

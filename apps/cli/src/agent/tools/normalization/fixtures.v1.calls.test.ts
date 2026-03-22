@@ -140,7 +140,7 @@ describe('tool normalization fixtures (v1): tool calls + permissions', () => {
 
     {
       const norm = normalizeFirstCallEvent(sample('claude/claude/tool-call/TaskCreate'));
-      expect(norm.canonicalToolName).toBe('Task');
+      expect(norm.canonicalToolName).toBe('SubAgent');
       const input = asRecord(norm.input);
       expect(input?.operation).toBe('create');
       expect(typeof input?.subject).toBe('string');

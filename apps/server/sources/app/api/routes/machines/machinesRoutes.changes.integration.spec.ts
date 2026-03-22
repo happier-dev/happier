@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
 
 const emitUpdate = vi.fn();
@@ -13,6 +15,10 @@ const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updI
     seq: updSeq,
     body: { t: "update-machine" },
 }));
+
+const dbMocks = createDbMocks({
+    machine: ["findFirst"],
+} as const);
 
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
@@ -30,12 +36,8 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        machine: {
-            findFirst: vi.fn(async () => null),
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
     isPrismaErrorCode: () => false,
 }));
 
@@ -56,22 +58,20 @@ vi.mock("@/storage/inTx", () => {
 
 describe("machinesRoutes (AccountChange integration)", () => {
     it("marks machine create once and emits new-machine + update-machine using the same cursor", async () => {
+        dbMocks.db.machine.findFirst.mockResolvedValue(null);
         const { machinesRoutes } = await import("./machinesRoutes");
-
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-
-        const response = await handler(
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
+        const { response, reply } = await route.invoke(
             {
                 userId: "u1",
                 body: { id: "m1", metadata: "meta", daemonState: "state", dataEncryptionKey: null },
             },
-            reply,
         );
 
         expect(markAccountChanged).toHaveBeenCalledWith(

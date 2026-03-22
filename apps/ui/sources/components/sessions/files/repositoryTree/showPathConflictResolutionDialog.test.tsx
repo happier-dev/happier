@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,57 +10,40 @@ const hideSpy = vi.fn();
 const showSpy = vi.fn();
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'web',
+                                                select: (value: any) => value?.web ?? value?.default ?? null,
+                                            },
+                                        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                divider: '#ddd',
-                surface: '#111',
-                surfaceHigh: '#222',
-                text: '#fff',
-                textLink: '#0af',
-                textSecondary: '#999',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        divider: '#ddd',
-                        surface: '#111',
-                        surfaceHigh: '#222',
-                        text: '#fff',
-                        textLink: '#0af',
-                        textSecondary: '#999',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (config: any) => showSpy(config),
-        hide: (id: string) => hideSpy(id),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (config: any) => showSpy(config),
+            hide: (id: string) => hideSpy(id),
+        },
+    }).module;
+});
 
 describe('showPathConflictResolutionDialog', () => {
     it('hides the modal when the user picks a conflict strategy', async () => {
@@ -79,18 +64,14 @@ describe('showPathConflictResolutionDialog', () => {
         expect(modalConfig).toBeDefined();
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(modalConfig.component, {
+        tree = (await renderScreen(React.createElement(modalConfig.component, {
                     ...(modalConfig.props ?? {}),
                     onClose: vi.fn(),
-                })
-            );
-        });
+                }))).tree;
 
-        const skip = tree.root.find((node: any) => node.props?.testID === 'upload-conflicts-skip');
+        const skip = tree.find((node: any) => node.props?.testID === 'upload-conflicts-skip');
         await act(async () => {
-            skip.props.onPress();
+            await pressTestInstanceAsync(skip);
         });
 
         await expect(promise).resolves.toBe('skip');

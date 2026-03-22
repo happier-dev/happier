@@ -4,11 +4,14 @@ import { getRepoScopeSessionIds } from './projectState';
 
 const getStateMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: getStateMock,
   },
-}));
+});
+});
 
 describe('getRepoScopeSessionIds', () => {
   it('groups repo sessions by host scope when machineId is missing', () => {

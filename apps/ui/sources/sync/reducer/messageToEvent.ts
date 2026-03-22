@@ -9,8 +9,6 @@
 import { NormalizedMessage } from "../typesRaw";
 import { AgentEvent } from "../typesRaw";
 
-import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
-
 /**
  * Parses a normalized message to determine if it should be converted to an event.
  * 
@@ -44,17 +42,6 @@ export function parseMessageAsEvent(msg: NormalizedMessage): AgentEvent | null {
                     }
                 }
                 
-            }
-            
-            // Check for change_title tool calls (new + legacy names during migration)
-            if (content.type === 'tool-call' && isChangeTitleToolNameAlias(content.name)) {
-                const title = content.input?.title;
-                if (typeof title === 'string') {
-                    return {
-                        type: 'message',
-                        message: `Title changed to "${title}"`,
-                    } as AgentEvent;
-                }
             }
         }
     }

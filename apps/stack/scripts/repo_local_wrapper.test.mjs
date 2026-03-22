@@ -1,25 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 import { resolveStablePortStart } from './utils/expo/metro_ports.mjs';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal, stdout, stderr }));
-  });
-}
 
 async function listenOnPort(port) {
   const srv = createServer((socket) => {

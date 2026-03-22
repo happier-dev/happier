@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import type { TabType } from '@/components/ui/navigation/TabBar';
+import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { kvBulkGet, kvSet } from '@/sync/api/account/apiKv';
 
 const TAB_STATE_KEY = 'ui:active-tab';
@@ -13,7 +13,7 @@ type TabState = Readonly<{
 }>;
 
 function normalizeStoredTab(value: unknown): TabType | null {
-  if (value === 'sessions' || value === 'inbox' || value === 'settings') return value;
+  if (value === 'sessions' || value === 'inbox' || value === 'friends' || value === 'settings') return value;
   // Zen is a legacy value; it is no longer rendered in the tab bar.
   if (value === 'zen') return 'sessions';
   return null;

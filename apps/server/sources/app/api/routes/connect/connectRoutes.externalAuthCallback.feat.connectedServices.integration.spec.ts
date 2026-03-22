@@ -1,35 +1,15 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
-import { initEncrypt } from "@/modules/encrypt";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -39,49 +19,33 @@ function createTestApp() {
     return typed;
 }
 
+function applyGithubExternalAuthCallbackEnv(
+    harness: LightSqliteHarness,
+    overrides: Record<string, string | undefined> = {},
+): void {
+    harness.resetEnv({
+        GITHUB_CLIENT_ID: "gh_client",
+        GITHUB_CLIENT_SECRET: "gh_secret",
+        GITHUB_REDIRECT_URL: "https://api.example.test/v1/oauth/github/callback",
+        AUTH_SIGNUP_PROVIDERS: "github",
+        HAPPIER_WEBAPP_URL: "https://app.example.test",
+        ...overrides,
+    });
+}
+
 describe("connectRoutes (GitHub callback) external auth flow (integration)", () => {
-    const envBackup = { ...process.env };
     const originalFetch = globalThis.fetch;
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-auth-external-callback-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
-        await initEncrypt();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-auth-external-callback-",
+            initAuth: true,
+            initEncrypt: true,
+        });
     }, 120_000);
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         globalThis.fetch = originalFetch;
         await db.repeatKey.deleteMany();
@@ -90,18 +54,12 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
+        await harness.close();
         globalThis.fetch = originalFetch;
-        await rm(baseDir, { recursive: true, force: true });
     });
 
     it("creates a pending auth record and redirects without creating an account", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubExternalAuthCallbackEnv(harness);
         const seed = new Uint8Array(32).fill(1);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
         const publicKey = privacyKit.encodeBase64(new Uint8Array(kp.publicKey));
@@ -162,11 +120,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("redirects back to the requesting web origin when the auth params request includes a loopback Origin header", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubExternalAuthCallbackEnv(harness);
 
         const seed = new Uint8Array(32).fill(2);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -220,17 +174,13 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("creates a pending auth record for proofHash auth-start and includes provisioning hints in the redirect", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
-
-        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
-        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
-        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION = "1";
-        process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
-        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION: "1",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+        });
 
         const ghProfile = {
             id: 123,
@@ -291,11 +241,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("redirects with an oauth error when the user denies access (no code)", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubExternalAuthCallbackEnv(harness);
 
         const seed = new Uint8Array(32).fill(9);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -335,11 +281,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("redirects with invalid_state when state token is invalid (no server crash)", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubExternalAuthCallbackEnv(harness);
 
         const app = createTestApp();
         connectRoutes(app as any);
@@ -359,13 +301,10 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("does not allow an http webapp oauth return url even when http is allowlisted", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
-        process.env.HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE = "http://evil.example.test/oauth";
-        process.env.HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES = "http";
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE: "http://evil.example.test/oauth",
+            HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES: "http",
+        });
 
         const seed = new Uint8Array(32).fill(8);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -416,13 +355,10 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("honors legacy GITHUB_OAUTH_PENDING_TTL_SECONDS when OAUTH_PENDING_TTL_SECONDS is unset", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
-        delete process.env.OAUTH_PENDING_TTL_SECONDS;
-        process.env.GITHUB_OAUTH_PENDING_TTL_SECONDS = "120";
+        applyGithubExternalAuthCallbackEnv(harness, {
+            OAUTH_PENDING_TTL_SECONDS: undefined,
+            GITHUB_OAUTH_PENDING_TTL_SECONDS: "120",
+        });
 
         const seed = new Uint8Array(32).fill(3);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -480,12 +416,9 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("ignores an unsafe HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE and falls back to HAPPIER_WEBAPP_URL", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
-        process.env.HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE = "javascript:alert(1)";
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE: "javascript:alert(1)",
+        });
 
         const seed = new Uint8Array(32).fill(9);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -535,13 +468,10 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("allows a custom OAuth return scheme when explicitly allowlisted", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
-        process.env.HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE = "myapp://oauth";
-        process.env.HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES = "myapp";
+        applyGithubExternalAuthCallbackEnv(harness, {
+            HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE: "myapp://oauth",
+            HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES: "myapp",
+        });
 
         const seed = new Uint8Array(32).fill(8);
         const kp = tweetnacl.sign.keyPair.fromSeed(seed);
@@ -590,11 +520,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("redirects with github=username_required when the GitHub login is already taken", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubExternalAuthCallbackEnv(harness);
 
         await db.account.create({
             data: {
@@ -663,11 +589,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     });
 
     it("does not prompt for username when the GitHub identity is already linked (auth signup flows should restore instead)", async () => {
-        process.env.GITHUB_CLIENT_ID = "gh_client";
-        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+        applyGithubExternalAuthCallbackEnv(harness);
 
         const existing = await db.account.create({
             data: {

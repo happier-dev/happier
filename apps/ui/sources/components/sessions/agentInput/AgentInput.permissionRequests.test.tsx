@@ -1,99 +1,40 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-    ...rn,
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-    useWindowDimensions: () => ({ width: 800, height: 600 }),
-    Dimensions: {
-        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-    },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('View', props, props.children),
+                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Text', props, props.children),
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Pressable', props, props.children),
+                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('ScrollView', props, props.children),
+                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                    Platform: {
+                                    OS: 'ios',
+                                    select: (v: any) => v.ios,
+                                },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    Dimensions: {
+                                        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                    },
+                                }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                    colors: {
-                        input: { background: '#fff' },
-                        accent: { indigo: '#5856D6' },
-                        box: {
-                            error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
-                            warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
-                        },
-                        button: {
-                            primary: { background: '#000', tint: '#fff' },
-                            secondary: { tint: '#000', surface: '#fff' },
-                        },
-                    radio: { active: '#000', inactive: '#ddd' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    divider: '#ddd',
-                    success: '#0a0',
-                    textDestructive: '#a00',
-                    surfacePressed: '#eee',
-                    permission: {
-                        acceptEdits: '#0a0',
-                        bypass: '#0a0',
-                        plan: '#0a0',
-                        readOnly: '#0a0',
-                        safeYolo: '#0a0',
-                        yolo: '#0a0',
-                    },
-                    surfaceHighest: '#fafafa',
-                },
-            };
-            return typeof styles === 'function' ? styles(theme) : styles;
-        },
-    },
-    useUnistyles: () => ({
-            theme: {
-                colors: {
-                    input: { background: '#fff' },
-                    accent: { indigo: '#5856D6' },
-                    box: {
-                        error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
-                        warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
-                    },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000', surface: '#fff' },
-                    },
-                radio: { active: '#000', inactive: '#ddd' },
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                success: '#0a0',
-                textDestructive: '#a00',
-                surfacePressed: '#eee',
-                permission: {
-                    acceptEdits: '#0a0',
-                    bypass: '#0a0',
-                    plan: '#0a0',
-                    readOnly: '#0a0',
-                    safeYolo: '#0a0',
-                    yolo: '#0a0',
-                },
-                surfaceHighest: '#fafafa',
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
@@ -104,9 +45,10 @@ vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -116,7 +58,9 @@ vi.mock('@/components/ui/text/Text', () => ({
         React.createElement(React.Fragment, null, props.children),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -131,12 +75,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-        }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-    }));
+    }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+});
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -259,9 +205,13 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    getProfileEnvironmentVariables: () => ({}),
-}));
+vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
+    return {
+        ...actual,
+        getProfileEnvironmentVariables: () => [],
+    };
+});
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     resolveProfileById: () => null,
@@ -288,9 +238,14 @@ vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsError: () => {},
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: () => {} },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: () => {},
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
@@ -301,7 +256,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
+    Typography: { default: () => ({}), mono: () => ({}), header: () => ({}) },
 }));
 
 vi.mock('./ResumeChip', () => ({
@@ -317,6 +272,7 @@ vi.mock('./PathAndResumeRow', () => ({
 
 vi.mock('./actionBarLogic', () => ({
     getHasAnyAgentInputActions: () => false,
+    shouldShowSecondaryControlRow: () => false,
     shouldShowPathAndResumeRow: () => false,
 }));
 
@@ -345,9 +301,7 @@ describe('AgentInput (permission requests)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput as any, {
+        tree = (await renderScreen(React.createElement(AgentInput as any, {
                     value: '',
                     placeholder: 'Type',
                     onChangeText: () => {},
@@ -358,9 +312,7 @@ describe('AgentInput (permission requests)', () => {
                     permissionRequests: [
                         { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
                     ],
-                }),
-            );
-        });
+                }))).tree;
 
         expect(tree!.root.findAllByType('PermissionFooter' as any)).toHaveLength(1);
     });
@@ -369,9 +321,7 @@ describe('AgentInput (permission requests)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput as any, {
+        tree = (await renderScreen(React.createElement(AgentInput as any, {
                     value: '',
                     placeholder: 'Type',
                     onChangeText: () => {},
@@ -383,9 +333,7 @@ describe('AgentInput (permission requests)', () => {
                         { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
                         { id: 'req2', tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 124 },
                     ],
-                }),
-            );
-        });
+                }))).tree;
 
         const scrolls = tree!.root.findAll(
             (node) => (node.type as any) === 'ScrollView' && node.props.testID === 'agentInput.permissionRequests.scroll',

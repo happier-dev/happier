@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,20 +11,23 @@ const useFeatureEnabledMock = vi.hoisted(() => vi.fn((featureId: string) => (
     featureId === 'prompts.assets.external' || featureId === 'prompts.skills.registries'
 )));
 
-vi.mock('react-native', () => ({
-    ScrollView: 'ScrollView',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            ScrollView: 'ScrollView',
+                                            View: 'View',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                            },
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                groupped: { background: 'white' },
-            },
-        }),
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 accent: { blue: 'blue', indigo: 'indigo' },
@@ -30,13 +35,16 @@ vi.mock('react-native-unistyles', () => ({
                 groupped: { background: 'white' },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-    Stack: { Screen: () => null },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -54,9 +62,10 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => useFeatureEnabledMock(featureId),
@@ -75,9 +84,7 @@ describe('PromptsSettingsHome', () => {
         const { PromptsSettingsHome } = await import('./PromptsSettingsHome');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptsSettingsHome));
-        });
+        tree = (await renderScreen(React.createElement(PromptsSettingsHome))).tree;
 
         const items = tree.root.findAllByType('Item' as any);
         const promptsItem = items.find((i: any) => i?.props?.testID === 'settings-prompts-library-prompts');

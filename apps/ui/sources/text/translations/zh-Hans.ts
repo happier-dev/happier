@@ -6,6 +6,18 @@
  */
 
 import type { TranslationStructure } from "../_types";
+import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
+import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
+import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
+import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
+import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
+import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
+
+const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions['zh-Hans'];
+const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions['zh-Hans'];
+const acpCatalogTranslationExtension = acpCatalogTranslationExtensions['zh-Hans'];
+const memoryEmbeddingsTranslationExtension = memoryEmbeddingsTranslationExtensions['zh-Hans'];
 
 /**
  * Chinese plural helper function
@@ -27,16 +39,152 @@ function plural({
 export const zhHans: TranslationStructure = {
   tabs: {
     // Tab navigation labels
-    inbox: "好友",
+    inbox: "收件箱",
+    friends: "好友",
     sessions: "终端",
     settings: "设置",
   },
 
   inbox: {
     // Inbox screen
-    emptyTitle: "暂无好友动态",
-    emptyDescription: "添加好友以共享会话，并在这里查看动态。",
+    emptyTitle: "已全部处理完",
+    emptyDescription: "目前没有待处理的请求或更新。",
+    approvals: "审批",
+    permissions: "权限",
     updates: "动态",
+  },
+
+  approvals: {
+    title: "审批",
+    untitled: "未命名审批",
+    details: "详情",
+    fieldStatus: "状态",
+    fieldAction: "动作",
+    approve: "批准",
+    reject: "拒绝",
+    loadError: "加载审批失败。",
+    decisionError: "更新审批失败。",
+    confirmApproveTitle: "批准请求？",
+    confirmApproveBody: "这将执行所请求的动作。",
+    confirmRejectTitle: "拒绝请求？",
+    confirmRejectBody: "这将拒绝该请求。",
+    status: {
+      open: "待处理",
+      approved: "已批准",
+      rejected: "已拒绝",
+      executed: "已执行",
+      failed: "失败",
+      canceled: "已取消",
+    },
+  },
+
+  promptLibrary: {
+    sections: "分区",
+    library: "资料库",
+    librarySubtitle: "管理提示词与技能",
+    create: "创建",
+    newPrompt: "新建提示词",
+    newSkill: "新建技能",
+    prompts: "提示词",
+    skills: "技能",
+    untitledPrompt: "未命名提示词",
+    untitledSkill: "未命名技能",
+    origin: "来源",
+    schema: "结构",
+    editPrompt: "编辑提示词",
+    editSkill: "编辑技能",
+    titlePlaceholder: "标题",
+	    saveError: "保存失败。",
+	    templates: "模板",
+	    templatesSubtitle: "创建并管理 / 斜杠模板",
+	    newTemplate: "新建模板",
+	    stacks: "堆栈",
+	    stacksSubtitle: "将提示词与技能附加到会话和个人资料",
+        externalAssets: "外部资源",
+        externalAssetsSubtitle: "从已连接的机器导入技能和提示词资源",
+        externalAssetsContext: "发现上下文",
+        externalAssetsMachine: "机器",
+        externalAssetsScope: "范围",
+        externalAssetsProjectScope: "项目",
+        externalAssetsProjectScopeSubtitle: "在工作区路径中发现资源",
+        externalAssetsUserScope: "用户",
+        externalAssetsUserScopeSubtitle: "在用户级文件夹中发现资源",
+        externalAssetsProjectDirectory: "项目目录",
+        externalAssetsProjectDirectoryRequired: "导入或导出项目范围资源前，请先选择项目目录。",
+        externalAssetsRefresh: "刷新外部资源",
+        externalAssetsRefreshSubtitle: "为所选机器和范围发现提示词资源",
+        externalAssetsTypes: "资源类型",
+        externalAssetsNoMachine: "选择一台机器以继续。",
+        externalAssetsNoTypes: "没有外部资源类型",
+        externalAssetsNoTypesSubtitle: "这台机器尚未暴露任何提示词资源适配器。",
+        externalAssetsNoItems: "未找到外部资源",
+        externalAssetsNoItemsSubtitle: "选择机器、范围或目录后请刷新。",
+        externalAssetsUnsupportedImport: "这里只能导入基于 bundle 的提示词资源。",
+        externalAssetsExportTitle: "导出外部资源",
+        externalAssetsExportOptions: "导出选项",
+        externalAssetsExportType: "资源类型",
+        externalAssetsExportAction: "导出",
+        externalAssetsExportConfirmTitle: "导出外部资源？",
+        externalAssetsExportConfirmBody: "这会将所选提示资源写入外部位置。",
+        externalAssetsExportTargetPathPlaceholder: "目标路径（例如 review/code.md）",
+        externalAssetsExportTargetNamePlaceholder: "目标名称（例如 reviewer）",
+        externalAssetsDeleteConfirmTitle: "删除外部资源？",
+        externalAssetsDeleteConfirmBody: "这会从磁盘删除已链接的外部资源。",
+        externalAssetsLinkedTitle: "已链接的外部资源",
+        registries: "注册表",
+        registriesSubtitle: "浏览技能注册表并将 bundle 导入库中",
+        registriesContext: "注册表上下文",
+        registriesNoMachine: "选择一台机器以继续。",
+        registriesRefresh: "刷新注册表",
+        registriesRefreshSubtitle: "为所选机器加载内置和已配置的注册表来源",
+        registriesAddGitSource: "添加 Git 来源",
+        registriesAddGitSourceAction: "保存 Git 来源",
+        registriesAddGitSourceActionSubtitle: "将此仓库保存为注册表来源",
+        registriesAddGitSourceError: "请同时填写标题和仓库 URL。",
+        registriesSourceTitlePlaceholder: "来源标题",
+        registriesSourceUrlPlaceholder: "仓库 URL 或本地路径",
+        registriesSources: "来源",
+        registriesNoSources: "未加载任何注册表来源",
+        registriesNoSourcesSubtitle: "添加 Git 来源或刷新以加载内置来源。",
+        registriesItems: "注册表条目",
+        registriesNoItems: "没有注册表条目",
+        registriesNoItemsSubtitle: "选择一个来源以扫描可用技能。",
+	    editTemplate: "编辑模板",
+    tokenPlaceholder: "标记（例如 /daily）",
+    codingStack: "编码堆栈",
+    codingStackSubtitle: "应用于编码会话",
+    voiceStack: "语音堆栈",
+    voiceStackSubtitle: "应用于 Happier Voice",
+    profileStacks: "个人资料堆栈",
+    profileStacksSubtitle: ({ count }: { count: number }) => `${count} 个个人资料`,
+    profileStackCount: ({ count }: { count: number }) => `${count} 项`,
+    noProfilesTitle: "没有个人资料",
+    noProfilesSubtitle: "创建个人资料以使用个人资料堆栈。",
+    stackEntries: "堆栈条目",
+    stackPlacementSkill: "技能说明",
+    stackPlacementComposer: "插入到编辑器",
+    stackPlacementSystem: "追加到系统",
+    stackEmptyTitle: "此堆栈为空",
+    stackEmptySubtitle: "添加提示词或技能以开始。",
+    actions: "操作",
+    addToStack: "添加到堆栈",
+    stackAlreadyContainsPrompt: "此堆栈已包含该项。",
+    stackPickerNoPrompts: "暂无提示词。",
+    stackPickerNoSkills: "暂无技能。",
+    removeFromStack: "从堆栈移除？",
+    removeFromStackConfirm: "这将从堆栈移除该项。",
+    deleteTemplate: "删除模板？",
+    deleteTemplateConfirm: "这将删除该模板。",
+    templateTokenReserved: "该标记已保留。",
+    templateTokenConflictsWithAction: "该标记与内置操作冲突。",
+    templateTokenDuplicate: "该标记已被使用。",
+    templateTarget: "目标提示词",
+    templateBehavior: "行为",
+    templateBehaviorInsert: "插入",
+    templateBehaviorInsertAndSend: "插入并发送",
+    templateAllowArgs: "允许参数",
+    templateAllowArgsSubtitle: "启用后，标记后的文本会作为 $args 传入。",
+        ...promptLibraryUxRefinementTranslationExtension.zhHans,
   },
 
   runs: {
@@ -88,6 +236,15 @@ export const zhHans: TranslationStructure = {
       sendLabel: "发送",
       sendingLabel: "正在发送…",
       failedToSend: "发送失败",
+    },
+    delivery: {
+      title: "发送方式",
+      cardDelivery: ({ label }: { label: string }) => `发送方式：${label}`,
+      steerLabel: "引导",
+      steerHelp: "在运行忙碌时发送引导消息（若支持）。",
+      interruptLabel: "中断",
+      interruptHelp: "取消当前回合，然后作为新回合发送你的消息。",
+      promptLabel: "提示",
     },
   },
 
@@ -144,7 +301,7 @@ export const zhHans: TranslationStructure = {
         timezoneOptional: "时区（可选）",
       },
       placeholders: {
-        name: "计划会话",
+        name: "每日摘要",
         description: "这个自动化应该做什么？",
         everyMinutes: "60",
         cronExpression: "*/5 * * * *",
@@ -249,6 +406,7 @@ export const zhHans: TranslationStructure = {
     // Simple string constants
     add: "添加",
     edit: "编辑",
+    duplicate: "复制",
     actions: "操作",
     moreActions: "更多操作",
     moreActionsHint: "打开包含更多操作的菜单",
@@ -258,13 +416,17 @@ export const zhHans: TranslationStructure = {
     authenticate: "认证",
     save: "保存",
     saveAs: "另存为",
-    error: "错误",
-    success: "成功",
-    ok: "确定",
-    continue: "继续",
-    back: "返回",
-    start: "开始",
-    create: "创建",
+		    error: "错误",
+		    success: "成功",
+		    info: "信息",
+		    comingSoon: "即将推出",
+		    ok: "确定",
+		    continue: "继续",
+		    back: "返回",
+        previous: "上一个",
+        next: "下一个",
+	    start: "开始",
+	    create: "创建",
     rename: "重命名",
     remove: "移除",
     update: "更新",
@@ -289,6 +451,7 @@ export const zhHans: TranslationStructure = {
     copied: "已复制",
     copy: "复制",
     copyWithLabel: ({ label }: { label: string }) => `复制 ${label}`,
+    paste: "粘贴",
     expand: "展开",
     collapse: "收起",
     command: "命令",
@@ -318,6 +481,8 @@ export const zhHans: TranslationStructure = {
     disabled: "已禁用",
     done: "完成",
     reorder: "重新排序",
+    moveUp: "上移",
+    moveDown: "下移",
     none: "—",
     unavailable: "不可用",
     dialog: "对话框",
@@ -613,7 +778,20 @@ export const zhHans: TranslationStructure = {
       machineLabel: ({ machine }: { machine: string }) => `机器：${machine}`,
       searchPlaceholder: "搜索记忆",
       enableLocalSearch: "启用本地记忆搜索",
+      emptyResults: 'No memory results yet',
     },
+        status: {
+            title: 'Local index status',
+            diskUsageTitle: 'Disk usage',
+            disabled: 'Local memory search is disabled on this machine',
+            readyLight: 'Light index ready on this machine',
+            readyDeep: 'Deep index ready on this machine',
+            unavailableLight: 'Light index is not ready on this machine yet',
+            unavailableDeep: 'Deep index is not ready on this machine yet',
+            diskUsage: ({ lightMb, deepMb }: { lightMb: number; deepMb: number }) => `Light ${lightMb} MB · Deep ${deepMb} MB`,
+            diskUsageUnavailable: 'Disk usage unavailable',
+            ...memoryEmbeddingsTranslationExtension.status,
+        },
     machine: {
       title: "设备",
       changeTitle: "更换设备",
@@ -668,14 +846,10 @@ export const zhHans: TranslationStructure = {
       },
     },
     embeddings: {
-      groupTitle: "嵌入",
-      groupFooter:
-        "可选：下载本地模型，以在使用深度模式时提升语义匹配效果。",
-      enableTitle: "启用嵌入",
-      enableSubtitle: "提升深度搜索的排序效果（首次使用时会下载模型）",
       modelTitle: "嵌入模型",
       promptBody: "输入本地 transformers 模型 id。",
       modelPlaceholder: "Xenova/all-MiniLM-L6-v2",
+      ...memoryEmbeddingsTranslationExtension.embeddings,
     },
   },
 
@@ -743,7 +917,7 @@ export const zhHans: TranslationStructure = {
       },
     },
     settings: {
-      groupTitle: "子代理",
+      groupTitle: "Subagents",
       disabled: {
         footer:
           "Execution runs 已禁用。请在 设置 → 功能 中启用 Execution Runs 以使用委派指引。",
@@ -754,6 +928,32 @@ export const zhHans: TranslationStructure = {
       },
       footer:
         "规则会追加到系统提示词中，让主代理知道你希望何时以及如何启动子代理运行。",
+      overview: {
+        groupTitle: "Overview",
+        footer:
+          "Use this page to configure Subagent guidance and jump to related provider, backend, and session settings.",
+        explainerTitle: "What this page controls",
+        explainerSubtitle:
+          "Delegation guidance for Subagents, plus links to provider-specific subagent settings.",
+        happierStatusTitle: "Subagents",
+        happierStatusEnabledSubtitle:
+          "Enabled. You can launch Subagents from supported sessions.",
+        happierStatusDisabledSubtitle:
+          "Disabled. Open Features settings to enable Subagents.",
+      },
+      related: {
+        groupTitle: "Related settings",
+        footer:
+          "Subagent launch and control also depend on session behavior, providers, and configured backends.",
+        sessionTitle: "Session behavior",
+        sessionSubtitle:
+          "Message sending, busy steering, and replay/resume behavior.",
+        providersTitle: "Providers",
+        providersSubtitle:
+          "Provider-specific auth, runtime, and agent settings.",
+        backendsTitle: "ACP catalog",
+        backendsSubtitle: "Configured backends and custom launch targets.",
+      },
       enableInjection: {
         title: "启用指引注入",
       },
@@ -785,11 +985,39 @@ export const zhHans: TranslationStructure = {
         footer: "这是追加到系统提示词中的（截断后的）文本。",
         systemPromptLabel: "系统提示词（已追加）",
       },
+      providers: {
+        claude: {
+          title: "Claude team agents",
+          footer: "Provider-specific subagent behavior stays owned by the provider settings screen.",
+          openTitle: "Claude subagent options",
+          openSubtitle: "Manage Agent Teams and other Claude-specific subagent behavior.",
+        },
+      },
     },
   },
 
   settings: {
     title: "设置",
+
+    // Main settings hub category groups
+    profileAndAccount: '个人资料与账号',
+    aiAndAgents: 'AI 与代理',
+    sessionsBehavior: '会话与行为',
+    general: '常规',
+    filesAndSourceControl: '文件与源代码管理',
+    system: '系统',
+
+    // Renamed / promoted items
+    sessions: '会话',
+    transcript: '会话记录',
+    transcriptSubtitle: '思考、工具渲染与代码显示',
+    permissions: '权限',
+    permissionsSubtitle: '权限模式与批准行为',
+    filesSourceControl: '文件与源代码管理',
+    filesSourceControlSubtitle: '编辑器、差异对比与源代码管理集成',
+    workspaces: '工作区',
+    workspacesSubtitle: '管理已关联的工作区、位置和签出',
+
     connectedAccounts: "已连接账户",
     connectedAccountsDisabled: "已禁用已连接的服务。",
     connectAccount: "连接账户",
@@ -801,6 +1029,16 @@ export const zhHans: TranslationStructure = {
     accountSubtitle: "管理您的账户详情",
     addYourPhone: "添加手机",
     addYourPhoneSubtitle: "显示二维码以便在手机上登录",
+    addMachine: "Add a machine",
+    machineSetupCurrentMachineTitle: "This computer",
+    machineSetupCurrentMachineSubtitle: "Bootstrap Happier directly on this device",
+    machineSetupSshMachineTitle: "Remote machine over SSH",
+    machineSetupSshMachineSubtitle: "Connect a dev box, VM, or server with SSH",
+    machineSetupStagesTitle: "What happens",
+    machineSetupStageConnect: "Connect and validate access",
+    machineSetupStageInstall: "Install Happier and pair the machine",
+    machineSetupStageFinish: "Finish setup in the built-in terminal",
+    machineSetupComingSoon: "Machine bootstrap is coming soon.",
     appearance: "外观",
     appearanceSubtitle: "自定义应用外观",
     voiceAssistant: "语音助手",
@@ -826,7 +1064,7 @@ export const zhHans: TranslationStructure = {
     actionsSettingsAboutSubtitle:
       "可全局、按界面（UI/语音/MCP）以及按展示位置（在界面中出现的位置）启用或禁用操作。被禁用的操作在运行时会以安全方式（fail-closed）被阻止。",
     aboutFooter:
-      "Happier Coder 是一个 Codex 和 Claude Code 移动客户端。它采用端到端加密，您的账户仅存储在本地设备上。与 Anthropic 无关联。",
+      "Happier Coder 是一个 Codex 和 Claude Code 移动客户端。默认启用端到端加密，并可在其他设备上恢复您的账户。与 Anthropic 无关联。",
     whatsNew: "更新日志",
     whatsNewSubtitle: "查看最新更新和改进",
     reportIssue: "报告问题",
@@ -853,14 +1091,164 @@ export const zhHans: TranslationStructure = {
     session: "会话",
     sessionSubtitleTmuxEnabled: "已启用 Tmux",
     sessionSubtitleMessageSendingAndTmux: "消息发送与 tmux",
+        actionsSubtitle: 'Choose where every action appears across the app, voice, and integrations.',
+    prompts: "提示词与技能",
+    promptsSubtitle: "提示词库、模板和堆栈",
     servers: "服务器",
-    serversSubtitle: "已保存的服务器、分组和默认设置",
-    systemStatus: "系统状态",
-    systemStatusSubtitle: "服务器、账号、机器、守护进程",
+		    serversSubtitle: "已保存的服务器、分组和默认设置",
+			    systemStatus: "系统状态",
+			    systemStatusSubtitle: "服务器、账号、机器、守护进程",
+		    mcpServers: "MCP servers",
+		    mcpServersSubtitle: "Manage MCP servers and bindings",
+		    mcpServersComingSoon: "MCP servers settings are coming soon.",
+		    mcpServersStrictMode: "Strict mode",
+		    mcpServersStrictModeSubtitle: "Fail closed when MCP server settings are invalid.",
+		    mcpServersCatalogTitle: "Catalog",
+		    mcpServersUnnamed: "Unnamed server",
+		    mcpServersEmptyTitle: "No MCP servers yet",
+		    mcpServersEmptySubtitle: "Add MCP servers to use them in sessions.",
+		    mcpServersAddServer: "Add server",
+		    mcpServersAddServerSubtitle: "Create a new MCP server entry",
+		    mcpServersEditorTitle: "MCP server",
+		    mcpServersPickSecretTitle: "Pick a secret",
+		    mcpServersPickSecretNoneSubtitle: "No secret selected",
+		    mcpServersEditorBasics: "Basics",
+		    mcpServersEditorStdio: "Stdio",
+		    mcpServersEditorRemote: "Remote",
+		    mcpServersEditorBindings: "Bindings",
+		    mcpServersFieldName: "Name",
+		    mcpServersFieldTitle: "Title",
+		    mcpServersFieldTitlePlaceholder: "Optional display title",
+		    mcpServersFieldTransport: "Transport",
+		    mcpServersFieldCommand: "Command",
+		    mcpServersFieldArgs: "Args",
+		    mcpServersFieldUrl: "URL",
+		    mcpServersBindingTitle: "Binding",
+		    mcpServersBindingEnabled: "Enabled",
+		    mcpServersBindingEnabledSubtitle: "Toggle this binding on or off",
+		    mcpServersBindingTarget: "Target",
+		    mcpServersBindingTargetSubtitle: "Where this server is available",
+		    mcpServersBindingMachine: "Machine",
+		    mcpServersBindingMachineSubtitle: "Select a machine",
+		    mcpServersBindingDeleteSubtitle: "Remove this binding",
+		    mcpServersBindingTargetAllMachines: "All machines",
+		    mcpServersBindingTargetMachine: ({ machine }: { machine: string }) => `Machine: ${machine}`,
+		    mcpServersBindingTargetWorkspace: ({ machine, path }: { machine: string; path: string }) =>
+		      `Workspace: ${machine} • ${path}`,
+		    mcpServersBindingTargetAllMachinesSubtitle: "Enable on every machine",
+		    mcpServersBindingTargetMachineTitle: "Machine",
+		    mcpServersBindingTargetMachineSubtitle: "Enable on a single machine",
+		    mcpServersBindingTargetWorkspaceTitle: "Workspace",
+		    mcpServersBindingTargetWorkspaceSubtitle: "Enable only for a specific workspace path",
+		    mcpServersValidationFailed: "MCP server settings are invalid.",
+		    mcpServersServerNotFound: "Server not found.",
+		    mcpServersBindingsEmptyTitle: "No bindings yet",
+		    mcpServersBindingsEmptySubtitle: "Add a binding to use this server.",
+		    mcpServersAddBinding: "Add binding",
+		    mcpServersAddBindingSubtitle: "Enable this server for machines or workspaces",
+		    mcpServersSaveDisabledSubtitle: "No changes to save.",
+		    mcpServersDeleteTitle: "Delete MCP server?",
+		    mcpServersDeleteConfirm: ({ name }: { name: string }) => `Delete "${name}"?`,
+		    mcpServersDeleteSubtitle: "Remove this server from your catalog",
+		    mcpServersNoMachineSelected: "No machine selected",
+		    mcpServersDetectedTitle: "Detected from provider configs",
+		    mcpServersDetectedMachineTitle: "Machine",
+		    mcpServersDetectedRefreshTitle: "Refresh detected servers",
+		    mcpServersDetectedRefreshSubtitle: "Scan provider config files on this machine",
+		    mcpServersDetectedWarningsTitle: "Detection warnings",
+		    mcpServersDetectedEmptyTitle: "No detected MCP servers",
+		    mcpServersDetectedEmptySubtitle: "Click refresh to scan Claude/Codex/OpenCode configs.",
+		    mcpServersImportTitle: "Import MCP server?",
+		    mcpServersImportConfirm: ({ provider, name }: { provider: string; name: string }) => `Import "${name}" from ${provider}?`,
+		    mcpServersImportAction: "Import",
+		    mcpServersBindingSummaryAllMachines: "All machines",
+		    mcpServersBindingSummaryMachines: ({ count }: { count: number }) => `${count} machine${count === 1 ? "" : "s"}`,
+		    mcpServersBindingSummaryWorkspaces: ({ count }: { count: number }) => `${count} workspace${count === 1 ? "" : "s"}`,
+		    mcpServersBindingSummaryNone: "Not bound",
+		    mcpServersPickWorkspaceTitle: "Pick a workspace root",
+		    mcpServersBindingWorkspaceRootTitle: "Workspace root",
+		    mcpServersBindingOverridesTitle: "Overrides",
+		    mcpServersBindingOverridesNone: "No overrides",
+		    mcpServersBindingOverridesCount: ({ count }: { count: number }) => `${count} override${count === 1 ? "" : "s"}`,
+		    mcpServersEditorEnv: "Environment",
+		    mcpServersEnvAdd: "Add env var",
+		    mcpServersEnvAddSubtitle: "Set environment variables for this server",
+		    mcpServersEnvEmptyTitle: "No env vars",
+		    mcpServersEnvEmptySubtitle: "Add env vars or use Saved Secrets.",
+		    mcpServersEditorHeaders: "Headers",
+		    mcpServersHeadersAdd: "Add header",
+		    mcpServersHeadersAddSubtitle: "Set HTTP/SSE headers for this server",
+		    mcpServersHeadersEmptyTitle: "No headers",
+		    mcpServersHeadersEmptySubtitle: "Add headers if your server requires auth.",
+		    mcpServersEnvEditorTitle: "Edit env var",
+		    mcpServersHeadersEditorTitle: "Edit header",
+		    mcpServersEnvKeyLabel: "Env var name",
+		    mcpServersEnvKeyPlaceholder: "API_KEY",
+		    mcpServersHeaderKeyLabel: "Header name",
+		    mcpServersHeaderKeyPlaceholder: "Authorization",
+		    mcpServersValueSourceTitle: "Value source",
+		    mcpServersArgsPlaceholder: "--flag\nvalue",
+		    mcpServersValueSourceLiteral: "Literal",
+		    mcpServersValueSourceLiteralSubtitle: "Store a value (supports ${VAR} templates)",
+		    mcpServersValueSourceSavedSecret: "Saved secret",
+		    mcpServersValueSourceSavedSecretNamed: ({ name }: { name: string }) => `Saved secret: ${name}`,
+		    mcpServersValueSourceSavedSecretSubtitle: "Reference a Saved Secret",
+		    mcpServersValueLiteralLabel: "Value",
+		    mcpServersValueLiteralPlaceholder: "Value or ${ENV_VAR}",
+		    mcpServersValueSecretLabel: "Saved secret",
+		    mcpServersValueSecretSelect: "Select secret",
+		    mcpServersValueSecretSelectSubtitle: "Choose a Saved Secret",
+		    mcpServersKeyInvalid: "Key is invalid.",
+		    mcpServersKeyAlreadyExists: "Key already exists.",
+		    mcpServersOverridesStdioTitle: "Stdio overrides",
+		    mcpServersOverridesCommandTitle: "Override command",
+		    mcpServersOverridesCommandSubtitle: "Use a different command for this binding",
+		    mcpServersOverridesArgsTitle: "Override args",
+		    mcpServersOverridesArgsSubtitle: "Use different args for this binding (blank = empty args)",
+		    mcpServersOverridesRemoteTitle: "Remote overrides",
+		    mcpServersOverridesUrlTitle: "Override URL",
+		    mcpServersOverridesUrlSubtitle: "Use a different URL for this binding",
+		    mcpServersOverridesEnvPatchTitle: "Env patch",
+		    mcpServersOverridesEnvPatchEmptyTitle: "No env overrides",
+		    mcpServersOverridesEnvPatchEmptySubtitle: "Add overrides or deletions for env vars.",
+		    mcpServersOverridesHeadersPatchTitle: "Headers patch",
+		    mcpServersOverridesHeadersPatchEmptyTitle: "No header overrides",
+		    mcpServersOverridesHeadersPatchEmptySubtitle: "Add overrides or deletions for headers.",
+		    mcpServersOverridesDeleteValue: "Delete this key for this binding",
+		    mcpServersOverridesEnvPatchAddTitle: "Add env override",
+		    mcpServersOverridesEnvPatchAddSubtitle: "Set or override an env var for this binding",
+		    mcpServersOverridesEnvPatchDeleteTitle: "Delete env key",
+		    mcpServersOverridesEnvPatchDeleteSubtitle: "Remove an env var for this binding",
+		    mcpServersOverridesHeadersPatchAddTitle: "Add header override",
+		    mcpServersOverridesHeadersPatchAddSubtitle: "Set or override a header for this binding",
+		    mcpServersOverridesHeadersPatchDeleteTitle: "Delete header key",
+		    mcpServersOverridesHeadersPatchDeleteSubtitle: "Remove a header for this binding",
+		    mcpServersOverridesDeleteEnvTitle: "Delete env key",
+		    mcpServersOverridesDeleteEnvPrompt: "Enter the env var name to delete for this binding.",
+		    mcpServersOverridesDeleteHeaderTitle: "Delete header key",
+		    mcpServersOverridesDeleteHeaderPrompt: "Enter the header name to delete for this binding.",
+		    mcpServersOverridesCommandRequired: "Command override is enabled but empty.",
+		    mcpServersOverridesUrlRequired: "URL override is enabled but empty.",
+		    mcpServersTestTitle: "Test",
+		    mcpServersTestFooter: "Runs on the selected machine. No secrets are shown in results.",
+		    mcpServersTestMachineTitle: "Test on machine",
+		    mcpServersTestBindingTitle: "Use binding",
+		    mcpServersTestNoBinding: "No binding",
+		    mcpServersTestNoBindingSubtitle: "Test without binding overrides",
+		    mcpServersTestDirectoryTitle: "Working directory",
+		    mcpServersTestDirectorySubtitle: "Tap to set a directory",
+		    mcpServersTestDirectoryPrompt: "Enter the working directory for the test.",
+		    mcpServersTestRunTitle: "Test server",
+		    mcpServersTestRunSubtitle: "Connect and list tools",
+		    mcpServersTestResultOkTitle: "Test succeeded",
+		    mcpServersTestResultOkSubtitle: ({ toolCount, durationMs }: { toolCount: number; durationMs: number }) => `${toolCount} tools · ${durationMs}ms`,
+		    mcpServersTestResultErrorTitle: "Test failed",
+        ...mcpServersUxTranslationExtension,
+        ...acpCatalogTranslationExtension.settings,
 
-    // Dynamic settings messages
-    accountConnected: ({ service }: { service: string }) =>
-      `已连接 ${service} 账户`,
+		    // Dynamic settings messages
+		    accountConnected: ({ service }: { service: string }) =>
+		      `已连接 ${service} 账户`,
     machineStatus: ({
       name,
       status,
@@ -868,19 +1256,19 @@ export const zhHans: TranslationStructure = {
       name: string;
       status: "online" | "offline";
     }) => `${name} ${status === "online" ? "在线" : "离线"}`,
-  featureToggled: ({
-      feature,
-      enabled,
-    }: {
-      feature: string;
-      enabled: boolean;
-    }) => `${feature} 已${enabled ? "启用" : "禁用"}`,
-  },
+		  featureToggled: ({
+		      feature,
+		      enabled,
+		    }: {
+		      feature: string;
+		      enabled: boolean;
+		    }) => `${feature} 已${enabled ? "启用" : "禁用"}`,
+		  },
 
-  systemStatus: {
-    sections: {
-      appHealth: "应用与同步状态",
-      currentServer: "当前服务器",
+	  systemStatus: {
+	    sections: {
+	      appHealth: "应用与同步状态",
+	      currentServer: "当前服务器",
       identity: "已登录身份",
       configuredServers: "已配置服务器",
       machinesActiveServer: "机器（当前服务器）",
@@ -1315,22 +1703,15 @@ export const zhHans: TranslationStructure = {
         promptMessage: "示例：25MB 为 26214400。",
         invalidValueMessage: "请输入 1024 到 1073741824 之间的数字。",
       },
-      uploadTtl: {
-        title: "上传 TTL（毫秒）",
-        promptTitle: "上传 TTL（毫秒）",
-        promptMessage: "上传在过期前可保持空闲的时间。",
-        invalidValueMessage: "请输入 5000 到 3600000 之间的数字。",
-      },
-      chunkSize: {
-        title: "首选分块大小（字节）",
-        promptTitle: "首选分块大小（字节）",
-        promptMessage: "CLI 可能会将其限制在安全范围内。",
-        invalidValueMessage: "请输入 4096 到 1048576 之间的数字。",
-      },
     },
   },
 
   settingsSourceControl: {
+  title: '文件与源代码管理',
+  editor: '编辑器',
+  editorFooter: '配置文件编辑器的行为。',
+  editorAutoSave: '自动保存',
+  editorAutoSaveDescription: '编辑后自动保存文件。',
     commitStrategy: {
       title: "提交策略",
       footer:
@@ -1623,6 +2004,10 @@ export const zhHans: TranslationStructure = {
     title: "AI 提供商设置",
     entrySubtitle: "配置提供商专属选项",
     footer: "配置提供商专属选项。这些设置可能会影响会话行为。",
+      configuration: '配置',
+      cliConnection: 'CLI 连接',
+      capabilities: '能力',
+      models: '模型',
     providerSubtitle: "提供商专属设置",
     stateEnabled: "已启用",
     stateDisabled: "已禁用",
@@ -1643,8 +2028,6 @@ export const zhHans: TranslationStructure = {
     localControlTitle: "本地控制",
     resumeSupportSupported: "支持",
     resumeSupportSupportedExperimental: "支持（实验）",
-    resumeSupportRuntimeGatedAcpLoadSession:
-      "通过 ACP loadSession 进行运行时门控",
     resumeSupportNotSupported: "不支持",
     sessionModeNone: "无 ACP 模式",
     sessionModeAcpPolicyPresets: "ACP 策略预设",
@@ -1676,6 +2059,20 @@ export const zhHans: TranslationStructure = {
     installSetupTitle: "安装 / 设置",
     installInfoSeeSetupGuide: "查看设置指南",
     installInfoUseProviderCliInstaller: "使用提供商的 CLI 安装器",
+    cliSourcePreference: {
+      title: "CLI 来源偏好",
+      subtitle: "当系统 CLI 和 Happier 管理安装同时存在时，选择优先使用哪一个。",
+      options: {
+        systemFirst: {
+          title: "优先系统安装",
+          subtitle: "优先使用这台机器上已安装的 CLI。",
+        },
+        managedFirst: {
+          title: "优先托管安装",
+          subtitle: "优先使用 Happier 为此提供商安装的 CLI。",
+        },
+      },
+    },
     cliInstaller: {
       installTitle: ({ provider }: { provider: string }) => `安装 ${provider} CLI`,
       reinstallTitle: ({ provider }: { provider: string }) =>
@@ -1683,6 +2080,13 @@ export const zhHans: TranslationStructure = {
       autoInstallUnavailable: "此机器不支持自动安装。",
       installSubtitle: "在所选机器上安装提供商 CLI（尽力而为）。",
       reinstallSubtitle: "即使已安装 CLI 也会重新运行安装器。",
+      confirmInstallTitle: ({ provider }: { provider: string }) => `安装 ${provider} CLI？`,
+      confirmReinstallTitle: ({ provider }: { provider: string }) =>
+        `重新安装 ${provider} CLI？`,
+      confirmBody: ({ provider }: { provider: string }) =>
+        `这会在所选机器上运行 ${provider} 的安装命令。仅在你信任该提供商时继续。`,
+      confirmInstallConfirm: "安装",
+      confirmReinstallConfirm: "重新安装",
       noMachineSelected: "未选择机器。",
       installNotSupported: "此机器不支持安装。",
       installFailed: "安装失败。",
@@ -1690,15 +2094,234 @@ export const zhHans: TranslationStructure = {
       logPath: ({ logPath }: { logPath: string }) => `日志：${logPath}`,
     },
     setupGuideUrlTitle: "设置指南 URL",
+    authentication: {
+      title: "认证",
+      footer: "查看本地 CLI 认证状态，并在支持时启动登录。",
+      terminalTitle: "提供商登录终端",
+      logInTitle: "登录",
+      logInSubtitle: "打开终端并在此机器上运行提供商登录流程。",
+      reauthenticateTitle: "重新认证",
+      reauthenticateSubtitle: "打开终端并在此机器上刷新提供商登录。",
+      checkNowTitle: "立即检查",
+      checkNowSubtitle: "刷新检测到的本地认证状态。",
+      statusTitle: "状态",
+      loggedInAsTitle: "登录账号",
+      methodTitle: "认证方式",
+      sourceTitle: "凭据来源",
+      reasonTitle: "问题",
+      lastCheckedTitle: "上次检查",
+      stateUnknown: "未知",
+      stateLoggedIn: "已登录",
+      stateLoggedOut: "已登出",
+      methods: {
+        apiKeyEnv: "API 密钥环境变量",
+        authTokenEnv: "认证令牌环境变量",
+        credentialsFile: "凭据文件",
+        oauthCli: "CLI OAuth 登录",
+        configFile: "配置文件",
+        gcloudAdc: "Google Cloud 应用默认凭据",
+        unknown: "未知",
+      },
+      reasons: {
+        missingCredentials: "缺少凭据",
+        expired: "凭据已过期",
+        cliMissing: "未安装 CLI",
+        probeFailed: "状态检查失败",
+        timeout: "状态检查超时",
+        unsupported: "不支持本地认证",
+        interactiveBlocked: "交互式登录被阻止",
+        notConfigured: "未配置",
+      },
+      sources: {
+        environment: "环境",
+        file: "文件",
+        command: "命令",
+        mixed: "混合",
+      },
+    },
     connectedServiceTitle: "已连接服务",
     notFoundTitle: "未找到提供商",
     notFoundSubtitle: "该提供商没有设置页面。",
     noOptionsAvailable: "没有可用选项",
     invalidNumber: "无效数字",
     invalidJson: "无效 JSON",
+    plugins: {
+            claude: {
+                title: "Claude（远程）",
+                sections: {
+                    claudeCodeExperiments: {
+                        title: "Claude Code 实验功能",
+                        footer: "这些设置同时适用于由 Happier 启动的 Claude 本地会话（终端）和远程会话（Agent SDK）。"
+                    },
+                    claudeRemoteSdk: {
+                        title: "Claude Agent SDK（远程模式）",
+                        footer: "远程模式会在你的机器上运行 Claude，但由 Happier UI 控制。本地模式则是终端中的 Claude Code TUI。这些设置仅影响远程模式。"
+                    }
+                },
+                fields: {
+                    claudeCodeExperimentalAgentTeamsEnabled: {
+                        title: "强制启用 Agent Teams",
+                        subtitle: "在所有由 Happier 启动的 Claude 会话中启用 Claude Code 的实验性 Agent Teams（代理群）功能。"
+                    },
+                    claudeRemoteAgentSdkEnabled: {
+                        title: "使用 Agent SDK（远程）",
+                        subtitle: "在远程模式下使用官方 @anthropic-ai/claude-agent-sdk。"
+                    },
+                    claudeRemoteSettingSourcesV2: {
+                        title: "设置来源",
+                        subtitle: "控制加载哪些 Claude 设置。",
+                        options: {
+                            user: {
+                                title: "用户",
+                                subtitle: "加载 Claude 的用户全局配置。"
+                            },
+                            project: {
+                                title: "项目",
+                                subtitle: "加载仓库设置（包括 CLAUDE.md）。"
+                            },
+                            local: {
+                                title: "本地",
+                                subtitle: "加载仅本地的覆盖项。"
+                            }
+                        }
+                    },
+                    claudeRemoteIncludePartialMessages: {
+                        title: "部分流式更新",
+                        subtitle: "当 Claude 仍在回复时显示助手的部分输出。"
+                    },
+                    claudeLocalPermissionBridgeEnabled: {
+                        title: "实验性：本地权限桥接",
+                        subtitle: "将 Claude 本地模式的权限请求转发到 Happier，以便你可以在界面中批准或拒绝。"
+                    },
+                    claudeLocalPermissionBridgeWaitIndefinitely: {
+                        title: "保持请求打开直到回应",
+                        subtitle: "启用后，Happier 会一直保持 Claude 本地权限请求处于待处理状态，直到你在界面中批准或拒绝。"
+                    },
+                    claudeLocalPermissionBridgeTimeoutSeconds: {
+                        title: "可选权限超时（秒）",
+                        subtitle: "仅在关闭无限等待时使用。超过该时间后，Happier 会回退到 Claude 的终端提示。"
+                    },
+                    claudeRemoteEnableFileCheckpointing: {
+                        title: "文件检查点 + /rewind",
+                        subtitle: "启用文件检查点和 /rewind（仅文件，不回退对话）。使用 /checkpoints 查看列表，使用 /rewind --confirm 应用（开销更高）。"
+                    },
+                    claudeRemoteMaxThinkingTokens: {
+                        title: "最大思考令牌数",
+                        subtitle: "限制 Claude 的内部思考预算（null = 默认）。"
+                    },
+                    claudeRemoteDisableTodos: {
+                        title: "禁用 TODO",
+                        subtitle: "阻止 Claude 在远程模式下创建 TODO 项。"
+                    },
+                    claudeRemoteStrictMcpServerConfig: {
+                        title: "严格 MCP 服务器配置",
+                        subtitle: "如果任何 MCP 服务器配置无效则失败。"
+                    },
+                    claudeRemoteAdvancedOptionsJson: {
+                        title: "高级选项（JSON）",
+                        subtitle: "为高级用户提供的 Agent SDK 覆盖项（客户端校验）。"
+                    }
+                }
+            },
+            opencode: {
+                title: "OpenCode",
+                sections: {
+                    backendMode: {
+                        title: "后端模式",
+                        footer: "服务器模式可启用提问和原生分叉。ACP 模式是旧版兜底方案。"
+                    },
+                    server: {
+                        title: "服务器连接",
+                        footer: "留空即可使用 Happier 管理的 OpenCode 服务器生命周期。设置绝对 http(s) URL 以连接到现有 OpenCode 服务器。"
+                    }
+                },
+                fields: {
+                    opencodeBackendMode: {
+                        title: "OpenCode 后端模式",
+                        subtitle: "选择集成后端。",
+                        options: {
+                            server: {
+                                title: "服务器（推荐）",
+                                subtitle: "使用 OpenCode 服务器 API，获得更丰富的功能和更高的可靠性。"
+                            },
+                            acp: {
+                                title: "ACP（旧版）",
+                                subtitle: "通过 ACP 路由 OpenCode；功能更少。"
+                            }
+                        }
+                    },
+                    opencodeServerBaseUrl: {
+                        title: "现有 OpenCode 服务器 URL",
+                        subtitle: "用户自管 OpenCode 服务器的可选覆盖地址。"
+                    }
+                }
+            },
+            auggie: {
+                title: "Auggie"
+            },
+            copilot: {
+                title: "Copilot"
+            },
+            customAcp: {
+                title: "自定义 ACP"
+            },
+            gemini: {
+                title: "Gemini"
+            },
+            kilo: {
+                title: "Kilo"
+            },
+            kimi: {
+                title: "Kimi"
+            },
+            kiro: {
+                title: "Kiro"
+            },
+            pi: {
+                title: "Pi"
+            },
+            qwen: {
+                title: "Qwen Code"
+            },
+            codex: {
+        title: "Codex",
+        sections: {
+          backendMode: {
+            title: "路由模式",
+            footer:
+              "选择 Codex 的路由方式。App Server 是推荐的默认选项。本地/远程切换和恢复都可使用 App Server；ACP 仍可作为旧版回退方案。",
+          },
+          installOverrides: {
+            title: "安装源覆盖",
+            footer: "可选。留空以使用默认安装源。",
+          },
+        },
+        fields: {
+          codexBackendMode: {
+            title: "Codex 路由模式",
+            subtitle: "选择 App Server、ACP 或 MCP。",
+            options: {
+              appServer: {
+                title: "App Server",
+                subtitle: "推荐的官方 Codex app-server 模式",
+              },
+              acp: {
+                title: "ACP",
+                subtitle: "通过 ACP 路由 Codex（codex-acp）",
+              },
+              mcp: {
+                title: "MCP",
+                subtitle: "默认 Codex MCP 模式",
+              },
+            },
+          },
+        },
+      },
+    },
   },
 
   settingsAppearance: {
+    ...settingsAppearanceTranslationExtension,
     // Appearance settings screen
     theme: "主题",
     themeDescription: "选择您喜欢的配色方案",
@@ -1779,6 +2402,16 @@ export const zhHans: TranslationStructure = {
       xlarge: "特大",
       xxlarge: "超特大",
     },
+    itemDensity: "项目密度",
+    itemDensityDescription: "选择应用内列表行和设置项的显示大小",
+    itemDensityOptions: {
+      comfortable: "默认",
+      comfortableDescription: "使用标准行高和间距",
+      cozy: "中等",
+      cozyDescription: "在不切换到紧凑布局的情况下，使用稍微更紧凑的行间距",
+      compact: "紧凑",
+      compactDescription: "使用更紧凑的间距以在屏幕上显示更多行",
+    },
   },
 
   settingsFeatures: {
@@ -1834,6 +2467,9 @@ export const zhHans: TranslationStructure = {
     expFilesEditor: "内嵌文件编辑器",
     expFilesEditorSubtitle:
       "允许从文件浏览器直接编辑文件（Web/桌面用 Monaco，原生用 CodeMirror）",
+    expEmbeddedTerminal: "内嵌终端",
+    expEmbeddedTerminalSubtitle:
+      "在会话中打开真实终端。",
     expSessionType: "会话类型选择器",
     expSessionTypeSubtitle:
       "显示会话类型选择器（简单 vs worktree）",
@@ -1852,6 +2488,8 @@ export const zhHans: TranslationStructure = {
     expConnectedServicesQuotasSubtitle: "显示已连接服务的配额徽标与用量仪表",
     expMemorySearch: "记忆搜索",
     expMemorySearchSubtitle: "启用本地记忆搜索页面与设置",
+    expSessionsDirect: "直连会话",
+    expSessionsDirectSubtitle: "在侧边栏中列出并打开由提供方支撑的直连会话",
     expFriends: "好友",
     expFriendsSubtitle: "启用好友功能（收件箱标签页与会话分享）",
     webFeatures: "Web 功能",
@@ -1920,6 +2558,12 @@ export const zhHans: TranslationStructure = {
       sessionNotFound: "会话未找到",
       voiceSessionFailed: "启动语音会话失败",
       voiceServiceUnavailable: "语音服务暂时不可用",
+      voiceSessionLimitStarted: ({ duration }: { duration: string }) =>
+      `语音会话时长上限：约 ${duration}。`,
+      voiceSessionLimitExpiring: ({ duration }: { duration: string }) =>
+      `语音会话将于约 ${duration} 后结束。`,
+      voiceSessionLimitExpired:
+      "语音会话已达到当前时长上限并结束。",
     voiceAlreadyStarting: "语音已在另一个会话中启动",
     oauthInitializationFailed: "初始化 OAuth 流程失败",
     tokenStorageFailed: "存储认证令牌失败",
@@ -1975,7 +2619,7 @@ export const zhHans: TranslationStructure = {
     maxUsesReached: "已达到最大使用次数",
     invalidShareLink: "无效或已过期的共享链接",
     missingPermissionId: "缺少权限请求 ID",
-    codexResumeNotInstalledTitle: "此机器未安装 Codex resume",
+    codexResumeNotInstalledTitle: "此机器未安装 Codex 恢复服务器",
     codexResumeNotInstalledMessage:
       "要恢复 Codex 对话，请在目标机器上安装 Codex resume 服务器（机器详情 → Installables）。",
     codexAcpNotInstalledTitle: "此机器未安装 Codex ACP",
@@ -1991,14 +2635,10 @@ export const zhHans: TranslationStructure = {
     installable: {
       codexResume: {
         title: "Codex 恢复服务器",
-        installSpecTitle: "Codex resume 安装来源",
       },
       codexAcp: {
         title: "Codex ACP 适配器",
-        installSpecTitle: "Codex ACP 安装来源",
       },
-      installSpecDescription:
-        "传给 `npm install` 的 NPM/Git/文件规格（实验性）。留空则使用守护进程默认值。",
     },
     ui: {
       notAvailable: "不可用",
@@ -2022,14 +2662,14 @@ export const zhHans: TranslationStructure = {
       registryCheckFailed: ({ error }: { error: string }) => `失败：${error}`,
       installSource: "安装来源",
       installSourceDefault: "（默认）",
-      installSpecPlaceholder:
-        "例如 file:/path/to/pkg 或 github:owner/repo#branch",
       lastInstallLog: "上次安装日志",
       installLogTitle: "安装日志",
     },
   },
 
   newSession: {
+    ...newSessionMcpTranslationExtension,
+    ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
     title: "启动新会话",
     selectAiProfileTitle: "选择 AI 配置",
@@ -2054,6 +2694,36 @@ export const zhHans: TranslationStructure = {
     selectPermissionModeDescription: "控制操作需要批准的严格程度。",
     selectModelTitle: "选择 AI 模型",
     selectModelDescription: "选择此会话使用的模型。",
+    checkout: {
+      selectTitle: "选择 checkout",
+      noWorktree: "当前文件夹",
+      noWorktreeSubtitle: "使用已选择的文件夹，而不链接任何 workspace checkout。",
+      noWorktreeSectionTitle: "当前文件夹",
+      existingWorktreesSectionTitle: "已链接 checkouts",
+      actionsSectionTitle: "操作",
+      newWorktree: "新建 worktree",
+      newWorktreeSubtitle: "为此会话创建并使用一个新的 Git worktree。",
+      newWorktreeDetailWorkspace: "在此 workspace 中创建一个新的已链接 checkout。",
+      newWorktreeDetailBranch: "从当前仓库状态开始，并选择新的 branch/worktree 名称。",
+      branchPickerTitle: "Start From",
+      branchPickerCurrentHead: "Current Branch",
+      branchPickerCurrentHeadDescription: "Start from the branch currently checked out in this repository.",
+      branchPickerEmpty: "No branches available for this repository.",
+      branchPickerSearchPlaceholder: "Search branches…",
+      branchPickerRefreshA11y: "Refresh branches",
+      branchPickerLoadingA11y: "Loading branches",
+      branchPickerRefreshingA11y: "Refreshing branches",
+      primaryDetailDescription: "在所选设备上使用此 workspace 的主已链接 checkout。",
+      gitWorktreeDetailDescription: "为此会话使用一个现有的已链接 Git worktree checkout。",
+      existingBranchWorktreeDescription: "This branch already has a worktree. You can reuse it directly or create a new branch from it.",
+      existingBranchDescription: "This branch can be used directly in a new worktree, or you can create a new branch from it.",
+      createNewBranchFromBranchHint: "Use Apply to create a new branch and worktree from this branch.",
+      useExistingBranchAction: "Use Existing Branch",
+      useExistingWorktreeAction: "Use Existing Worktree",
+      detailBranch: ({ branch }: { branch: string }) => `分支：${branch}`,
+      detailPath: ({ path }: { path: string }) => `路径：${path}`,
+      detailLinkedWorkspace: "已链接到当前工作区。",
+    },
     selectSessionTypeTitle: "选择会话类型",
     selectSessionTypeDescription: "选择简单会话或与 Git worktree 关联的会话。",
     searchPathsPlaceholder: "搜索路径...",
@@ -2063,6 +2733,11 @@ export const zhHans: TranslationStructure = {
     machineOfflineInlineBody:
       "请在此机器上启动守护进程，或在创建会话前选择另一台机器。",
     machineOfflineCannotStartStatus: "离线（无法启动会话）",
+    automationChip: {
+      default: "自动化",
+      interval: ({ minutes }: { minutes: number }) => `每 ${minutes} 分钟`,
+      cron: "Cron 计划",
+    },
     machineDetails: "查看设备详情 →",
     directoryDoesNotExist: "目录不存在",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -2091,6 +2766,7 @@ export const zhHans: TranslationStructure = {
       enterPathTitle: "输入路径",
       enterPathPlaceholder: "输入路径...",
       customPathTitle: "自定义路径",
+      truncatedDirectoryInfo: ({ count }: { count: number }) => `显示前 ${count} 项`,
       recentTitle: "最近",
       favoritesTitle: "收藏",
       suggestedTitle: "推荐",
@@ -2109,6 +2785,9 @@ export const zhHans: TranslationStructure = {
     profileAvailability: {
       requiresAgent: ({ agent }: { agent: string }) => `需要 ${agent}`,
       cliNotDetected: ({ cli }: { cli: string }) => `未检测到 ${cli} CLI`,
+    },
+    profileSelection: {
+      workspaceDefault: "工作区默认",
     },
     cliBanners: {
       cliNotDetectedTitle: ({ cli }: { cli: string }) => `${cli} CLI 未检测到`,
@@ -2143,7 +2822,7 @@ export const zhHans: TranslationStructure = {
       cannotApplyBody: "此恢复 ID 当前无法应用。Happier 将改为启动一个新会话。",
     },
     codexResumeBanner: {
-      title: "Codex 续接",
+      title: "Codex 恢复服务器",
       updateAvailable: "有可用更新",
       systemCodexVersion: ({ version }: { version: string }) =>
         `系统 codex：${version}`,
@@ -2158,9 +2837,9 @@ export const zhHans: TranslationStructure = {
       reinstall: "重新安装",
     },
     codexResumeInstallModal: {
-      installTitle: "安装 Codex resume？",
-      updateTitle: "更新 Codex resume？",
-      reinstallTitle: "重新安装 Codex resume？",
+      installTitle: "安装 Codex 恢复服务器？",
+      updateTitle: "更新 Codex 恢复服务器？",
+      reinstallTitle: "重新安装 Codex 恢复服务器？",
       description: "这将安装一个仅用于恢复操作的实验性 Codex MCP 服务器封装。",
     },
     codexAcpBanner: {
@@ -2188,6 +2867,8 @@ export const zhHans: TranslationStructure = {
     viewAll: "查看所有会话",
   },
 
+  sessionHandoff: sessionHandoffTranslationExtensions['zh-Hans'],
+
   session: {
     inputPlaceholder: "输入消息...",
     toolCalls: "工具调用",
@@ -2199,15 +2880,22 @@ export const zhHans: TranslationStructure = {
       openParent: "打开",
       openParentA11y: "打开父会话",
       forkFromMessageA11y: "从此消息分叉",
-    },
-    resuming: "正在恢复...",
-    resumeFailed: "恢复会话失败",
-    pendingQueuedResumeFailedTitle: "消息已排队",
-    pendingQueuedResumeFailedBody: "你的消息已保存到待处理队列，但 Happier 无法恢复此会话。请重试以启动它。",
-    resumeSupportNoteChecking:
-      "注意：Happier 仍在检查此机器是否可以恢复提供方会话。",
-    resumeSupportNoteUnverified: "注意：Happier 无法验证此机器的恢复支持情况。",
-    resumeSupportDetails: {
+	    },
+	    rollback: {
+	      latestTurnA11y: '回退最新一轮',
+	      beforeUserMessageA11y: '回退到这条消息之前',
+	    },
+	    resuming: "正在恢复...",
+	    resumeFailed: "恢复会话失败",
+	    pendingQueuedResumeFailedTitle: "消息已排队",
+	    pendingQueuedResumeFailedBody:
+	      "你的消息已保存到待处理队列，但 Happier 无法恢复此会话。请重试以启动它。",
+	    invalidLinkTitle: "无效的会话链接",
+	    invalidLinkDescription: "会话链接缺失或无效。请检查 URL 并重试。",
+	    resumeSupportNoteChecking:
+	      "注意：Happier 仍在检查此机器是否可以恢复提供方会话。",
+	    resumeSupportNoteUnverified: "注意：Happier 无法验证此机器的恢复支持情况。",
+	    resumeSupportDetails: {
       cliNotDetected: "未在机器上检测到 CLI。",
       capabilityProbeFailed: "能力检查失败。",
       acpProbeFailed: "ACP 检查失败。",
@@ -2225,7 +2913,7 @@ export const zhHans: TranslationStructure = {
     machineOfflineCannotResume: "机器离线。请将其恢复在线后再恢复此会话。",
       openRuns: "打开会话运行",
       openAutomations: "打开会话自动化",
-      openSubagents: ({ count }: { count: number }) => (count > 0 ? `Open agents (${count})` : 'Open agents'),
+      openSubagents: ({ count }: { count: number }) => (count > 0 ? `打开代理 (${count})` : '打开代理'),
       participants: {
         to: '发送给',
         lead: '主助手',
@@ -2278,10 +2966,10 @@ export const zhHans: TranslationStructure = {
           teammateInstructionsPlaceholder: "这个队友应该做什么？",
           launchTeammateA11y: "启动队友",
           launchTeammateAction: "启动队友",
-          typeFact: ({ value }: { value: string }) => `Type: ${value}`,
-          providerFact: ({ value }: { value: string }) => `Provider: ${value}`,
-          backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
-          intentFact: ({ value }: { value: string }) => `Intent: ${value}`,
+          typeFact: ({ value }: { value: string }) => `类型：${value}`,
+          providerFact: ({ value }: { value: string }) => `提供商：${value}`,
+          backendFact: ({ value }: { value: string }) => `后端：${value}`,
+          intentFact: ({ value }: { value: string }) => `意图：${value}`,
           errors: {
             teamIdRequired: "请先输入团队 ID。",
             memberTeamIdRequired: "请先输入队友所属团队的 ID。",
@@ -2295,7 +2983,7 @@ export const zhHans: TranslationStructure = {
         kind: {
           execution_run: "执行",
           agent_team_member: "团队代理",
-          task_sidechain: "任务代理",
+          subagent_sidechain: "子代理",
         },
         intent: {
           review: "审查",
@@ -2312,6 +3000,7 @@ export const zhHans: TranslationStructure = {
       closeA11y: "关闭详情",
       openTabA11y: ({ title }: { title: string }) => `打开标签页 ${title}`,
       pinTabA11y: "固定标签页",
+      unpinTabA11y: "取消固定标签页",
       pinnedTabA11y: "已固定标签页",
       closeTabA11y: "关闭标签页",
       enterFocusModeA11y: "进入编辑器专注模式",
@@ -2320,6 +3009,9 @@ export const zhHans: TranslationStructure = {
 
     actionsDraft: {
       noInputHints: "此操作没有输入提示。",
+      validation: {
+        requiredField: ({ field }: { field: string }) => `必须填写${field}。`,
+      },
     },
 
     planOutput: {
@@ -2337,6 +3029,8 @@ export const zhHans: TranslationStructure = {
 
     reviewFindings: {
       title: ({ count }: { count: number }) => `审查发现 (${count})`,
+      questionsTitle: "审查者问题",
+      assumptionsTitle: "假设",
       findingTitle: ({
         status,
         severity,
@@ -2349,22 +3043,26 @@ export const zhHans: TranslationStructure = {
         title: string;
       }) => `[${status}] [${severity}/${category}] ${title}`,
       status: {
-        untriaged: "未分诊",
-        accept: "接受",
-        reject: "拒绝",
-        defer: "延后",
-        needsRefinement: "需要完善",
+        untriaged: "待处理",
+        accept: "实现修复",
+        reject: "忽略",
+        defer: "稍后决定",
+        needsRefinement: "请求澄清",
       },
-      refinementPlaceholder: "用于完善的可选备注",
+      refinementPlaceholder: "需要澄清什么？",
       actions: {
-        applyTriage: "应用分诊",
+        applyTriage: "应用审查操作",
         applying: "正在应用…",
-        applyAcceptedFindings: "应用已接受的发现",
+        askReviewer: "询问审查者",
+        answerQuestion: "回复审查者",
+        applyAcceptedFindings: "实现所选修复",
+        sendFollowUp: "发送跟进",
         sending: "正在发送…",
       },
       errors: {
-        applyTriageFailed: "应用分诊失败。",
-        applyAcceptedFailed: "应用已接受的发现失败。",
+        applyTriageFailed: "应用审查操作失败。",
+        followUpFailed: "发送审查跟进失败。",
+        applyAcceptedFailed: "发送所选修复失败。",
       },
     },
 
@@ -2537,6 +3235,8 @@ export const zhHans: TranslationStructure = {
       teleport: "传送语音代理",
       toggleActivity: "切换语音活动",
       clearActivity: "清除语音活动",
+      bargeIn: "打断",
+      cancelTurn: "取消回复",
     },
   },
 
@@ -2557,6 +3257,38 @@ export const zhHans: TranslationStructure = {
       errorFallback: "错误",
       eventFallback: "事件",
     },
+  },
+
+  devVoiceQa: {
+    menuTitle: "语音 QA 测试台",
+    menuSubtitle: "使用文本提示驱动真实语音代理",
+    title: "语音 QA 测试台",
+    subtitle: "启动已配置的语音运行时，并在不使用麦克风的情况下发送提示。",
+    instructions: "使用此界面通过确定性的文本提示来测试真实的本地语音代理或 ElevenLabs 会话。将会话 ID 留空即可使用当前语音目标或全局语音代理会话。",
+    configurationTitle: "配置",
+    configuredProvider: "已配置的提供方",
+    qaProvider: "当前 QA 提供方",
+    qaStatus: "QA 状态",
+    targetSession: "当前目标会话",
+    runtimeSession: "当前运行时会话",
+    inputsTitle: "输入",
+    sessionIdLabel: "会话 ID 覆盖",
+    sessionIdPlaceholder: "留空以使用当前语音目标",
+    initialContextLabel: "初始上下文",
+    initialContextPlaceholder: "QA 会话启动时发送的可选上下文",
+    promptLabel: "提示",
+    promptPlaceholder: "输入你想发送给语音代理的文本",
+    contextUpdateLabel: "上下文更新",
+    contextUpdatePlaceholder: "可选的后续上下文更新",
+    actionsTitle: "操作",
+    sendContext: "发送上下文",
+    usesCurrentProvider: "此测试台始终使用你当前的语音设置和真实的运行时集成。",
+    localModeHint: "本地 QA 需要将 Local voice 的对话模式设置为 Agent。",
+    elevenLabsHint: "ElevenLabs QA 需要先配置 ElevenLabs 提供方，并且实时会话能够成功连接。",
+    transcriptTitle: "QA 转录",
+    transcriptEmpty: "暂无 QA 转录。",
+    activityTitle: "语音活动",
+    activityEmpty: "当前 QA 会话尚未捕获到语音活动。",
   },
 
   server: {
@@ -2628,25 +3360,25 @@ export const zhHans: TranslationStructure = {
     saveServerGroup: "保存组",
     serverGroupMustHaveServer: "服务器组至少需要包含一个服务器。",
     retention: {
-        title: "Retention policy",
-        summary: "Summary",
-        keepForever: "No automatic deletion",
-        deleteInactiveSessionsDays: ({ count }: { count: number }) => `Deletes inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })}.`,
-        deleteOlderThanDays: ({ count }: { count: number }) => `Deletes data after ${count} ${plural({ count, singular: 'day', plural: 'days' })}.`,
-        sessionNotice: ({ count }: { count: number }) => `This server deletes inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })} of inactivity.`,
-        sessions: "Sessions",
-        accountChanges: "Account changes",
-        voiceSessionLeases: "Voice session leases",
-        feedItems: "Feed items",
-        sessionShareAccessLogs: "Session share access logs",
-        publicShareAccessLogs: "Public share access logs",
-        terminalAuthRequests: "Terminal auth requests",
-        accountAuthRequests: "Account auth requests",
-        authPairingSessions: "Auth pairing sessions",
-        repeatKeys: "Repeat keys",
-        globalLocks: "Global locks",
-        automationRuns: "Automation runs",
-        automationRunEvents: "Automation run events",
+        title: "数据保留策略",
+        summary: "摘要",
+        keepForever: "不自动删除",
+        deleteInactiveSessionsDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}后删除非活跃会话。`,
+        deleteOlderThanDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}后删除数据。`,
+        sessionNotice: ({ count }: { count: number }) => `此服务器会在会话非活跃 ${count} ${plural({ count, singular: '天', plural: '天' })}后自动删除。`,
+        sessions: "会话",
+        accountChanges: "账户变更",
+        voiceSessionLeases: "语音会话租约",
+        feedItems: "动态条目",
+        sessionShareAccessLogs: "会话共享访问日志",
+        publicShareAccessLogs: "公开共享访问日志",
+        terminalAuthRequests: "终端认证请求",
+        accountAuthRequests: "账户认证请求",
+        authPairingSessions: "认证配对会话",
+        repeatKeys: "重复键",
+        globalLocks: "全局锁",
+        automationRuns: "自动化运行",
+        automationRunEvents: "自动化运行事件",
     },
     multiServerView: {
       title: "多服务器并行视图",
@@ -2673,7 +3405,54 @@ export const zhHans: TranslationStructure = {
 
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `服务器：${server}`,
+    storagePersistedTab: "已同步",
+    storageDirectTab: "直连",
+    renameWorkspace: '重命名工作区',
+    renameWorkspacePromptTitle: '重命名工作区',
+    renameWorkspacePromptPlaceholder: '输入名称...',
+    resetWorkspaceName: '重置名称',
   },
+
+  directSessions: {
+    browseTitle: "浏览提供方会话",
+    browseOpenExisting: "浏览提供方会话",
+    browseFiltersTitle: "选择来源",
+    browseMachines: "机器",
+    browseProviders: "提供方",
+    browseSources: "来源",
+    browseSourceCodexUserHome: "我的 Codex 主目录",
+    browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
+    browseSourceClaudeDefault: "默认 Claude 配置",
+    browseSourceOpenCodeDefault: "默认 OpenCode 服务器",
+    browseCandidates: "可用会话",
+    browseNoMachines: "尚无可用于直连会话的机器。",
+    browseNoCandidates: "未找到此机器和提供方对应的会话。",
+    browseActivityRunning: "运行中",
+        browseActivityRunningNow: "正在运行",
+    browseActivityRecent: "最近活跃",
+    browseActivityIdle: "空闲",
+    browseActivityUnknown: "未知",
+        browseSearchPlaceholder: "搜索已加载的会话…",
+        browseNoSearchResults: "当前没有已加载的会话匹配此搜索。",
+    browseLoadMore: "加载更多会话",
+    browseFailedToLoad: "加载提供方会话失败。",
+    browseLinkFailed: "关联所选提供方会话失败。",
+  },
+
+    workspacePresentation: {
+        checkoutKinds: {
+            primary: '主 checkout',
+            git_worktree: 'Git worktree',
+        },
+    },
+    sourceControlWorkspace: {
+        createTitle: 'Create linked workspace',
+        createSubtitle: '将此 checkout 添加到已链接工作区并打开其设置。',
+        otherCheckoutsTitle: 'Other checkouts',
+        unlinkedWorktreesTitle: 'Unlinked worktrees',
+        createSessionInWorktreeTitle: 'Create session here',
+        adoptWorktreeTitle: 'Add worktree to workspace',
+    },
 
 	  sessionInfo: {
 	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
@@ -2684,6 +3463,16 @@ export const zhHans: TranslationStructure = {
     stopSessionConfirm: "您确定要停止此会话吗？",
     archiveSession: "归档会话",
     archiveSessionConfirm: "您确定要归档此会话吗？",
+    workspaceTitle: "工作区",
+    workspaceLabel: "工作区",
+    linkWorkspaceTitle: "链接此工作区",
+    linkWorkspaceSubtitle: "根据此会话路径创建一个已链接工作区并打开其设置。",
+    openWorkspaceTitle: "打开工作区",
+    openWorkspaceSubtitle: "打开已链接工作区的详细信息和设置。",
+    createWorktreeTitle: "创建 worktree",
+    createWorktreeSubtitle: "启动一个新会话，在此已链接工作区中创建 Git worktree。",
+    locationLabel: "位置",
+    checkoutLabel: "检出",
     happySessionIdCopied: "Happier 会话 ID 已复制到剪贴板",
     failedToCopySessionId: "复制 Happier 会话 ID 失败",
     happySessionId: "Happier 会话 ID",
@@ -2707,6 +3496,10 @@ export const zhHans: TranslationStructure = {
     kimiSessionIdCopied: "Kimi 会话 ID 已复制到剪贴板",
     kiloSessionId: "Kilo 会话 ID",
     kiloSessionIdCopied: "Kilo 会话 ID 已复制到剪贴板",
+    kiroSessionId: "Kiro 会话 ID",
+    kiroSessionIdCopied: "Kiro 会话 ID 已复制到剪贴板",
+    customAcpSessionId: "自定义 ACP 会话 ID",
+    customAcpSessionIdCopied: "自定义 ACP 会话 ID 已复制到剪贴板",
     piSessionId: "Pi 会话 ID",
     piSessionIdCopied: "Pi 会话 ID 已复制到剪贴板",
     copilotSessionId: "Copilot 会话 ID",
@@ -2770,7 +3563,7 @@ export const zhHans: TranslationStructure = {
       requiredVersion: string;
     }) =>
       `已安装版本 ${currentVersion}。请更新到 ${requiredVersion} 或更高版本`,
-    updateCliInstructions: "请运行 npm install -g @happier-dev/cli@latest",
+    updateCliInstructions: "请运行 happier self update",
     deleteSession: "删除会话",
     deleteSessionSubtitle: "永久删除此会话",
     deleteSessionConfirm: "永久删除会话？",
@@ -2797,7 +3590,6 @@ export const zhHans: TranslationStructure = {
       runIt: "运行它",
       scanQrCode: "扫描二维码",
       openCamera: "打开相机",
-      installCommand: "$ npm i -g @happier-dev/cli",
       runCommand: "$ happier",
     },
     emptyMessages: {
@@ -2876,6 +3668,8 @@ export const zhHans: TranslationStructure = {
       qwen: "Qwen Code",
       kimi: "Kimi",
       kilo: "Kilo",
+      kiro: "Kiro",
+      customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
     },
@@ -2949,7 +3743,6 @@ export const zhHans: TranslationStructure = {
       sectionTitle: "模式",
       badge: ({ name }: { name: string }) => `模式：${name}`,
       badgePending: ({ name }: { name: string }) => `模式：${name}（待处理）`,
-      badgeA11y: ({ name }: { name: string }) => `模式：${name}`,
       refreshModesA11y: "刷新模式",
       pendingSwitching: ({ from, to }: { from: string; to: string }) =>
         `待处理：从 ${from} 切换到 ${to}`,
@@ -3065,6 +3858,17 @@ export const zhHans: TranslationStructure = {
       result: "结果",
       items: "条目",
       more: ({ count }: { count: number }) => `+${count} 更多`,
+    },
+    taskLikeSummary: {
+      createTaskWithSubject: ({ subject }: { subject: string }) => `创建子代理：${subject}`,
+      createTask: "创建子代理",
+      listTasks: "列出子代理",
+      updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `更新子代理 ${id} → ${status}`,
+      updateTaskWithId: ({ id }: { id: string }) => `更新子代理 ${id}`,
+      updateTask: "更新子代理",
+    },
+    taskView: {
+      moreTools: ({ count }: { count: number }) => `+${count} 个更多工具`,
     },
     workspaceIndexingPermission: {
       defaultTitle: "工作区索引",
@@ -3188,15 +3992,49 @@ export const zhHans: TranslationStructure = {
     createFileInvalidPath:
       "文件路径无效。请使用工作区内的相对路径，例如 src/new-file.ts。",
     createFileFailed: "创建文件失败。",
-    createFolderPromptTitle: "创建文件夹",
-    createFolderPromptBody: "请输入相对于项目根目录的文件夹路径。",
-    createFolderInvalidPath:
-      "文件夹路径无效。请使用工作区内的相对路径，例如 src/new-folder。",
-    createFolderFailed: "创建文件夹失败。",
-    changeRow: {
-      viewDiffA11y: ({ file }: { file: string }) => `查看 ${file} 的差异`,
-      status: {
-        untracked: "未跟踪文件",
+	    createFolderPromptTitle: "创建文件夹",
+	    createFolderPromptBody: "请输入相对于项目根目录的文件夹路径。",
+	    createFolderInvalidPath:
+	      "文件夹路径无效。请使用工作区内的相对路径，例如 src/new-folder。",
+	    createFolderFailed: "创建文件夹失败。",
+	    repositoryTree: {
+	      actions: {
+	        copyPath: "复制路径",
+	        download: "下载",
+	        downloadAsZip: "以 ZIP 下载",
+	      },
+	      dropToUpload: "拖放文件以上传",
+	      rename: {
+	        title: "重命名",
+	        body: "请输入相对于项目根目录的新路径。",
+	        invalidPath:
+	          "路径无效。请使用工作区内的相对路径，例如 src/new-file.ts。",
+	        failed: "重命名失败。",
+	        conflicts: {
+	          title: "目标已存在",
+	          body: ({ path }: { path: string }) => `“${path}”已存在。你想怎么处理？`,
+	        },
+	      },
+	      deleteFolder: {
+	        title: "删除文件夹？",
+	        body: ({ path }: { path: string }) => `删除文件夹 ${path} 及其所有内容？`,
+	        confirm: "删除文件夹",
+	      },
+	      deleteFile: {
+	        title: "删除文件？",
+	        body: ({ path }: { path: string }) => `删除文件 ${path}？`,
+	      },
+	      delete: {
+	        failed: "删除失败。",
+	      },
+	      download: {
+	        notReady: "下载暂不可用。",
+	      },
+	    },
+	    changeRow: {
+	      viewDiffA11y: ({ file }: { file: string }) => `查看 ${file} 的差异`,
+	      status: {
+	        untracked: "未跟踪文件",
         added: "新文件",
         deleted: "已删除文件",
         renamed: "已重命名文件",
@@ -3210,6 +4048,100 @@ export const zhHans: TranslationStructure = {
       searchFailed: "搜索失败。请重试。",
     },
     detachedHead: "游离 HEAD",
+    branchSwitchDialog: {
+      title: "切换分支",
+      body: "你有未提交的更改。你想如何处理？",
+      leaveTitle: ({ branch }: { branch: string }) => `将我的更改留在 ${branch}`,
+      leaveSubtitle: "在当前分支创建 stash 并切换。",
+      bringTitle: ({ branch }: { branch: string }) => `将我的更改带到 ${branch}`,
+      bringSubtitle: "尝试切换并将更改带到新分支。",
+    },
+    branchMenu: {
+      openA11y: "打开分支菜单",
+      failedToLoad: "加载分支失败。",
+      unavailable: "分支列表不可用",
+      empty: "未找到分支",
+      searchPlaceholder: "搜索分支...",
+      category: {
+        actions: "操作",
+        branches: "分支",
+        worktrees: "Worktrees",
+        remote: "远程",
+        local: "本地",
+        options: "选项",
+      },
+      publish: {
+        title: "发布分支",
+        subtitle: "将当前分支推送到上游远程分支",
+        short: "发布",
+        failed: "发布分支失败。",
+      },
+      create: {
+        title: "创建分支",
+        subtitle: ({ name }: { name: string }) => `创建 \"${name}\"`,
+        failed: "创建分支失败。",
+      },
+      switch: {
+        failed: "切换分支失败。",
+      },
+      branch: {
+        upstream: ({ upstream }: { upstream: string }) => `上游：${upstream}`,
+      },
+      remotes: {
+        show: "显示远程分支",
+        hide: "隐藏远程分支",
+        subtitle: "在列表中包含远程分支",
+      },
+      worktrees: {
+        createFromCurrentBranchTitle: "New worktree from current branch",
+        createFromCurrentBranchSubtitle: ({ branch }: { branch: string }) => `Create a new worktree from ${branch} and start a session there.`,
+        createFromCurrentBranchDetachedSubtitle: "Switch to a branch before creating a worktree from the current branch.",
+        createFromAnotherBranchTitle: "New worktree from another branch",
+        createFromAnotherBranchSubtitle: "Open the new-session flow to choose another branch or reuse an existing worktree.",
+        removeTitle: "Remove worktree",
+        removeSubtitle: ({ target }: { target: string }) => `Remove ${target} from this repository.`,
+        removeConfirmTitle: "Remove worktree?",
+        removeConfirmBody: ({ path }: { path: string }) => `Remove the worktree at ${path}? This cannot be undone.`,
+        removeConfirmButton: "Remove worktree",
+        pruneTitle: "Prune stale worktrees",
+        pruneSubtitle: "Clean up stale worktree metadata for this repository.",
+        createFailed: "Failed to create worktree.",
+        removeFailed: "Failed to remove worktree.",
+        pruneFailed: "Failed to prune worktrees.",
+      },
+      stashOverwrite: {
+        title: "覆盖该分支的储藏？",
+        body: ({ branch }: { branch: string }) =>
+          `已存在 ${branch} 的储藏。要覆盖吗？`,
+        confirm: "覆盖储藏",
+      },
+    },
+    stash: {
+      summaryA11y: "打开储藏详情",
+      summaryTitle: "管理的储藏",
+      detailsTitle: "管理的储藏",
+      empty: "没有托管的 stash。",
+      failedToLoad: "无法加载 stash。",
+      failedToLoadDiff: "无法加载 stash diff。",
+      diffTruncated: "diff 已截断（输出限制）。",
+      writeDisabled: "源代码控制写入操作已禁用。",
+      noSelection: "请选择一个 stash 以继续。",
+      selectA11y: ({ stash }: { stash: string }) => `选择 stash ${stash}`,
+      restore: "恢复",
+      discard: "丢弃",
+      restoreFailed: "无法恢复 stash。",
+      discardFailed: "无法丢弃 stash。",
+      restoreConfirm: {
+        title: "恢复已暂存的更改？",
+        body: "将把 stash 中的更改应用到你的工作区。冲突可能需要手动解决。",
+        confirm: "恢复",
+      },
+      discardConfirm: {
+        title: "丢弃已暂存的更改？",
+        body: "这将永久删除此 stash。",
+        confirm: "丢弃",
+      },
+    },
     summary: ({ staged, unstaged }: { staged: number; unstaged: number }) =>
       `${staged} 已暂存 • ${unstaged} 未暂存`,
     branchSummary: {
@@ -3239,6 +4171,10 @@ export const zhHans: TranslationStructure = {
       `仓库变更文件（${count}）`,
     sessionAttributedChanges: ({ count }: { count: number }) =>
       `会话归因的变更（${count}）`,
+    latestTurnChanges: ({ count }: { count: number }) =>
+      `最近一轮变更（${count}）`,
+    latestTurnDescription:
+      '来自最近一次已完成轮次的提供方变更。',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `其他仓库变更（${count}）`,
     attributionReliabilityHigh:
@@ -3252,6 +4188,8 @@ export const zhHans: TranslationStructure = {
       `已有 ${count} 个推断文件保留在仅仓库变更中。`,
     noSessionAttributedChanges:
       "当前未检测到会话归因的变更。",
+    noLatestTurnChanges:
+      "当前未检测到最近一轮的变更。",
     notRepo: "不是版本控制仓库",
     notUnderSourceControl: "此目录不在版本控制下",
     searching: "正在搜索文件...",
@@ -3283,6 +4221,7 @@ export const zhHans: TranslationStructure = {
         `未暂存的更改 (${count})`,
       // File viewer strings
       fileReadFailed: "读取文件失败",
+      fileTooLargeToPreview: "文件过大，无法预览",
       fileWriteFailed: "写入文件失败",
       fileEditor: {
         experimentalHint:
@@ -3356,12 +4295,65 @@ export const zhHans: TranslationStructure = {
     },
     toolbar: {
       changedFiles: "更改的文件",
+      details: "详情",
+      upload: "上传",
+      uploadFiles: "上传文件",
+      uploadFolder: "上传文件夹",
       allRepositoryFiles: "仓库中的所有文件",
       repositoryView: "仓库视图",
+      turnView: "轮次视图",
       sessionView: "会话视图",
       review: "审阅",
       list: "列表",
       scm: "Git",
+    },
+    transfers: {
+      preparingUpload: ({ count }: { count: number }) =>
+        `正在准备上传（${count} 个文件）…`,
+      uploading: ({
+        completed,
+        total,
+        uploaded,
+        totalBytes,
+      }: {
+        completed: number;
+        total: number;
+        uploaded: string;
+        totalBytes: string;
+      }) => `正在上传 ${completed}/${total} · ${uploaded} / ${totalBytes}`,
+      downloading: ({
+        name,
+        downloaded,
+        totalBytes,
+      }: {
+        name: string;
+        downloaded: string;
+        totalBytes: string;
+      }) => `正在下载 ${name} · ${downloaded} / ${totalBytes}`,
+    },
+    upload: {
+      conflicts: {
+        title: "上传冲突",
+        body: ({
+          conflictCount,
+          totalCount,
+        }: {
+          conflictCount: number;
+          totalCount: number;
+        }) => `${conflictCount}/${totalCount} 个文件已存在。你想怎么处理？`,
+        keepBoth: {
+          title: "保留两者",
+          subtitle: "在冲突名称后添加“ (1)”、“ (2)”…",
+        },
+        replace: {
+          title: "替换",
+          subtitle: "覆盖现有文件。",
+        },
+        skip: {
+          title: "跳过",
+          subtitle: "仅上传不存在的文件。",
+        },
+      },
     },
     fileEmpty: "文件为空",
     noChanges: "没有要显示的更改",
@@ -3428,7 +4420,17 @@ export const zhHans: TranslationStructure = {
       },
     },
     details: {
+      titles: {
+        executionRun: "执行",
+        executionRunWithIntent: ({ intent }: { intent: string }) => `${intent} · 执行`,
+      },
       labels: {
+        status: "状态",
+        statusValue: ({ value }: { value: string }) => `Status: ${value}`,
+        runId: ({ value }: { value: string }) => `Run ID: ${value}`,
+        backend: ({ value }: { value: string }) => `Backend: ${value}`,
+        permissions: ({ value }: { value: string }) => `Permissions: ${value}`,
+        mode: ({ value }: { value: string }) => `Mode: ${value}`,
         intent: "意图",
         backendId: "后端 ID",
         permissionMode: "权限模式",
@@ -3443,7 +4445,108 @@ export const zhHans: TranslationStructure = {
     },
   },
 
-  settingsSession: {
+      settingsActions: {
+        aboutSubtitle: 'Choose where each action is surfaced across the app, voice, and integrations. Unavailable tiles stay visible so you can understand what is blocked by features, privacy, or runtime support.',
+        aboutFooter: 'These settings apply globally to your account defaults. Unavailable tiles explain why a target is currently blocked.',
+        searchPlaceholder: 'Search actions',
+        noResults: 'No actions match your current search.',
+        noDescription: 'No description available yet.',
+        sections: {
+            app: 'In the app',
+            voice: 'Voice',
+            integrations: 'Integrations',
+        },
+        badges: {
+            unavailable: 'Unavailable',
+        },
+        reasons: {
+            voiceFeature: 'Enable Voice Assistant settings to use this target.',
+            voiceInventoryPrivacy: 'Turn on Share device inventory in Voice Assistant privacy settings to use this target.',
+            mcpFeature: 'Enable MCP servers to surface this action through MCP.',
+            executionRunsFeature: 'Enable execution runs to use this action or target.',
+            memorySearchFeature: 'Enable Local Memory Search to use this action.',
+            sessionHandoffFeature: 'Enable session handoff support to use this action.',
+            notAvailableInThisApp: '此目标目前尚未在此客户端中显示。',
+        },
+        targets: {
+            session_header: {
+                title: 'Session header',
+                subtitle: 'Visible in the session header toolbar.',
+            },
+            session_action_menu: {
+                title: 'Session menu',
+                subtitle: 'Visible in the session actions menu.',
+            },
+            session_info: {
+                title: 'Session details',
+                subtitle: 'Visible in the session info screen.',
+            },
+            command_palette: {
+                title: 'Command palette',
+                subtitle: 'Visible in the global command palette.',
+            },
+            slash_command: {
+                title: 'Slash command',
+                subtitle: 'Available from slash-command style action pickers.',
+            },
+            agent_input_chips: {
+                title: 'Composer chips',
+                subtitle: 'Shown as quick chips near the agent input.',
+            },
+            voice_panel: {
+                title: 'Voice panel',
+                subtitle: 'Shown in the voice assistant panel.',
+            },
+            run_list: {
+                title: 'Runs list',
+                subtitle: 'Visible from execution run lists.',
+            },
+            run_card: {
+                title: 'Run cards',
+                subtitle: 'Visible on execution run cards.',
+            },
+            voice_tool: {
+                title: 'Voice tool',
+                subtitle: 'Available to the voice agent as a callable tool.',
+            },
+            voice_action_block: {
+                title: 'Voice action block',
+                subtitle: 'Shown inside voice action blocks and affordances.',
+            },
+            mcp: {
+                title: 'MCP',
+                subtitle: 'Available through the MCP action catalog.',
+            },
+            cli: {
+                title: 'Session control CLI',
+                subtitle: 'Available through the session control CLI surface.',
+            },
+            contextual_ui: {
+                title: 'Contextual UI',
+                subtitle: 'Shown in contextual UI surfaces that do not have a dedicated placement.',
+            },
+        },
+    },
+
+settingsSession: {
+    sessionList: {
+        title: '会话列表',
+        footer: '自定义会话列表每行显示的内容。',
+        tagsTitle: '会话标签',
+        tagsEnabledSubtitle: '在会话列表中显示标签控件',
+        tagsDisabledSubtitle: '隐藏标签控件',
+    },
+    input: {
+        title: '输入',
+        footer: '配置代理输入栏的外观和行为。',
+    },
+    windows: {
+        title: 'Windows',
+        defaultModeTitle: '默认 Windows 远程会话模式',
+    },
+    advanced: {
+        title: '高级',
+    },
     messageSending: {
       title: "消息发送",
       footer:
@@ -3529,6 +4632,8 @@ export const zhHans: TranslationStructure = {
       title: "会话记录",
       entrySubtitle: "打开会话记录设置",
       footer: "自定义聊天显示方式与会话记录行为。",
+        codeDiffs: '代码与 diff',
+        codeDiffsFooter: '配置在会话记录中如何显示代码和 diff 内容。',
       layoutTitle: "布局",
       layoutFooter: "在简单线性记录与按回合分组之间选择。",
       layoutPickerTitle: "会话记录布局",
@@ -3683,11 +4788,7 @@ export const zhHans: TranslationStructure = {
     subAgentGuidanceEntry: {
       openSubtitle: "打开子代理设置",
     },
-    actionsEntry: {
-      footer:
-        "按界面与位置（UI、语音、MCP）启用操作，并控制它们显示的位置。",
-      openSubtitle: "打开操作设置",
-    },
+      handoff: settingsSessionHandoffTranslationExtensions['zh-Hans'],
     defaultPermissions: {
       title: "默认权限",
       footer:
@@ -3697,6 +4798,16 @@ export const zhHans: TranslationStructure = {
         "对正在运行的会话立即应用（更新会话元数据）。",
       applyPermissionChangesNextPromptSubtitle: "仅在下一条消息时应用。",
     },
+          defaultStorage: {
+              title: 'Default session storage',
+              footer: 'Choose whether new sessions start as synced Happier sessions or direct provider-backed sessions.',
+              globalTitle: 'Global default',
+              persistedSubtitle: 'Store new sessions in Happier and sync them across devices by default.',
+              directSubtitle: 'Start machine-bound direct sessions when the provider supports it.',
+              globalSubtitle: ({ label }: { label: string }) => `Global default: ${label}`,
+              useGlobalDefault: 'Use global default',
+              currently: ({ label }: { label: string }) => `Currently: ${label}`,
+          },
     replayResume: {
       title: "回放恢复",
       footer:
@@ -3755,13 +4866,17 @@ export const zhHans: TranslationStructure = {
       legacySecretExportDisabledSubtitle:
         "已禁用（推荐）：只用内容密钥为终端配置（Terminal Connect V2）。",
     },
-    sessionList: {
-      title: "会话列表",
-      footer: "自定义会话列表每行显示的内容。",
-      tagsTitle: "会话标签",
-      tagsEnabledSubtitle: "在会话列表中显示标签控件",
-      tagsDisabledSubtitle: "隐藏标签控件",
-    },
+  },
+  windowsRemoteSessionLaunchMode: {
+    hidden: "隐藏",
+    shortHidden: "隐藏",
+    hiddenSubtitle: "在后台启动会话而不打开终端窗口。",
+    windowsTerminal: "Windows Terminal",
+    shortWindowsTerminal: "WT",
+    windowsTerminalSubtitle: "在专用的 Windows Terminal 窗口中打开会话。",
+    console: "控制台",
+    shortConsole: "控制台",
+    consoleSubtitle: "在标准的 Windows 控制台窗口中打开会话。",
   },
   settingsVoice: {
     // Voice settings screen
@@ -4278,6 +5393,17 @@ export const zhHans: TranslationStructure = {
           teleportEnabledSubtitle: "需要时允许将代理迁移到其他机器。",
           teleportDisabledSubtitle: "已禁用传送。",
         },
+        machineRecovery: {
+          switchTitle: "语音机器不可用",
+          switchBody: ({ currentMachine, nextMachine }: { currentMachine: string; nextMachine: string }) =>
+            `当前语音机器（${currentMachine}）不可用。\n\n要将语音切换到 ${nextMachine} 吗？`,
+          switchAction: "切换机器",
+          replayTitle: "带上这段对话吗？",
+          replayBody: ({ nextMachine }: { nextMachine: string }) =>
+            `你可以在 ${nextMachine} 上重新开始，或者切换并重放上一台机器中的最近语音上下文。`,
+          replayAction: "切换并重放最近的语音上下文",
+          startFreshAction: "重新开始",
+        },
         agentSource: {
           followSessionTitle: "跟随会话",
           followSessionSubtitle: "使用会话后端与配置。",
@@ -4344,7 +5470,11 @@ export const zhHans: TranslationStructure = {
         streaming: {
           title: "流式传输",
           enableTitle: "启用流式传输",
+          enableSubtitle:
+            "在生成过程中流式传输代理的部分文本（用于语音流式播放）。",
           enableTtsTitle: "启用 TTS 流式传输",
+          enableTtsSubtitle:
+            "在流式传输时朗读回复（需要开启流式传输）。",
           ttsChunkCharsTitle: "TTS 分块字符数",
           ttsChunkCharsPromptBody:
             "在请求下一段 TTS 前缓冲多少字符（32–2000）。",
@@ -4636,6 +5766,36 @@ export const zhHans: TranslationStructure = {
       `此连接对应 ${serverUrl}。是否切换服务器并继续？`,
   },
 
+  terminalEmbedded: {
+    dockMenuA11y: "停靠终端",
+    settings: {
+      locationTitle: "嵌入式终端位置",
+    },
+    quickKeys: {
+      esc: "ESC",
+      tab: "TAB",
+      ctrlC: "Ctrl + C",
+      ctrlD: "Ctrl + D",
+      enter: "回车",
+    },
+    location: {
+      sidebar: "侧边栏",
+      details: "详情面板",
+      bottom: "底部面板",
+    },
+    errors: {
+      missingMachineTarget: "此会话缺少机器目标。",
+      rpcTargetUnavailable: "此机器的 RPC 不可用。",
+      machineUnreachable: "无法连接到机器。",
+      disabled: "守护进程配置已禁用终端支持。请启用后重启守护进程。",
+      notFound: "未找到终端会话。请尝试重启。",
+      cwdDenied: "守护进程没有权限使用此工作目录。",
+      spawnFailed: "无法启动终端进程。",
+      invalidRequest: "无效的终端请求。",
+      busy: "终端正忙。请重试。",
+    },
+  },
+
   modals: {
     // Used across connect flows and settings
     authenticateTerminal: "认证终端",
@@ -4701,7 +5861,7 @@ export const zhHans: TranslationStructure = {
   welcome: {
     // Main welcome screen for unauthenticated users
     title: "Codex 和 Claude Code 移动客户端",
-    subtitle: "端到端加密，您的账户仅存储在您的设备上。",
+    subtitle: "默认启用端到端加密，并可在其他设备上恢复您的账户。",
     createAccount: "创建账户",
     chooseEncryptionTitle: "选择加密方式",
     chooseEncryptionBody: "此服务器支持加密与不加密账户。请选择你希望如何存储账户数据。",
@@ -4728,17 +5888,18 @@ export const zhHans: TranslationStructure = {
     notReally: "不太喜欢",
   },
 
-  items: {
-    // Used by Item component for copy toast
-    copiedToClipboard: ({ label }: { label: string }) =>
-      `${label} 已复制到剪贴板`,
-  },
+	  items: {
+	    // Used by Item component for copy toast
+	    copiedToClipboard: ({ label }: { label: string }) =>
+	      `${label} 已复制到剪贴板`,
+	    failedToCopyToClipboard: "复制到剪贴板失败",
+	  },
 
     machine: {
     launchNewSessionInDirectory: "在目录中启动新会话",
     offlineUnableToSpawn: "设备离线时无法启动",
     offlineHelp:
-      "• 确保您的计算机在线\n• 运行 `happier daemon status` 进行诊断\n• 您是否在运行最新的 CLI 版本？请使用 `npm install -g @happier-dev/cli@latest` 升级",
+      "• 确保您的计算机在线\n• 运行 `happier daemon status` 进行诊断\n• 您是否在运行最新的 CLI 版本？请运行 `happier self update`",
     daemon: "守护进程",
     status: "状态",
     customPathPlaceholder: "输入自定义路径",
@@ -4805,6 +5966,7 @@ export const zhHans: TranslationStructure = {
     never: "从未",
     metadataVersion: "元数据版本",
     detectedClis: "已检测到的 CLI",
+    detectedCliDetected: "已检测到",
     detectedCliNotDetected: "未检测到",
     detectedCliUnknown: "未知",
     detectedCliNotSupported: "不支持（请更新 @happier-dev/cli）",
@@ -4829,6 +5991,11 @@ export const zhHans: TranslationStructure = {
       remoteSessionConsoleHiddenSubtitle:
         "远程会话会以隐藏方式启动，以避免窗口反复打开/闪烁。",
       remoteSessionConsoleUpdateFailed: "无法更新 Windows 会话控制台设置。",
+      remoteSessionModeTitle: "远程会话模式",
+      remoteSessionModeOverrideTitle: "覆盖全局 Windows 会话模式",
+      remoteSessionModeOverrideEnabledSubtitle: "此设备使用自己的 Windows 远程会话模式。",
+      remoteSessionModeOverrideDisabledSubtitle: "此设备遵循你的全局 Windows 远程会话模式。",
+      windowsTerminalUnavailableSuffix: "此设备未检测到 Windows Terminal。",
     },
   },
 
@@ -4845,12 +6012,31 @@ export const zhHans: TranslationStructure = {
       "权限仅在终端中显示。重置或发送消息即可从应用中控制。",
     sessionRunningLocally:
       "此会话正在本机上以本地模式运行。你可以切换到远程以在应用中控制。",
-    switchToRemote: "切换到远程",
-    localModeAvailable: "此会话可使用本地模式。",
-    localModeUnavailableMachineOffline: "此机器离线时无法使用本地模式。",
-    localModeUnavailableDaemonStarted: "由守护进程启动的会话无法使用本地模式。",
-    localModeUnavailableNeedsResume: "本地模式需要此提供方支持会话恢复。",
+    sessionRunningLocallyAndRemotely:
+      "此会话已在 OpenCode 中本地附加，同时仍可从应用中控制。",
+    switchingToRemote: "正在切换到远程模式…",
     switchToLocal: "切换到本地",
+    switchToRemote: "切换到远程",
+    detachLocalTerminal: "断开终端",
+    directSessionTakeoverAvailable:
+      "此直连会话可在你的机器上使用。可在 Happier 中接管它并在这里控制。",
+    directSessionMachineOffline:
+      "此直连会话当前不可用，因为机器已离线。",
+    switchingToDirectTakeover: "正在接管此直连会话…",
+    switchingToPersistedTakeover: "正在接管并同步此会话…",
+    takeOverDirect: "接管",
+    takeOverPersist: "接管并同步",
+    directTakeoverDialogTitle: "要在 Happier 中继续此直连会话吗？",
+    directTakeoverDialogBody: "选择 Happier 应如何接管。直连将继续使用提供方的会话记录。同步会将记录导入 Happier。",
+    directTakeoverDialogDirectTitle: "接管",
+    directTakeoverDialogDirectBody: "在 Happier 中控制此会话，而不将会话记录同步到 Happier。",
+    directTakeoverDialogPersistTitle: "接管并同步",
+    directTakeoverDialogPersistBody: "将会话记录导入 Happier，并继续使用完整的已同步会话功能。",
+    directTakeoverDialogForceStopTitle: "先尝试停止本地进程",
+    directTakeoverDialogForceStopBody: "Happier 找到了此会话对应的可信本地进程。如果你希望 Happier 在接管前先停止它，请启用此项。",
+    directTakeoverForceStopConfirmTitle: "先停止本地进程？",
+    directTakeoverForceStopConfirmBody: "Happier 找到了此直连会话对应的可信本地进程。要在这里接管前先停止它吗？",
+    directTakeoverForceStopConfirmAction: "停止并接管",
   },
 
     codex: {
@@ -4955,6 +6141,9 @@ export const zhHans: TranslationStructure = {
     howToFind: "如何查找好友",
     findInstructions:
       "通过用户名搜索好友。根据你的服务器设置，你可能需要连接提供方或选择用户名才能使用好友功能。",
+    emptyTitle: "暂无好友动态",
+    emptyDescription: "添加好友以共享会话，并在这里查看动态。",
+    activity: "动态",
     requestSent: "好友请求已发送！",
     requestAccepted: "好友请求已接受！",
     requestRejected: "好友请求已拒绝",
@@ -5179,7 +6368,6 @@ export const zhHans: TranslationStructure = {
         useOnceButton: "仅使用一次（仅本次会话）",
       },
     },
-    defaultSessionType: "默认会话类型",
     defaultPermissionMode: {
       title: "默认权限模式",
       descriptions: {
@@ -5198,6 +6386,13 @@ export const zhHans: TranslationStructure = {
       useAccountDefault: "使用账号默认",
       currently: ({ label }: { label: string }) => `当前：${label}`,
     },
+    defaultStorage: {
+      title: 'Default session storage',
+      footer: 'Overrides the account-level default synced/direct session mode for new sessions when this profile is selected.',
+      accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+      useAccountDefault: 'Use account default',
+      currently: ({ label }: { label: string }) => `Currently: ${label}`,
+    },
     aiBackend: {
       title: "AI 后端",
       selectAtLeastOneError: "至少选择一个 AI 后端。",
@@ -5209,6 +6404,8 @@ export const zhHans: TranslationStructure = {
       qwenSubtitleExperimental: "Qwen Code 命令行（实验）",
       kimiSubtitleExperimental: "Kimi 命令行（实验）",
       kiloSubtitleExperimental: "Kilo 命令行（实验）",
+      kiroSubtitleExperimental: "Kiro 命令行（实验）",
+      customAcpSubtitleExperimental: "自定义 ACP 命令行（实验）",
       piSubtitleExperimental: "Pi 命令行（实验）",
       copilotSubtitleExperimental: "GitHub Copilot CLI（实验）",
     },

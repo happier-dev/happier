@@ -1,3 +1,4 @@
+import type { AcpConfigOption, AcpConfigOptionSelectOption } from '@/sync/acp/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { ProbedResourceCache, type ProbedResourceSnapshot } from '@happier-dev/protocol';
 import { MMKV } from 'react-native-mmkv';
@@ -21,7 +22,7 @@ const storage = isWebRuntime
     ? null
     : (storageScope ? new MMKV({ id: scopedStorageId('dynamic-model-probe-cache', storageScope) }) : new MMKV());
 const PERSIST_KEY = 'dynamic-model-probe-cache-v1';
-const PERSIST_VERSION = 1;
+const PERSIST_VERSION = 3;
 const PERSIST_MAX_ENTRIES = 200;
 const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 
@@ -82,17 +83,74 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
     const modelsRaw = (input as any).availableModels;
     const supportsFreeformRaw = (input as any).supportsFreeform;
-    if (!Array.isArray(modelsRaw) || modelsRaw.length === 0) return null;
+    if (!Array.isArray(modelsRaw)) return null;
+
+    const normalizePersistedConfigValue = (raw: unknown): string | null => {
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        }
+        if (typeof raw === 'boolean') return raw ? 'true' : 'false';
+        if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+        return null;
+    };
+
+    const normalizeModelOptions = (value: unknown): readonly AcpConfigOption[] | undefined => {
+        if (!Array.isArray(value)) return undefined;
+        const normalized: AcpConfigOption[] = [];
+        for (const optionRaw of value) {
+            if (!optionRaw || typeof optionRaw !== 'object' || Array.isArray(optionRaw)) continue;
+            const option = optionRaw as Record<string, unknown>;
+            const id = typeof option.id === 'string' ? option.id.trim() : '';
+            const name = typeof option.name === 'string' ? option.name.trim() : '';
+            const type = typeof option.type === 'string' ? option.type.trim() : '';
+            if (!id || !name || !type) continue;
+            const currentValue = normalizePersistedConfigValue(option.currentValue);
+            if (!currentValue) continue;
+            const description = typeof option.description === 'string' ? option.description : undefined;
+            const choices: AcpConfigOptionSelectOption[] = [];
+            if (Array.isArray(option.options)) {
+                for (const choiceRaw of option.options) {
+                    if (!choiceRaw || typeof choiceRaw !== 'object' || Array.isArray(choiceRaw)) continue;
+                    const choice = choiceRaw as Record<string, unknown>;
+                    const choiceName = typeof choice.name === 'string' ? choice.name.trim() : '';
+                    if (!choiceName) continue;
+                    const choiceValue = normalizePersistedConfigValue(choice.value);
+                    if (!choiceValue) continue;
+                    const choiceDescription = typeof choice.description === 'string' ? choice.description : undefined;
+                    choices.push({
+                        value: choiceValue,
+                        name: choiceName,
+                        ...(choiceDescription ? { description: choiceDescription } : {}),
+                    });
+                }
+            }
+            normalized.push({
+                id,
+                name,
+                type,
+                currentValue,
+                ...(description ? { description } : {}),
+                ...(choices.length > 0 ? { options: choices } : {}),
+            });
+        }
+        return normalized.length > 0 ? normalized : undefined;
+    };
 
     const models = modelsRaw
         .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-        .map((m: any) => ({
-            id: String(m.id),
-            name: String(m.name),
-            ...(typeof m.description === 'string' ? { description: m.description } : {}),
-        }));
-    if (models.length === 0) return null;
-    return { availableModels: models, supportsFreeform: Boolean(supportsFreeformRaw) };
+        .map((m: any) => {
+            const modelOptions = normalizeModelOptions(m.modelOptions);
+            return {
+                id: String(m.id),
+                name: String(m.name),
+                ...(typeof m.description === 'string' ? { description: m.description } : {}),
+                ...(modelOptions ? { modelOptions } : {}),
+            };
+        });
+    const supportsFreeform = Boolean(supportsFreeformRaw);
+    if (models.length === 0 && supportsFreeform !== true) return null;
+    return { availableModels: models, supportsFreeform };
 }
 
 function readPersistedState(): PersistedState | null {

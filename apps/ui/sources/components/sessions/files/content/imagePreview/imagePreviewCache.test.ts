@@ -14,9 +14,12 @@ describe('ImagePreviewCache', () => {
     });
 
     it('evicts entries to satisfy maxTotalBytes', () => {
-        const cache = new ImagePreviewCache({ maxEntries: 10, maxTotalBytes: 10, now: () => 1_000 });
-        cache.set({ sessionId: 's1', signature: 'sig1', filePath: 'a.png' }, { status: 'loaded', uri: '12345678901' });
-        // Estimated bytes is 2 * length => 22, should evict immediately.
+        const cache = new ImagePreviewCache({ maxEntries: 10, maxTotalBytes: 20, now: () => 1_000 });
+        cache.set({ sessionId: 's1', signature: 'sig1', filePath: 'a.png' }, { status: 'loaded', uri: '12345' });
+        expect(cache.get({ sessionId: 's1', signature: 'sig1', filePath: 'a.png' })?.status).toBe('loaded');
+
+        cache.set({ sessionId: 's1', signature: 'sig1', filePath: 'b.png' }, { status: 'loaded', uri: '123456' });
         expect(cache.get({ sessionId: 's1', signature: 'sig1', filePath: 'a.png' })).toBeNull();
+        expect(cache.get({ sessionId: 's1', signature: 'sig1', filePath: 'b.png' })?.status).toBe('loaded');
     });
 });

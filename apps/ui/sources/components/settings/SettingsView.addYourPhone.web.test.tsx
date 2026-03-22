@@ -1,26 +1,36 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
 let windowDimensions: { width: number; height: number } = { width: 1600, height: 900 };
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-    Linking: { canOpenURL: async () => false, openURL: async () => {} },
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Pressable: 'Pressable',
+                            Dimensions: {
+                                get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+                            },
+                            useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                            },
+                            Linking: {
+                                canOpenURL: async () => false,
+                                openURL: async () => {},
+                            },
+                            ActivityIndicator: 'ActivityIndicator',
+                        }
+    );
+});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -31,9 +41,13 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -74,7 +88,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useEntitlement: () => false,
     useLocalSettingMutable: () => [false, vi.fn()],
     useSetting: () => null,
@@ -82,7 +98,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useMachineListByServerId: () => ({}),
     useMachineListStatusByServerId: () => ({}),
     useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -97,20 +114,24 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -124,8 +145,8 @@ vi.mock('react-native-unistyles', () => ({
                 header: { background: 'white', tint: 'black' },
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
@@ -149,9 +170,10 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
@@ -215,12 +237,10 @@ describe('SettingsView (web)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<SettingsView />);
-        });
+        tree = (await renderScreen(<SettingsView />)).tree;
         if (!tree) throw new Error('Expected renderer');
 
-        const items = tree.root.findAll(
+        const items = tree.findAll(
             (n) => n?.props?.title === 'settings.addYourPhone' && typeof n?.props?.onPress === 'function',
         );
         expect(items.length).toBeGreaterThan(0);
@@ -239,12 +259,10 @@ describe('SettingsView (web)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<SettingsView />);
-        });
+        tree = (await renderScreen(<SettingsView />)).tree;
         if (!tree) throw new Error('Expected renderer');
 
-        const items = tree.root.findAll(
+        const items = tree.findAll(
             (n) => n?.props?.title === 'settings.addYourPhone' && typeof n?.props?.onPress === 'function',
         );
         expect(items).toHaveLength(0);
@@ -260,12 +278,10 @@ describe('SettingsView (web)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<SettingsView />);
-        });
+        tree = (await renderScreen(<SettingsView />)).tree;
         if (!tree) throw new Error('Expected renderer');
 
-        const items = tree.root.findAll(
+        const items = tree.findAll(
             (n) => n?.props?.title === 'settings.addYourPhone' && typeof n?.props?.onPress === 'function',
         );
         expect(items.length).toBeGreaterThan(0);

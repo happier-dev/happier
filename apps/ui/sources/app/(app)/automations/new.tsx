@@ -1,11 +1,16 @@
-import { Redirect } from 'expo-router';
+import React from 'react';
+import { useRouter } from 'expo-router';
 
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 
 export default function NewAutomationRoute() {
+    const router = useRouter();
     const support = useAutomationsSupport();
-    if (support && !support.enabled) {
-        return <Redirect href={'/new' as any} />;
-    }
-    return <Redirect href={'/new?automation=1' as any} />;
+
+    React.useEffect(() => {
+        if (support.loading) return;
+        router.replace(support.enabled ? '/new?automation=1' : '/new');
+    }, [router, support.enabled, support.loading]);
+
+    return null;
 }

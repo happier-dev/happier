@@ -11,6 +11,7 @@ import { configuration } from '@/configuration'
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { inspect } from 'node:util'
+import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '@/utils/writeConsoleBestEffort'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
 
@@ -57,7 +58,7 @@ class Logger {
     if (process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING 
       && process.env.HAPPIER_SERVER_URL) {
       this.dangerouslyUnencryptedServerLoggingUrl = process.env.HAPPIER_SERVER_URL
-      console.log(chalk.yellow('[REMOTE LOGGING] Sending logs to server for AI debugging'))
+      writeConsoleLogBestEffort(chalk.yellow('[REMOTE LOGGING] Sending logs to server for AI debugging'))
     }
   }
 
@@ -165,28 +166,28 @@ class Logger {
   private logToConsole(level: 'debug' | 'error' | 'info' | 'warn', prefix: string, message: string, ...args: unknown[]): void {
     switch (level) {
       case 'debug': {
-        console.log(chalk.gray(prefix), message, ...args)
+        writeConsoleLogBestEffort(chalk.gray(prefix), message, ...args)
         break
       }
 
       case 'error': {
-        console.error(chalk.red(prefix), message, ...args)
+        writeConsoleErrorBestEffort(chalk.red(prefix), message, ...args)
         break
       }
 
       case 'info': {
-        console.log(chalk.blue(prefix), message, ...args)
+        writeConsoleLogBestEffort(chalk.blue(prefix), message, ...args)
         break
       }
 
       case 'warn': {
-        console.log(chalk.yellow(prefix), message, ...args)
+        writeConsoleLogBestEffort(chalk.yellow(prefix), message, ...args)
         break
       }
 
       default: {
         this.debug('Unknown log level:', level)
-        console.log(chalk.blue(prefix), message, ...args)
+        writeConsoleLogBestEffort(chalk.blue(prefix), message, ...args)
         break
       }
     }
@@ -266,7 +267,7 @@ class Logger {
       // Never throw from logging: log files are best-effort and should not break the CLI.
       // When DEBUG is set, surface the first write failure for easier debugging.
       if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
-        console.error('[DEV MODE ONLY] Failed to append to log file:', appendError)
+        writeConsoleErrorBestEffort('[DEV MODE ONLY] Failed to append to log file:', appendError)
         this.hasLoggedFileWriteError = true
       }
       // In production (and after the first DEBUG warning), fail silently to avoid disturbing the session.

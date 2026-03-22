@@ -32,10 +32,27 @@ describe('forkedTranscriptPaging', () => {
     const req = resolveNextForkedTranscriptLoadOlderRequest({
       fork,
       getHasMoreOlder: (id) => (id === 'child' ? true : true),
-      getBeforeSeqCursor: () => undefined,
+      getBeforeSeqCursor: (id) => (id === 'child' ? 123 : undefined),
     });
 
     expect(req).toEqual({ kind: 'loadOlder', sessionId: 'child' });
+  });
+
+  it('skips paging the child session when it has no beforeSeq cursor (avoids not_ready loops)', () => {
+    const fork = buildForkSnapshot({
+      segments: [
+        { sessionId: 'parent', isReadOnlyContext: true, cutoffSeqInclusive: 3 },
+        { sessionId: 'child', isReadOnlyContext: false, cutoffSeqInclusive: null },
+      ],
+    });
+
+    const req = resolveNextForkedTranscriptLoadOlderRequest({
+      fork,
+      getHasMoreOlder: (id) => (id === 'child' ? true : true),
+      getBeforeSeqCursor: () => undefined,
+    });
+
+    expect(req).toEqual({ kind: 'loadOlderFromCursor', sessionId: 'parent', beforeSeq: 4 });
   });
 
   it('starts ancestor paging from cutoff+1 when ancestor cursor is missing', () => {
@@ -110,4 +127,3 @@ describe('forkedTranscriptPaging', () => {
     })).toBe(true);
   });
 });
-

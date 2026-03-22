@@ -19,6 +19,17 @@ import { runScmCommand } from '../../../runtime';
 import { buildScmNonInteractiveEnv } from '../../shared/nonInteractiveEnv';
 import { mapGitErrorCode } from '../remote';
 
+function validateStashRef(stashRef: string): { ok: true; value: string } | { ok: false; error: string } {
+    const normalized = String(stashRef ?? '').trim();
+    if (!normalized) {
+        return { ok: false, error: 'Stash ref cannot be empty' };
+    }
+    if (normalized.startsWith('-')) {
+        return { ok: false, error: 'Stash ref cannot start with "-"' };
+    }
+    return { ok: true, value: normalized };
+}
+
 export const HAPPIER_MANAGED_STASH_MARKERS = {
     branch: '!!Happier<',
     transient: '!!HappierTransient<',
@@ -260,10 +271,21 @@ export async function gitStashDrop(input: {
     context: ScmBackendContext;
     request: ScmStashDropRequest;
 }): Promise<ScmStashDropResponse> {
+    const stashRef = validateStashRef(input.request.stashRef);
+    if (!stashRef.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: stashRef.error,
+            stdout: '',
+            stderr: '',
+        };
+    }
+
     const drop = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,
-        args: ['stash', 'drop', input.request.stashRef],
+        args: ['stash', 'drop', stashRef.value],
         timeoutMs: 15_000,
         env: buildScmNonInteractiveEnv(),
     });
@@ -283,10 +305,21 @@ export async function gitStashPop(input: {
     context: ScmBackendContext;
     request: ScmStashPopRequest;
 }): Promise<ScmStashPopResponse> {
+    const stashRef = validateStashRef(input.request.stashRef);
+    if (!stashRef.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: stashRef.error,
+            stdout: '',
+            stderr: '',
+        };
+    }
+
     const pop = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,
-        args: ['stash', 'pop', input.request.stashRef],
+        args: ['stash', 'pop', stashRef.value],
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
     });
@@ -306,10 +339,21 @@ export async function gitStashApply(input: {
     context: ScmBackendContext;
     request: ScmStashApplyRequest;
 }): Promise<ScmStashApplyResponse> {
+    const stashRef = validateStashRef(input.request.stashRef);
+    if (!stashRef.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: stashRef.error,
+            stdout: '',
+            stderr: '',
+        };
+    }
+
     const apply = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,
-        args: ['stash', 'apply', input.request.stashRef],
+        args: ['stash', 'apply', stashRef.value],
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
     });
@@ -329,10 +373,19 @@ export async function gitStashShow(input: {
     context: ScmBackendContext;
     request: ScmStashShowRequest;
 }): Promise<ScmStashShowResponse> {
+    const stashRef = validateStashRef(input.request.stashRef);
+    if (!stashRef.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: stashRef.error,
+        };
+    }
+
     const show = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,
-        args: ['stash', 'show', '-p', '--include-untracked', '--no-color', input.request.stashRef],
+        args: ['stash', 'show', '-p', '--include-untracked', '--no-color', stashRef.value],
         timeoutMs: 30_000,
         maxOutputBytes: input.request.maxBytes,
         env: buildScmNonInteractiveEnv(),

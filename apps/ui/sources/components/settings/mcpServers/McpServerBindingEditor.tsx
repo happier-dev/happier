@@ -18,6 +18,7 @@ import type { McpServerBindingTargetV1, McpServerBindingV1, McpServerCatalogEntr
 import { McpWorkspaceRootPickerModal } from './McpWorkspaceRootPickerModal';
 import { McpBindingOverridesEditorModal } from './McpBindingOverridesEditorModal';
 import { McpBindingTargetFields, describeBindingTarget } from './McpBindingTargetFields';
+import { resolveMcpBindingTargetTypeChange } from './resolveMcpBindingTarget';
 
 const stylesheet = StyleSheet.create((theme) => ({
     groupHeader: {
@@ -71,18 +72,13 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
     const setTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t']) => {
         update((current) => {
             const now = Date.now();
-            if (nextType === 'allMachines') {
-                return { ...current, target: { t: 'allMachines' }, updatedAt: now };
+            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines);
+            if (!nextTarget) {
+                Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
+                return current;
             }
 
-            const fallbackMachineId = current.target.t === 'allMachines'
-                ? (props.machines[0]?.id ?? 'unknown')
-                : current.target.machineId;
-            if (nextType === 'machine') {
-                return { ...current, target: { t: 'machine', machineId: fallbackMachineId }, updatedAt: now };
-            }
-
-            return { ...current, target: { t: 'workspace', machineId: fallbackMachineId, workspaceRoot: '/' }, updatedAt: now };
+            return { ...current, target: nextTarget, updatedAt: now };
         });
     }, [props.machines, update]);
 

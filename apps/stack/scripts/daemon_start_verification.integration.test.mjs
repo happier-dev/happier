@@ -8,6 +8,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { checkDaemonState, startLocalDaemonWithAuth } from './daemon.mjs';
+import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 
 function runNode(args, { cwd, env }) {
@@ -23,9 +25,7 @@ function runNode(args, { cwd, env }) {
 }
 
 async function writeStubHappyCli({ cliDir }) {
-    await mkdir(join(cliDir, 'bin'), { recursive: true });
-    await mkdir(join(cliDir, 'dist'), { recursive: true });
-    const distScript = `
+  const distScript = `
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -54,13 +54,14 @@ if (sub === 'start') {
 
 process.exit(0);
 `;
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
-  const cliBin = join(cliDir, 'bin', 'happier.mjs');
-  // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
-  await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
-  return cliBin;
+  const monoRoot = join(cliDir, '..', '..');
+  const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    packageJsonContent: '{}\n',
+    distIndexScript: distScript.trimStart(),
+    // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+    binHappierScript: 'process.exit(42);\n',
+  });
+  return join(cliBinDir, 'happier.mjs');
 }
 
 function createTestJwt({ sub, jti }) {
@@ -727,7 +728,7 @@ test('checkDaemonState ignores running daemon state from a different active serv
   const cliHomeDir = join(tmp, 'stack', 'cli');
   await mkdir(cliHomeDir, { recursive: true });
 
-  const dummy = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1e6)'], {
+  const dummy = spawnDetachedInlineNodeTestProcess('setInterval(()=>{}, 1e6)', {
     env: {
       ...process.env,
       HAPPIER_HOME_DIR: cliHomeDir,
@@ -735,7 +736,6 @@ test('checkDaemonState ignores running daemon state from a different active serv
       HAPPIER_WEBAPP_URL: 'http://localhost:4301',
     },
     stdio: ['ignore', 'ignore', 'ignore'],
-    detached: true,
   });
 
   try {

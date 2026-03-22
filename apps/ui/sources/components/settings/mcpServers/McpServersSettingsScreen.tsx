@@ -87,7 +87,7 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     const previewAgentIds = React.useMemo(() => listMcpPreviewAgentIds(), []);
 
     React.useEffect(() => {
-        if (previewAgentIds.includes(selectedAgentId as AgentId)) return;
+        if (previewAgentIds.includes(selectedAgentId)) return;
         setSelectedAgentId(getPreferredMcpPreviewAgentId(previewAgentIds, selectedAgentId));
     }, [previewAgentIds, selectedAgentId]);
 
@@ -96,7 +96,7 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         iconColor: theme.colors.textSecondary,
     }), [previewAgentIds, theme.colors.textSecondary]);
 
-    const selectedAgentTools = React.useMemo(() => getAgentCore(selectedAgentId as AgentId).tools, [selectedAgentId]);
+    const selectedAgentTools = React.useMemo(() => getAgentCore(selectedAgentId).tools, [selectedAgentId]);
 
     const handleToggleStrictMode = React.useCallback(() => {
         setMcpSettings({ ...mcpSettings, strictMode: !mcpSettings.strictMode });
@@ -145,7 +145,7 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         setDetected(response.servers);
         setDetectWarnings(response.warnings ?? null);
     }, [directory, selectedMachineId]);
-    const [detectLoading, runDetect] = useHappyAction(detectAction);
+    const [detectLoading, runDetect] = useHappyAction(detectAction, { mode: 'rerun_latest' });
 
     const previewAction = React.useCallback(async () => {
         if (!selectedMachineId) {

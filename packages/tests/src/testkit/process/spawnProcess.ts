@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 
-import { terminateProcessTreeByPid } from './processTree';
+import { collectDescendantPids, terminateProcessTreeByPid } from './processTree';
 
 export type SpawnedProcess = {
   child: ChildProcess;
@@ -9,6 +9,40 @@ export type SpawnedProcess = {
   stderrPath: string;
   stop: (signal?: NodeJS.Signals) => Promise<void>;
 };
+
+function attachExitCleanup(
+  child: ChildProcess,
+  getAdditionalPids: () => number[] = () => [],
+): () => void {
+  const cleanup = () => {
+    if (typeof child.pid !== 'number' || child.pid <= 0) return;
+    void terminateProcessTreeByPid(child.pid, {
+      graceMs: 0,
+      pollMs: 25,
+      skipAliveCheck: true,
+      additionalPids: getAdditionalPids(),
+    }).catch(() => {});
+  };
+
+  const onExit = () => {
+    cleanup();
+  };
+  const onSignal = () => {
+    cleanup();
+  };
+
+  process.once('exit', onExit);
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  process.once('SIGHUP', onSignal);
+
+  return () => {
+    process.off('exit', onExit);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    process.off('SIGHUP', onSignal);
+  };
+}
 
 function waitForStreamDrain(stream: NodeJS.WritableStream, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -65,8 +99,9 @@ export async function runLoggedCommand(params: {
     detached: process.platform !== 'win32',
   });
 
-  const stdout = createWriteStream(params.stdoutPath, { flags: 'a' });
-  const stderr = createWriteStream(params.stderrPath, { flags: 'a' });
+  const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });
+  const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
+  const detachCleanup = attachExitCleanup(child);
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
@@ -84,6 +119,7 @@ export async function runLoggedCommand(params: {
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      detachCleanup();
       try {
         stdout.end();
       } catch {
@@ -98,6 +134,7 @@ export async function runLoggedCommand(params: {
     });
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
+      detachCleanup();
       if (code === 0) {
         resolve({ ok: true });
         return;
@@ -140,31 +177,81 @@ export function spawnLoggedProcess(params: {
     detached: process.platform !== 'win32',
   });
 
-  const stdout = createWriteStream(params.stdoutPath, { flags: 'a' });
-  const stderr = createWriteStream(params.stderrPath, { flags: 'a' });
+  const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });
+  const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
+  const observedDescendantPids = new Set<number>();
+  const detachCleanup = attachExitCleanup(child, () => [...observedDescendantPids]);
+  const descendantPoller = process.platform === 'win32'
+    ? null
+    : setInterval(() => {
+      if (typeof child.pid !== 'number' || child.pid <= 0) return;
+      for (const pid of collectDescendantPids(child.pid)) {
+        observedDescendantPids.add(pid);
+      }
+    }, 1);
+
+  descendantPoller?.unref?.();
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
 
   const stop = async (signal: NodeJS.Signals = 'SIGTERM') => {
-    if (child.exitCode !== null || child.killed) return;
+    descendantPoller?.unref?.();
+    descendantPoller && clearInterval(descendantPoller);
+
     if (typeof child.pid === 'number' && child.pid > 0) {
-      if (signal !== 'SIGTERM') {
-        try {
-          process.kill(child.pid, signal);
-        } catch {
-          // ignore
-        }
+      for (const pid of collectDescendantPids(child.pid)) {
+        observedDescendantPids.add(pid);
       }
-      await terminateProcessTreeByPid(child.pid, { graceMs: 10_000, pollMs: 100 });
+    }
+
+    if (typeof child.pid !== 'number' || child.pid <= 0) {
+      try {
+        child.kill(signal);
+      } catch {
+        // ignore
+      }
       return;
     }
-    try {
-      child.kill(signal);
-    } catch {
-      // ignore
+
+    if (process.platform === 'win32') {
+      await terminateProcessTreeByPid(child.pid, {
+        graceMs: 10_000,
+        pollMs: 25,
+        skipAliveCheck: true,
+        additionalPids: [...observedDescendantPids],
+      });
+      return;
     }
+
+    if (signal !== 'SIGTERM' && child.exitCode === null && !child.killed) {
+      try {
+        process.kill(child.pid, signal);
+      } catch {
+        // ignore
+      }
+    }
+
+    await terminateProcessTreeByPid(child.pid, {
+      graceMs: 10_000,
+      pollMs: 25,
+      skipAliveCheck: true,
+      additionalPids: [...observedDescendantPids],
+    });
   };
+
+  child.once('exit', () => {
+    if (descendantPoller) clearInterval(descendantPoller);
+    if (observedDescendantPids.size > 0) {
+      void terminateProcessTreeByPid(child.pid ?? 0, {
+        graceMs: 0,
+        pollMs: 25,
+        skipAliveCheck: true,
+        additionalPids: [...observedDescendantPids],
+      }).catch(() => {});
+    }
+    detachCleanup();
+  });
 
   return { child, stdoutPath: params.stdoutPath, stderrPath: params.stderrPath, stop };
 }

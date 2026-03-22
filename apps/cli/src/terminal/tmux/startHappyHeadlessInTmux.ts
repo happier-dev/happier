@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { isTmuxAvailable, selectPreferredTmuxSessionName, TmuxUtilities } from '@/integrations/tmux';
-import { AGENTS } from '@/backends/catalog';
+import { AGENTS, requireCatalogEntry } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 
 function removeFlag(argv: string[], flag: string): string[] {
@@ -42,7 +42,7 @@ async function resolveTmuxSessionName(params: {
 export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
   const argsWithoutTmux = removeFlag(argv, '--tmux');
   const agent = inferAgent(argsWithoutTmux);
-  const entry = AGENTS[agent];
+  const entry = requireCatalogEntry(agent);
   const transform = entry.getHeadlessTmuxArgvTransform ? await entry.getHeadlessTmuxArgvTransform() : null;
   const childArgs = transform ? transform(argsWithoutTmux) : argsWithoutTmux;
 

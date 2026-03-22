@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,11 +18,19 @@ let mockedSettings: Record<string, any> = {
     bottomPaneHeightBasisPx: 900,
 };
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    useWindowDimensions: () => ({ width: 1200, height: mockedWindowHeightPx }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                        select: (value: Record<string, unknown>) => value.web ?? value.default,
+                    },
+                    View: 'View',
+                    useWindowDimensions: () => ({ width: 1200, height: mockedWindowHeightPx }),
+                }
+    );
+});
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: (props: any) => {
@@ -34,10 +43,13 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => (Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null),
     useLocalSettingMutable: () => [null, vi.fn()],
-}));
+});
+});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
@@ -72,15 +84,13 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
             bottomPaneHeightBasisPx: 900,
         };
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
-                    scopeId="scope1"
-                    main={<div />}
-                    bottomPane={<div />}
-                />,
-            );
-        });
+        await renderScreen(
+            <AppPaneScopeHost
+                scopeId="scope1"
+                main={<div />}
+                bottomPane={<div />}
+            />,
+        );
 
         expect(lastProps).not.toBeNull();
         expect(lastProps.bottomPresentation).toBe('overlay');
@@ -103,15 +113,13 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
             bottomPaneHeightBasisPx: 900,
         };
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
-                    scopeId="scope1"
-                    main={<div />}
-                    bottomPane={<div />}
-                />,
-            );
-        });
+        await renderScreen(
+            <AppPaneScopeHost
+                scopeId="scope1"
+                main={<div />}
+                bottomPane={<div />}
+            />,
+        );
 
         expect(lastProps).not.toBeNull();
         expect(lastProps.bottomPresentation).toBe('docked');
@@ -140,19 +148,16 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
             bottomPaneHeightBasisPx: 900,
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AppPaneScopeHost
-                    scopeId="scope1"
-                    main={<div />}
-                    bottomPane={<div />}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <AppPaneScopeHost
+                scopeId="scope1"
+                main={<div />}
+                bottomPane={<div />}
+            />,
+        );
 
         const initialBottomDockMaxHeightPx = lastProps.bottomDockMaxHeightPx;
-        const rootView = tree!.root.findByType('View');
+        const rootView = screen.root.findByType('View');
 
         await act(async () => {
             rootView.props.onLayout({ nativeEvent: { layout: { width: 0, height: 500 } } });

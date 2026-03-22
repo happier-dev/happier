@@ -1,9 +1,16 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { installLocalStorageMock, type LocalStorageMockHandle } from './tokenStorage.web.testHelpers';
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                        }
+    );
+});
 
 vi.mock('expo-secure-store', () => ({}));
 

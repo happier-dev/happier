@@ -3,6 +3,7 @@ import type { AgentUiConfig } from '@/agents/registry/registryUi';
 export const GEMINI_UI: AgentUiConfig = {
     id: 'gemini',
     icon: require('@/assets/images/icon-gemini.png'),
+    svgIconXml: null,
     tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
@@ -10,4 +11,3 @@ export const GEMINI_UI: AgentUiConfig = {
     },
     cliGlyph: '\u2726\uFE0E',
 };
-

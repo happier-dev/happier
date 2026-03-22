@@ -14,6 +14,7 @@ describe('sessionControl contract exports', () => {
     expect(typeof (protocol as any).SessionStopEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionActionsListEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionActionsDescribeEnvelopeSchema).toBe('object');
+    expect(typeof (protocol as any).SessionActionsExecuteEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionRunStartEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionRunListEnvelopeSchema).toBe('object');
     expect(typeof (protocol as any).SessionRunGetEnvelopeSchema).toBe('object');
@@ -103,11 +104,26 @@ describe('sessionControl contract exports', () => {
               voice_tool: true,
               voice_action_block: true,
               mcp: true,
-              session_control_cli: true,
+              cli: true,
             },
             inputHints: null,
           },
         ],
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('validates a session_actions_execute envelope shape', () => {
+    const schema = (protocol as any).SessionActionsExecuteEnvelopeSchema;
+    const parsed = schema.safeParse({
+      v: 1,
+      ok: true,
+      kind: 'session_actions_execute',
+      data: {
+        sessionId: 'sess_123',
+        actionId: 'review.start',
+        result: { started: true },
       },
     });
     expect(parsed.success).toBe(true);
@@ -130,6 +146,9 @@ describe('sessionControl contract exports', () => {
           metadataVersion: 1,
           agentState: null,
           agentStateVersion: 0,
+          lastViewedSessionSeq: 4,
+          pendingPermissionRequestCount: 2,
+          pendingUserActionRequestCount: 1,
           pendingCount: 0,
           pendingVersion: 1,
           dataEncryptionKey: 'a2V5',
@@ -156,6 +175,9 @@ describe('sessionControl contract exports', () => {
           metadataVersion: 1,
           agentState: null,
           agentStateVersion: 0,
+          lastViewedSessionSeq: 4,
+          pendingPermissionRequestCount: 0,
+          pendingUserActionRequestCount: 0,
           dataEncryptionKey: null,
         },
       ],

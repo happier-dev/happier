@@ -1,61 +1,78 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
 import { writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { restoreProcessEnv, snapshotProcessEnv } from '@/testkit/env.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 describe('configuration env url fallback', () => {
-  const envBackup = snapshotProcessEnv();
+  const envKeys = [
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_SERVER_URL',
+    'HAPPIER_LOCAL_SERVER_URL',
+    'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_WEBAPP_URL',
+    'HAPPIER_ACTIVE_SERVER_ID',
+    'HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION',
+    'HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION',
+    'HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS',
+    'HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS',
+    'HAPPIER_EXECUTION_RUNS_MAX_TURNS',
+    'HAPPIER_EXECUTION_RUNS_MAX_DEPTH',
+    'HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION',
+    'HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON',
+  ] as const;
+  let envScope = createEnvKeyScope(envKeys);
   const tempDirs: string[] = [];
 
   afterEach(() => {
-    restoreProcessEnv(envBackup);
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
     for (const tempDir of tempDirs) {
-      rmSync(tempDir, { recursive: true, force: true });
+      removeTempDirSync(tempDir);
     }
     tempDirs.length = 0;
   });
 
   it('defaults webappUrl to server origin when HAPPIER_SERVER_URL is custom and webapp is unset', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'https://selfhost.example.test/api';
     delete process.env.HAPPIER_WEBAPP_URL;
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const output = captureConsoleText();
     try {
       const configMod = await import('./configuration');
       configMod.reloadConfiguration();
       expect(configMod.configuration.serverUrl).toBe('https://selfhost.example.test/api');
       expect(configMod.configuration.webappUrl).toBe('https://selfhost.example.test');
     } finally {
-      warn.mockRestore();
+      output.restore();
     }
   });
 
   it('keeps the cloud default webappUrl when HAPPIER_SERVER_URL matches the cloud default and webapp is unset', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'https://api.happier.dev';
     delete process.env.HAPPIER_WEBAPP_URL;
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const output = captureConsoleText();
     try {
       const configMod = await import('./configuration');
       configMod.reloadConfiguration();
       expect(configMod.configuration.serverUrl).toBe('https://api.happier.dev');
       expect(configMod.configuration.webappUrl).toBe('https://app.happier.dev');
     } finally {
-      warn.mockRestore();
+      output.restore();
     }
   });
 
   it('normalizes trailing slashes so env HAPPIER_SERVER_URL matches persisted server profiles', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     const settingsFile = join(homeDir, 'settings.json');
     writeFileSync(
@@ -82,19 +99,19 @@ describe('configuration env url fallback', () => {
     process.env.HAPPIER_SERVER_URL = 'https://selfhost.example.test/api/';
     delete process.env.HAPPIER_WEBAPP_URL;
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const output = captureConsoleText();
     try {
       const configMod = await import('./configuration');
       configMod.reloadConfiguration();
       expect(configMod.configuration.activeServerId).toBe('custom');
       expect(configMod.configuration.serverUrl).toBe('https://selfhost.example.test/api');
     } finally {
-      warn.mockRestore();
+      output.restore();
     }
   });
 
   it('reuses persisted webappUrl when env server override matches a saved profile', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     const settingsFile = join(homeDir, 'settings.json');
     writeFileSync(
@@ -121,7 +138,7 @@ describe('configuration env url fallback', () => {
     process.env.HAPPIER_SERVER_URL = 'https://api.selfhost.example.test/v1/';
     delete process.env.HAPPIER_WEBAPP_URL;
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const output = captureConsoleText();
     try {
       const configMod = await import('./configuration');
       configMod.reloadConfiguration();
@@ -129,12 +146,12 @@ describe('configuration env url fallback', () => {
       expect(configMod.configuration.serverUrl).toBe('https://api.selfhost.example.test/v1');
       expect(configMod.configuration.webappUrl).toBe('https://app.selfhost.example.test');
     } finally {
-      warn.mockRestore();
+      output.restore();
     }
   });
 
   it('falls back to cloud when persisted activeServerId is path-unsafe', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-unsafe-id-'));
+    const homeDir = createTempDirSync('happier-cli-config-unsafe-id-');
     tempDirs.push(homeDir);
     const settingsFile = join(homeDir, 'settings.json');
     writeFileSync(
@@ -173,7 +190,7 @@ describe('configuration env url fallback', () => {
   });
 
   it('uses HAPPIER_ACTIVE_SERVER_ID override for active server scope without changing URL selection', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-active-scope-'));
+    const homeDir = createTempDirSync('happier-cli-config-active-scope-');
     tempDirs.push(homeDir);
     const settingsFile = join(homeDir, 'settings.json');
     writeFileSync(
@@ -208,8 +225,55 @@ describe('configuration env url fallback', () => {
     expect(configMod.configuration.webappUrl).toBe('https://app.selfhost.example.test');
   });
 
+  it('prefers the persisted active server id when multiple saved profiles share the env-selected URL', async () => {
+    const homeDir = createTempDirSync('happier-cli-config-duplicate-url-');
+    tempDirs.push(homeDir);
+    const settingsFile = join(homeDir, 'settings.json');
+    writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          schemaVersion: 5,
+          activeServerId: 'custom-3',
+          servers: {
+            cloud: {
+              id: 'cloud',
+              serverUrl: 'https://api.happier.dev',
+              webappUrl: 'https://app.happier.dev',
+            },
+            'custom-2': {
+              id: 'custom-2',
+              serverUrl: 'http://192.168.1.115:26851',
+              webappUrl: 'http://192.168.1.115:8081',
+            },
+            'custom-3': {
+              id: 'custom-3',
+              serverUrl: 'http://192.168.1.115:26851',
+              webappUrl: 'http://192.168.1.115:8081',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'http://192.168.1.115:26851';
+    process.env.HAPPIER_SERVER_URL = 'http://192.168.1.115:26851';
+    process.env.HAPPIER_WEBAPP_URL = 'http://192.168.1.115:8081';
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+    expect(configMod.configuration.activeServerId).toBe('custom-3');
+    expect(configMod.configuration.serverUrl).toBe('http://192.168.1.115:26851');
+    expect(configMod.configuration.webappUrl).toBe('http://192.168.1.115:8081');
+  });
+
   it('reads execution-run and ephemeral-task budget env vars', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-budget-'));
+    const homeDir = createTempDirSync('happier-cli-config-budget-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION = '7';
@@ -234,7 +298,7 @@ describe('configuration env url fallback', () => {
   });
 
   it('defaults execution-run concurrency and timeouts to unlimited when budget env vars are unset', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-budget-defaults-'));
+    const homeDir = createTempDirSync('happier-cli-config-budget-defaults-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION;

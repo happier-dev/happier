@@ -216,6 +216,9 @@ export const TaskResultV2Schema = BaseEnvelopeSchema.extend({
   errorMessage: z.string().optional(),
 }).passthrough();
 
+export const SubAgentInputV2Schema = TaskInputV2Schema;
+export const SubAgentResultV2Schema = TaskResultV2Schema;
+
 export const ReasoningInputV2Schema = BaseEnvelopeSchema.extend({
   text: z.string().optional(),
 }).passthrough();
@@ -402,6 +405,7 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WebSearch: WebSearchInputV2Schema,
   TodoWrite: TodoWriteInputV2Schema,
   TodoRead: TodoReadInputV2Schema,
+  SubAgent: SubAgentInputV2Schema,
   Task: TaskInputV2Schema,
   Reasoning: ReasoningInputV2Schema,
   EnterPlanMode: EnterPlanModeInputV2Schema,
@@ -433,6 +437,7 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WebSearch: WebResultV2Schema,
   TodoWrite: TodoResultV2Schema,
   TodoRead: TodoResultV2Schema,
+  SubAgent: SubAgentResultV2Schema,
   Task: TaskResultV2Schema,
   Reasoning: ReasoningResultV2Schema,
   EnterPlanMode: BaseEnvelopeSchema.passthrough(),

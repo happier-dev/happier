@@ -1,5 +1,10 @@
 import { parsePermissionIntentAlias } from '../permissions/index.js';
 import { computeMonotonicUpdatedAt } from './monotonic.js';
+import {
+  getMetadataKeysForAlias,
+  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
+  SESSION_CONFIG_OPTION_OVERRIDES_KEY,
+} from './metadataKeys.js';
 
 function asFiniteNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -67,14 +72,19 @@ export function computeNextMetadataStringOverrideV1(params: Readonly<{
   });
   if (nextUpdatedAt === null) return params.metadata;
 
-  return {
-    ...params.metadata,
-    [overrideKey]: {
-      v: 1,
-      updatedAt: nextUpdatedAt,
-      [valueKey]: isClear ? null : value,
-    },
+  const nextOverride = {
+    v: 1,
+    updatedAt: nextUpdatedAt,
+    [valueKey]: isClear ? null : value,
   };
+
+  const nextMetadata: Record<string, unknown> = {
+    ...params.metadata,
+  };
+  for (const key of getMetadataKeysForAlias(overrideKey)) {
+    nextMetadata[key] = nextOverride;
+  }
+  return nextMetadata;
 }
 
 function normalizeConfigOptionId(value: unknown): string {
@@ -98,8 +108,9 @@ export function computeNextMetadataConfigOptionOverrideV1(params: Readonly<{
   const valueId = normalizeConfigOptionValueId(params.value);
   if (!valueId) return params.metadata;
 
-  const rootKey = 'acpConfigOptionOverridesV1';
-  const prevRoot = params.metadata[rootKey] as Record<string, unknown> | null | undefined;
+  const prevRoot =
+    (params.metadata[SESSION_CONFIG_OPTION_OVERRIDES_KEY] as Record<string, unknown> | null | undefined) ??
+    (params.metadata[LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY] as Record<string, unknown> | null | undefined);
   const prevUpdatedAt = prevRoot ? asFiniteNumber(prevRoot.updatedAt) : 0;
 
   const prevOverridesRaw = prevRoot?.overrides;
@@ -129,12 +140,17 @@ export function computeNextMetadataConfigOptionOverrideV1(params: Readonly<{
 
   const nextRootUpdatedAt = Math.max(prevUpdatedAt, nextEntryUpdatedAt);
 
-  return {
-    ...params.metadata,
-    [rootKey]: {
-      v: 1,
-      updatedAt: nextRootUpdatedAt,
-      overrides: nextOverrides,
-    },
+  const nextRoot = {
+    v: 1,
+    updatedAt: nextRootUpdatedAt,
+    overrides: nextOverrides,
   };
+
+  const nextMetadata: Record<string, unknown> = {
+    ...params.metadata,
+  };
+  for (const rootKey of getMetadataKeysForAlias(SESSION_CONFIG_OPTION_OVERRIDES_KEY)) {
+    nextMetadata[rootKey] = nextRoot;
+  }
+  return nextMetadata;
 }

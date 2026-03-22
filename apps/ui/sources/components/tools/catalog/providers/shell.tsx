@@ -6,6 +6,8 @@ import { t } from '@/text';
 import { ICON_TERMINAL } from '../icons';
 import type { KnownToolDefinition } from '../_types';
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
+import { extractHappierToolsShellBridgeCommand } from '../../normalization/parse/happierToolsShellBridge';
+import { getHappierToolsShellBridgeDisplay } from '../../normalization/parse/happierToolsShellBridgeDisplay';
 
 export const providerShellTools = {
     'CodexBash': {
@@ -118,6 +120,11 @@ export const providerShellTools = {
     },
     'execute': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
+            if (shellBridge) {
+                return t('tools.desc.terminalCmd', { cmd: getHappierToolsShellBridgeDisplay(shellBridge).titleCommand });
+            }
+
             // Prefer a human-readable title when provided by ACP metadata
             const acpTitle =
                 typeof opts.tool.input?._acp?.title === 'string'
@@ -147,6 +154,9 @@ export const providerShellTools = {
         isMutable: true,
         input: z.object({}).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
+            if (shellBridge) return getHappierToolsShellBridgeDisplay(shellBridge).subtitle;
+
             const cmd = extractShellCommand(opts.tool.input);
             if (cmd) return stripShellCommandPreludeForDisplay(cmd);
             return null;

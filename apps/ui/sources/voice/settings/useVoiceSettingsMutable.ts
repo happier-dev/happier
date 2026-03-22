@@ -1,12 +1,12 @@
-import { useSetting } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
+import { useSetting } from '@/sync/store/hooks';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 
 export function useVoiceSettingsMutable(): [VoiceSettings, (next: VoiceSettings) => void] {
-  const voice = useSetting('voice') as unknown as VoiceSettings;
+  const applySettings = useApplySettings();
+  const voice = useSetting('voice') as VoiceSettings;
   const setVoice = (next: VoiceSettings) => {
-    sync.applySettings({ voice: next } as any);
+    applySettings({ voice: next });
   };
   return [voice, setVoice];
 }
-

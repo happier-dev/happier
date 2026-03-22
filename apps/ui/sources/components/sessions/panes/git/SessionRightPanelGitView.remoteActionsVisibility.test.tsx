@@ -1,42 +1,41 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
 const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
+let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
+let scmSnapshotMock: any = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                                    View: (props: any) => React.createElement('View', props, props.children),
+                                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                                    Text: (props: any) => React.createElement('Text', props, props.children),
+                                                                    ActivityIndicator: 'ActivityIndicator',
+                                                                    Platform: {
+                                                                    OS: 'web',
+                                                                    select: (value: any) => value?.default ?? null,
+                                                                },
+                                                                    AppState: {
+                                                                    addEventListener: () => ({ remove: () => {} }),
+                                                                },
+                                                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: {
-                textSecondary: '#666',
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) => value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -49,7 +48,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 
 vi.mock('./useSessionRightPanelGitTabState', () => ({
     useSessionRightPanelGitTabState: () => ({
-        activeGitSubTab: 'update',
+        activeGitSubTab,
         setActiveGitSubTab: vi.fn(),
         commitDraftMessage: '',
         setCommitDraftMessage: vi.fn(),
@@ -96,56 +95,27 @@ vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-
-    return {
-        ...actual,
-    useSetting: () => null,
-    useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
-    useProjectForSession: () => null,
-    useProjectSessions: () => [],
-    useMachine: () => ({ online: true }),
-    useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmSnapshot: () => ({
-        fetchedAt: 1,
-        projectKey: 'm1:/repo',
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-        capabilities: {
-            readStatus: true,
-            readDiffFile: true,
-            readDiffCommit: true,
-            readLog: true,
-            writeCommit: true,
-            writeInclude: true,
-            writeExclude: true,
-            writeRemoteFetch: true,
-            writeRemotePull: true,
-            writeRemotePush: true,
-            supportedDiffAreas: ['included', 'pending'],
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(
+        importOriginal,
+        {
+            useSetting: () => null,
+            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
+            useProjectForSession: () => null,
+            useProjectSessions: () => [],
+            useMachine: () => ({ online: true }),
+            useSession: () => ({ active: true, metadata: { machineId: 'm1', path: '/repo' } }),
+            useSessionProjectScmCommitSelectionPaths: () => [],
+            useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionProjectScmInFlightOperation: () => null,
+            useSessionProjectScmOperationLog: () => [],
+            useSessionProjectScmSnapshot: () => scmSnapshotMock,
+            useSessionProjectScmSnapshotError: () => null,
+            useSessionProjectScmTouchedPaths: () => [],
+            useSessionProjectScmOperationLogEntryIds: () => [],
+            useSessionProjectScmTouchedPathsCount: () => 0,
         },
-        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-        stashCount: 0,
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
-    }),
-    useSessionProjectScmSnapshotError: () => null,
-    useSessionProjectScmTouchedPaths: () => [],
-    useSessionProjectScmOperationLogEntryIds: () => [],
-    useSessionProjectScmTouchedPathsCount: () => 0,
-    };
+    );
 });
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
@@ -180,9 +150,10 @@ vi.mock('@/scm/scmStatusSync', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
     SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
@@ -196,9 +167,46 @@ vi.mock('./SessionRightPanelGitHistoryTab', () => ({
     SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
 }));
 
+function createScmSnapshot(overrides?: Partial<NonNullable<typeof scmSnapshotMock>>) {
+    return {
+        fetchedAt: 1,
+        projectKey: 'm1:/repo',
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+        capabilities: {
+            readStatus: true,
+            readDiffFile: true,
+            readDiffCommit: true,
+            readLog: true,
+            writeCommit: true,
+            writeInclude: true,
+            writeExclude: true,
+            writeRemoteFetch: true,
+            writeRemotePull: true,
+            writeRemotePush: true,
+            supportedDiffAreas: ['included', 'pending'],
+        },
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+        stashCount: 0,
+        hasConflicts: false,
+        entries: [],
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 0,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
+        ...overrides,
+    };
+}
+
 describe('SessionRightPanelGitView (remote action visibility)', () => {
     beforeEach(() => {
         publishBranchMock.mockClear();
+        activeGitSubTab = 'update';
+        scmSnapshotMock = createScmSnapshot();
         usePublishBranchActionMock.mockReturnValue({
             canPublish: true,
             publishBusy: false,
@@ -210,13 +218,39 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
-        });
+        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
 
         const updateTab = tree.root.findByType('UpdateTab' as any);
         const actions = (updateTab.props as any).actions as Array<{ key: string }>;
         expect(actions.map((a) => a.key)).toEqual(['fetch', 'publish']);
         expect((updateTab.props as any).hint).toBeNull();
+    });
+
+    it('does not render a workspace rail when remote update actions are unavailable', async () => {
+        activeGitSubTab = 'commit';
+        scmSnapshotMock = createScmSnapshot({
+            capabilities: {
+                ...createScmSnapshot().capabilities,
+                writeRemoteFetch: false,
+                writeRemotePull: false,
+                writeRemotePush: false,
+            },
+        });
+
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+
+        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(0);
+    });
+
+    it('keeps the git tabs visible without a workspace rail', async () => {
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+
+        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(1);
     });
 });

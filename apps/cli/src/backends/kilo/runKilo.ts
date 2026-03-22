@@ -8,6 +8,7 @@ import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
+import { formatProviderPromptErrorMessage } from '@/agent/runtime/formatProviderPromptErrorMessage';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 
 import { KiloTerminalDisplay } from '@/backends/kilo/ui/KiloTerminalDisplay';
@@ -27,13 +28,15 @@ export async function runKilo(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: KiloTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
-    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) => createKiloAcpRuntime({
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled }) => createKiloAcpRuntime({
       directory,
+      machineId,
       session,
       messageBuffer,
       mcpServers,
       permissionHandler,
       onThinkingChange: setThinking,
+      memoryRecallGuidanceEnabled,
       getPermissionMode,
     }),
     onAttachMetadataSnapshotMissing: (error) => {
@@ -42,6 +45,6 @@ export async function runKilo(opts: StandardAcpProviderRunOptions & {
         error ?? undefined,
       );
     },
-    formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
+    formatPromptErrorMessage: formatProviderPromptErrorMessage,
   });
 }

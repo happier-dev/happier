@@ -80,7 +80,7 @@ export function resolveExecutionRunStartBoundedTimeoutMs(args: Readonly<{
 }
 
 export function isSafePermissionModeForIntent(intent: ExecutionRunIntent, permissionModeRaw: string): boolean {
-  const raw = permissionModeRaw.trim();
+  const raw = permissionModeRaw.trim().toLowerCase();
   const mode =
     raw === 'no_tools' || raw === 'read_only' || raw === 'workspace_write'
       ? raw

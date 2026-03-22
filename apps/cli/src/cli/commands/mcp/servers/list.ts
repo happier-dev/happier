@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { loadFreshMcpAccountSettingsContext } from '../loadFreshMcpAccountSettingsContext';
 

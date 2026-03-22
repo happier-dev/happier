@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { AcpBackend } from '../AcpBackend';
 import { defaultTransport } from '../../transport';
 import { logger } from '@/ui/logger';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
+const envScope = createEnvKeyScope(['HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION']);
 
 describe('AcpBackend session/update max updates guard', () => {
   it('truncates excessive updates per notification using an env override', () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const prev = process.env.HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION;
-    process.env.HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION = '1';
+    envScope.patch({ HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION: '1' });
     try {
       const emitted: any[] = [];
       const fakeBackend: any = {
@@ -16,6 +18,7 @@ describe('AcpBackend session/update max updates guard', () => {
         replayCapture: null,
         activeToolCalls: new Set<string>(),
         finalizedToolCalls: new Set<string>(),
+        toolCallLifecycleStates: new Map<string, string>(),
         toolCallStartTimes: new Map<string, number>(),
         toolCallTimeouts: new Map<string, any>(),
         toolCallIdToNameMap: new Map<string, string>(),
@@ -54,7 +57,7 @@ describe('AcpBackend session/update max updates guard', () => {
       expect(emitted.filter((m) => m.type === 'tool-call').length).toBe(1);
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
-      process.env.HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION = prev;
+      envScope.restore();
       warnSpy.mockRestore();
     }
   });

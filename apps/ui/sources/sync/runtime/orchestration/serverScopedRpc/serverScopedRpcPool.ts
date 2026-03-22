@@ -115,7 +115,9 @@ export async function resolveScopedMachineDataKey(params: Readonly<{
             decryptEncryptionKey: params.decryptEncryptionKey,
             timeoutMs,
         });
-        setMachineDataKeyCache(keyCacheKey, machineDataKey ?? null);
+        if (machineDataKey) {
+            setMachineDataKeyCache(keyCacheKey, machineDataKey);
+        }
     }
     return machineDataKey ?? null;
 }

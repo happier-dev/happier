@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import type { Machine } from './types';
 
 const { mockIo } = vi.hoisted(() => ({
@@ -16,17 +18,19 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
 
-describe('ApiMachineClient loopback url resolution', () => {
-  const originalEnv = {
-    homeDir: process.env.HAPPIER_HOME_DIR,
-    activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,
-    serverUrl: process.env.HAPPIER_SERVER_URL,
-    webappUrl: process.env.HAPPIER_WEBAPP_URL,
-    publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL,
-  };
+const envKeys = [
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+] as const;
+let envScope = createEnvKeyScope(envKeys);
 
+describe('ApiMachineClient loopback url resolution', () => {
   beforeEach(() => {
-    mockIo.mockReset();
+    bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
+    vi.resetModules();
 
     process.env.HAPPIER_HOME_DIR = '/tmp/happier-cli-test-loopback-machine';
     process.env.HAPPIER_SERVER_URL = 'http://localhost:3005';
@@ -37,17 +41,8 @@ describe('ApiMachineClient loopback url resolution', () => {
   });
 
   afterEach(() => {
-    if (originalEnv.homeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalEnv.homeDir;
-    if (originalEnv.activeServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-    else process.env.HAPPIER_ACTIVE_SERVER_ID = originalEnv.activeServerId;
-    if (originalEnv.serverUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalEnv.serverUrl;
-    if (originalEnv.webappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalEnv.webappUrl;
-    if (originalEnv.publicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-    else process.env.HAPPIER_PUBLIC_SERVER_URL = originalEnv.publicServerUrl;
-
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
     reloadConfiguration();
   });
 
@@ -70,5 +65,5 @@ describe('ApiMachineClient loopback url resolution', () => {
     expect(mockIo).toHaveBeenCalled();
     const calledUrl = mockIo.mock.calls[0]?.[0];
     expect(String(calledUrl)).toContain('http://127.0.0.1:3005');
-  }, 15_000);
+  });
 });

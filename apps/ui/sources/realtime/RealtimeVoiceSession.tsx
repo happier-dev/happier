@@ -1,10 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { useConversation } from '@elevenlabs/react-native';
-import { registerVoiceSession } from './RealtimeSession';
+import { getCurrentRealtimeControlSessionId, registerVoiceSession, setCurrentRealtimeControlSessionId } from './RealtimeSession';
 import { storage } from '@/sync/domains/state/storage';
 import { realtimeClientTools } from './realtimeClientTools';
 import { getElevenLabsCodeFromPreference } from '@/constants/Languages';
 import type { VoiceSession, VoiceSessionConfig } from './types';
+import { useVoiceQaStore } from '@/voice/qa/voiceQaStore';
+import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
+import { appendRealtimeVoiceTranscriptEvent } from './realtimeVoiceTranscriptBridge';
 
 // Static reference to the conversation hook instance
 type ElevenLabsConversation = Readonly<{
@@ -21,6 +24,13 @@ let conversationInstance: ElevenLabsConversation | null = null;
 function debugLog(...args: unknown[]) {
     if (!__DEV__) return;
     console.debug(...args);
+}
+
+function getRealtimeVoiceErrorMessage(error: unknown): string {
+    if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+        return error.message;
+    }
+    return 'realtime_voice_error';
 }
 
 // Global voice session implementation
@@ -53,6 +63,9 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
                     initialConversationContext: config.initialContext || ''
                 },
                 overrides: {
+                    conversation: {
+                        textOnly: config.textOnly === true,
+                    },
                     agent: {
                         language: elevenLabsLanguage
                     }
@@ -68,6 +81,7 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
             if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
                 return null;
             }
+            setCurrentRealtimeControlSessionId(config.sessionId);
             return conversationId;
         } catch (error) {
             console.error('Failed to start realtime session:', error);
@@ -83,6 +97,7 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
 
         try {
             await conversationInstance.endSession();
+            setCurrentRealtimeControlSessionId(null);
             storage.getState().setRealtimeStatus('disconnected');
         } catch (error) {
             console.error('Failed to end realtime session:', error);
@@ -123,15 +138,26 @@ export const RealtimeVoiceSession: React.FC = () => {
             debugLog('Realtime session connected');
             storage.getState().setRealtimeStatus('connected');
             storage.getState().setRealtimeMode('idle');
+            useVoiceQaStore.getState().appendSystem('Realtime ElevenLabs session connected');
         },
         onDisconnect: () => {
             debugLog('Realtime session disconnected');
             storage.getState().setRealtimeStatus('disconnected');
             storage.getState().setRealtimeMode('idle', true); // immediate mode change
             storage.getState().clearRealtimeModeDebounce();
+            useVoiceQaStore.getState().appendSystem('Realtime ElevenLabs session disconnected');
         },
         onMessage: (data) => {
             debugLog('Realtime message received');
+            useVoiceQaStore.getState().appendRealtimeProviderPayload(data);
+            const controlSessionId = getCurrentRealtimeControlSessionId();
+            const binding = controlSessionId
+                ? resolveVoiceSessionBindingByControlSessionId({ controlSessionId, adapterId: 'realtime_elevenlabs' })
+                : null;
+            appendRealtimeVoiceTranscriptEvent({
+                conversationSessionId: binding?.conversationSessionId ?? null,
+                payload: data,
+            });
         },
         onError: (error) => {
             // Log but don't block app - voice features will be unavailable
@@ -141,6 +167,7 @@ export const RealtimeVoiceSession: React.FC = () => {
             // This allows the app to continue working without voice features
             storage.getState().setRealtimeStatus('disconnected');
             storage.getState().setRealtimeMode('idle', true); // immediate mode change
+            useVoiceQaStore.getState().appendError(getRealtimeVoiceErrorMessage(error));
         },
         onStatusChange: (data) => {
             debugLog('Realtime status change');

@@ -1,13 +1,16 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { CodexMcpClient } from '@/backends/codex/codexMcpClient';
-import type { createCodexAcpRuntime } from '@/backends/codex/acp/runtime';
+
+type CodexResettableRuntime = Readonly<{
+  reset: () => Promise<void>;
+}>;
 
 type CleanupRunResourcesOptions = Readonly<{
   session: ApiSessionClient;
   reconnectionHandle: { cancel: () => void } | null;
   client: CodexMcpClient | null;
-  codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null;
+  codexRuntime: CodexResettableRuntime | null;
   stopHappierMcpServer: () => void;
   unmountRemoteUi: () => Promise<void>;
   keepAliveInterval: ReturnType<typeof setInterval>;
@@ -43,7 +46,7 @@ export async function cleanupCodexRunResources(opts: CleanupRunResourcesOptions)
     await opts.client.forceCloseSession();
     opts.logDebug('[codex]: client.forceCloseSession done');
   } else {
-    await opts.codexAcpRuntime?.reset();
+    await opts.codexRuntime?.reset();
   }
 
   opts.logDebug('[codex]: happierMcpServer.stop');
@@ -57,4 +60,3 @@ export async function cleanupCodexRunResources(opts: CleanupRunResourcesOptions)
   opts.logActiveHandles('cleanup-end');
   opts.logDebug('[codex]: Final cleanup completed');
 }
-

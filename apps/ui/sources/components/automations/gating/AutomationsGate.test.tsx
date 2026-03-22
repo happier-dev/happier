@@ -1,63 +1,123 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
-import { stubServerFeaturesFetch } from '@/hooks/server/serverFeaturesTestUtils';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const useAutomationsSupportMock = vi.fn();
+
+vi.mock('@/hooks/server/useAutomationsSupport', () => ({
+    useAutomationsSupport: () => useAutomationsSupportMock(),
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    ActivityIndicator: 'ActivityIndicator',
+                    View: 'View',
+                }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
+            colors: {
+                textSecondary: '#999',
+            },
+        },
+    });
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/components/ui/lists/ItemList', () => ({
+    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+}));
+
+vi.mock('@/components/ui/layout/layout', () => ({
+    layout: { maxWidth: 1000 },
+}));
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
+        if (key === 'automations.gate.disabledTitle') return 'Automations are disabled';
+        if (key === 'automations.gate.disabledBody') return 'Enable them from Settings, then turn on Experiments and Automations.';
+        return key;
+    },
+    });
+});
 
 afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetModules();
+    useAutomationsSupportMock.mockReset();
 });
 
 describe('AutomationsGate', () => {
-    it('renders children when automations are enabled and experiments are on', async () => {
-        vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true });
-
-        const [{ AutomationsGate }, { getStorage }] = await Promise.all([
-            import('./AutomationsGate'),
-            import('@/sync/domains/state/storage'),
-        ]);
-
-        await act(async () => {
-            getStorage().getState().applySettingsLocal({
-                experiments: true,
-                featureToggles: { automations: true },
-            });
+    it('renders a loading state while automations support is unresolved', async () => {
+        useAutomationsSupportMock.mockReturnValue({
+            enabled: false,
+            loading: true,
+            discoverable: true,
+            blockedBy: null,
+            blockerCode: null,
         });
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AutomationsGate>
-                    <TextStub>Allowed</TextStub>
-                </AutomationsGate>,
-            );
-            await new Promise((r) => setTimeout(r, 0));
-        });
-
-        expect(JSON.stringify(tree!.toJSON())).toContain('Allowed');
-    });
-
-    it('renders a disabled state when experiments are off', async () => {
-        vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { AutomationsGate } = await import('./AutomationsGate');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AutomationsGate>
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AutomationsGate>
                     <TextStub>Allowed</TextStub>
-                </AutomationsGate>,
-            );
-            await new Promise((r) => setTimeout(r, 0));
+                </AutomationsGate>)).tree;
+
+        const json = JSON.stringify(tree.toJSON());
+        expect(json).not.toContain('Allowed');
+        expect(json).not.toContain('Automations are disabled');
+        expect(json).toContain('ActivityIndicator');
+    });
+
+    it('renders children when automations are enabled', async () => {
+        useAutomationsSupportMock.mockReturnValue({
+            enabled: true,
+            loading: false,
+            discoverable: true,
+            blockedBy: null,
+            blockerCode: null,
         });
 
-        const json = JSON.stringify(tree!.toJSON());
+        const { AutomationsGate } = await import('./AutomationsGate');
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AutomationsGate>
+                    <TextStub>Allowed</TextStub>
+                </AutomationsGate>)).tree;
+
+        expect(JSON.stringify(tree.toJSON())).toContain('Allowed');
+    });
+
+    it('renders a disabled state when automations are unavailable', async () => {
+        useAutomationsSupportMock.mockReturnValue({
+            enabled: false,
+            loading: false,
+            discoverable: false,
+            blockedBy: 'server',
+            blockerCode: 'disabled_on_server',
+        });
+
+        const { AutomationsGate } = await import('./AutomationsGate');
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AutomationsGate>
+                    <TextStub>Allowed</TextStub>
+                </AutomationsGate>)).tree;
+
+        const json = JSON.stringify(tree.toJSON());
         expect(json).not.toContain('Allowed');
         expect(json).toContain('Automations are disabled');
     });

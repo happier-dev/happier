@@ -1,84 +1,59 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createReducer } from '@/sync/reducer/reducer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Dimensions: {
+                            get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                        },
+                        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                        View: 'View',
+                        Text: 'Text',
+                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                    }
+    );
+});
 
-vi.mock('react-native', async () => ({
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.web ?? values?.default,
-    },
-    Dimensions: {
-        get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-    View: 'View',
-    Text: 'Text',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                success: '#0a0',
-                text: '#111',
-                textSecondary: '#555',
-                link: '#06f',
-                surfaceHighest: '#fff',
-                divider: '#ddd',
-                input: { background: '#f7f7f7' },
-                userMessageBackground: '#eef',
-                agentEventText: '#777',
-                warning: '#f90',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    success: '#0a0',
-                    text: '#111',
-                    textSecondary: '#555',
-                    link: '#06f',
-                    surfaceHighest: '#fff',
-                    divider: '#ddd',
-                    input: { background: '#f7f7f7' },
-                    userMessageBackground: '#eef',
-                    agentEventText: '#777',
-                    warning: '#f90',
-                },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => React.createElement('MarkdownView', props),
 }));
 
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
-    ToolView: (props: any) => React.createElement('ToolView', props),
+    ToolView: (props: any) => {
+        renderedToolViewProps.push(props);
+        return React.createElement('ToolView', props);
+    },
 }));
 
 vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
-    ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
+    ToolTimelineRow: (props: any) => {
+        renderedToolTimelineRowProps.push(props);
+        return React.createElement('ToolTimelineRow', props);
+    },
 }));
 
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => false,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -99,9 +74,13 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
     isCommittedMessageDiscarded: () => false,
@@ -121,19 +100,59 @@ vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
 }));
 
 let toolChromeMode: 'cards' | 'activity_feed' = 'cards';
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'sessionThinkingDisplayMode') return 'inline';
-        if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
-        return null;
-    },
-}));
+const renderedToolViewProps: any[] = [];
+const renderedToolTimelineRowProps: any[] = [];
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'sessionThinkingDisplayMode') return 'inline';
+            if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
+            return null;
+        },
+        useSession: () => null,
+        useSessionMessagesById: () => ({}),
+        useSessionMessagesReducerState: () => createReducer(),
+    }),
+);
 
 afterEach(() => {
     toolChromeMode = 'cards';
+    renderedToolViewProps.length = 0;
+    renderedToolTimelineRowProps.length = 0;
+    standardCleanup();
 });
 
 describe('MessageView (tool timeline chrome mode)', () => {
+    it('passes a stable server route id to ToolTimelineRow when the message is already persisted', async () => {
+        toolChromeMode = 'activity_feed';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'internal-1',
+            realID: 'server-msg-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_read_1',
+                name: 'read',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: {},
+            },
+            children: [],
+        };
+
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(renderedToolTimelineRowProps).toHaveLength(1);
+        expect(renderedToolTimelineRowProps[0]!.messageId).toBe('server:server-msg-1');
+    });
+
     it('renders ToolTimelineRow when toolViewTimelineChromeMode is activity_feed', async () => {
         toolChromeMode = 'activity_feed';
         const { MessageView } = await import('./MessageView');
@@ -156,14 +175,42 @@ describe('MessageView (tool timeline chrome mode)', () => {
             children: [],
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(1);
-        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(0);
+        expect(renderedToolTimelineRowProps).toHaveLength(1);
+        expect(renderedToolViewProps).toHaveLength(0);
     });
+
+    it('passes a stable server route id to ToolView when the message is already persisted', async () => {
+        toolChromeMode = 'cards';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'internal-1',
+            realID: 'server-msg-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_read_1',
+                name: 'read',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: {},
+            },
+            children: [],
+        };
+
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(renderedToolViewProps).toHaveLength(1);
+        expect(renderedToolViewProps[0]!.messageId).toBe('server:server-msg-1');
+    });
+
 
     it('renders ToolView when toolViewTimelineChromeMode is cards', async () => {
         toolChromeMode = 'cards';
@@ -187,12 +234,9 @@ describe('MessageView (tool timeline chrome mode)', () => {
             children: [],
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(1);
-        expect(tree!.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+        expect(renderedToolViewProps).toHaveLength(1);
+        expect(renderedToolTimelineRowProps).toHaveLength(0);
     });
 });

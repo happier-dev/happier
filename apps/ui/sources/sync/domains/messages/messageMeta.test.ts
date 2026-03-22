@@ -75,4 +75,14 @@ describe('buildOutgoingMessageMeta', () => {
 
         expect(meta.permissionMode).toBe('default');
     });
+
+    it('omits appendSystemPrompt when undefined', () => {
+        const meta = buildOutgoingMessageMeta({
+            sentFrom: 'web',
+            permissionMode: 'default',
+            appendSystemPrompt: undefined,
+        });
+
+        expect(Object.prototype.hasOwnProperty.call(meta, 'appendSystemPrompt')).toBe(false);
+    });
 });

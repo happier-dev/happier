@@ -1,12 +1,10 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
-import { dirname, isAbsolute, join, sep } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 
 import {
   PromptAssetDeleteRequest,
   PromptAssetDiscoverRequest,
   type PromptAssetDiscoveryItemV1,
-  type PromptAssetMutationErrorCodeV1,
   PromptAssetMutationResponseV1,
   PromptAssetReadRequest,
   PromptAssetReadResponseV1,
@@ -18,9 +16,11 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PromptAssetAdapter } from '@/promptAssets/types';
+import { toPromptAssetMutationError, toPromptAssetReadError } from '@/promptAssets/shared/promptAssetResponses';
 import {
   buildPromptBundleBodyFromDirectory,
   computePromptBundleDigest,
+  materializePromptBundleBodyToDirectory,
 } from '@/promptAssets/shared/promptBundleDirectory';
 import {
   deleteManagedBundleSymlinkInstall,
@@ -28,6 +28,7 @@ import {
   resolveAllowedManagedBundleSymlinkTarget,
   resolvePromptAssetManagedBundleInstallDir,
 } from '@/promptAssets/shared/promptAssetManagedSymlinkInstall';
+import { resolveScopedPromptAssetRoot } from '@/promptAssets/shared/resolveScopedPromptAssetRoot';
 
 const DEFAULT_SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
@@ -43,10 +44,6 @@ type SkillMdPromptAssetAdapterConfig = Readonly<{
   capabilities?: PromptAssetCapabilitiesV1;
   skillNamePattern?: RegExp;
 }>;
-
-function resolveHomedir(depsHomedir?: (() => string) | undefined): string {
-  return typeof depsHomedir === 'function' ? depsHomedir() : os.homedir();
-}
 
 function resolveReadableSkillContentRoot(params: Readonly<{
   skillDir: string;
@@ -74,25 +71,7 @@ function resolveSkillRootPath(params: Readonly<{
   homedir?: () => string;
   config: SkillMdPromptAssetAdapterConfig;
 }>): { ok: true; rootPath: string; displayRoot: string } | { ok: false; error: string } {
-  if (params.scope === 'project') {
-    const directory = typeof params.directory === 'string' ? params.directory.trim() : '';
-    if (!directory) return { ok: false, error: 'directory is required for project-scoped prompt assets' };
-    if (!isAbsolute(directory)) {
-      return { ok: false, error: 'directory must be an absolute path for project-scoped prompt assets' };
-    }
-    return {
-      ok: true,
-      rootPath: join(directory, ...params.config.projectRootPath),
-      displayRoot: params.config.projectRootDisplayPath,
-    };
-  }
-
-  const homeDirectory = resolveHomedir(params.homedir);
-  return {
-    ok: true,
-    rootPath: join(homeDirectory, ...params.config.userRootPath),
-    displayRoot: params.config.userRootDisplayPath,
-  };
+  return resolveScopedPromptAssetRoot(params);
 }
 
 function readSkillNameFromExternalRef(externalRef: Record<string, unknown>): string | null {
@@ -137,29 +116,6 @@ function resolveSkillDir(params: Readonly<{
   skillName: string;
 }>): string {
   return join(params.rootPath, params.skillName);
-}
-
-type PromptAssetMutationErrorResponseV1 = Extract<PromptAssetMutationResponseV1, { ok: false }>;
-type PromptAssetReadErrorResponseV1 = Extract<PromptAssetReadResponseV1, { ok: false }>;
-
-function toReadError(
-  errorCode: PromptAssetMutationErrorCodeV1,
-  error: string,
-): PromptAssetReadErrorResponseV1 {
-  return { ok: false, errorCode, error };
-}
-
-function toMutationError(
-  errorCode: PromptAssetMutationErrorCodeV1,
-  error: string,
-  currentDigest?: string | null,
-): PromptAssetMutationErrorResponseV1 {
-  return {
-    ok: false,
-    errorCode,
-    error,
-    ...(currentDigest !== undefined ? { currentDigest } : {}),
-  };
 }
 
 export function createSkillMdPromptAssetAdapter(
@@ -264,12 +220,12 @@ export function createSkillMdPromptAssetAdapter(
         homedir: params?.homedir,
         config,
       });
-      if (!root.ok) return toReadError('invalid_request', root.error);
+      if (!root.ok) return toPromptAssetReadError('invalid_request', root.error);
 
       const skillName = readSkillNameFromExternalRef(request.externalRef);
-      if (!skillName) return toReadError('invalid_request', 'externalRef.skillName is required');
+      if (!skillName) return toPromptAssetReadError('invalid_request', 'externalRef.skillName is required');
       const skillNameValidation = validateSkillName(skillName, skillNamePattern);
-      if (!skillNameValidation.ok) return toReadError('invalid_request', skillNameValidation.error);
+      if (!skillNameValidation.ok) return toPromptAssetReadError('invalid_request', skillNameValidation.error);
 
       const skillDir = resolveSkillDir({ rootPath: root.rootPath, skillName });
       const readableRoot = resolveReadableSkillContentRoot({
@@ -277,13 +233,13 @@ export function createSkillMdPromptAssetAdapter(
         happierHomeDir: params?.happierHomeDir,
       });
       if (!readableRoot.ok || !existsSync(join(readableRoot.contentRoot, 'SKILL.md'))) {
-        return toReadError('not_found', 'skill not found');
+        return toPromptAssetReadError('not_found', 'skill not found');
       }
       const bundleBody = safeBuildBundleBodyFromSkillDir({
         skillDir,
         happierHomeDir: params?.happierHomeDir,
       });
-      if (!bundleBody.ok) return toReadError('access_denied', bundleBody.error);
+      if (!bundleBody.ok) return toPromptAssetReadError('access_denied', bundleBody.error);
 
       return {
         ok: true,
@@ -303,16 +259,16 @@ export function createSkillMdPromptAssetAdapter(
         homedir: params?.homedir,
         config,
       });
-      if (!root.ok) return toMutationError('invalid_request', root.error);
+      if (!root.ok) return toPromptAssetMutationError('invalid_request', root.error);
 
       const skillNameValidation = validateSkillName(request.targetName, skillNamePattern);
-      if (!skillNameValidation.ok) return toMutationError('invalid_request', skillNameValidation.error);
+      if (!skillNameValidation.ok) return toPromptAssetMutationError('invalid_request', skillNameValidation.error);
 
       const bundleValidation = validatePromptBundleBodyV1AgainstSchemaId({
         bundleSchemaId: request.bundleSchemaId,
         body: request.bundleBody,
       });
-      if (!bundleValidation.ok) return toMutationError('invalid_request', bundleValidation.message);
+      if (!bundleValidation.ok) return toPromptAssetMutationError('invalid_request', bundleValidation.message);
 
       const skillDir = resolveSkillDir({ rootPath: root.rootPath, skillName: request.targetName });
       const installMode = request.installMode ?? 'copy';
@@ -323,17 +279,17 @@ export function createSkillMdPromptAssetAdapter(
       };
 
       if (installMode === 'symlink' && descriptor.capabilities.supportsSymlinkInstall !== true) {
-        return toMutationError('unsupported', 'symlink installs are not supported for this prompt asset type');
+        return toPromptAssetMutationError('unsupported', 'symlink installs are not supported for this prompt asset type');
       }
 
       const currentBundleBody = existsSync(skillDir) ? safeBuildBundleBodyFromSkillDir({
         skillDir,
         happierHomeDir: params?.happierHomeDir,
       }) : null;
-      if (currentBundleBody && !currentBundleBody.ok) return toMutationError('access_denied', currentBundleBody.error);
+      if (currentBundleBody && !currentBundleBody.ok) return toPromptAssetMutationError('access_denied', currentBundleBody.error);
       const currentDigest = currentBundleBody?.ok ? computePromptBundleDigest(currentBundleBody.bundleBody) : null;
       if (request.expectedDigest && request.expectedDigest !== currentDigest) {
-        return toMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
+        return toPromptAssetMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
       }
 
       if (request.previewOnly === true) {
@@ -361,14 +317,10 @@ export function createSkillMdPromptAssetAdapter(
       });
       rmSync(installDirectory, { recursive: true, force: true });
       mkdirSync(installDirectory, { recursive: true });
-      for (const entry of request.bundleBody.entries) {
-        const absolutePath = join(installDirectory, entry.path.split('/').join(sep));
-        mkdirSync(dirname(absolutePath), { recursive: true });
-        writeFileSync(absolutePath, Buffer.from(entry.contentBase64, 'base64'));
-        if (typeof entry.unixMode === 'number') {
-          chmodSync(absolutePath, entry.unixMode);
-        }
-      }
+      materializePromptBundleBodyToDirectory({
+        rootDirectory: installDirectory,
+        bundleBody: request.bundleBody,
+      });
       if (installMode === 'symlink') {
         replaceDirectoryWithManagedSymlink({
           linkPath: skillDir,
@@ -379,7 +331,7 @@ export function createSkillMdPromptAssetAdapter(
         skillDir,
         happierHomeDir: params?.happierHomeDir,
       });
-      if (!committedBundleBody.ok) return toMutationError('access_denied', committedBundleBody.error);
+      if (!committedBundleBody.ok) return toPromptAssetMutationError('access_denied', committedBundleBody.error);
       const committedDigest = computePromptBundleDigest(committedBundleBody.bundleBody);
 
       return {
@@ -391,7 +343,7 @@ export function createSkillMdPromptAssetAdapter(
     },
 
     async writeDoc(_request: PromptAssetWriteDocRequest): Promise<PromptAssetMutationResponseV1> {
-      return toMutationError('unsupported', 'doc writes are not supported for this prompt asset type');
+      return toPromptAssetMutationError('unsupported', 'doc writes are not supported for this prompt asset type');
     },
 
     async delete(request: PromptAssetDeleteRequest): Promise<PromptAssetMutationResponseV1> {
@@ -401,23 +353,23 @@ export function createSkillMdPromptAssetAdapter(
         homedir: params?.homedir,
         config,
       });
-      if (!root.ok) return toMutationError('invalid_request', root.error);
+      if (!root.ok) return toPromptAssetMutationError('invalid_request', root.error);
 
       const skillName = readSkillNameFromExternalRef(request.externalRef);
-      if (!skillName) return toMutationError('invalid_request', 'externalRef.skillName is required');
+      if (!skillName) return toPromptAssetMutationError('invalid_request', 'externalRef.skillName is required');
       const skillNameValidation = validateSkillName(skillName, skillNamePattern);
-      if (!skillNameValidation.ok) return toMutationError('invalid_request', skillNameValidation.error);
+      if (!skillNameValidation.ok) return toPromptAssetMutationError('invalid_request', skillNameValidation.error);
 
       const skillDir = resolveSkillDir({ rootPath: root.rootPath, skillName });
       const currentBundleBody = existsSync(skillDir) ? safeBuildBundleBodyFromSkillDir({
         skillDir,
         happierHomeDir: params?.happierHomeDir,
       }) : null;
-      if (currentBundleBody && !currentBundleBody.ok) return toMutationError('access_denied', currentBundleBody.error);
+      if (currentBundleBody && !currentBundleBody.ok) return toPromptAssetMutationError('access_denied', currentBundleBody.error);
       const currentDigest = currentBundleBody?.ok ? computePromptBundleDigest(currentBundleBody.bundleBody) : null;
-      if (!currentDigest) return toMutationError('not_found', 'skill not found');
+      if (!currentDigest) return toPromptAssetMutationError('not_found', 'skill not found');
       if (request.expectedDigest && request.expectedDigest !== currentDigest) {
-        return toMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
+        return toPromptAssetMutationError('conflict', 'prompt asset has changed on disk', currentDigest);
       }
 
       const preview = {

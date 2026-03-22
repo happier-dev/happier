@@ -1,5 +1,5 @@
-import type { AttachmentsUploadConfig } from '@/sync/ops/sessionAttachmentsUpload';
-import { sessionAttachmentsUploadFile } from '@/sync/ops/sessionAttachmentsUpload';
+import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
+import { sessionAttachmentsUploadFile } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import { randomUUID } from '@/platform/randomUUID';
 
@@ -104,7 +104,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
 
 export function formatAttachmentsBlock(uploaded: readonly UploadedAttachment[]): string {
     const lines: string[] = [
-        'Attachments: read each file path with the Read tool before answering.',
+        'Attachments: open and analyze these files before answering.',
         '[attachments]',
     ];
     for (const a of uploaded) {

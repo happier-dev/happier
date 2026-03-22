@@ -23,13 +23,13 @@ describe('encodeAutomationTemplateCiphertextForAccount', () => {
 
     const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
       credentials: { token: 't' } as any,
-      template: { directory: '/tmp/project', prompt: 'Hi', existingSessionId: 'session-1' },
+      template: { directory: '/tmp/project', prompt: 'Hi', transcriptStorage: 'direct', existingSessionId: 'session-1' },
       encryptRaw,
     });
 
     const envelope = JSON.parse(templateCiphertext);
     expect(envelope.kind).toBe('happier_automation_template_plain_v1');
-    expect(envelope.payload).toEqual(expect.objectContaining({ directory: '/tmp/project', prompt: 'Hi', existingSessionId: 'session-1' }));
+    expect(envelope.payload).toEqual(expect.objectContaining({ directory: '/tmp/project', prompt: 'Hi', transcriptStorage: 'direct', existingSessionId: 'session-1' }));
     expect(encryptRaw).not.toHaveBeenCalled();
   });
 

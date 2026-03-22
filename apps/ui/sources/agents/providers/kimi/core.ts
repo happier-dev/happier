@@ -1,5 +1,8 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const KIMI_CORE: AgentCoreConfig = {
@@ -14,15 +17,7 @@ export const KIMI_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['kimi', 'kimi-cli'],
-    cli: {
-        detectKey: 'kimi',
-        machineLoginKey: 'kimi',
-        installBanner: {
-            installKind: 'ifAvailable',
-            guideUrl: 'https://kimi.moonshot.cn/docs/cli',
-        },
-        spawnAgent: 'kimi',
-    },
+    cli: buildCatalogProviderCliUiConfig('kimi'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -39,6 +34,8 @@ export const KIMI_CORE: AgentCoreConfig = {
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'kimi' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'kimi' }),
     ui: {
         agentPickerIconName: 'code-slash-outline',
         cliGlyphScale: 1.0,

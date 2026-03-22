@@ -1,23 +1,14 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
 
+import { withTempDir } from '../../src/testkit/fs/tempDir';
 import { runLoggedCommand } from '../../src/testkit/process/spawnProcess';
-
-async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'spawn-logged-command-'));
-  try {
-    return await run(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
 
 describe('providers: runLoggedCommand log flush', () => {
   it('waits for stdout/stderr streams to flush before resolving', async () => {
-    await withTempDir(async (dir) => {
+    await withTempDir({ prefix: 'spawn-logged-command-' }, async ({ path: dir }) => {
       const stdoutPath = join(dir, 'stdout.log');
       const stderrPath = join(dir, 'stderr.log');
       const marker = 'END_FLUSH_MARKER_12345';

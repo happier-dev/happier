@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock, installPrismaModuleMock } from "../testkit/dbMocks";
 import { createInTxHarness } from "../testkit/txHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
@@ -48,8 +50,15 @@ vi.mock("expo-server-sdk", () => {
 });
 
 const sessionUpdateMany = vi.hoisted(() => vi.fn(async () => ({ count: 1 })));
-const sessionFindMany = vi.hoisted(() => vi.fn(async (_args?: unknown) => [] as Array<Record<string, unknown>>));
-const accountPushTokenFindMany = vi.hoisted(() => vi.fn(async (_args?: unknown) => [] as Array<Record<string, unknown>>));
+const markSessionInactive = vi.hoisted(() => vi.fn());
+const { db, reset: resetDbMocks } = createDbMocks({
+    session: ["findMany", "findUnique", "update"],
+    accountPushToken: ["findMany"],
+} as const);
+const sessionFindMany = db.session.findMany;
+const directSessionFindUnique = db.session.findUnique;
+const directSessionUpdate = db.session.update;
+const accountPushTokenFindMany = db.accountPushToken.findMany;
 const sessionFindUnique = vi.hoisted(() => vi.fn(async (args: any) => {
     if (args?.select?.metadataVersion === true) {
         return {
@@ -112,22 +121,16 @@ vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: {
         isSessionValid: vi.fn(async () => true),
         queueSessionUpdate: vi.fn(),
+        markSessionInactive,
     },
 }));
 
-vi.mock("@/storage/prisma", () => ({
+installPrismaModuleMock(() => ({
     isPrismaErrorCode: () => false,
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findMany: (args: any) => sessionFindMany(args),
-        },
-        accountPushToken: {
-            findMany: (args: any) => accountPushTokenFindMany(args),
-        },
-    },
+installDbModuleMock(() => ({
+    db,
 }));
 
 vi.mock("@/storage/inTx", () => {
@@ -148,9 +151,13 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         buildUpdateSessionUpdate.mockClear();
         buildSessionActivityEphemeral.mockClear();
         markAccountChanged.mockClear();
+        markSessionInactive.mockClear();
         sessionUpdateMany.mockClear();
-        sessionFindMany.mockReset().mockResolvedValue([]);
-        accountPushTokenFindMany.mockReset().mockResolvedValue([]);
+        resetDbMocks();
+        sessionFindMany.mockResolvedValue([]);
+        directSessionFindUnique.mockResolvedValue(null);
+        directSessionUpdate.mockResolvedValue({ id: "s1" });
+        accountPushTokenFindMany.mockResolvedValue([]);
     });
 
     it("sends a silent badge refresh push when a read-cursor change clears badge attention", async () => {
@@ -351,5 +358,37 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
             lastViewedSessionSeq: 7,
         });
         expect(callback).toHaveBeenCalledWith({ result: "success", lastViewedSessionSeq: 7 });
+    });
+
+    it("marks cached presence inactive before persisting session-end", async () => {
+        directSessionFindUnique.mockResolvedValue({
+            id: "s1",
+            seq: 7,
+            pendingCount: 0,
+            lastViewedSessionSeq: 2,
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0,
+            active: true,
+            archivedAt: null,
+        });
+
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "session-end");
+
+        await handler({ sid: "s1", time: Date.now() }, vi.fn());
+
+        expect(markSessionInactive).toHaveBeenCalledWith("s1", "owner", expect.any(Number));
+        expect(directSessionUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "s1" },
+            data: expect.objectContaining({ active: false, lastActiveAt: expect.any(Date) }),
+        }));
     });
 });

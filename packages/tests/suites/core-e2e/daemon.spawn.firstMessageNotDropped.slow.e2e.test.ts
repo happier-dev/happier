@@ -62,6 +62,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_WEBAPP_URL: server.baseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
 
@@ -150,6 +151,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_WEBAPP_URL: server.baseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
 

@@ -1,6 +1,7 @@
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/registerSessionHandlers';
 import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
-import { BackendTargetRefSchema, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import { AgentRuntimeDescriptorV1Schema, BackendTargetRefSchema, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 import * as z from 'zod';
 
 const TERMINAL_MODES = ['plain', 'tmux', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
@@ -21,6 +22,26 @@ const TerminalSpawnOptionsSchema: z.ZodType<TerminalSpawnOptions> = z
   .passthrough();
 
 export const SessionRunnerRespawnDescriptorV1Schema = z
+  .preprocess((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return value;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+      codexBackendMode: candidate.codexBackendMode,
+      experimentalCodexAcp: candidate.experimentalCodexAcp === true,
+      agentRuntimeDescriptorV1: candidate.agentRuntimeDescriptorV1,
+    }) ?? (candidate.experimentalCodexResume === true ? 'acp' : undefined);
+    const { experimentalCodexAcp: _legacyExperimentalCodexAcp, experimentalCodexResume: _legacyExperimentalCodexResume, ...rest } = candidate;
+
+    return canonicalCodexBackendMode
+      ? {
+          ...rest,
+          codexBackendMode: canonicalCodexBackendMode,
+        }
+      : rest;
+  }, z
   .object({
     version: z.literal(1),
     directory: z.string(),
@@ -33,14 +54,17 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     profileId: z.string().optional(),
     permissionMode: z.string().optional(),
     permissionModeUpdatedAt: z.number().int().optional(),
+    agentModeId: z.string().optional(),
+    agentModeUpdatedAt: z.number().int().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
+    sessionConfigOptionOverrides: z.unknown().optional(),
+    connectedServices: z.unknown().optional(),
     mcpSelection: SessionMcpSelectionV1Schema.optional(),
-    experimentalCodexAcp: z.boolean().optional(),
-    // Back-compat: older marker payloads used this flag name.
-    experimentalCodexResume: z.boolean().optional(),
+    agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   })
-  .strict();
+  .passthrough());
 
 export type SessionRunnerRespawnDescriptorV1 = z.infer<typeof SessionRunnerRespawnDescriptorV1Schema>;
 
@@ -57,6 +81,11 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   if (!directory) return null;
   const resume = normalizeOptionalString(spawnOptions.resume);
   const transcriptStorage = spawnOptions.transcriptStorage === 'direct' ? 'direct' : undefined;
+  const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+    codexBackendMode: spawnOptions.codexBackendMode,
+    experimentalCodexAcp: spawnOptions.experimentalCodexAcp,
+    agentRuntimeDescriptorV1: spawnOptions.agentRuntimeDescriptorV1,
+  });
 
   const descriptor: SessionRunnerRespawnDescriptorV1 = {
     version: 1,
@@ -70,10 +99,15 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     ...(typeof spawnOptions.profileId === 'string' ? { profileId: spawnOptions.profileId } : {}),
     ...(typeof spawnOptions.permissionMode === 'string' ? { permissionMode: spawnOptions.permissionMode } : {}),
     ...(typeof spawnOptions.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: spawnOptions.permissionModeUpdatedAt } : {}),
+    ...(typeof spawnOptions.agentModeId === 'string' ? { agentModeId: spawnOptions.agentModeId } : {}),
+    ...(typeof spawnOptions.agentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: spawnOptions.agentModeUpdatedAt } : {}),
     ...(typeof spawnOptions.modelId === 'string' ? { modelId: spawnOptions.modelId } : {}),
     ...(typeof spawnOptions.modelUpdatedAt === 'number' ? { modelUpdatedAt: spawnOptions.modelUpdatedAt } : {}),
+    ...(spawnOptions.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: spawnOptions.sessionConfigOptionOverrides } : {}),
+    ...(spawnOptions.connectedServices ? { connectedServices: spawnOptions.connectedServices } : {}),
     ...(spawnOptions.mcpSelection ? { mcpSelection: spawnOptions.mcpSelection } : {}),
-    ...(spawnOptions.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {}),
+    ...(spawnOptions.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: spawnOptions.agentRuntimeDescriptorV1 } : {}),
+    ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
   };
 
   const parsed = SessionRunnerRespawnDescriptorV1Schema.safeParse(descriptor);
@@ -83,6 +117,11 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
 export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
   descriptor: SessionRunnerRespawnDescriptorV1,
 ): SpawnSessionOptions {
+  const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+    codexBackendMode: descriptor.codexBackendMode,
+    agentRuntimeDescriptorV1: descriptor.agentRuntimeDescriptorV1,
+  });
+
   return {
     directory: descriptor.directory,
     ...(descriptor.backendTarget ? { backendTarget: descriptor.backendTarget } : {}),
@@ -94,10 +133,15 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     ...(typeof descriptor.profileId === 'string' ? { profileId: descriptor.profileId } : {}),
     ...(typeof descriptor.permissionMode === 'string' ? { permissionMode: descriptor.permissionMode as any } : {}),
     ...(typeof descriptor.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: descriptor.permissionModeUpdatedAt } : {}),
+    ...(typeof descriptor.agentModeId === 'string' ? { agentModeId: descriptor.agentModeId } : {}),
+    ...(typeof descriptor.agentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: descriptor.agentModeUpdatedAt } : {}),
     ...(typeof descriptor.modelId === 'string' ? { modelId: descriptor.modelId } : {}),
     ...(typeof descriptor.modelUpdatedAt === 'number' ? { modelUpdatedAt: descriptor.modelUpdatedAt } : {}),
+    ...(descriptor.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: descriptor.sessionConfigOptionOverrides as any } : {}),
+    ...(descriptor.connectedServices ? { connectedServices: descriptor.connectedServices } : {}),
     ...(descriptor.mcpSelection ? { mcpSelection: descriptor.mcpSelection } : {}),
-    ...(descriptor.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {}),
+    ...(descriptor.agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: descriptor.agentRuntimeDescriptorV1 } : {}),
+    ...(canonicalCodexBackendMode ? { codexBackendMode: canonicalCodexBackendMode } : {}),
     approvedNewDirectoryCreation: true,
   };
 }

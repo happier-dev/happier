@@ -48,6 +48,7 @@ export function ServerSettingsScreen() {
                     />
 
                     <ServerRetentionSection serverId={controller.activeServerId || null} />
+
                     <AddTargetsSection
                         autoMode={controller.autoMode}
                         inputUrl={controller.inputUrl}

@@ -1,18 +1,12 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-    createSessionRouteReply,
-    preloadSessionRoutes,
-    registerSessionRoutesAndGetHandler,
+    createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     sessionFindFirst,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 session by id", () => {
-    beforeAll(async () => {
-        await preloadSessionRoutes();
-    }, 120_000);
-
     beforeEach(() => {
         resetSessionRouteMocks();
         sessionFindFirst.mockReset();
@@ -32,22 +26,26 @@ describe("sessionRoutes v2 session by id", () => {
             metadataVersion: 2,
             agentState: null,
             agentStateVersion: 3,
+            lastViewedSessionSeq: 1,
+            pendingPermissionRequestCount: 2,
+            pendingUserActionRequestCount: 0,
             dataEncryptionKey: Buffer.from([1, 2, 3]),
             active: true,
             lastActiveAt: now,
             shares: [],
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions/:sessionId");
-        const reply = createSessionRouteReply();
-
-        const res = await handler({ userId: "u1", params: { sessionId: "s1" } }, reply);
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
+        const { response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s1",
                 encryptionMode: "e2ee",
                 dataEncryptionKey: "AQID",
+                lastViewedSessionSeq: 1,
+                pendingPermissionRequestCount: 2,
+                pendingUserActionRequestCount: 0,
                 share: null,
                 archivedAt: null,
             }),
@@ -68,6 +66,9 @@ describe("sessionRoutes v2 session by id", () => {
             metadataVersion: 1,
             agentState: null,
             agentStateVersion: 0,
+            lastViewedSessionSeq: 0,
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 1,
             dataEncryptionKey: null,
             active: true,
             lastActiveAt: now,
@@ -80,16 +81,17 @@ describe("sessionRoutes v2 session by id", () => {
             ],
         });
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions/:sessionId");
-        const reply = createSessionRouteReply();
-
-        const res = await handler({ userId: "u1", params: { sessionId: "s2" } }, reply);
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
+        const { response: res } = await route.invoke({ params: { sessionId: "s2" } });
 
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s2",
                 encryptionMode: "e2ee",
                 dataEncryptionKey: "BAU=",
+                lastViewedSessionSeq: 0,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 1,
                 share: { accessLevel: "edit", canApprovePermissions: true },
                 archivedAt: null,
             }),
@@ -99,10 +101,8 @@ describe("sessionRoutes v2 session by id", () => {
     it("returns 404 when session is not accessible", async () => {
         sessionFindFirst.mockResolvedValue(null);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions/:sessionId");
-        const reply = createSessionRouteReply();
-
-        const res = await handler({ userId: "u1", params: { sessionId: "missing" } }, reply);
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
+        const { reply, response: res } = await route.invoke({ params: { sessionId: "missing" } });
 
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(res).toEqual({ error: "Session not found" });

@@ -12,22 +12,27 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: routerPushSpy }),
-}));
-
-vi.mock('react-native', async () => {
-  const actual = await import('@/dev/reactNativeStub');
-  return {
-    ...actual,
-    useWindowDimensions: () => ({ width: 1400, height: 900 }),
-  };
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return expoRouterMock.module;
 });
 
-vi.mock('react-native-unistyles', () => ({
-  __esModule: true,
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    useWindowDimensions: () => ({ width: 1400, height: 900 }),
+                }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       dark: false,
       colors: {
         text: '#000',
@@ -36,21 +41,8 @@ vi.mock('react-native-unistyles', () => ({
         surfaceHigh: '#f5f5f5',
       },
     },
-  }),
-  StyleSheet: {
-    create: (styles: any) =>
-      typeof styles === 'function'
-        ? styles({
-            colors: {
-              text: '#000',
-              textSecondary: '#666',
-              divider: '#ddd',
-              surfaceHigh: '#f5f5f5',
-            },
-          })
-        : styles,
-  },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
   Text: 'Text',
@@ -64,13 +56,16 @@ vi.mock('@/utils/platform/responsive', () => ({
   useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useLocalSetting: (key: string) => {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useLocalSetting: (key: string) => {
     if (key === 'uiMultiPanePanelsEnabled') return true;
     if (key === 'detailsPaneTabsBehavior') return 'preview';
     return undefined;
   },
-}));
+});
+});
 
 describe('LinkedWorkspaceFilesRow', () => {
   it('opens details tab when multi-pane is available', async () => {

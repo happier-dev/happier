@@ -1,30 +1,35 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: {
-            ...rn.Platform,
-            OS: 'ios',
-            select: (v: any) => v?.ios ?? v?.default ?? rn.Platform.select(v),
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                    OS: 'ios',
+                                    select: (v: any) => v?.ios ?? v?.default ?? v?.web ?? v?.native ?? v?.android,
+                                },
+                                }
+    );
 });
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -43,7 +48,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionMessagesById: () => ({}),
     useSessionMessagesVersion: () => 0,
     useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-}));
+    useSessionMessagesReducerState: () => null,
+});
+});
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     useUserMessageHistory: () => ({ reset: () => {}, moveUp: () => {}, moveDown: () => {}, setText: () => {} }),
@@ -154,9 +161,10 @@ vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: () => null,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
@@ -167,13 +175,11 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (chip ordering)', () => {
-    it('renders permissions, then backend, then mode', async () => {
+    it('keeps the engine controls grouped ahead of permission in wrap layout', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -185,9 +191,7 @@ describe('AgentInput (chip ordering)', () => {
                     onAgentClick: () => {},
                     onAcpSessionModeChange: () => {},
                     acpSessionModeOptionsOverride: [{ id: 'plan', name: 'Plan' }],
-                }),
-            );
-        });
+                }))).tree;
 
         type JsonNode =
             | renderer.ReactTestRendererJSON
@@ -231,14 +235,130 @@ describe('AgentInput (chip ordering)', () => {
         const allNodes = flattenJson(tree!.toJSON() as JsonNode);
         const pressables = allNodes.filter((n) => n.type === 'Pressable');
 
-        const permissionIndex = pressables.findIndex((n) => pressableContainsIcon(n, 'Octicons', 'gear'));
+        const permissionIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-permission-chip');
         const agentIndex = pressables.findIndex((n) => pressableContainsIcon(n, 'Octicons', 'cpu'));
-        const modeIndex = pressables.findIndex((n) => (n.props as any)?.accessibilityLabel === 'agentInput.mode.badgeA11y');
+        const modeIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-session-mode-chip');
 
         expect(permissionIndex).toBeGreaterThanOrEqual(0);
         expect(agentIndex).toBeGreaterThanOrEqual(0);
         expect(modeIndex).toBeGreaterThanOrEqual(0);
-        expect(permissionIndex).toBeLessThan(agentIndex);
         expect(agentIndex).toBeLessThan(modeIndex);
-    });
+        expect(modeIndex).toBeLessThan(permissionIndex);
+    }, 90_000);
+
+    it('keeps machine on the secondary wrap row after the send button and before path/resume', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        tree = (await renderScreen(React.createElement(AgentInput, {
+                    value: '',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    onMachineClick: () => {},
+                    machineName: 'Local dev machine',
+                    onPathClick: () => {},
+                    currentPath: '/workspace/app',
+                    onResumeClick: () => {},
+                    resumeSessionId: 'session-1',
+                }))).tree;
+
+        type JsonNode =
+            | renderer.ReactTestRendererJSON
+            | renderer.ReactTestRendererJSON[]
+            | string
+            | number
+            | null;
+
+        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
+            if (!node) return out;
+            if (typeof node === 'string' || typeof node === 'number') return out;
+            if (Array.isArray(node)) {
+                for (const entry of node) flattenJson(entry, out);
+                return out;
+            }
+            out.push(node);
+            if (node.children) flattenJson(node.children as JsonNode, out);
+            return out;
+        }
+
+        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const sendIndex = allNodes.findIndex((node) => node.props?.testID === 'new-session-composer-send');
+        const machineIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-machine-chip');
+        const pathIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-path-chip');
+
+        expect(sendIndex).toBeGreaterThanOrEqual(0);
+        expect(machineIndex).toBeGreaterThan(sendIndex);
+        expect(pathIndex).toBeGreaterThan(machineIndex);
+    }, 90_000);
+
+    it('keeps recipient ahead of delivery in the primary wrap row', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        tree = (await renderScreen(React.createElement(AgentInput, {
+                    value: '',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    onPermissionClick: () => {},
+                    extraActionChips: [
+                        {
+                            key: 'participants-recipient',
+                            controlId: 'recipient',
+                            collapsedOptionsPopover: {
+                                title: 'session.participants.sendToTitle',
+                                options: [{ id: 'lead', label: 'Lead' }],
+                                selectedOptionId: 'lead',
+                                onSelect: () => {},
+                            },
+                            render: () => React.createElement('Pressable', { testID: 'agent-input-recipient-chip' }),
+                        },
+                        {
+                            key: 'execution-run-delivery',
+                            controlId: 'delivery',
+                            collapsedOptionsPopover: {
+                                title: 'runs.delivery.title',
+                                options: [{ id: 'interrupt', label: 'Interrupt' }],
+                                selectedOptionId: 'interrupt',
+                                onSelect: () => {},
+                            },
+                            render: () => React.createElement('Pressable', { testID: 'agent-input-delivery-chip' }),
+                        },
+                    ],
+                }))).tree;
+
+        type JsonNode =
+            | renderer.ReactTestRendererJSON
+            | renderer.ReactTestRendererJSON[]
+            | string
+            | number
+            | null;
+
+        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
+            if (!node) return out;
+            if (typeof node === 'string' || typeof node === 'number') return out;
+            if (Array.isArray(node)) {
+                for (const entry of node) flattenJson(entry, out);
+                return out;
+            }
+            out.push(node);
+            if (node.children) flattenJson(node.children as JsonNode, out);
+            return out;
+        }
+
+        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const permissionIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-permission-chip');
+        const recipientIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-recipient-chip');
+        const deliveryIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-delivery-chip');
+
+        expect(permissionIndex).toBeGreaterThanOrEqual(0);
+        expect(recipientIndex).toBeGreaterThan(permissionIndex);
+        expect(deliveryIndex).toBeGreaterThan(recipientIndex);
+    }, 90_000);
+
 });

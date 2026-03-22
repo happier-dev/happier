@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,24 +14,26 @@ vi.mock('@shopify/flash-list', () => ({
 }));
 
 vi.mock('react-native', async () => {
-  const ReactMod = await import('react');
-  const stub = await import('@/dev/reactNativeStub');
-  return {
-    ...stub,
-    Platform: { ...(stub as any).Platform, OS: 'web' },
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-    ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
-    FlatList: (props: any) => {
-      const children = (props.data ?? []).map((item: any, index: number) =>
-        ReactMod.createElement(
-          ReactMod.Fragment,
-          { key: props.keyExtractor?.(item, index) ?? String(index) },
-          props.renderItem?.({ item, index }),
-        ),
-      );
-      return ReactMod.createElement('FlatList', props, children);
-    },
-  };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            View: (props: any) => React.createElement('View', props, props.children),
+                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+                            FlatList: (props: any) => {
+                              const children = (props.data ?? []).map((item: any, index: number) =>
+                                React.createElement(
+                                  React.Fragment,
+                                  { key: props.keyExtractor?.(item, index) ?? String(index) },
+                                  props.renderItem?.({ item, index }),
+                                ),
+                              );
+                              return React.createElement('FlatList', props, children);
+                            },
+                        }
+    );
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -40,9 +44,12 @@ vi.mock('@/utils/platform/responsive', () => ({
   useHeaderHeight: () => 0,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: (key: string) => settingValues[key],
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useSetting: (key: string) => settingValues[key],
+});
+});
 
 vi.mock('@/components/sessions/transcript/ChatFooter', () => ({
   ChatFooter: () => React.createElement('ChatFooter'),
@@ -70,16 +77,12 @@ describe('TranscriptList (thinking expansion controlled)', () => {
     const normalMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'answer', isThinking: false };
 
     const { TranscriptList } = await import('./TranscriptList');
-    await act(async () => {
-      renderer.create(
-        <TranscriptList
+    await renderScreen(<TranscriptList
           sessionId="s1"
           metadata={null}
           messages={[thinkingMessage as any, normalMessage as any]}
           interaction={{ canSendMessages: false, canApprovePermissions: false }}
-        />,
-      );
-    });
+        />);
 
     const firstThinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
     expect(firstThinkingProps?.thinkingExpanded).toBe(false);

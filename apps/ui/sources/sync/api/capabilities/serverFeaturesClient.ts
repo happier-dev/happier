@@ -21,6 +21,12 @@ export type ServerFeaturesSnapshot =
     | Readonly<{ status: 'unsupported'; reason: 'endpoint_missing' | 'invalid_payload' }>
     | Readonly<{ status: 'error'; reason: 'network' | 'timeout' | 'response_status' }>;
 
+export type AuthenticatedServerFeaturesProbeResult =
+    | Readonly<{ status: 'ready' }>
+    | Readonly<{ status: 'auth_failed'; statusCode: 401 | 403; errorMessage: string }>
+    | Readonly<{ status: 'retry_later'; errorMessage: string }>
+    | Readonly<{ status: 'server_unreachable'; errorMessage: string }>;
+
 const cache = new AsyncTtlCache<ServerFeaturesSnapshot>({
     successTtlMs: TTL_READY_MS,
     errorTtlMs: TTL_ERROR_NETWORK_MS,
@@ -87,6 +93,45 @@ function joinBaseAndPath(baseUrl: string, path: string): string {
 function isAbortErrorLike(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
     return 'name' in error && (error as { name?: unknown }).name === 'AbortError';
+}
+
+export async function probeAuthenticatedServerFeaturesEndpoint(params: Readonly<{
+    endpoint: string;
+    token: string;
+}>): Promise<AuthenticatedServerFeaturesProbeResult> {
+    const endpoint = normalizeBaseUrl(params.endpoint) ?? String(params.endpoint ?? '').replace(/\/+$/, '');
+
+    try {
+        const authResponse = await runtimeFetch(joinBaseAndPath(endpoint, '/v1/features'), {
+            method: 'GET',
+            headers: {
+                Accept: 'application/json',
+                Authorization: `Bearer ${params.token}`,
+            },
+        });
+
+        if (authResponse.status === 401 || authResponse.status === 403) {
+            return {
+                status: 'auth_failed',
+                statusCode: authResponse.status,
+                errorMessage: `Authenticated probe returned ${authResponse.status}`,
+            };
+        }
+
+        if (authResponse.status >= 500) {
+            return {
+                status: 'retry_later',
+                errorMessage: `Authenticated probe returned ${authResponse.status}`,
+            };
+        }
+
+        return { status: 'ready' };
+    } catch (error) {
+        return {
+            status: 'server_unreachable',
+            errorMessage: error instanceof Error ? error.message : String(error),
+        };
+    }
 }
 
 async function getServerFeaturesSnapshotWithRetry(

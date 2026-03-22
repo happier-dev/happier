@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
+import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/registerSessionHandlers';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 function sha256Hex(value: string): string {
@@ -85,18 +86,23 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   const windowsRemoteSessionConsole = normalizeNonEmptyString(options.windowsRemoteSessionConsole);
 
   const permissionMode = normalizeNonEmptyString(options.permissionMode);
+  const agentModeId = normalizeNonEmptyString(options.agentModeId);
 
   const modelId = normalizeNonEmptyString(options.modelId);
-
+  const codexBackendMode = resolveCanonicalCodexBackendMode({
+    codexBackendMode: options.codexBackendMode,
+    experimentalCodexAcp: options.experimentalCodexAcp,
+    agentRuntimeDescriptorV1: options.agentRuntimeDescriptorV1,
+  }) ?? null;
   const resume = normalizeNonEmptyString(options.resume);
-  const experimentalCodexAcp = options.experimentalCodexAcp === true;
-
-  const token = normalizeNonEmptyString(options.token);
   const initialPrompt = normalizeNonEmptyString(options.initialPrompt);
 
   const environmentVariables = options.environmentVariables;
   const connectedServices = options.connectedServices;
   const mcpSelection = normalizeMcpSelectionForFingerprint(options.mcpSelection);
+  const sessionConfigOptionOverrides = options.sessionConfigOptionOverrides === undefined
+    ? null
+    : toStableJson(options.sessionConfigOptionOverrides, new WeakSet());
 
   const fingerprint = {
     directory,
@@ -107,14 +113,15 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
     windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
     windowsRemoteSessionConsole: windowsRemoteSessionConsole ?? null,
     permissionMode: permissionMode ?? null,
+    agentModeId: agentModeId ?? null,
     modelId: modelId ?? null,
+    codexBackendMode,
     resume: resume ?? null,
-    experimentalCodexAcp,
-    tokenHash: token ? sha256Hex(token) : null,
     initialPromptHash: initialPrompt ? sha256Hex(initialPrompt) : null,
     envValueHashes: hashRecordValues(environmentVariables),
     connectedServicesHash: connectedServices === undefined ? null : sha256Hex(stableJsonStringify(connectedServices)),
     mcpSelection,
+    sessionConfigOptionOverrides,
     ...(transcriptStorage ? { transcriptStorage } : {}),
     ...(spawnNonce ? { spawnNonce } : {}),
   } as const;

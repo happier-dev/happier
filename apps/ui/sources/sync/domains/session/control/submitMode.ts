@@ -1,5 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { isVersionSupported, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
+import { isSessionExclusiveLocalControl } from '@/sync/domains/session/control/sessionLocalControl';
 
 export type MessageSendMode = 'agent_queue' | 'interrupt' | 'server_pending';
 
@@ -33,7 +34,7 @@ export function chooseSubmitMode(opts: {
         }
     }
 
-    const controlledByUser = Boolean(session?.agentState?.controlledByUser);
+    const controlledByUser = isSessionExclusiveLocalControl(session);
     const isBusy = Boolean(session?.thinking);
     const isOnline = session?.presence === 'online';
     const agentReady = Boolean(session && session.agentStateVersion > 0);

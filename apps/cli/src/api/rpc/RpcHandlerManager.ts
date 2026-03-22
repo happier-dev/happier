@@ -20,13 +20,17 @@ export class RpcHandlerManager {
     private readonly scopePrefix: string;
     private readonly encryptionKey: Uint8Array;
     private readonly encryptionVariant: 'legacy' | 'dataKey';
+    private readonly encryptionMode: 'e2ee' | 'plain';
     private readonly logger: (message: string, data?: any) => void;
     private socket: Socket | null = null;
+    private inFlightRequestCount = 0;
+    private idleResolvers = new Set<() => void>();
 
     constructor(config: RpcHandlerConfig) {
         this.scopePrefix = config.scopePrefix;
         this.encryptionKey = config.encryptionKey;
         this.encryptionVariant = config.encryptionVariant;
+        this.encryptionMode = config.encryptionMode ?? 'e2ee';
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
     }
 
@@ -57,18 +61,30 @@ export class RpcHandlerManager {
     async handleRequest(
         request: RpcRequest,
     ): Promise<any> {
+        this.inFlightRequestCount += 1;
         try {
             const handler = this.handlers.get(request.method);
 
             if (!handler) {
                 this.logger('[RPC] [ERROR] Method not found', { method: request.method });
                 const errorResponse = { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+                if (this.encryptionMode === 'plain') return errorResponse;
                 const encryptedError = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, errorResponse));
                 return encryptedError;
             }
 
-            // Decrypt the incoming params
-            const decryptedParams = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(request.params));
+            // Decrypt the incoming params (unless session is plaintext).
+            const decryptedParams = this.encryptionMode === 'plain'
+              ? request.params
+              : typeof request.params === 'string'
+                ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(request.params))
+                : null;
+            if (this.encryptionMode !== 'plain' && decryptedParams === null) {
+              const errorResponse = {
+                error: 'Invalid RPC params',
+              };
+              return encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, errorResponse));
+            }
 
             // Call the handler
             this.logger('[RPC] Calling handler', { method: request.method });
@@ -76,6 +92,9 @@ export class RpcHandlerManager {
             this.logger('[RPC] Handler returned', { method: request.method, hasResult: result !== undefined });
 
             // Encrypt and return the response
+            if (this.encryptionMode === 'plain') {
+              return result;
+            }
             const encryptedResponse = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, result));
             this.logger('[RPC] Sending encrypted response', { method: request.method, responseLength: encryptedResponse.length });
             return encryptedResponse;
@@ -84,7 +103,17 @@ export class RpcHandlerManager {
             const errorResponse = {
                 error: error instanceof Error ? error.message : 'Unknown error'
             };
+            if (this.encryptionMode === 'plain') return errorResponse;
             return encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, errorResponse));
+        } finally {
+            this.inFlightRequestCount = Math.max(0, this.inFlightRequestCount - 1);
+            if (this.inFlightRequestCount === 0 && this.idleResolvers.size > 0) {
+                const resolvers = Array.from(this.idleResolvers);
+                this.idleResolvers.clear();
+                for (const resolve of resolvers) {
+                    resolve();
+                }
+            }
         }
     }
 
@@ -119,6 +148,19 @@ export class RpcHandlerManager {
      */
     getHandlerCount(): number {
         return this.handlers.size;
+    }
+
+    getInFlightRequestCount(): number {
+        return this.inFlightRequestCount;
+    }
+
+    async waitForIdle(): Promise<void> {
+        if (this.inFlightRequestCount === 0) {
+            return;
+        }
+        await new Promise<void>((resolve) => {
+            this.idleResolvers.add(resolve);
+        });
     }
 
     /**

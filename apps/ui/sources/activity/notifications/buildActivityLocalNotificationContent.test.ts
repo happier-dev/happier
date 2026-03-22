@@ -4,8 +4,10 @@ import {
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
         switch (key) {
             case 'notifications.activity.defaultSessionTitle':
                 return 'Session';
@@ -19,7 +21,8 @@ vi.mock('@/text', () => ({
                 return key;
         }
     },
-}));
+    });
+});
 
 describe('buildActivityLocalNotificationContent', () => {
     it('uses the latest assistant text for ready notifications when available', async () => {

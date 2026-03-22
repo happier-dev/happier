@@ -2,6 +2,12 @@ import type { ModelMode } from '../permissions/permissionTypes';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '../state/storageTypes';
+import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
+import {
+    LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    readMetadataAliasValue,
+    SESSION_MODELS_STATE_KEY,
+} from '@happier-dev/agents';
 
 export type AgentType = AgentId;
 
@@ -9,10 +15,16 @@ export type ModelOption = Readonly<{
     value: ModelMode;
     label: string;
     description: string;
+    modelOptions?: readonly AcpConfigOption[];
 }>;
 
 export type PreflightModelList = Readonly<{
-    availableModels: ReadonlyArray<Readonly<{ id: string; name: string; description?: string }>>;
+    availableModels: ReadonlyArray<Readonly<{
+        id: string;
+        name: string;
+        description?: string;
+        modelOptions?: readonly AcpConfigOption[];
+    }>>;
     supportsFreeform: boolean;
 }>;
 
@@ -23,6 +35,7 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
             value: String(m.id),
             label: String(m.name),
             description: typeof m.description === 'string' ? m.description : '',
+            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
         }));
 
     const withDefault: ModelOption[] = [
@@ -40,9 +53,11 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
 }
 
 export function hasDynamicModelListForSession(agentType: AgentType, metadata: Metadata | null | undefined): boolean {
-    const state = (metadata as any)?.acpSessionModelsV1 as
-        | { provider?: unknown; availableModels?: Array<{ id?: unknown }> }
-        | undefined;
+    const state = readMetadataAliasValue<{ provider?: unknown; availableModels?: Array<{ id?: unknown }> }>(
+        (metadata as any) ?? {},
+        SESSION_MODELS_STATE_KEY,
+        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    );
     return Boolean(
         state &&
         state.provider === agentType &&
@@ -105,15 +120,28 @@ export function getModelOptionsForAgentTypeOrPreflight(params: {
     preflight: PreflightModelList | null | undefined;
 }): readonly ModelOption[] {
     if (params.preflight && Array.isArray(params.preflight.availableModels) && params.preflight.availableModels.length > 0) {
-        return getModelOptionsForPreflightModelList(params.preflight);
+        const preflightOptions = getModelOptionsForPreflightModelList(params.preflight);
+        const catalogOptions = getModelOptionsForAgentType(params.agentType);
+        const merged = [...preflightOptions];
+        const seen = new Set(merged.map((option) => option.value));
+
+        for (const option of catalogOptions) {
+            if (seen.has(option.value)) continue;
+            seen.add(option.value);
+            merged.push(option);
+        }
+
+        return merged;
     }
     return getModelOptionsForAgentType(params.agentType);
 }
 
 export function getSelectableModelIdsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly string[] {
-    const state = (metadata as any)?.acpSessionModelsV1 as
-        | { provider?: string; availableModels?: Array<{ id?: unknown }> }
-        | undefined;
+    const state = readMetadataAliasValue<{ provider?: string; availableModels?: Array<{ id?: unknown }> }>(
+        (metadata as any) ?? {},
+        SESSION_MODELS_STATE_KEY,
+        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    );
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
         const ids = state.availableModels
             .filter((m) => m && typeof m.id === 'string' && String(m.id).trim().length > 0)
@@ -137,9 +165,19 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
 }
 
 export function getModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
-    const state = (metadata as any)?.acpSessionModelsV1 as
-        | { provider?: string; availableModels?: Array<{ id?: unknown; name?: unknown; description?: unknown }> }
-        | undefined;
+    const state = readMetadataAliasValue<{
+        provider?: string;
+        availableModels?: Array<{
+            id?: unknown;
+            name?: unknown;
+            description?: unknown;
+            modelOptions?: unknown;
+        }>;
+    }>(
+        (metadata as any) ?? {},
+        SESSION_MODELS_STATE_KEY,
+        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    );
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
         const dynamic = state.availableModels
             .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
@@ -147,6 +185,7 @@ export function getModelOptionsForSession(agentType: AgentType, metadata: Metada
                 value: String(m.id),
                 label: String(m.name),
                 description: typeof m.description === 'string' ? m.description : '',
+                ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] } : {}),
             }));
 
         const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;

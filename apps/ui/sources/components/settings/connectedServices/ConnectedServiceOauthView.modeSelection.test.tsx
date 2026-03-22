@@ -1,147 +1,157 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+
+import type { ExpoRouterParams } from '@/dev/testkit/mocks/router';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-  const actual = await vi.importActual<typeof import('react-native')>('react-native');
-  return {
-    ...actual,
-    Platform: { ...actual.Platform, OS: 'ios' },
-  };
-});
-
-let searchParams: Record<string, unknown> = { serviceId: 'anthropic', profileId: 'work' };
-const routerPushSpy = vi.fn();
-const routerBackSpy = vi.fn();
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: routerBackSpy, push: routerPushSpy }),
-  useLocalSearchParams: () => searchParams,
+const shared = vi.hoisted(() => ({
+    searchParams: { serviceId: 'anthropic', profileId: 'work' } as ExpoRouterParams,
+    routerPushSpy: vi.fn(),
+    routerBackSpy: vi.fn(),
+    unsupportedSpy: vi.fn((props: Record<string, unknown>) =>
+        React.createElement('OAuthViewUnsupported', props),
+    ),
+    pasteSpy: vi.fn((props: Record<string, unknown>) =>
+        React.createElement('ConnectedServiceOauthPasteView', props),
+    ),
+    deviceAuthSpy: vi.fn((props: Record<string, unknown>) =>
+        React.createElement('OpenAiCodexDeviceAuthView', props),
+    ),
+    embeddedSpy: vi.fn((props: Record<string, unknown>) =>
+        React.createElement('ConnectedServiceOauthEmbeddedView', props),
+    ),
 }));
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'ios',
+        },
+    });
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: shared.routerBackSpy, push: shared.routerPushSpy },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => shared.searchParams,
+        useGlobalSearchParams: () => shared.searchParams,
+    };
+});
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: () => true,
+    useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
+    useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-  getConnectedServiceRegistryEntry: (serviceId: string) => ({
-    serviceId,
-    connectCommand: `happier connect ${serviceId}`,
-    supportsOauth: serviceId !== 'anthropic',
-    oauthAddActionModes: serviceId === 'openai-codex'
-      ? ['device', 'paste', 'browser']
-      : serviceId === 'claude-subscription'
-        ? ['paste']
-        : ['paste'],
-  }),
+    getConnectedServiceRegistryEntry: (serviceId: string) => ({
+        serviceId,
+        connectCommand: `happier connect ${serviceId}`,
+        supportsOauth: serviceId !== 'anthropic',
+        oauthAddActionModes:
+            serviceId === 'openai-codex'
+                ? ['device', 'paste', 'browser']
+                : serviceId === 'claude-subscription'
+                    ? ['paste']
+                    : ['paste'],
+    }),
 }));
 
 vi.mock('@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters', () => ({
-  getConnectedServiceOauthAdapter: (serviceId: string) => ({
-    serviceId,
-    defaultRedirectUri: 'http://localhost/cb',
-    buildAuthorizationUrl: () => 'https://example.com/oauth',
-    exchangeAuthorizationCodeForRecord: async () => ({}),
-  }),
+    getConnectedServiceOauthAdapter: (serviceId: string) => ({
+        serviceId,
+        defaultRedirectUri: 'http://localhost/cb',
+        buildAuthorizationUrl: () => 'https://example.com/oauth',
+        exchangeAuthorizationCodeForRecord: async () => ({}),
+    }),
 }));
 
 vi.mock('@/components/ui/navigation/OAuthView', () => ({
-  OAuthView: () => React.createElement('OAuthView'),
-  OAuthViewUnsupported: () => React.createElement('OAuthViewUnsupported'),
-}));
-
-vi.mock('./oauth/ConnectedServiceOauthEmbeddedView', () => ({
-  ConnectedServiceOauthEmbeddedView: (props: unknown) =>
-    React.createElement('ConnectedServiceOauthEmbeddedView', props as Record<string, unknown>),
+    OAuthView: () => React.createElement('OAuthView'),
+    OAuthViewUnsupported: shared.unsupportedSpy,
 }));
 
 vi.mock('./ConnectedServiceOauthPasteView', () => ({
-  ConnectedServiceOauthPasteView: (props: unknown) => React.createElement('ConnectedServiceOauthPasteView', props as Record<string, unknown>),
+    ConnectedServiceOauthPasteView: shared.pasteSpy,
 }));
 
 vi.mock('./oauth/openai/OpenAiCodexDeviceAuthView', () => ({
-  OpenAiCodexDeviceAuthView: (props: unknown) => React.createElement('OpenAiCodexDeviceAuthView', props as Record<string, unknown>),
+    OpenAiCodexDeviceAuthView: shared.deviceAuthSpy,
+}));
+
+vi.mock('./oauth/ConnectedServiceOauthEmbeddedView', () => ({
+    ConnectedServiceOauthEmbeddedView: shared.embeddedSpy,
 }));
 
 describe('ConnectedServiceOauthView mode selection', () => {
-  it('renders unsupported when the service does not support oauth', async () => {
-    searchParams = { serviceId: 'anthropic', profileId: 'work' };
-    routerPushSpy.mockClear();
-    routerBackSpy.mockClear();
-    const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
+    it('renders unsupported when the service does not support oauth', async () => {
+        shared.searchParams = { serviceId: 'anthropic', profileId: 'work' };
+        vi.clearAllMocks();
+        const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthView />);
+        await renderScreen(<ConnectedServiceOauthView />);
+
+        expect(shared.unsupportedSpy).toHaveBeenCalledTimes(1);
+        expect(shared.pasteSpy).not.toHaveBeenCalled();
     });
 
-    expect(tree.root.findAllByType('OAuthViewUnsupported' as any)).toHaveLength(1);
-    expect(tree.root.findAllByType('ConnectedServiceOauthPasteView' as any)).toHaveLength(0);
-  });
+    it('uses paste fallback for openai-codex device auth on native', async () => {
+        shared.searchParams = { serviceId: 'openai-codex', profileId: 'work' };
+        vi.clearAllMocks();
 
-  it('uses paste fallback for openai-codex device auth on native', async () => {
-    searchParams = { serviceId: 'openai-codex', profileId: 'work' };
-    routerPushSpy.mockClear();
-    routerBackSpy.mockClear();
+        const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
 
-    const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
+        await renderScreen(<ConnectedServiceOauthView />);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthView />);
+        expect(shared.deviceAuthSpy).toHaveBeenCalledTimes(1);
+        const deviceProps = shared.deviceAuthSpy.mock.calls[0]?.[0] as
+            | { fallbackAction?: { onPress?: () => void } }
+            | undefined;
+        expect(deviceProps?.fallbackAction?.onPress).toBeTypeOf('function');
+
+        deviceProps?.fallbackAction?.onPress?.();
+
+        expect(shared.routerPushSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                params: expect.objectContaining({ method: 'paste' }),
+            }),
+        );
     });
 
-    const deviceViews = tree.root.findAllByType('OpenAiCodexDeviceAuthView' as any);
-    expect(deviceViews).toHaveLength(1);
-    expect(deviceViews[0]?.props?.fallbackAction?.onPress).toBeTypeOf('function');
+    it('supports embedded oauth for claude-subscription when explicitly requested on native', async () => {
+        shared.searchParams = { serviceId: 'claude-subscription', profileId: 'work', method: 'browser' };
+        vi.clearAllMocks();
+        const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
 
-    await act(async () => {
-      deviceViews[0]?.props?.fallbackAction?.onPress?.();
+        await renderScreen(<ConnectedServiceOauthView />);
+
+        expect(shared.embeddedSpy).toHaveBeenCalledTimes(1);
+        expect(shared.pasteSpy).not.toHaveBeenCalled();
     });
 
-    expect(routerPushSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        params: expect.objectContaining({ method: 'paste' }),
-      }),
-    );
-  });
+    it('supports embedded oauth for openai-codex when explicitly requested on native', async () => {
+        shared.searchParams = { serviceId: 'openai-codex', profileId: 'work', method: 'browser' };
+        vi.clearAllMocks();
+        const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
 
-  it('supports embedded oauth for claude-subscription when explicitly requested on native', async () => {
-    searchParams = { serviceId: 'claude-subscription', profileId: 'work', method: 'browser' };
-    routerPushSpy.mockClear();
-    routerBackSpy.mockClear();
-    const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
+        await renderScreen(<ConnectedServiceOauthView />);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthView />);
+        expect(shared.embeddedSpy).toHaveBeenCalledTimes(1);
+        expect(shared.deviceAuthSpy).not.toHaveBeenCalled();
     });
-
-    expect(tree.root.findAllByType('ConnectedServiceOauthEmbeddedView' as any)).toHaveLength(1);
-    expect(tree.root.findAllByType('ConnectedServiceOauthPasteView' as any)).toHaveLength(0);
-  });
-
-  it('supports embedded oauth for openai-codex when explicitly requested on native', async () => {
-    searchParams = { serviceId: 'openai-codex', profileId: 'work', method: 'browser' };
-    routerPushSpy.mockClear();
-    routerBackSpy.mockClear();
-    const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
-
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceOauthView />);
-    });
-
-    expect(tree.root.findAllByType('ConnectedServiceOauthEmbeddedView' as any)).toHaveLength(1);
-    expect(tree.root.findAllByType('OpenAiCodexDeviceAuthView' as any)).toHaveLength(0);
-  });
 });

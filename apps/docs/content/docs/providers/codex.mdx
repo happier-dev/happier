@@ -1,6 +1,6 @@
 ---
 title: Codex
-description: Configure Codex in Happier, including the default App Server backend, installables management, local control, and resume behavior.
+description: Configure Codex in Happier, including the default App Server backend, installables, local control, and resume behavior.
 ---
 
 This page documents how Happier integrates with **Codex** and what Codex-specific behavior matters for day-to-day usage.
@@ -91,19 +91,19 @@ See:
 
 Happier can run Codex using different backends depending on what’s available and what features you enable:
 
-- **Codex App Server (default)**: the recommended path for normal Codex sessions in Happier. It supports the app-first workflow, local/remote switching, and vendor resume when the session metadata is available.
-- **Codex ACP (legacy fallback)**: still available when you explicitly switch Codex to ACP mode.
-- **Codex MCP**: still available for fresh sessions; vendor resume on MCP depends on the Codex resume helper being installed.
+- **Codex App Server (default)**: the recommended and default path for normal Codex sessions in Happier. It supports the app-first workflow, local/remote switching, and vendor resume when the session metadata is available.
+- **Codex ACP**: still available as an explicit fallback when you switch Codex to ACP mode.
+- **Codex MCP**: still available for fresh sessions, but plain MCP is not the default or normal vendor-resume path in current Happier builds.
 - **Local-control**: Happier can switch a session into a “local control” mode that mirrors Codex activity (useful when moving control from the app back to your terminal).
 
 Important Codex behavior:
 
-- Happier now defaults Codex to **App Server**
+- Happier defaults Codex to **App Server**
 - old `mcp_resume` behavior is gone
-- if App Server is unavailable for a **new** session, Happier may fall back to another supported backend with a warning
+- if App Server is unavailable for a **new** session, the default Codex launch fails instead of silently falling back; choose ACP or MCP explicitly if you want a different backend
 - local/remote switching and normal Codex resume work on the default App Server path
 
-If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but vendor resume then depends on the Codex resume helper instead of the default App Server path.
+If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but vendor resume is not available on that plain MCP path.
 
 For the full user-facing MCP guide in Happier, see:
 
@@ -119,8 +119,8 @@ Happier exposes that in:
 
 This matters for two reasons:
 
-- **cold start performance** — a preinstalled Codex ACP binary starts faster than an on-demand fallback path
-- **ACP-mode reliability** — if you explicitly choose ACP, keeping Codex ACP installed avoids slower fallback paths and missing-capability errors
+- **cold start performance** — a preinstalled Codex ACP binary avoids first-run install/setup delay
+- **ACP-mode reliability** — if you explicitly choose ACP, keeping Codex ACP installed avoids install-time waits and missing-capability errors
 
 ### Default behavior
 
@@ -135,8 +135,8 @@ If you select the Codex ACP backend for a new session and Codex ACP is missing, 
 
 For a **new** Codex session:
 
-- Happier tries to keep session start usable even if Codex ACP is not yet installed
-- in parallel, Happier can install Codex ACP in the background when policy allows it
+- Happier can install Codex ACP in the background when policy allows it
+- later ACP sessions on that machine benefit from having the installable ready ahead of time
 
 For **resume in ACP mode**:
 
@@ -164,12 +164,12 @@ For the end-to-end workflow, see [Features → Attach to a running session](/doc
 
 ## Resume inactive Codex sessions
 
-Codex resume in Happier is no longer ACP-only.
+Codex resume in Happier normally uses the default App Server path. ACP resume still works when you explicitly choose ACP.
 
 An inactive Codex session can be resumed when:
 
 - the session has valid Codex resume metadata
-- the current backend/machine combination supports resume for that session (App Server by default, ACP when explicitly selected, or MCP with the Codex resume helper)
+- the current backend/machine combination supports resume for that session (App Server by default, or ACP when explicitly selected)
 - any required machine dependency for the selected resume path is already installed
 
 From the CLI, use:

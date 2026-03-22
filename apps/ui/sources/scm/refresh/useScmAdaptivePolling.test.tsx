@@ -1,26 +1,39 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-    },
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Platform: {
+                OS: 'web',
+            },
+        }
+    );
+});
 
 describe('useScmAdaptivePolling', () => {
-    it('does not poll when baseIntervalMs is 0 (prevents tight loops)', async () => {
+    beforeEach(() => {
         vi.useFakeTimers();
+    });
 
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('does not poll when baseIntervalMs is 0 (prevents tight loops)', async () => {
         const { useScmAdaptivePolling } = await import('./useScmAdaptivePolling');
 
         const invalidateAndAwait = vi.fn(async () => {});
         const getSignature = vi.fn(() => 'sig1');
 
-        function Test() {
+        await renderHook(() => {
             useScmAdaptivePolling({
                 enabled: true,
                 baseIntervalMs: 0,
@@ -30,32 +43,25 @@ describe('useScmAdaptivePolling', () => {
                 invalidateAndAwait,
             });
             return null;
-        }
-
-        await act(async () => {
-            renderer.create(<Test />);
+        }, {
+            flushOptions: { cycles: 0 },
         });
 
         expect(invalidateAndAwait).toHaveBeenCalledTimes(0);
 
-        await act(async () => {
-            vi.advanceTimersByTime(10_000);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 10_000 });
 
         expect(invalidateAndAwait).toHaveBeenCalledTimes(0);
-        vi.useRealTimers();
     });
 
     it('backs off when signature does not change and resets when it does', async () => {
-        vi.useFakeTimers();
-
         const { useScmAdaptivePolling } = await import('./useScmAdaptivePolling');
 
         let signature = 'sig1';
         const invalidateAndAwait = vi.fn(async () => {});
         const getSignature = vi.fn(() => signature);
 
-        function Test() {
+        await renderHook(() => {
             useScmAdaptivePolling({
                 enabled: true,
                 baseIntervalMs: 1000,
@@ -65,55 +71,35 @@ describe('useScmAdaptivePolling', () => {
                 invalidateAndAwait,
             });
             return null;
-        }
-
-        await act(async () => {
-            renderer.create(<Test />);
+        }, {
+            flushOptions: { cycles: 0 },
         });
 
         expect(invalidateAndAwait).toHaveBeenCalledTimes(1);
 
-        await act(async () => {
-            vi.advanceTimersByTime(1000);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1000 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(2);
 
         // unchanged -> backoff to 2000
-        await act(async () => {
-            vi.advanceTimersByTime(1999);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1999 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(2);
-        await act(async () => {
-            vi.advanceTimersByTime(1);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(3);
 
         // now change signature -> interval resets to base
         signature = 'sig2';
-        await act(async () => {
-            vi.advanceTimersByTime(2999);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 2999 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(3);
-        await act(async () => {
-            vi.advanceTimersByTime(1);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(4);
 
-        await act(async () => {
-            vi.advanceTimersByTime(999);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 999 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(4);
-        await act(async () => {
-            vi.advanceTimersByTime(1);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1 });
         expect(invalidateAndAwait).toHaveBeenCalledTimes(5);
-
-        vi.useRealTimers();
     });
 
     it('continues polling after invalidateAndAwait throws', async () => {
-        vi.useFakeTimers();
-
         const { useScmAdaptivePolling } = await import('./useScmAdaptivePolling');
 
         let signature = 'sig1';
@@ -126,7 +112,7 @@ describe('useScmAdaptivePolling', () => {
         });
         const getSignature = vi.fn(() => signature);
 
-        function Test() {
+        await renderHook(() => {
             useScmAdaptivePolling({
                 enabled: true,
                 baseIntervalMs: 1000,
@@ -136,27 +122,19 @@ describe('useScmAdaptivePolling', () => {
                 invalidateAndAwait,
             });
             return null;
-        }
-
-        await act(async () => {
-            renderer.create(<Test />);
+        }, {
+            flushOptions: { cycles: 0 },
         });
 
         expect(invalidateAndAwait).toHaveBeenCalledTimes(1);
 
-        await act(async () => {
-            vi.advanceTimersByTime(1000);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1000 });
 
         expect(invalidateAndAwait).toHaveBeenCalledTimes(2);
 
         signature = 'sig2';
-        await act(async () => {
-            vi.advanceTimersByTime(2000);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 2000 });
 
         expect(invalidateAndAwait).toHaveBeenCalledTimes(3);
-
-        vi.useRealTimers();
     });
 });

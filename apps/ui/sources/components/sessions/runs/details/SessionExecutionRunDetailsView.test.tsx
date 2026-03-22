@@ -1,6 +1,9 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,62 +84,43 @@ function createExecutionRunGetResponse(overrides?: Record<string, unknown>) {
     };
 }
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.web ?? values?.default,
-    },
-    AppState: {
-        currentState: 'active',
-        addEventListener: () => ({ remove: () => {} }),
-    },
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    ActivityIndicator: 'ActivityIndicator',
-    TextInput: ({ ...props }: any) => React.createElement('TextInput', props),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                                            Platform: {
+                                                                                OS: 'web',
+                                                                                select: (values: any) => values?.web ?? values?.default,
+                                                                            },
+                                                                            AppState: {
+                                                                                currentState: 'active',
+                                                                                addEventListener: () => ({ remove: () => {} }),
+                                                                            },
+                                                                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+                                                                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                                                                            ActivityIndicator: 'ActivityIndicator',
+                                                                            TextInput: ({ ...props }: any) => React.createElement('TextInput', props),
+                                                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                text: '#eee',
-                textSecondary: '#aaa',
-                textDestructive: '#f44',
-                status: { error: '#f44' },
-                shadow: { color: '#000' },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#111',
-                        surfaceHigh: '#222',
-                        divider: '#333',
-                        text: '#eee',
-                        textSecondary: '#aaa',
-                        textDestructive: '#f44',
-                        status: { error: '#f44' },
-                        shadow: { color: '#000' },
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn(), back: vi.fn() },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunGet: (sessionId: string, request: { runId: string }) => getRunSpy(sessionId, request),
@@ -157,7 +141,9 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => ({ sessions: { s1: { metadata: { machineId: 'm1' } } } }),
     },
@@ -165,7 +151,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: sessionMessagesState.isLoaded }),
     useResolvedSessionMessageRouteId: () => 'tool-msg-1',
     useMessage: () => sessionMessagesState.messages[0] ?? null,
-}));
+});
+});
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
     resolveServerIdForSessionIdFromLocalCache: () => null,
@@ -194,11 +181,10 @@ vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
     ConstrainedScreenContent: ({ children, ...props }: any) => React.createElement('ConstrainedScreenContent', props, children),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -286,16 +272,12 @@ describe('SessionExecutionRunDetailsView', () => {
     it('renders transcript details alongside the execution-run info card when the run has a transcript tool route', async () => {
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(tree).toBeTruthy();
         expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -310,8 +292,8 @@ describe('SessionExecutionRunDetailsView', () => {
                 id: 'tool-msg-1',
                 kind: 'tool-call',
             }),
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('skips the execution-run info card when embedded under the subagent details header', async () => {
@@ -319,24 +301,20 @@ describe('SessionExecutionRunDetailsView', () => {
         executionRunInfoCardSpy.mockClear();
         messageDetailsSpy.mockClear();
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
                     showInfoCard={false}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(tree).toBeTruthy();
         expect(executionRunInfoCardSpy).not.toHaveBeenCalled();
         expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 's1',
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('hides the legacy inline send composer when embedded under the shared subagent composer', async () => {
@@ -355,20 +333,17 @@ describe('SessionExecutionRunDetailsView', () => {
         });
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
                     showSendComposer={false}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(tree).toBeTruthy();
-        expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
+        expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
+        expect(screen.findByTestId('session-run-details-send')).toBeNull();
     });
 
     it('clears the inline send composer after a successful send on supported running runs', async () => {
@@ -378,35 +353,25 @@ describe('SessionExecutionRunDetailsView', () => {
         getRunSpy.mockResolvedValueOnce(createExecutionRunGetResponse());
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
-
-        const input = tree!.root.findByType('TextInput');
-        await act(async () => {
-            input.props.onChangeText('follow up');
-        });
-        const sendButton = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
-        })[0];
-        expect(sendButton).toBeDefined();
+                />);
+        tree = screen.tree;
 
         await act(async () => {
-            await sendButton!.props.onPress();
-            await Promise.resolve();
+            screen.changeTextByTestId('session-run-details-send-input', 'follow up');
+        });
+        expect(screen.findByTestId('session-run-details-send')).toBeTruthy();
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('session-run-details-send');
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        const refreshedInput = tree!.root.findByType('TextInput');
         expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ runId: 'run_1', message: 'follow up' }));
-        expect(refreshedInput.props.value).toBe('');
+        expect(screen.findByTestId('session-run-details-send-input')?.props.value).toBe('');
     });
 
     it('reloads and hides the inline send composer when a bounded run is no longer in flight', async () => {
@@ -422,47 +387,28 @@ describe('SessionExecutionRunDetailsView', () => {
             .mockResolvedValueOnce(createExecutionRunGetResponse({ turnInFlight: false }));
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
-
-        const input = tree!.root.findByType('TextInput');
-        await act(async () => {
-            input.props.onChangeText('follow up');
-        });
-        const sendButton = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
-        })[0];
-        expect(sendButton).toBeDefined();
+                />);
+        tree = screen.tree;
 
         await act(async () => {
-            await sendButton!.props.onPress();
-            await Promise.resolve();
+            screen.changeTextByTestId('session-run-details-send-input', 'follow up');
+        });
+        expect(screen.findByTestId('session-run-details-send')).toBeTruthy();
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('session-run-details-send');
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(sendSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ runId: 'run_1', message: 'follow up' }));
         await vi.waitFor(() => {
-            expect(
-                tree!.root.findAll((node) => {
-                    if ((node as any).type !== 'Pressable') return false;
-                    return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
-                }),
-            ).toHaveLength(0);
+            expect(screen.findByTestId('session-run-details-send')).toBeNull();
         });
-        expect(
-            tree!.root.findAll((node) => {
-                if ((node as any).type !== 'Pressable') return false;
-                return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
-            }),
-        ).toHaveLength(0);
+        expect(screen.findByTestId('session-run-details-send')).toBeNull();
     });
 
     it('falls back to the persisted transcript when execution.run.get no longer finds the run', async () => {
@@ -487,16 +433,12 @@ describe('SessionExecutionRunDetailsView', () => {
         ];
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(tree).toBeTruthy();
         expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -513,8 +455,8 @@ describe('SessionExecutionRunDetailsView', () => {
                 id: 'tool-msg-1',
                 kind: 'tool-call',
             }),
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('hides the transcript composer when the run is no longer sendable', async () => {
@@ -524,22 +466,18 @@ describe('SessionExecutionRunDetailsView', () => {
         }));
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 's1',
-            presentation: 'panel',
             showComposer: false,
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('loads main transcript messages before failing closed on execution.run.get not-found responses', async () => {
@@ -554,16 +492,12 @@ describe('SessionExecutionRunDetailsView', () => {
         const loadOlderMessagesSpy = vi.mocked(sync.loadOlderMessages);
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(loadOlderMessagesSpy).toHaveBeenCalledWith('s1');
     });
@@ -596,16 +530,12 @@ describe('SessionExecutionRunDetailsView', () => {
         });
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
 
-        await act(async () => {
-            tree = renderer.create(
-                <SessionExecutionRunDetailsView
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
                     sessionId="s1"
                     runId="run_1"
                     presentation="panel"
-                />,
-            );
-            await Promise.resolve();
-        });
+                />);
+        tree = screen.tree;
 
         expect(executionRunInfoCardSpy).toHaveBeenCalledWith(expect.objectContaining({
             run: expect.objectContaining({
@@ -620,9 +550,43 @@ describe('SessionExecutionRunDetailsView', () => {
                 id: 'tool-msg-1',
                 kind: 'tool-call',
             }),
-            presentation: 'panel',
         }));
-        expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
+        expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
+    });
+
+    it('does not expose mutable run controls when only transcript fallback state is available', async () => {
+        getRunSpy.mockResolvedValueOnce({
+            ok: false,
+            error: 'RPC method not available',
+            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+        });
+        sessionMessagesState.messages = [
+            {
+                ...sessionMessagesState.messages[0],
+                tool: {
+                    ...sessionMessagesState.messages[0]!.tool,
+                    state: 'running',
+                    result: {
+                        ...sessionMessagesState.messages[0]!.tool.result,
+                        status: 'running',
+                        permissionMode: 'read-only',
+                    },
+                },
+            },
+        ];
+        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
+
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
+                    sessionId="s1"
+                    runId="run_1"
+                    presentation="panel"
+                />);
+        tree = screen.tree;
+
+        expect(tree).toBeTruthy();
+        expect(screen.findByTestId('session-run-details-send-input')).toBeNull();
+        expect(screen.findByTestId('session-run-details-stop')).toBeNull();
     });
 
 });

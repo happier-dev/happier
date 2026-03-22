@@ -1,5 +1,7 @@
 import { resolve } from 'node:path';
 
+import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
+
 import { pathExists } from '../../utils/fs/fs.mjs';
 import {
   readRuntimeManifest,
@@ -20,6 +22,18 @@ async function collectSnapshotEntrypointErrors({ snapshotPath, manifest }) {
   return missing.length > 0
     ? [`[runtime] active runtime snapshot is incomplete: missing ${missing.join(', ')} entrypoints.`]
     : [];
+}
+
+async function collectSnapshotRuntimePayloadErrors({ snapshotPath }) {
+  const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
+  if (!daemonComponent.nodeEntrypointRelativePath) {
+    return [];
+  }
+
+  const daemonNodeEntrypoint = resolve(snapshotPath, 'cli', daemonComponent.nodeEntrypointRelativePath);
+  return (await pathExists(daemonNodeEntrypoint))
+    ? []
+    : [`[runtime] active runtime snapshot is incomplete: missing daemon node entrypoint (${daemonNodeEntrypoint}).`];
 }
 
 export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
@@ -67,6 +81,9 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
         snapshotPath: normalizedExpectedSnapshotPath,
         manifest: validation.manifest,
       })),
+      ...(await collectSnapshotRuntimePayloadErrors({
+        snapshotPath: normalizedExpectedSnapshotPath,
+      })),
     );
   }
 
@@ -79,7 +96,10 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
       snapshotPath: runtimePaths.currentDir,
       manifest: validation.manifest,
     });
-    if (currentDirErrors.length === 0) {
+    const currentRuntimePayloadErrors = await collectSnapshotRuntimePayloadErrors({
+      snapshotPath: runtimePaths.currentDir,
+    });
+    if (currentDirErrors.length === 0 && currentRuntimePayloadErrors.length === 0) {
       launchPath = runtimePaths.currentDir;
     }
   }

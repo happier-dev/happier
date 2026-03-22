@@ -1,18 +1,39 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
-    },
-}));
+const ITEM_TEST_ID = 'item-double-press-target';
+
+function requireTestIdNode(node: ReactTestInstance | null): ReactTestInstance {
+    if (!node) {
+        throw new Error(`Unable to find testID "${ITEM_TEST_ID}"`);
+    }
+
+    return node;
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            Pressable: 'Pressable',
+                                            ActivityIndicator: 'ActivityIndicator',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
+                                            },
+                                            AppState: {
+                                                currentState: 'active',
+                                                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                                            },
+                                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -22,16 +43,19 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -49,9 +73,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { divider: '#444', groupped: { chevron: '#888' } } }, {}) : input) },
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -81,23 +104,20 @@ describe('Item (double press)', () => {
         const onDoublePress = vi.fn();
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Hello"
-                    onPress={onPress}
-                    onDoublePress={onDoublePress}
-                    showChevron={false}
-                />
-            );
-        });
-
-        const pressable = (tree! as any).root.findByType('Pressable');
+        const screen = await renderScreen(
+            <Item
+                testID={ITEM_TEST_ID}
+                title="Hello"
+                onPress={onPress}
+                onDoublePress={onDoublePress}
+                showChevron={false}
+            />,
+        );
+        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
         expect(typeof pressable.props.onDoubleClick).toBe('function');
 
         await act(async () => {
-            pressable.props.onDoubleClick({});
+            invokeTestInstanceHandler(pressable, 'onDoubleClick', {});
         });
 
         expect(onDoublePress).toHaveBeenCalledTimes(1);
@@ -109,23 +129,17 @@ describe('Item (double press)', () => {
         const onDoublePress = vi.fn();
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Hello"
-                    onPress={onPress}
-                    onDoublePress={onDoublePress}
-                    showChevron={false}
-                />
-            );
-        });
-
-        const pressable = (tree! as any).root.findByType('Pressable');
+        const screen = await renderScreen(
+            <Item
+                testID={ITEM_TEST_ID}
+                title="Hello"
+                onPress={onPress}
+                onDoublePress={onDoublePress}
+                showChevron={false}
+            />,
+        );
+        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
         expect(typeof pressable.props.onPress).toBe('function');
-
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
 
         await act(async () => {
             pressable.props.onPress({ nativeEvent: { detail: 1 } });
@@ -134,16 +148,12 @@ describe('Item (double press)', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onDoublePress).toHaveBeenCalledTimes(0);
 
-        vi.setSystemTime(120);
-
         await act(async () => {
             pressable.props.onPress({ nativeEvent: { detail: 1 } });
         });
 
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onDoublePress).toHaveBeenCalledTimes(1);
-
-        vi.useRealTimers();
     });
 
     it('does not fire onPress immediately after onDoubleClick on web', async () => {
@@ -151,40 +161,31 @@ describe('Item (double press)', () => {
         const onDoublePress = vi.fn();
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Hello"
-                    onPress={onPress}
-                    onDoublePress={onDoublePress}
-                    showChevron={false}
-                />
-            );
-        });
-
-        const pressable = (tree! as any).root.findByType('Pressable');
+        const screen = await renderScreen(
+            <Item
+                testID={ITEM_TEST_ID}
+                title="Hello"
+                onPress={onPress}
+                onDoublePress={onDoublePress}
+                showChevron={false}
+            />,
+        );
+        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
         expect(typeof pressable.props.onDoubleClick).toBe('function');
         expect(typeof pressable.props.onPress).toBe('function');
 
-        vi.useFakeTimers();
-        vi.setSystemTime(1000);
-
         await act(async () => {
-            pressable.props.onDoubleClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+            invokeTestInstanceHandler(pressable, 'onDoubleClick', { preventDefault: vi.fn(), stopPropagation: vi.fn() });
         });
 
         // Some RN web builds dispatch an onPress after onDoubleClick; ensure we ignore it so a pinned-open
         // is not immediately overwritten by a preview-open.
-        vi.setSystemTime(1100);
         await act(async () => {
             pressable.props.onPress({ nativeEvent: { detail: 1 }, preventDefault: vi.fn(), stopPropagation: vi.fn() });
         });
 
         expect(onDoublePress).toHaveBeenCalledTimes(1);
         expect(onPress).toHaveBeenCalledTimes(0);
-
-        vi.useRealTimers();
     });
 
     it('treats web click detail=1 as a single press', async () => {
@@ -192,19 +193,16 @@ describe('Item (double press)', () => {
         const onDoublePress = vi.fn();
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Hello"
-                    onPress={onPress}
-                    onDoublePress={onDoublePress}
-                    showChevron={false}
-                />
-            );
-        });
-
-        const pressable = (tree! as any).root.findByType('Pressable');
+        const screen = await renderScreen(
+            <Item
+                testID={ITEM_TEST_ID}
+                title="Hello"
+                onPress={onPress}
+                onDoublePress={onDoublePress}
+                showChevron={false}
+            />,
+        );
+        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
 
         await act(async () => {
             pressable.props.onPress({ nativeEvent: { detail: 1 } });

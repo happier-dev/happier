@@ -51,6 +51,18 @@ describe('waitForInitialAppUi', () => {
     expect(page.reloadCalls).toBe(0);
   });
 
+  it('returns when provider-based welcome actions are visible', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-signup-provider': [1],
+        'welcome-restore': [1],
+      },
+    });
+
+    await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();
+    expect(page.reloadCalls).toBe(0);
+  });
+
   it('reloads once when the first pass never renders but the retry does', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy
@@ -68,11 +80,9 @@ describe('waitForInitialAppUi', () => {
     expect(page.reloadCalls).toBe(1);
   });
 
-  it('throws with diagnostics when UI never appears', async () => {
+  it('throws when UI never appears', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(300)
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(300);
 
@@ -85,6 +95,14 @@ describe('waitForInitialAppUi', () => {
         browserDiagnostics: () => '# Browser diagnostics',
       }),
     ).rejects.toThrow('App did not render initial UI within 250ms.');
+  });
+
+  it('includes browser diagnostics when UI never appears', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(300);
+
     await expect(
       waitForInitialAppUi({
         page: createFakePage({}),

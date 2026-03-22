@@ -93,3 +93,18 @@ packages/*/android/build/
 /packages/tests/test-results/
 _.env.pipeline.local
 _.env.pipeline.production.local
+
+# Local node version file (keep local)
+.nvmrc
+
+# Local package-manager/runtime artifacts
+/package-lock.json
+/eas.json
+**/.happier/
+
+# Local probe/debug scratch files
+/apps/cli/tmp-*
+
+# Local QA screenshots
+/authoring-qa-*.png
+/.codex-tmp

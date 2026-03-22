@@ -16,9 +16,12 @@ if (logPath) {
 }
 
 const toolName = process.env.FAKE_CLAUDE_TOOL_NAME || '';
+const toolInput = process.env.FAKE_CLAUDE_TOOL_INPUT ? JSON.parse(process.env.FAKE_CLAUDE_TOOL_INPUT) : {};
 const hangTurn = process.env.FAKE_CLAUDE_HANG_TURN === '1';
 const multiChunk = process.env.FAKE_CLAUDE_MULTI_CHUNK === '1';
 const emitToolFlow = process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW === '1';
+const emitWriteFlow = process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW === '1';
+const emitDiffFlow = process.env.FAKE_CLAUDE_EMIT_DIFF_FLOW === '1';
 const emitUsage = process.env.FAKE_CLAUDE_EMIT_USAGE === '1';
 
 let turn = 0;
@@ -61,7 +64,7 @@ const rl = readline.createInterface({ input: process.stdin });
 	    if (toolName && turn === 1) {
 	      // Request permission for a tool call; the parent will reply with a control_response.
 	      const reqId = 'req-1';
-    process.stdout.write(JSON.stringify({ type: 'control_request', request_id: reqId, request: { subtype: 'can_use_tool', tool_name: toolName, input: {} } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'control_request', request_id: reqId, request: { subtype: 'can_use_tool', tool_name: toolName, input: toolInput } }) + '\\n');
     const onControl = (line2) => {
       const t2 = String(line2 || '').trim();
       if (!t2) return;
@@ -86,6 +89,22 @@ const rl = readline.createInterface({ input: process.stdin });
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'README.md' } }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK' }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'TOOL_DONE' }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+    return;
+  }
+  if (emitWriteFlow && turn === 1) {
+    const toolUseId = 'toolu_write_1';
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Edit', input: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' } }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK', is_error: false }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'WRITE_DONE' }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+    return;
+  }
+  if (emitDiffFlow && turn === 1) {
+    const toolUseId = 'toolu_diff_1';
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Diff', input: { files: [{ file_path: 'src/diff.ts', oldText: 'before', newText: 'after' }] } }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK', is_error: false }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'DIFF_DONE' }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     return;
   }
@@ -119,9 +138,12 @@ async function withFakeClaudeBackend(
     dirPrefix: string;
     permissionPolicy: 'no_tools' | 'read_only' | 'workspace_write';
     toolName?: string;
+    toolInput?: Record<string, unknown>;
     hangTurn?: boolean;
     multiChunk?: boolean;
     emitToolFlow?: boolean;
+    emitWriteFlow?: boolean;
+    emitDiffFlow?: boolean;
     emitUsage?: boolean;
     modelId?: string;
     includeLogPath?: boolean;
@@ -149,9 +171,16 @@ async function withFakeClaudeBackend(
     } else {
       delete process.env.FAKE_CLAUDE_TOOL_NAME;
     }
+    if (params.toolInput) {
+      process.env.FAKE_CLAUDE_TOOL_INPUT = JSON.stringify(params.toolInput);
+    } else {
+      delete process.env.FAKE_CLAUDE_TOOL_INPUT;
+    }
     process.env.FAKE_CLAUDE_HANG_TURN = params.hangTurn ? '1' : '0';
     process.env.FAKE_CLAUDE_MULTI_CHUNK = params.multiChunk ? '1' : '0';
     process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW = params.emitToolFlow ? '1' : '0';
+    process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW = params.emitWriteFlow ? '1' : '0';
+    process.env.FAKE_CLAUDE_EMIT_DIFF_FLOW = params.emitDiffFlow ? '1' : '0';
     process.env.FAKE_CLAUDE_EMIT_USAGE = params.emitUsage ? '1' : '0';
 
     const { ClaudeSdkAgentBackend } = await import('./ClaudeSdkAgentBackend');
@@ -193,9 +222,12 @@ describe('ClaudeSdkAgentBackend', () => {
     }
     delete process.env.FAKE_CLAUDE_LOG_PATH;
     delete process.env.FAKE_CLAUDE_TOOL_NAME;
+    delete process.env.FAKE_CLAUDE_TOOL_INPUT;
     delete process.env.FAKE_CLAUDE_HANG_TURN;
     delete process.env.FAKE_CLAUDE_MULTI_CHUNK;
     delete process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW;
+    delete process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW;
+    delete process.env.FAKE_CLAUDE_EMIT_DIFF_FLOW;
     delete process.env.FAKE_CLAUDE_EMIT_USAGE;
     if (originalDebug === undefined) {
       delete process.env.DEBUG;
@@ -362,14 +394,14 @@ describe('ClaudeSdkAgentBackend', () => {
     );
   });
 
-  it('allows non-write-like tool calls in read_only policy', async () => {
+  it('allows ToolSearch in read_only policy', async () => {
     delete process.env.DEBUG;
 
     await withFakeClaudeBackend(
       {
         dirPrefix: 'happier-claude-sdk-tools-',
         permissionPolicy: 'read_only',
-        toolName: 'fetch',
+        toolName: 'ToolSearch',
       },
       async ({ backend }) => {
         const seen: string[] = [];
@@ -383,6 +415,199 @@ describe('ClaudeSdkAgentBackend', () => {
         await backend.sendPrompt(sessionId, 'hi');
         await (backend as any).waitForResponseComplete?.();
         expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
+  it('allows read-only bash inspection commands in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: { command: 'ls -la /tmp 2>/dev/null && echo \"---\" && ls /tmp 2>/dev/null' },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
+  it('allows read-only bash loop inspection commands in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: {
+          command:
+            'for d in happier agent-os intent leeroy-wip tool-demo; do if [ -d "/Users/leeroy/$d/.git" ]; then echo "$d: git repo"; else echo "$d: not a git repo"; fi; done',
+        },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
+  it('allows read-only bash loop inspection commands with safe command substitutions in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: {
+          command: 'for d in /Users/leeroy/*/; do name=$(basename "$d"); if [ -d "$d/.git" ]; then echo "$name: git repo"; else echo "$name: not a git repo"; fi; done',
+        },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
+  it('allows multiline read-only bash inspection commands with comments, elif branches, and safe command substitutions in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: {
+          command: '# Check likely candidates more carefully\nfor p in /Users/leeroy/happier /Users/leeroy/leeroy-wip /Users/leeroy/agent-os; do\n  if [ -d \"$p/.git\" ]; then\n    echo \"GIT: $(basename $p)\"\n  elif [ -d \"$p\" ]; then\n    echo \"DIR: $(basename $p)\"\n  elif [ -f \"$p\" ]; then\n    echo \"FILE: $(basename $p)\"\n  fi\ndone',
+        },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
+  it('denies bash commands that redirect to a writable file in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: { command: 'echo hi > /tmp/out.txt' },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_DENIED');
+      },
+    );
+  });
+
+  it('denies bash loop commands that perform write operations in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: {
+          command: 'for f in alpha beta; do rm -rf "$f"; done',
+        },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_DENIED');
+      },
+    );
+  });
+
+  it('denies bash loop command substitutions that perform write operations in read_only policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'read_only',
+        toolName: 'Bash',
+        toolInput: {
+          command: 'for d in alpha beta; do name=$(rm -rf "$d"); echo "$name"; done',
+        },
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_DENIED');
       },
     );
   });
@@ -568,6 +793,35 @@ describe('ClaudeSdkAgentBackend', () => {
     );
   });
 
+  it('rejects a pending turn when the Claude subprocess exits before completing the turn', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-exit-',
+        permissionPolicy: 'no_tools',
+      },
+      async ({ backend, dir }) => {
+        const crashingEntry = join(dir, 'fake-claude-crash.cjs');
+        await writeFile(crashingEntry, "process.exit(17);\n", 'utf8');
+        process.env.HAPPIER_CLAUDE_PATH = crashingEntry;
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+
+        const settled = await Promise.race([
+          (backend as any).waitForResponseComplete().then(
+            () => 'resolved',
+            (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+          ),
+          new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 1_000)),
+        ]);
+
+        expect(settled).toContain('rejected:Claude Code process exited with code 17');
+      },
+    );
+  });
+
   it('supports loadSession by passing --resume and emitting vendor_session_id', async () => {
     delete process.env.DEBUG;
 
@@ -636,6 +890,101 @@ describe('ClaudeSdkAgentBackend', () => {
           callId: 'toolu_1',
           result: 'OK',
         });
+      },
+    );
+  });
+
+  it('emits a canonical Diff tool after a successful write-like turn', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-diff-',
+        permissionPolicy: 'workspace_write',
+        emitWriteFlow: true,
+      },
+      async ({ backend }) => {
+        const events: any[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'tool-call' || msg.type === 'tool-result') {
+            events.push(msg);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'edit the file');
+        await (backend as any).waitForResponseComplete?.();
+
+        const diffToolCall = events.find((event) => event.type === 'tool-call' && event.toolName === 'Diff');
+        expect(diffToolCall).toBeTruthy();
+        expect(diffToolCall?.args?._happier).toMatchObject({
+          protocol: 'claude',
+          provider: 'claude',
+          canonicalToolName: 'Diff',
+          sessionChangeScope: 'turn',
+          source: 'provider_tool',
+        });
+        expect(diffToolCall?.args?.files).toEqual([
+          expect.objectContaining({
+            file_path: 'src/app.ts',
+            oldText: 'old',
+            newText: 'new',
+          }),
+        ]);
+
+        const diffToolResult = events.find((event) => event.type === 'tool-result' && event.toolName === 'Diff');
+        expect(diffToolResult).toMatchObject({
+          type: 'tool-result',
+          toolName: 'Diff',
+          result: { status: 'completed' },
+        });
+      },
+    );
+  });
+
+  it('normalizes an explicit Claude Diff tool into a canonical Diff turn artifact', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-explicit-diff-',
+        permissionPolicy: 'workspace_write',
+        emitDiffFlow: true,
+      },
+      async ({ backend }) => {
+        const events: any[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'tool-call' || msg.type === 'tool-result') {
+            events.push(msg);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'show me the diff');
+        await (backend as any).waitForResponseComplete?.();
+
+        const canonicalDiffCall = events.find((event) =>
+          event.type === 'tool-call'
+          && event.toolName === 'Diff'
+          && event.args?._happier?.sessionChangeScope === 'turn'
+        );
+        expect(canonicalDiffCall).toBeTruthy();
+        expect(canonicalDiffCall?.args?._happier).toMatchObject({
+          protocol: 'claude',
+          provider: 'claude',
+          canonicalToolName: 'Diff',
+          sessionChangeScope: 'turn',
+          source: 'provider_tool',
+        });
+        expect(canonicalDiffCall?.args?.files).toEqual([
+          expect.objectContaining({
+            file_path: 'src/diff.ts',
+            oldText: 'before',
+            newText: 'after',
+          }),
+        ]);
+        expect(events.filter((event) => event.type === 'tool-call' && event.toolName === 'Diff')).toHaveLength(1);
+        expect(events.filter((event) => event.type === 'tool-result' && event.toolName === 'Diff')).toHaveLength(1);
       },
     );
   });

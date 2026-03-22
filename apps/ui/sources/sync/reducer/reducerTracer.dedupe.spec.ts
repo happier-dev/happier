@@ -51,5 +51,29 @@ describe('reducerTracer (dedupe keys)', () => {
     expect(traced).toHaveLength(2);
     expect(traced.map((m) => m.id)).toEqual(['m1', 'm2']);
   });
-});
 
+  it('does not dedupe streaming agent-text updates that reuse the same message id + uuid', () => {
+    const state = createTracer();
+
+    const sharedUuid = 'shared_uuid';
+    const first: NormalizedMessage = {
+      id: 'm1',
+      seq: 1,
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [{ type: 'text', text: 'CODE', uuid: sharedUuid, parentUUID: null }],
+    };
+
+    const second: NormalizedMessage = {
+      ...first,
+      createdAt: 1001,
+      content: [{ type: 'text', text: 'X', uuid: sharedUuid, parentUUID: null }],
+    };
+
+    const traced = traceMessages(state, [first, second]);
+    expect(traced).toHaveLength(2);
+    expect(traced.map((m) => m.id)).toEqual(['m1', 'm1']);
+  });
+});

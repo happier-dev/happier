@@ -1,42 +1,41 @@
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { runNodeCapture } from './stack_script_command_testkit.mjs';
+import { buildStackFixtureEnv, filterEnvForSpawn } from './core/env_scope.mjs';
+import { runNodeCapture } from './core/run_node_capture.mjs';
+import { resolveStackRootFromMeta, resolveStackScriptPath } from './core/stack_root.mjs';
+import { spawnDetachedInlineNodeTestProcess } from './core/spawn_test_process.mjs';
+import { createTempFixture } from './core/temp_fixture.mjs';
 
 function toSpawnEnv(env) {
-  const runtimeKeep = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'SHELL', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM'];
-  const ownershipFirst = ['HAPPIER_STACK_STACK', 'HAPPIER_STACK_ENV_FILE', 'HAPPIER_STACK_PROCESS_KIND', 'npm_lifecycle_event', 'npm_package_name'];
-  const cleanEnv = {};
-  for (const key of runtimeKeep) {
-    const value = env?.[key];
-    if (value == null) continue;
-    cleanEnv[key] = String(value);
-  }
-  for (const key of ownershipFirst) {
-    const value = env?.[key];
-    if (value == null) continue;
-    cleanEnv[key] = String(value);
-  }
-  for (const [key, value] of Object.entries(env ?? {})) {
-    if (key in cleanEnv) continue;
-    if (value == null) continue;
-    if (!key.startsWith('HAPPIER_') && !key.startsWith('npm_')) continue;
-    cleanEnv[key] = String(value);
-  }
-  return cleanEnv;
+  return filterEnvForSpawn(env, {
+    keepKeys: [
+      'PATH',
+      'HOME',
+      'TMPDIR',
+      'TMP',
+      'TEMP',
+      'SHELL',
+      'USER',
+      'LOGNAME',
+      'LANG',
+      'LC_ALL',
+      'TERM',
+      'HAPPIER_STACK_STACK',
+      'HAPPIER_STACK_ENV_FILE',
+      'HAPPIER_STACK_PROCESS_KIND',
+      'npm_lifecycle_event',
+      'npm_package_name',
+    ],
+    keepPrefixes: ['HAPPIER_', 'npm_'],
+  });
 }
 
 export function spawnOwnedSleep({ env }) {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  return spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
     env: toSpawnEnv(env),
     stdio: 'ignore',
-    detached: true,
   });
-  child.unref();
-  return child;
 }
 
 export function isAlive(pid) {
@@ -97,9 +96,9 @@ export async function setupStackStopSweepFixture({
   tmpPrefix = 'hstack-stack-stop-sweep-',
   stackName = 'exp1',
 } = {}) {
-  const scriptsDir = dirname(fileURLToPath(importMetaUrl));
-  const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), tmpPrefix));
+  const rootDir = resolveStackRootFromMeta(importMetaUrl);
+  const fixture = await createTempFixture(t, { prefix: tmpPrefix });
+  const tmp = fixture.root;
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
   const workspaceDir = join(tmp, 'workspace');
@@ -136,19 +135,17 @@ export async function setupStackStopSweepFixture({
       if (!child?.pid) continue;
       terminateTrackedProcess(child.pid);
     }
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    await fixture.cleanup();
   };
-  if (t?.after) t.after(cleanup);
 
-  const baseEnv = {
-    ...process.env,
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-  };
+  const baseEnv = buildStackFixtureEnv({
+    homeDir,
+    storageDir,
+    workspaceDir,
+  });
 
   async function runStackStop(extraArgs = []) {
-    return await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'stop', stackName, ...extraArgs], {
+    return await runNodeCapture([resolveStackScriptPath(rootDir, 'stack.mjs'), 'stop', stackName, ...extraArgs], {
       cwd: rootDir,
       env: baseEnv,
     });

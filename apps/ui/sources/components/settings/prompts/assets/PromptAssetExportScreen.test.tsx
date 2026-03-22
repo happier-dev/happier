@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -165,29 +167,30 @@ const contextSelectionsState = vi.hoisted(() => ({
   value: { v: 1, selectionsByKey: {} as Record<string, { machineId?: string | null; workspacePath?: string | null }> },
 }));
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  ScrollView: 'ScrollView',
-  TextInput: 'TextInput',
-  Platform: { OS: 'web', select: ({ web, default: defaultValue }: any) => web ?? defaultValue },
-}));
+async function renderPromptAssetExportScreen(artifactId: string) {
+  const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+  return renderScreen(React.createElement(PromptAssetExportScreen, { artifactId }));
+}
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (factory: any) => factory({
-      colors: {
-        groupped: { background: '#fff' },
-        textSecondary: '#999',
-        divider: '#ddd',
-        input: { background: '#fff', text: '#111', placeholder: '#666' },
-        accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-        deleteAction: '#f33',
-        button: { primary: { tint: '#fff' } },
-      },
-    }),
-  },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                    View: 'View',
+                                                    ScrollView: 'ScrollView',
+                                                    TextInput: 'TextInput',
+                                                    Platform: {
+                                                        OS: 'web',
+                                                        select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                                    },
+                                                }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         textSecondary: '#999',
         input: { placeholder: '#666' },
@@ -196,57 +199,52 @@ vi.mock('react-native-unistyles', () => ({
         button: { primary: { tint: '#fff' } },
       },
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-  Stack: { Screen: () => null },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 960 },
 }));
 
-vi.mock('@/components/contextBar/ContextBar', () => ({
-  ContextBar: (props: any) => React.createElement('ContextBar', props),
-}));
+vi.mock('@/components/contextBar/ContextBar', () => createPassThroughModule(['ContextBar']));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-  DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-  Item: (props: any) => React.createElement('Item', props),
-}));
+vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-  ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
+vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-  ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
+vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
 
-vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
-  SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', props),
-}));
+vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text']));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: vi.fn(),
-    confirm: vi.fn(async () => true),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => true),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
   useAllMachines: () => [
     {
       id: 'machine-1',
@@ -304,7 +302,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
       updateArtifact: vi.fn(),
     }),
   },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -348,18 +347,9 @@ describe('PromptAssetExportScreen', () => {
       },
     };
 
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('doc-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-    });
-
-    const footer = tree.root.findByType('SettingsActionFooter');
-    await act(async () => {
-      await footer.props.onPrimaryPress();
-    });
+    await screen.pressByTestIdAsync('promptAssetExport.export');
 
     expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
       artifactId: 'doc-1',
@@ -397,17 +387,9 @@ describe('PromptAssetExportScreen', () => {
       },
     };
 
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('doc-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      await tree.root.findByType('SettingsActionFooter').props.onPrimaryPress();
-    });
+    await screen.pressByTestIdAsync('promptAssetExport.export');
 
     expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
       assetTypeId: 'claude.command',
@@ -426,17 +408,9 @@ describe('PromptAssetExportScreen', () => {
       },
     };
 
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('bundle-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'bundle-1' }));
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      await tree.root.findByType('SettingsActionFooter').props.onPrimaryPress();
-    });
+    await screen.pressByTestIdAsync('promptAssetExport.export');
 
     expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
       artifactId: 'bundle-1',
@@ -447,27 +421,14 @@ describe('PromptAssetExportScreen', () => {
   });
 
   it('reads the prompt artifact once during initial load', async () => {
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
-
-    await act(async () => {
-      renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await renderPromptAssetExportScreen('doc-1');
 
     expect(readPromptLibraryArtifactForExportMock).toHaveBeenCalledTimes(1);
   });
 
   it('passes machine browse config to the export workspace context bar input', async () => {
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
-
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-    });
-
-    const contextBar = tree.root.findByType('ContextBar');
+    const screen = await renderPromptAssetExportScreen('doc-1');
+    const contextBar = screen.findByType('ContextBar');
     expect(contextBar.props.workspace.browse).toEqual({
       machineId: 'machine-1',
       enabled: true,
@@ -500,18 +461,9 @@ describe('PromptAssetExportScreen', () => {
       ],
     };
 
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('doc-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-    });
-
-    const footer = tree.root.findByType('SettingsActionFooter');
-    await act(async () => {
-      await footer.props.onSecondaryPress();
-    });
+    await screen.pressByTestIdAsync('promptAssetExport.delete');
 
     expect(machinePromptAssetsDeleteMock).toHaveBeenCalledWith(
       'machine-1',
@@ -553,44 +505,24 @@ describe('PromptAssetExportScreen', () => {
       ],
     };
 
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('doc-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-    });
-
-    expect(tree.root.findByType('SettingsActionFooter').props.secondaryTestID).toBeUndefined();
+    expect(screen.findAllByTestId('promptAssetExport.delete')).toHaveLength(0);
   });
 
   it('does not export a project-scoped prompt asset until a workspace path is selected', async () => {
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('doc-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'doc-1' }));
-      await Promise.resolve();
-    });
+    expect(screen.findByTestId('promptAssetExport.export')?.props.disabled).toBe(true);
+    await screen.pressByTestIdAsync('promptAssetExport.export');
 
-    await act(async () => {
-      await tree.root.findByType('SettingsActionFooter').props.onPrimaryPress();
-    });
-
-    expect(machinePromptAssetsWriteMock).not.toHaveBeenCalled();
+    expect(writePromptLibraryArtifactToExternalAssetMock).not.toHaveBeenCalled();
   });
 
   it('does not crash when the artifact body is malformed json', async () => {
-    const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+    const screen = await renderPromptAssetExportScreen('broken-1');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(PromptAssetExportScreen, { artifactId: 'broken-1' }));
-      await Promise.resolve();
-    });
-
-    const footer = tree.root.findByType('SettingsActionFooter');
-    expect(footer.props.primaryDisabled).toBe(true);
+    expect(screen.findByTestId('promptAssetExport.export')?.props.disabled).toBe(true);
     expect(writePromptLibraryArtifactToExternalAssetMock).not.toHaveBeenCalled();
   });
 

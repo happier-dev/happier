@@ -1,17 +1,19 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         StyleSheet: {
             absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
         },
         View: (props: any) => React.createElement('View', props, props.children),
-    };
+    });
 });
 
 describe('OverlayPortalProvider', () => {
@@ -32,17 +34,13 @@ describe('OverlayPortalProvider', () => {
         }
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(RenderCountChild),
                     React.createElement(CaptureDispatch),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
         expect(renderCount).toBe(1);
         expect(dispatch).toBeTruthy();
@@ -72,17 +70,13 @@ describe('OverlayPortalProvider', () => {
         }
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
+        tree = (await renderScreen(React.createElement(
                     OverlayPortalProvider,
                     null,
                     React.createElement(RenderCountChild),
                     React.createElement(CaptureDispatch),
                     React.createElement(OverlayPortalHost),
-                ),
-            );
-        });
+                ))).tree;
 
         expect(renderCount).toBe(1);
         expect(dispatch).toBeTruthy();

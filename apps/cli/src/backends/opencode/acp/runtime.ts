@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
+import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { OpenCodeTurnDiffAccumulator } from '../utils/turnDiffAccumulator';
+import { extractOpenCodeFileDiff } from '../utils/extractOpenCodeFileDiff';
 
 export function createOpenCodeAcpRuntime(params: {
   directory: string;
@@ -21,7 +24,10 @@ export function createOpenCodeAcpRuntime(params: {
    */
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
-  const turnDiffAccumulator = new OpenCodeTurnDiffAccumulator();
+  const turnChangeCollector = new TurnChangeSetCollector({
+    provider: 'opencode',
+  });
+  let turnStartSeqInclusive = 0;
 
   return createCatalogProviderAcpRuntime({
     provider: 'opencode',
@@ -39,18 +45,39 @@ export function createOpenCodeAcpRuntime(params: {
     getPermissionMode: params.getPermissionMode,
     hooks: {
       onBeginTurn: () => {
-        turnDiffAccumulator.beginTurn();
+        turnStartSeqInclusive = params.session.getLastObservedMessageSeq?.() ?? 0;
+        turnChangeCollector.beginTurn();
       },
       onToolResult: ({ toolName, result }) => {
-        // OpenCode emits file diffs on Edit tool results via output.metadata.filediff (before/after).
-        // We coalesce per-file changes into a single before/after pair for the turn.
-        turnDiffAccumulator.observeToolResult(toolName, result);
+        const fileDiff = extractOpenCodeFileDiff(result);
+        if (!fileDiff) return;
+        turnChangeCollector.observeTextDiff({
+          filePath: fileDiff.filePath,
+          oldText: fileDiff.oldText,
+          newText: fileDiff.newText,
+          source: 'provider_tool',
+          confidence: 'exact',
+        });
       },
       onBeforeFlushTurn: ({ sendToolCall, sendToolResult }) => {
-        const diff = turnDiffAccumulator.flushTurn();
-        if (!diff.files || diff.files.length === 0) return;
-        const callId = sendToolCall({ toolName: 'Diff', input: diff });
-        sendToolResult({ callId, output: { status: 'completed' } });
+        const endSeqInclusive = params.session.getLastObservedMessageSeq?.() ?? turnStartSeqInclusive;
+        const turnChangeSet = turnChangeCollector.flushTurn({
+          sessionId: params.session.sessionId,
+          turnId: `opencode-acp-turn-${randomUUID()}`,
+          seqRange: {
+            startSeqInclusive: turnStartSeqInclusive,
+            endSeqInclusive: Math.max(turnStartSeqInclusive, endSeqInclusive),
+          },
+          status: 'completed',
+        });
+        if (!turnChangeSet) return;
+        emitCanonicalTurnDiffTool({
+          turnChangeSet,
+          protocol: 'acp',
+          rawToolName: 'OpenCodeDiff',
+          sendToolCall,
+          sendToolResult,
+        });
       },
     },
   });

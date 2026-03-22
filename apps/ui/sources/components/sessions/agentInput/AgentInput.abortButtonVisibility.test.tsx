@@ -1,28 +1,34 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('View', props, props.children),
-        Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Text', props, props.children),
-        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, props.children),
-        ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('ScrollView', props, props.children),
-        ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-        Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-        Dimensions: {
-            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                            React.createElement('View', props, props.children),
+                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                            React.createElement('Text', props, props.children),
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                            React.createElement('Pressable', props, props.children),
+                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                            React.createElement('ScrollView', props, props.children),
+                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                    Platform: {
+                                    OS: 'ios',
+                                    select: (v: any) => v.ios,
+                                },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    Dimensions: {
+                                            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                        },
+                                }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -38,11 +44,14 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -57,15 +66,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-        }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-    }));
+    }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+});
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -169,9 +180,10 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
@@ -181,14 +193,13 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
     computeAcpConfigOptionControls: () => null,
 }));
 
+const agentInputModulePromise = import('./AgentInput');
+
 describe('AgentInput (abort button visibility)', () => {
     it('does not render the stop button when showAbortButton is false (even if onAbort exists)', async () => {
-        const { AgentInput } = await import('./AgentInput');
-
+        const { AgentInput } = await agentInputModulePromise;
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -197,9 +208,7 @@ describe('AgentInput (abort button visibility)', () => {
                     showAbortButton={false}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
         expect(stopIcons).toHaveLength(0);
@@ -208,12 +217,9 @@ describe('AgentInput (abort button visibility)', () => {
     });
 
     it('renders the stop button when showAbortButton is true and onAbort exists', async () => {
-        const { AgentInput } = await import('./AgentInput');
-
+        const { AgentInput } = await agentInputModulePromise;
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -222,12 +228,13 @@ describe('AgentInput (abort button visibility)', () => {
                     showAbortButton={true}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
         expect(stopIcons).toHaveLength(1);
+
+        const abortButtons = tree!.root.findAll((n: any) => n?.props?.testID === 'agent-input-abort');
+        expect(abortButtons.length).toBeGreaterThanOrEqual(1);
 
         act(() => tree!.unmount());
     });

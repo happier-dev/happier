@@ -1,6 +1,13 @@
 import { isHiddenSystemSession } from '@happier-dev/protocol';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import {
+    resolveDisplayMachineIdForSessionFromState,
+    resolveDisplayPathForSessionFromState,
+    type SessionMachineTargetState,
+} from '@/sync/ops/sessionMachineTarget';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import type { SessionListRenderableSession } from './sessionListRenderable';
+import { t } from '@/text';
 
 export type SessionListViewItem =
     | {
@@ -12,6 +19,7 @@ export type SessionListViewItem =
         serverId?: string;
         serverName?: string;
         subtitle?: string;
+        machine?: MachineDisplayRenderable;
     }
     | {
         type: 'session';
@@ -29,6 +37,7 @@ export interface BuildSessionListViewDataOptions {
     groupInactiveSessionsByProject: boolean;
     activeGroupingV1?: 'project' | 'date';
     inactiveGroupingV1?: 'project' | 'date';
+    sessionTargetState?: SessionMachineTargetState;
     serverScope?: {
         serverId: string;
         serverName?: string;
@@ -48,19 +57,6 @@ function resolveGroupingForSection(
     }
     if (options.inactiveGroupingV1) return options.inactiveGroupingV1;
     return options.groupInactiveSessionsByProject ? 'project' : 'date';
-}
-
-function formatPathRelativeToHome(path: string, homeDir?: string | null): string {
-    if (!homeDir) return path;
-
-    const normalizedHome = homeDir.endsWith('/') ? homeDir.slice(0, -1) : homeDir;
-    const isInHome = path === normalizedHome || path.startsWith(`${normalizedHome}/`);
-    if (!isInHome) {
-        return path;
-    }
-
-    const relativePath = path.slice(normalizedHome.length);
-    return relativePath ? `~${relativePath}` : '~';
 }
 
 function makeUnknownMachine(id: string): MachineDisplayRenderable {
@@ -113,19 +109,33 @@ function compareSessionsStableNewestFirst(a: SessionListRenderableSession, b: Se
 function groupSessionsByProject(params: Readonly<{
     sessions: ReadonlyArray<SessionListRenderableSession>;
     machines: Record<string, MachineDisplayRenderable>;
+    sessionTargetState?: SessionMachineTargetState;
 }>): ProjectGroup[] {
     const groups = new Map<string, ProjectGroup>();
 
     for (const session of params.sessions) {
-        const machineId = session.metadata?.machineId || 'unknown';
-        const path = session.metadata?.path || '';
+        const machineId = params.sessionTargetState
+            ? (resolveDisplayMachineIdForSessionFromState({
+                state: params.sessionTargetState,
+                sessionId: session.id,
+                metadata: session.metadata ?? null,
+            }) || 'unknown')
+            : (session.metadata?.machineId || 'unknown');
+        const path = params.sessionTargetState
+            ? resolveDisplayPathForSessionFromState({
+                state: params.sessionTargetState,
+                sessionId: session.id,
+                metadata: session.metadata ?? null,
+            })
+            : (session.metadata?.path || '');
+        const homeDir = typeof session.metadata?.homeDir === 'string' ? session.metadata.homeDir : undefined;
         const key = `${machineId}:${path}`;
 
         const existing = groups.get(key);
         if (!existing) {
             groups.set(key, {
                 key,
-                displayPath: path ? formatPathRelativeToHome(path, session.metadata?.homeDir) : '',
+                displayPath: path ? formatPathRelativeToHome(path, homeDir) : '',
                 machine: params.machines[machineId] ?? makeUnknownMachine(machineId),
                 latestCreatedAt: session.createdAt,
                 sessions: [session],
@@ -214,13 +224,13 @@ function pushDateGroupsToList(params: Readonly<{
 
         let headerTitle: string;
         if (sessionDateOnly.getTime() === today.getTime()) {
-            headerTitle = 'Today';
+            headerTitle = t('sessionHistory.today');
         } else if (sessionDateOnly.getTime() === yesterday.getTime()) {
-            headerTitle = 'Yesterday';
+            headerTitle = t('sessionHistory.yesterday');
         } else {
             const diffTime = today.getTime() - sessionDateOnly.getTime();
             const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-            headerTitle = `${diffDays} days ago`;
+            headerTitle = t('sessionHistory.daysAgo', { count: diffDays });
         }
 
         const groupKey = `server:${params.serverKey}:${params.section}:day:${formatYyyyMmDdLocal(sessionDateOnly)}`;
@@ -292,7 +302,11 @@ export function buildSessionListViewData(
         if (grouping === 'project') {
             pushProjectGroupsToList({
                 listData,
-                groups: groupSessionsByProject({ sessions: activeSessions, machines }),
+                groups: groupSessionsByProject({
+                    sessions: activeSessions,
+                    machines,
+                    sessionTargetState: options.sessionTargetState,
+                }),
                 section: 'active',
                 serverKey,
                 serverScopeMeta,
@@ -316,7 +330,11 @@ export function buildSessionListViewData(
         if (grouping === 'project') {
             pushProjectGroupsToList({
                 listData,
-                groups: groupSessionsByProject({ sessions: inactiveSessions, machines }),
+                groups: groupSessionsByProject({
+                    sessions: inactiveSessions,
+                    machines,
+                    sessionTargetState: options.sessionTargetState,
+                }),
                 section: 'inactive',
                 serverKey,
                 serverScopeMeta,

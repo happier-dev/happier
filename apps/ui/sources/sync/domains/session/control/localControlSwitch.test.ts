@@ -1,47 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getSwitchToLocalControlDisabledReason,
   shouldRenderChatTimelineForSession,
   shouldRequestRemoteControlAfterPendingEnqueue,
-  shouldOfferSwitchToLocalControl,
 } from './localControlSwitch';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
-
-type LocalControlMetadata = NonNullable<Session['metadata']> & {
-  startedFromDaemon?: boolean;
-};
-
-const resumeOptions: ResumeCapabilityOptions = {
-  accountSettings: { codexBackendMode: 'acp' },
-};
-
-function buildSession(overrides: Partial<Session> = {}): Session {
-  const metadata: LocalControlMetadata = {
-    path: '/repo',
-    host: 'localhost',
-    flavor: 'codex',
-    codexSessionId: 'codex-session-1',
-    startedFromDaemon: false,
-  };
-
-  return {
-    id: 's1',
-    seq: 1,
-    createdAt: 0,
-    updatedAt: 0,
-    active: true,
-    activeAt: 0,
-    metadata,
-    metadataVersion: 1,
-    agentState: { controlledByUser: false, requests: null, completedRequests: null },
-    agentStateVersion: 1,
-    thinking: false,
-    thinkingAt: 0,
-    presence: 'online',
-    ...overrides,
-  };
-}
 
 describe('localControlSwitch', () => {
   it('does not request remote control when session is null', () => {
@@ -62,6 +24,22 @@ describe('localControlSwitch', () => {
       shouldRequestRemoteControlAfterPendingEnqueue({
         presence: 'online',
         agentState: { controlledByUser: false },
+      } as Session),
+    ).toBe(false);
+  });
+
+  it('does not request remote control after pending enqueue for shared local attachment', () => {
+    expect(
+      shouldRequestRemoteControlAfterPendingEnqueue({
+        presence: 'online',
+        agentState: {
+          controlledByUser: false,
+          localControl: {
+            attached: true,
+            topology: 'shared',
+            remoteWritable: true,
+          },
+        },
       } as Session),
     ).toBe(false);
   });
@@ -87,188 +65,14 @@ describe('localControlSwitch', () => {
     ).toBe(true);
   });
 
-  it('offers switch-to-local when the session is active even if the machine is offline', () => {
-    const session = buildSession({ presence: 'online' });
-
+  it('renders the chat timeline when shared local control can be attached even with no messages yet', () => {
     expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: false,
-        resumeCapabilityOptions: resumeOptions,
-      }),
+      shouldRenderChatTimelineForSession({
+        committedMessagesCount: 0,
+        pendingMessagesCount: 0,
+        controlledByUser: false,
+        showLocalControlFooter: true,
+      } as any),
     ).toBe(true);
-  });
-
-  it('requires the machine to be online when the session is inactive', () => {
-    const session = buildSession({ presence: Date.now() - 60_000, active: false });
-
-    expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: false,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe(false);
-
-    expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe(true);
-  });
-
-  it('returns a disabled reason for supported agents when machine is offline and the session is inactive', () => {
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session: buildSession({ presence: Date.now() - 60_000, active: false }),
-        isMachineOnline: false,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe('machineOffline');
-  });
-
-  it('returns a disabled reason for supported agents when session was started by daemon without a tmux terminal', () => {
-    const session = buildSession({
-      metadata: {
-        ...(buildSession().metadata as LocalControlMetadata),
-        startedFromDaemon: true,
-      } as Session['metadata'],
-    });
-
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe('daemonStarted');
-  });
-
-  it('does not disable local-control when session was started by daemon with a tmux terminal', () => {
-    const session = buildSession({
-      metadata: {
-        ...(buildSession().metadata as LocalControlMetadata),
-        startedFromDaemon: true,
-        terminal: { mode: 'tmux', tmux: { target: 'happy:happy-123' } },
-      } as Session['metadata'],
-    });
-
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBeNull();
-
-    expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe(true);
-  });
-
-  it('returns a disabled reason for supported agents when resume support is missing', () => {
-    const session = buildSession({
-      metadata: {
-        ...(buildSession().metadata as LocalControlMetadata),
-        codexSessionId: '',
-      } as Session['metadata'],
-    });
-
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe('resumeUnsupported');
-  });
-
-  it('does not offer switch-to-local for agents that do not support local control', () => {
-    const session = buildSession({
-      metadata: {
-        path: '/repo',
-        host: 'localhost',
-        flavor: 'gemini',
-        geminiSessionId: 'gemini-session-1',
-      } as Session['metadata'],
-    });
-
-    expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe(false);
-  });
-
-  it('keeps disabled reason null when the session is already under local control', () => {
-    const session = buildSession({
-      agentState: { controlledByUser: true, requests: null, completedRequests: null },
-    });
-
-    expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe(false);
-
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBeNull();
-  });
- 
-  it('does not offer local-control switch for unknown session flavor', () => {
-    const session = buildSession({
-      metadata: {
-        path: '/repo',
-        host: 'localhost',
-        flavor: 'unknown-provider',
-      } as Session['metadata'],
-    });
-
-    expect(
-      shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe(false);
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: true,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBeNull();
-  });
-
-  it('prefers daemonStarted disabled reason over machineOffline when both apply', () => {
-    const session = buildSession({
-      metadata: {
-        ...(buildSession().metadata as LocalControlMetadata),
-        startedFromDaemon: true,
-      } as Session['metadata'],
-    });
-
-    expect(
-      getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: false,
-        resumeCapabilityOptions: resumeOptions,
-      }),
-    ).toBe('daemonStarted');
   });
 });

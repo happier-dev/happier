@@ -94,9 +94,10 @@ async function createTmpGitRepoWithTwoChanges(): Promise<string> {
 }
 
 describe('ephemeral.task.run session RPC handler', () => {
-  it('generates a commit message for scm.commit_message', async () => {
+  it('forwards backendTarget when generating a commit message for scm.commit_message', async () => {
     const repoDir = await createTmpGitRepo();
     const capture = { lastPrompt: '' };
+    const createdBackendOpts: Array<{ backendId: string; permissionMode: string; backendTarget?: unknown }> = [];
 
     try {
       const client = createEncryptedRpcTestClient({
@@ -104,7 +105,9 @@ describe('ephemeral.task.run session RPC handler', () => {
         registerHandlers: (rpc) => {
           registerEphemeralTaskHandlers(rpc, {
             workingDirectory: repoDir,
-            createBackend: (_opts: { backendId: string; permissionMode: string }) =>
+            createBackend: (opts: { backendId: string; permissionMode: string; backendTarget?: unknown }) => {
+              createdBackendOpts.push(opts);
+              return (
               createStaticBackend(
                 JSON.stringify({
                   title: 'feat: update a',
@@ -113,7 +116,9 @@ describe('ephemeral.task.run session RPC handler', () => {
                   confidence: 0.8,
                 }),
                 capture,
-              ),
+              )
+              );
+            },
           });
         },
       });
@@ -121,12 +126,19 @@ describe('ephemeral.task.run session RPC handler', () => {
       const res = await client.call<any, any>(SESSION_RPC_METHODS.EPHEMERAL_TASK_RUN, {
         kind: 'scm.commit_message',
         sessionId: 'sess_1',
-        input: { backendId: 'claude' },
+        input: { backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' } },
         permissionMode: 'no_tools',
       });
 
       expect(res.ok).toBe(true);
       expect(res.result?.title).toBe('feat: update a');
+      expect(createdBackendOpts).toEqual([
+        {
+          backendId: 'customAcp',
+          permissionMode: 'no_tools',
+          backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        },
+      ]);
       expect(String(capture.lastPrompt)).toContain('Commit message');
       expect(String(capture.lastPrompt)).toContain('a.txt');
     } finally {

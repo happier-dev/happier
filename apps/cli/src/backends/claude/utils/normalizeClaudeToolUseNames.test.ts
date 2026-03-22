@@ -14,7 +14,7 @@ describe('normalizeClaudeToolUseNames', () => {
   });
 
   it('maps Claude teammate Agent tool uses to canonical Task', () => {
-    expect(normalizeClaudeToolNameToCanonicalToolNameV2('Agent')).toBe('Task');
+    expect(normalizeClaudeToolNameToCanonicalToolNameV2('Agent')).toBe('SubAgent');
   });
 
   it('normalizes tool_use name in assistant SDK messages', () => {
@@ -30,7 +30,6 @@ describe('normalizeClaudeToolUseNames', () => {
 
     const normalized: any = normalizeClaudeToolUseNamesInSdkMessage(message);
     expect(normalized).not.toBe(message);
-    expect(normalized.message.content[0].name).toBe('Task');
+    expect(normalized.message.content[0].name).toBe('SubAgent');
   });
 });
-

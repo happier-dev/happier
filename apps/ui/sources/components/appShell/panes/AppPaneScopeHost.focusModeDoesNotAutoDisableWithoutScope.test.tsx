@@ -1,16 +1,26 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setEditorFocusModeEnabledSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                        select: (value: Record<string, unknown>) => value.web ?? value.default,
+                    },
+                    View: 'View',
+                    useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                }
+    );
+});
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: () => React.createElement('MultiPaneHostStub'),
@@ -20,7 +30,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
         if (key === 'editorFocusModeEnabled') return true;
@@ -36,7 +48,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'editorFocusModeEnabled') return [true, setEditorFocusModeEnabledSpy];
         return [null, vi.fn()];
     },
-}));
+});
+});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
@@ -54,16 +67,12 @@ describe('AppPaneScopeHost (focus mode auto-disable)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         setEditorFocusModeEnabledSpy.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope-missing"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={<div />}
-                />
-            );
-        });
+                />);
 
         await act(async () => {});
         expect(setEditorFocusModeEnabledSpy).not.toHaveBeenCalled();

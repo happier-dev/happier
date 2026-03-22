@@ -1,28 +1,38 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const modalAlertMock = vi.fn(async () => {});
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlertMock,
-    confirm: vi.fn(async () => false),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertMock,
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
 const routerBackMock = vi.fn();
-vi.mock('expo-router', () => ({
-  useRouter: () => ({
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
     back: routerBackMock,
     push: vi.fn(),
-  }),
-}));
+  },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/utils/system/bugReportActionTrail', () => ({
   recordBugReportUserAction: vi.fn(),
@@ -106,13 +116,11 @@ describe('useBugReportComposerSubmit', () => {
     }
 
     let tree: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<TestComponent />);
-    });
+    tree = (await renderScreen(<TestComponent />)).tree;
 
-    const button = tree!.root.findByType('Text' as any);
+    const button = tree!.findByType('Text' as any);
     await act(async () => {
-      await button.props.onPress?.();
+      await pressTestInstanceAsync(button);
     });
 
     expect(clearPreRestartBugReportSnapshotMock).toHaveBeenCalledTimes(1);

@@ -1,16 +1,28 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
-  AppState: { addEventListener: () => ({ remove: () => {} }) },
-  Pressable: 'Pressable',
-  Text: 'Text',
-  View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                    Pressable: 'Pressable',
+                                    Text: 'Text',
+                                    View: 'View',
+                                }
+    );
+});
 
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}) },
@@ -21,9 +33,7 @@ describe('SelectableRow (web cursor)', () => {
     const { SelectableRow } = await import('./SelectableRow');
 
     let tree: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<SelectableRow title="Row" disabled onPress={() => {}} />);
-    });
+    tree = (await renderScreen(<SelectableRow title="Row" disabled onPress={() => {}} />)).tree;
 
     const pressable = (tree! as any).root.findByType('Pressable' as any);
     const styleFn = pressable.props.style;

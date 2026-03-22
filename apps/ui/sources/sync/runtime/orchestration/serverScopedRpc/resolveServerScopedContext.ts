@@ -42,7 +42,9 @@ export async function resolveServerScopedContext(params: Readonly<{
         throw new Error(`Target server profile not found for serverId "${resolvedTargetServerId}"`);
     }
 
-    const credentials = await TokenStorage.getCredentialsForServerUrl(targetProfile.serverUrl);
+    const credentials = await TokenStorage.getCredentialsForServerUrl(targetProfile.serverUrl, {
+        serverId: resolvedTargetServerId,
+    });
     if (!credentials) {
         throw new Error(`No authentication credentials for target server "${resolvedTargetServerId}"`);
     }

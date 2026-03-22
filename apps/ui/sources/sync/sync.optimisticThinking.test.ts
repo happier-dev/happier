@@ -23,12 +23,17 @@ vi.mock('react-native-mmkv', () => {
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
-    const actual = await vi.importActual<any>('react-native');
-    return {
-        ...actual,
-        Platform: { ...(actual?.Platform ?? {}), OS: 'web' },
-        AppState: { addEventListener: appStateAddListener as any },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            AppState: {
+                                addEventListener: appStateAddListener as any,
+                            },
+                        }
+    );
 });
 
 vi.mock('@/log', () => ({
@@ -48,6 +53,8 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const initialStorageState = storage.getState();
 
@@ -85,7 +92,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         vi.useRealTimers();
     });
 
-    it('clears optimistic thinking after a successful ACK/commit', async () => {
+    it('preserves optimistic thinking after a successful ACK/commit (until lifecycle clears)', async () => {
         const sessionId = 's_test';
         storage.getState().applySessions([createSession({ sessionId })]);
 
@@ -114,6 +121,259 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         await promise;
 
+        // ACK means the user message was committed; it does not mean the agent turn is complete.
+        // Keep optimistic thinking so the UI can still show "processing" and expose abort controls
+        // until we see a terminal lifecycle marker (task_complete / turn_aborted) or the timeout fires.
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+
+        await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
+            type: 'task_complete',
+            id: 'task-1',
+            createdAt: Date.now(),
+        });
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('prefers session runtime RPC for active sessions so steering-capable agents receive the user message directly', async () => {
+        const sessionId = 's_active_runtime_rpc';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm1',
+            seq: 1,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(sessionId, 'steer this');
+
+        expect(sessionRpcSpy).toHaveBeenCalledWith(
+            sessionId,
+            SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+            expect.objectContaining({
+                text: 'steer this',
+                localId: expect.any(String),
+                meta: expect.objectContaining({
+                    sentFrom: expect.any(String),
+                    permissionMode: 'default',
+                }),
+            }),
+            { timeoutMs: 7_500 },
+        );
+        expect(emitWithAck).not.toHaveBeenCalled();
+
+        const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pending.map((message) => message.text)).toEqual(['steer this']);
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+
+        sessionRpcSpy.mockRestore();
+    });
+
+    it('falls back to the socket commit path when active-session runtime RPC is unavailable', async () => {
+        const sessionId = 's_active_runtime_rpc_fallback';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcError = Object.assign(new Error('RPC method not available'), {
+            rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(sessionRpcError);
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm-fallback',
+            seq: 7,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(sessionId, 'fallback please');
+
+        expect(sessionRpcSpy).toHaveBeenCalledTimes(1);
+        expect(emitWithAck).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: sessionId,
+                localId: expect.any(String),
+            }),
+            expect.anything(),
+        );
+
+        sessionRpcSpy.mockRestore();
+    });
+
+    it('sendPendingMessageNow preserves the pending localId in the outbound payload and does not remove the queued row', async () => {
+        const sessionId = 's_pending_send_now';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const rawRecord = {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: {},
+        } as any;
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1',
+            localId: 'p1',
+            createdAt: 111,
+            updatedAt: 111,
+            text: 'hello',
+            rawRecord,
+        });
+
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm1',
+            seq: 1,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        const pendingBefore = (storage.getState().sessionPending[sessionId]?.messages ?? []).map((m) => m.id);
+        expect(pendingBefore).toContain('p1');
+
+        await sync.sendPendingMessageNow(sessionId, {
+            localId: 'p1',
+            createdAt: 111,
+            rawRecord,
+            text: 'hello',
+        });
+
+        expect(emitWithAck).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: sessionId,
+                localId: 'p1',
+            }),
+            expect.anything(),
+        );
+
+        // No duplicate pending row should be created (localId is preserved).
+        const pendingAfter = (storage.getState().sessionPending[sessionId]?.messages ?? []).map((m) => m.id);
+        expect(pendingAfter.every((id) => id === 'p1')).toBe(true);
+
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+
+        await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
+            type: 'task_complete',
+            id: 'task-1',
+            createdAt: Date.now(),
+        });
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('sendPendingMessageNow removes the pending row when the server rejects the message', async () => {
+        const sessionId = 's_pending_rejected';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const rawRecord = {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: {},
+        } as const;
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p-reject',
+            localId: 'p-reject',
+            createdAt: 111,
+            updatedAt: 111,
+            text: 'hello',
+            rawRecord,
+        });
+
+        const emitWithAck = vi.fn(async () => ({
+            ok: false,
+            error: 'rejected',
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await expect(sync.sendPendingMessageNow(sessionId, {
+            localId: 'p-reject',
+            createdAt: 111,
+            rawRecord,
+            text: 'hello',
+        })).rejects.toThrow('rejected');
+
+        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('sendPendingMessageNow schedules a retry when the transport produces no ack', async () => {
+        const sessionId = 's_pending_retry';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const rawRecord = {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: {},
+        } as const;
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p-retry',
+            localId: 'p-retry',
+            createdAt: 111,
+            updatedAt: 111,
+            text: 'hello',
+            rawRecord,
+        });
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck: vi.fn(async () => null) as any,
+            send: vi.fn(),
+        });
+
+        await sync.sendPendingMessageNow(sessionId, {
+            localId: 'p-retry',
+            createdAt: 111,
+            rawRecord,
+            text: 'hello',
+        });
+
+        expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry`)).toBe(true);
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
@@ -190,6 +450,40 @@ describe('sync.sendMessage optimistic thinking', () => {
         const user = transcript.find((m) => m.kind === 'user-text') as any;
         expect(user?.meta?.happier?.kind).toBe('review_comments.v1');
         expect(user?.seq).toBe(1);
+    });
+
+    it('does not materialize appendSystemPrompt in first-turn message metadata', async () => {
+        const sessionId = 's_profile_override';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode: 'plain' }]);
+
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm1',
+            seq: 1,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = {
+            getSessionEncryption: () => null,
+        } as any;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(
+            sessionId,
+            'hello',
+            undefined,
+            undefined,
+            { profileId: 'profile-test' },
+        );
+
+        const payload = emitWithAck.mock.calls[0]?.[1];
+        expect(payload?.message?.t).toBe('plain');
+        expect(Object.prototype.hasOwnProperty.call(payload?.message?.v?.meta ?? {}, 'appendSystemPrompt')).toBe(false);
     });
 
     it('clears optimistic thinking when a turn is aborted even if session.thinking is already false', async () => {

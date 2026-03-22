@@ -1,6 +1,11 @@
 import type { MarkdownBlock } from "./parseMarkdown";
 import { parseMarkdownSpans } from "./parseMarkdownSpans";
 
+function getListIndentDepth(rawLine: string): number {
+    const leadingSpaces = rawLine.match(/^\s*/)?.[0].length ?? 0;
+    return Math.floor(leadingSpaces / 2);
+}
+
 /**
  * Trims empty strings that result from leading/trailing pipe characters,
  * while preserving intentionally empty cells in the middle of the row.
@@ -153,28 +158,46 @@ export function parseMarkdownBlock(markdown: string) {
         }
 
         // If it is a numbered list
-        const numberedListMatch = trimmed.match(/^(\d+)\.\s/);
+        const numberedListMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
         if (numberedListMatch) {
-            let allLines = [{ number: parseInt(numberedListMatch[1]), content: trimmed.slice(numberedListMatch[0].length) }];
+            let allLines = [{
+                depth: getListIndentDepth(line),
+                number: parseInt(numberedListMatch[2]),
+                content: numberedListMatch[3],
+            }];
             while (index < lines.length) {
-                const nextLine = lines[index].trim();
-                const nextMatch = nextLine.match(/^(\d+)\.\s/);
+                const nextLine = lines[index];
+                const nextMatch = nextLine.match(/^(\s*)(\d+)\.\s+(.*)$/);
                 if (!nextMatch) break;
-                allLines.push({ number: parseInt(nextMatch[1]), content: nextLine.slice(nextMatch[0].length) });
+                allLines.push({
+                    depth: getListIndentDepth(nextLine),
+                    number: parseInt(nextMatch[2]),
+                    content: nextMatch[3],
+                });
                 index++;
             }
-            blocks.push({ type: 'numbered-list', items: allLines.map((l) => ({ number: l.number, spans: parseMarkdownSpans(l.content, false) })) });
+            blocks.push({
+                type: 'numbered-list',
+                items: allLines.map((l) => ({ depth: l.depth, number: l.number, spans: parseMarkdownSpans(l.content, false) })),
+            });
             continue;
         }
 
         // If it is a list
-        if (trimmed.startsWith('- ')) {
-            let allLines = [trimmed.slice(2)];
-            while (index < lines.length && lines[index].trim().startsWith('- ')) {
-                allLines.push(lines[index].trim().slice(2));
+        const bulletListMatch = line.match(/^(\s*)-\s+(.*)$/);
+        if (bulletListMatch) {
+            let allLines = [{ depth: getListIndentDepth(line), content: bulletListMatch[2] }];
+            while (index < lines.length) {
+                const nextLine = lines[index];
+                const nextMatch = nextLine.match(/^(\s*)-\s+(.*)$/);
+                if (!nextMatch) break;
+                allLines.push({ depth: getListIndentDepth(nextLine), content: nextMatch[2] });
                 index++;
             }
-            blocks.push({ type: 'list', items: allLines.map((l) => parseMarkdownSpans(l, false)) });
+            blocks.push({
+                type: 'list',
+                items: allLines.map((l) => ({ depth: l.depth, spans: parseMarkdownSpans(l.content, false) })),
+            });
             continue;
         }
 

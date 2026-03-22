@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
+import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 
 function encodeBase64Url(value) {
   return Buffer.from(value, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -68,10 +69,6 @@ async function writeStackEnv({ storageDir, stackName, env }) {
 }
 
 async function writeStubHappyCli({ cliDir }) {
-  await mkdir(join(cliDir, 'bin'), { recursive: true });
-  await mkdir(join(cliDir, 'dist'), { recursive: true });
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
   const script = `
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -133,13 +130,14 @@ if (sub === 'start') {
 
 	process.exit(0);
 	`;
-
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), script.trimStart(), 'utf-8');
-
-  const cliBin = join(cliDir, 'bin', 'happier.mjs');
-  // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
-  await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
-  return cliBin;
+  const monoRoot = join(cliDir, '..', '..');
+  const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    packageJsonContent: '{}\n',
+    distIndexScript: script.trimStart(),
+    // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+    binHappierScript: 'process.exit(42);\n',
+  });
+  return join(cliBinDir, 'happier.mjs');
 }
 
 test('invalid-auth auto-reseed uses resolved stack name instead of null placeholder', async () => {

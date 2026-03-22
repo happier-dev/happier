@@ -47,6 +47,7 @@ export type FloatingOverlayArrow =
 interface FloatingOverlayProps {
     children: React.ReactNode;
     maxHeight?: number;
+    scrollEnabled?: boolean;
     showScrollIndicator?: boolean;
     keyboardShouldPersistTaps?: boolean | 'always' | 'never' | 'handled';
     edgeFades?: FloatingOverlayEdgeFades;
@@ -73,6 +74,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const { 
         children, 
         maxHeight = 240, 
+        scrollEnabled = true,
         showScrollIndicator = false, 
         keyboardShouldPersistTaps = 'handled',
         edgeFades = false,
@@ -105,10 +107,10 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
 
     const fades = useScrollEdgeFades({
         enabledEdges: {
-            top: Boolean(fadeCfg?.top) || Boolean(indicatorCfg),
-            bottom: Boolean(fadeCfg?.bottom) || Boolean(indicatorCfg),
-            left: Boolean(fadeCfg?.left),
-            right: Boolean(fadeCfg?.right),
+            top: scrollEnabled && (Boolean(fadeCfg?.top) || Boolean(indicatorCfg)),
+            bottom: scrollEnabled && (Boolean(fadeCfg?.bottom) || Boolean(indicatorCfg)),
+            left: scrollEnabled && Boolean(fadeCfg?.left),
+            right: scrollEnabled && Boolean(fadeCfg?.right),
         },
         overflowThreshold: 1,
         edgeThreshold: 1,
@@ -139,21 +141,29 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         }
     }, [arrowCfg?.placement]);
 
+    const content = scrollEnabled ? (
+        <Animated.ScrollView
+            style={[{ maxHeight }, scrollViewStyle]}
+            keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+            showsVerticalScrollIndicator={showScrollIndicator}
+            scrollEventThrottle={32}
+            onLayout={fadeCfg || indicatorCfg ? fades.onViewportLayout : undefined}
+            onContentSizeChange={fadeCfg || indicatorCfg ? fades.onContentSizeChange : undefined}
+            onScroll={fadeCfg || indicatorCfg ? fades.onScroll : undefined}
+            onMomentumScrollEnd={fadeCfg || indicatorCfg ? fades.onMomentumScrollEnd : undefined}
+        >
+            {children}
+        </Animated.ScrollView>
+    ) : (
+        <Animated.View style={[{ maxHeight }, scrollViewStyle]}>
+            {children}
+        </Animated.View>
+    );
+
     const overlay = (
         <Animated.View style={[styles.container, { maxHeight }, containerStyle]}>
-            <Animated.ScrollView
-                style={[{ maxHeight }, scrollViewStyle]}
-                keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-                showsVerticalScrollIndicator={showScrollIndicator}
-                scrollEventThrottle={32}
-                onLayout={fadeCfg || indicatorCfg ? fades.onViewportLayout : undefined}
-                onContentSizeChange={fadeCfg || indicatorCfg ? fades.onContentSizeChange : undefined}
-                onScroll={fadeCfg || indicatorCfg ? fades.onScroll : undefined}
-                onMomentumScrollEnd={fadeCfg || indicatorCfg ? fades.onMomentumScrollEnd : undefined}
-            >
-                {children}
-            </Animated.ScrollView>
-            {fadeCfg ? (
+            {content}
+            {scrollEnabled && fadeCfg ? (
                 <ScrollEdgeFades
                     color={theme.colors.surface}
                     size={fadeCfg.size}
@@ -161,7 +171,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 />
             ) : null}
 
-            {indicatorCfg ? (
+            {scrollEnabled && indicatorCfg ? (
                 <ScrollEdgeIndicators
                     edges={fades.visibility}
                     color={theme.colors.textSecondary}

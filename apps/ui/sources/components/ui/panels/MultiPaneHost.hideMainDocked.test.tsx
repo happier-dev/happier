@@ -1,18 +1,18 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { MultiPaneHost } from './MultiPaneHost';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (hideMain docked)', () => {
-    it('hides the main region when hideMain is true and panes are docked', () => {
+    it('hides the main region when hideMain is true and panes are docked', async () => {
         vi.useFakeTimers();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <MultiPaneHost
+        tree = (await renderScreen(<MultiPaneHost
                     hideMain
                     main={<Main />}
                     rightPane={<Right />}
@@ -24,13 +24,11 @@ describe('MultiPaneHost (hideMain docked)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />
-            );
-        });
+                />)).tree;
 
-        expect(() => tree!.root.findByType('Main' as any)).toThrow();
-        expect(tree!.root.findByType('Details' as any)).toBeTruthy();
-        expect(tree!.root.findByType('Right' as any)).toBeTruthy();
+        expect(() => tree!.findByType('Main' as any)).toThrow();
+        expect(tree!.findByType('Details' as any)).toBeTruthy();
+        expect(tree!.findByType('Right' as any)).toBeTruthy();
     });
 });
 

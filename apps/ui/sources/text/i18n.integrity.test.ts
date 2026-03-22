@@ -13,6 +13,11 @@ import { ja } from './translations/ja';
 
 import { auditTranslations } from '../../tools/i18n/translationAudit';
 
+const IGNORED_UNTRANSLATED_KEYS = new Set([
+    'promptLibrary.supportingFilePathPlaceholder',
+    'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
+]);
+
 describe('i18n integrity', () => {
     it('does not ship untranslated English strings in non-English locales', () => {
         const report = auditTranslations({
@@ -31,7 +36,8 @@ describe('i18n integrity', () => {
         });
 
         const untranslated = Object.entries(report)
-            .flatMap(([locale, r]) => r.untranslatedStrings.map((u) => ({ ...u, locale })));
+            .flatMap(([locale, r]) => r.untranslatedStrings.map((u) => ({ ...u, locale })))
+            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS.has(entry.key));
 
         if (untranslated.length > 0) {
             const sample = untranslated

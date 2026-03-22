@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { createOpenCodeAttachArgs } from './createOpenCodeAttachArgs';
-import { resolveOpenCodeCliCommand } from '../utils/resolveOpenCodeCliCommand';
+import { resolveOpenCodeCliLaunchSpec } from '../utils/resolveOpenCodeCliCommand';
 
 type SpawnedProcess = Readonly<{
   pid?: number;
@@ -64,12 +64,15 @@ export type OpenCodeTuiSupervisor = Readonly<{
 export function createOpenCodeTuiSupervisor(params?: Readonly<{
   spawnProcess?: typeof spawn;
   command?: string;
+  commandArgs?: readonly string[];
   env?: NodeJS.ProcessEnv;
   onExit?: () => void | Promise<void>;
 }>): OpenCodeTuiSupervisor {
   const spawnProcess = params?.spawnProcess ?? spawn;
   const env = params?.env ?? process.env;
-  const command = params?.command ?? resolveOpenCodeCliCommand(env);
+  const launch = resolveOpenCodeCliLaunchSpec(env);
+  const command = params?.command ?? launch.command;
+  const commandArgs = params?.commandArgs ?? launch.args;
   let proc: SpawnedProcess | null = null;
 
   const clearProc = (): void => {
@@ -92,13 +95,16 @@ export function createOpenCodeTuiSupervisor(params?: Readonly<{
     isAttached: () => proc !== null,
     attach: async ({ baseUrl, directory, sessionId }) => {
       if (proc) return true;
-      const child = spawnProcess(command, createOpenCodeAttachArgs({ baseUrl, directory, sessionId }), {
+      const child = spawnProcess(command, [...commandArgs, ...createOpenCodeAttachArgs({ baseUrl, directory, sessionId })], {
         stdio: 'inherit',
         env,
       }) as unknown as SpawnedProcess;
       proc = child;
       let startupCompleted = false;
+      let closeHandled = false;
       const handleClosed = (): void => {
+        if (closeHandled) return;
+        closeHandled = true;
         clearProc();
         if (startupCompleted) {
           void params?.onExit?.();

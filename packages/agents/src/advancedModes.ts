@@ -1,5 +1,5 @@
 import type { AgentId } from './types.js';
-import { getAgentSessionModesKind } from './sessionModes.js';
+import { getAgentSessionModeDescriptor } from './sessionModes.js';
 
 export type AgentRuntimeModeSwitchKind = 'none' | 'metadata-gating' | 'acp-setSessionMode' | 'provider-native';
 
@@ -27,16 +27,10 @@ export type AgentAdvancedModeCapabilities = Readonly<{
 }>;
 
 export function getAgentAdvancedModeCapabilities(agentId: AgentId): AgentAdvancedModeCapabilities {
-  const sessionModesKind = getAgentSessionModesKind(agentId);
-  const supportsPlanMode = sessionModesKind === 'acpAgentModes' || sessionModesKind === 'staticAgentModes';
+  const sessionModeDescriptor = getAgentSessionModeDescriptor(agentId);
+  const supportsPlanMode = sessionModeDescriptor.semantics === 'agent-modes';
   const supportsAcceptEdits = agentId === 'claude';
-
-  const supportsRuntimeModeSwitch: AgentRuntimeModeSwitchKind =
-    sessionModesKind === 'acpAgentModes'
-      ? 'acp-setSessionMode'
-      : sessionModesKind === 'staticAgentModes'
-        ? 'provider-native'
-        : 'metadata-gating';
+  const supportsRuntimeModeSwitch = sessionModeDescriptor.runtimeSwitch;
 
   return { supportsPlanMode, supportsAcceptEdits, supportsRuntimeModeSwitch };
 }

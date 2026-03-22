@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,7 +43,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
     let latest: any = null;
     function Harness() {
       latest = useNewSessionPreflightModelsState({
-        agentType: 'codex' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -50,10 +52,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     expect((latest.modelOptions ?? []).some((o: any) => o.value === 'm1')).toBe(true);
@@ -71,4 +70,3 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
     });
   });
 });
-

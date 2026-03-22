@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { installDbModuleMock } from "../api/testkit/dbMocks";
 import { createInTxHarness } from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
@@ -35,7 +37,7 @@ vi.mock("@/storage/inTx", () => {
     return { afterTx, inTx };
 });
 
-vi.mock("@/storage/db", () => ({ db: {} }));
+installDbModuleMock({ db: {} });
 
 describe("kvMutate (AccountChange integration)", () => {
     beforeEach(() => {

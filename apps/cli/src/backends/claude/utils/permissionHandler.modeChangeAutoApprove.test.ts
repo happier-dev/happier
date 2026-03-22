@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { EnhancedMode } from '../loop';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
-function timeout(ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    const id = setTimeout(() => {
-      clearTimeout(id);
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
       reject(new Error(`Timed out after ${ms}ms`));
     }, ms);
   });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
 }
 
 describe('Claude PermissionHandler - mode change auto-approve', () => {
@@ -33,7 +39,7 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
 
     handler.handleModeChange('yolo');
 
-    const result = await Promise.race([pending, timeout(1_000)]);
+    const result = await withTimeout(pending, 1_000);
     expect(result).toMatchObject({ behavior: 'allow' });
     expect(client.agentState.requests['toolu_mode_change_1']).toBeUndefined();
     expect(client.agentState.completedRequests['toolu_mode_change_1']).toBeTruthy();
@@ -47,9 +53,10 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
     const signal = new AbortController();
     const mode: EnhancedMode = { permissionMode: 'default' };
 
+    const filePath = join(tmpdir(), 'happier-permission-handler-mode-change.txt');
     const pending = handler.handleToolCall(
       'Write',
-      { file_path: '/tmp/a.txt', content: 'hi' },
+      { file_path: filePath, content: 'hi' },
       mode,
       { signal: signal.signal, toolUseId: 'toolu_mode_change_2' },
     );
@@ -58,10 +65,9 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
 
     handler.handleModeChange('safe-yolo');
 
-    const result = await Promise.race([pending, timeout(1_000)]);
+    const result = await withTimeout(pending, 1_000);
     expect(result).toMatchObject({ behavior: 'allow' });
     expect(client.agentState.requests['toolu_mode_change_2']).toBeUndefined();
     expect(client.agentState.completedRequests['toolu_mode_change_2']).toBeTruthy();
   });
 });
-

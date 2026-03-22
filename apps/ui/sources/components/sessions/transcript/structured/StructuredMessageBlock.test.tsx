@@ -1,8 +1,10 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { StructuredMessageBlock } from './StructuredMessageBlock';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,25 +13,19 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('StructuredMessageBlock', () => {
-    it('returns null for unknown kinds', () => {
+    it('returns null for unknown kinds', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <StructuredMessageBlock
+        tree = (await renderScreen(<StructuredMessageBlock
                     message={{ meta: { happier: { kind: 'unknown.v1', payload: {} } } } as any}
                     sessionId="s1"
                     onJumpToAnchor={() => {}}
-                />,
-            );
-        });
+                />)).tree;
         expect(tree!.toJSON()).toBeNull();
     });
 
-    it('renders review comments card for valid payload', () => {
+    it('renders review comments card for valid payload', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <StructuredMessageBlock
+        tree = (await renderScreen(<StructuredMessageBlock
                     message={{
                         meta: {
                             happier: {
@@ -53,20 +49,16 @@ describe('StructuredMessageBlock', () => {
                     } as any}
                     sessionId="s1"
                     onJumpToAnchor={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('Review comments');
         expect(serialized).toContain('src/a.ts');
     });
 
-    it('renders participant message card for valid payload', () => {
+    it('renders participant message card for valid payload', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <StructuredMessageBlock
+        tree = (await renderScreen(<StructuredMessageBlock
                     message={{
                         kind: 'user-text',
                         id: 'm1',
@@ -89,9 +81,7 @@ describe('StructuredMessageBlock', () => {
                     } as any}
                     sessionId="s1"
                     onJumpToAnchor={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('To:');
@@ -99,15 +89,13 @@ describe('StructuredMessageBlock', () => {
         expect(serialized).toContain('hello there');
 
         const findTextNode = (text: string) =>
-            tree!.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
+            tree!.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
         expect(findTextNode('hello there').props.selectable).toBe(true);
     });
 
-    it('renders subagent launch card for valid payload', () => {
+    it('renders subagent launch card for valid payload', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <StructuredMessageBlock
+        tree = (await renderScreen(<StructuredMessageBlock
                     message={{
                         kind: 'user-text',
                         id: 'm_launch',
@@ -129,20 +117,16 @@ describe('StructuredMessageBlock', () => {
                     } as any}
                     sessionId="s1"
                     onJumpToAnchor={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('alpha');
         expect(serialized).toContain('Launch the alpha teammate');
     });
 
-    it('renders subagent command card for valid payload', () => {
+    it('renders subagent command card for valid payload', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <StructuredMessageBlock
+        tree = (await renderScreen(<StructuredMessageBlock
                     message={{
                         kind: 'user-text',
                         id: 'm_command',
@@ -163,9 +147,7 @@ describe('StructuredMessageBlock', () => {
                     } as any}
                     sessionId="s1"
                     onJumpToAnchor={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('alpha');

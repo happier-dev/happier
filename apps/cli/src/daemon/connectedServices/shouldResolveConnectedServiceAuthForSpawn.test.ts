@@ -10,14 +10,14 @@ describe('shouldResolveConnectedServiceAuthForSpawn', () => {
     expect(shouldResolveConnectedServiceAuthForSpawn(options)).toBe(false);
   });
 
-  it('returns false when token auth is present', () => {
-    const options: SpawnSessionOptions = {
+  it('ignores legacy token-shaped payload noise and still resolves connected-services auth', () => {
+    const options = {
       directory: '.',
-      token: 'token',
+      token: 'legacy-spawn-token',
       connectedServices: { v: 1, bindingsByServiceId: { anthropic: { source: 'connected', profileId: 'work' } } },
       environmentVariables: {},
-    };
-    expect(shouldResolveConnectedServiceAuthForSpawn(options)).toBe(false);
+    } as any as SpawnSessionOptions;
+    expect(shouldResolveConnectedServiceAuthForSpawn(options)).toBe(true);
   });
 
   it('returns false when all bindings are native', () => {
@@ -38,4 +38,3 @@ describe('shouldResolveConnectedServiceAuthForSpawn', () => {
     expect(shouldResolveConnectedServiceAuthForSpawn(options)).toBe(true);
   });
 });
-

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { getAgentModelConfig } from '@happier-dev/agents';
+import { getAgentModelConfig, getProviderCliInstallGuideUrl } from '@happier-dev/agents';
 
 import {
     resolveAgentIdFromCliDetectKey,
@@ -9,11 +9,20 @@ import {
     getAgentCore,
     AGENT_IDS,
 } from './registryCore';
+import { buildAgentToolsUiConfig } from './buildAgentToolsUiConfig';
 
 describe('agents/registryCore', () => {
     it('exposes a stable list of agent ids', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);
+    });
+
+    it('exports only agent ids that have a UI core config', () => {
+        for (const agentId of AGENT_IDS) {
+            const core = getAgentCore(agentId);
+            expect(core.id).toBe(agentId);
+            expect(typeof core.cli.detectKey).toBe('string');
+        }
     });
 
     it('resolves known flavors and aliases to canonical agent ids', () => {
@@ -39,6 +48,8 @@ describe('agents/registryCore', () => {
             { detectKey: 'claude', expected: 'claude' },
             { detectKey: 'codex', expected: 'codex' },
             { detectKey: 'opencode', expected: 'opencode' },
+            { detectKey: 'kiro-cli', expected: 'kiro' },
+            { detectKey: 'custom-acp', expected: 'customAcp' },
             { detectKey: '  ', expected: null },
             { detectKey: 'unknown', expected: null },
             { detectKey: null, expected: null },
@@ -76,6 +87,43 @@ describe('agents/registryCore', () => {
         expect(pi.cli.detectKey).toBeTruthy();
     });
 
+    it('provides core config for kiro', () => {
+        const kiro = getAgentCore('kiro');
+        expect(kiro.id).toBe('kiro');
+        expect(kiro.cli.detectKey).toBe('kiro-cli');
+    });
+
+    it('provides core config for custom ACP', () => {
+        const customAcp = getAgentCore('customAcp');
+        expect(customAcp.id).toBe('customAcp');
+        expect(customAcp.cli.detectKey).toBe('custom-acp');
+    });
+
+    it('uses generic installer guidance instead of hardcoded package-manager commands', () => {
+        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'] as const) {
+            const core = getAgentCore(agentId);
+            expect(core.cli.installBanner.installKind).toBe('ifAvailable');
+            expect(core.cli.installBanner.installCommand).toBeUndefined();
+        }
+    });
+
+    it('uses centralized setup guide URLs for provider install banners', () => {
+        for (const agentId of ['claude', 'opencode', 'kimi', 'qwen', 'pi'] as const) {
+            expect(getAgentCore(agentId).cli.installBanner.guideUrl).toBe(getProviderCliInstallGuideUrl(agentId));
+        }
+    });
+
+    it('surfaces shared tools delivery config from @happier-dev/agents', () => {
+        expect(buildAgentToolsUiConfig({ agentId: 'claude' })).toEqual({
+            delivery: 'native_mcp',
+            support: 'supported',
+        });
+        expect(buildAgentToolsUiConfig({ agentId: 'gemini' })).toEqual({
+            delivery: 'shell_bridge',
+            support: 'experimental',
+        });
+    });
+
     it('reads model selection config from @happier-dev/agents', () => {
         const claude = getAgentModelConfig('claude');
         expect(claude.supportsSelection).toBe(true);
@@ -92,6 +140,9 @@ describe('agents/registryCore', () => {
 
         const kilo = getAgentModelConfig('kilo');
         expect(kilo.supportsSelection).toBe(true);
+
+        const kiro = getAgentModelConfig('kiro');
+        expect(kiro.supportsSelection).toBe(true);
 
         const auggie = getAgentModelConfig('auggie');
         expect(auggie.supportsSelection).toBe(true);

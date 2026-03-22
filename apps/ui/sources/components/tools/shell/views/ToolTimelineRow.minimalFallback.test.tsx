@@ -1,58 +1,49 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => ({
-    Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-    View: 'View',
-    Text: 'Text',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    Animated: {
-        Value: class {
-            constructor(_v: any) {}
-            setValue(_v: any) {}
-            interpolate(_cfg: any) { return 0; }
-        },
-        timing: () => ({ start: (cb?: any) => cb?.({ finished: true }) }),
-        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-    },
-    Easing: {
-        bezier: () => (t: number) => t,
-        linear: (t: number) => t,
+const ensureSidechainMessagesLoadedMock = vi.fn();
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#555',
-                surfaceHigh: '#eee',
-                surfaceHighest: '#fff',
-                surfacePressedOverlay: '#ddd',
-                warning: '#f90',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    text: '#111',
-                    textSecondary: '#555',
-                    surfaceHigh: '#eee',
-                    surfaceHighest: '#fff',
-                    surfacePressedOverlay: '#ddd',
-                    warning: '#f90',
-                },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                                        Animated: {
+                                            Value: class {
+                                                constructor(_value: unknown) {}
+                                                setValue(_value: unknown) {}
+                                                interpolate(_config: unknown) {
+                                                    return 0;
+                                                }
+                                            },
+                                            timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
+                                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+                                        },
+                                        Easing: {
+                                            bezier: () => (t: number) => t,
+                                            linear: (t: number) => t,
+                                        },
+                                    }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -66,7 +57,7 @@ vi.mock('@/components/tools/catalog', () => ({
 }));
 
 vi.mock('@/components/tools/normalization/core/normalizeToolCallForRendering', () => ({
-    normalizeToolCallForRendering: (t: any) => t,
+    normalizeToolCallForRendering: (tool: any) => tool,
 }));
 
 vi.mock('@/components/tools/normalization/policy/toolNameInference', () => ({
@@ -110,28 +101,42 @@ vi.mock('@/components/tools/shell/presentation/ToolError', () => ({
     ToolError: () => React.createElement('ToolError'),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
-}));
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return {
+        ...createTextModuleMock(),
+        Text: (props: any) => React.createElement('Text', props, props.children),
+        TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
+    };
+});
 
-vi.mock('@/text', () => ({
-    t: (_key: string) => _key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
-let settings: Record<string, any> = {};
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => settings[key],
-}));
+let settings: Record<string, unknown> = {};
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => settings[key],
+        },
+    });
+});
 
 describe('ToolTimelineRow (minimal fallback)', () => {
     beforeEach(() => {
@@ -144,6 +149,10 @@ describe('ToolTimelineRow (minimal fallback)', () => {
             toolViewTimelineFeedDefaultExpanded: true,
             toolViewTapAction: 'expand',
         };
+    });
+
+    afterEach(() => {
+        standardCleanup();
     });
 
     it('does not render default input/output chrome for minimal tools', async () => {
@@ -159,12 +168,10 @@ describe('ToolTimelineRow (minimal fallback)', () => {
             result: { ok: true },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} />);
-        });
+        const screen = await renderScreen(React.createElement(ToolTimelineRow, { tool, metadata: null }));
 
-        expect(tree!.root.findAllByType('ToolSectionView' as any)).toHaveLength(0);
-        expect(tree!.root.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+        expect(screen.findByTestId('tool-timeline-body')).not.toBeNull();
+        expect(screen.findAllByType('ToolSectionView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('StructuredResultView' as any)).toHaveLength(1);
     });
 });

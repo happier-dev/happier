@@ -1,20 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createDbMocks, installDbModuleMock } from '../../api/testkit/dbMocks';
+
 const findMany = vi.fn();
 const deleteMany = vi.fn();
 const updateMany = vi.fn();
 
-vi.mock('@/storage/db', () => ({
-    db: {
-        accountChange: {
-            findMany,
-            deleteMany,
-        },
-        account: {
-            updateMany,
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    accountChange: ["findMany", "deleteMany"],
+    account: ["updateMany"],
+} as const);
+
+dbMocks.db.accountChange.findMany.mockImplementation((...args: any[]) => findMany(...args));
+dbMocks.db.accountChange.deleteMany.mockImplementation((...args: any[]) => deleteMany(...args));
+dbMocks.db.account.updateMany.mockImplementation((...args: any[]) => updateMany(...args));
+
+installDbModuleMock({ db: dbMocks.db });
 
 describe('accountChangeRetentionRule', () => {
     beforeEach(() => {

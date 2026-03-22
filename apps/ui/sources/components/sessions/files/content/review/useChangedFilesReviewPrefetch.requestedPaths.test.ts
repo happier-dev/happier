@@ -1,13 +1,17 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    // Return non-numeric values so prefetch is disabled, but viewability/requestedPaths should still work.
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: () => null,
-}));
+});
+});
 
 function file(fullPath: string) {
     return { fullPath } as any;
@@ -29,10 +33,7 @@ async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () =
         return null;
     }
     let root: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        root = renderer.create(React.createElement(Test));
-        await flushAsync();
-    });
+    root = (await renderScreen(React.createElement(Test))).tree;
     return {
         getCurrent: () => {
             if (!current) throw new Error('Hook did not render');

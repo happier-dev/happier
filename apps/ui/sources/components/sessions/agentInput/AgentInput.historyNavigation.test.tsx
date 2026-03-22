@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,24 +19,28 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-native', async () => {
-  const rn = await import('@/dev/reactNativeStub');
-  return {
-    ...rn,
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-      React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-      React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-      React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-      React.createElement('ScrollView', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { ...rn.Platform, OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-    useWindowDimensions: () => ({ width: 900, height: 600 }),
-    Dimensions: {
-      get: () => ({ width: 900, height: 600, scale: 1, fontScale: 1 }),
-    },
-  };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                      React.createElement('View', props, props.children),
+                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                      React.createElement('Text', props, props.children),
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                      React.createElement('Pressable', props, props.children),
+                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                      React.createElement('ScrollView', props, props.children),
+                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                    Platform: {
+                                    OS: 'web',
+                                    select: (v: any) => v.web ?? v.default ?? null,
+                                },
+                                    useWindowDimensions: () => ({ width: 900, height: 600 }),
+                                    Dimensions: {
+                                      get: () => ({ width: 900, height: 600, scale: 1, fontScale: 1 }),
+                                    },
+                                }
+    );
 });
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -54,12 +60,15 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: (key: string) => {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useSetting: (key: string) => {
     if (key === 'profiles') return [];
     if (key === 'agentInputEnterToSend') return true;
     if (key === 'agentInputActionBarLayout') return 'wrap';
@@ -68,19 +77,21 @@ vi.mock('@/sync/domains/state/storage', () => ({
     if (key === 'agentInputHistoryScope') return 'perSession';
     return null;
   },
-  useSettings: () => ({
+    useSettings: () => ({
     profiles: [],
     agentInputEnterToSend: true,
     agentInputActionBarLayout: 'wrap',
     agentInputChipDensity: 'labels',
     sessionPermissionModeApplyTiming: 'immediate',
     agentInputHistoryScope: 'perSession',
-      }),
-      useSessionMessages: () => ({ messages: [], isLoaded: true }),
-      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-      useSessionMessagesById: () => ({}),
-      useSessionMessagesVersion: () => 0,
-    }));
+  }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesVersion: () => 0,
+    useSessionMessagesReducerState: () => null,
+});
+});
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
   useUserMessageHistory: () => ({
@@ -194,15 +205,41 @@ describe('AgentInput (history navigation)', () => {
     vi.clearAllMocks();
   });
 
+  it('does not send on Enter when sending is disabled', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    let tree: renderer.ReactTestRenderer;
+
+    tree = (await renderScreen(<AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          isSendDisabled={true}
+          disabled={false}
+          showAbortButton={false}
+        />)).tree;
+
+    const input = findMultiTextInput(tree!);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+    });
+
+    expect(handled).toBe(false);
+    expect(mocks.onSend).not.toHaveBeenCalled();
+    expect(mocks.historyReset).not.toHaveBeenCalled();
+  });
+
   it('intercepts ArrowUp at start-of-input on web and applies history text', async () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 
     const { AgentInput } = await import('./AgentInput');
     let tree: renderer.ReactTestRenderer;
 
-    await act(async () => {
-      tree = renderer.create(
-        <AgentInput
+    tree = (await renderScreen(<AgentInput
           value="draft"
           onChangeText={mocks.onChangeText}
           placeholder="p"
@@ -213,9 +250,7 @@ describe('AgentInput (history navigation)', () => {
           metadata={null}
           disabled={false}
           showAbortButton={false}
-        />
-      );
-    });
+        />)).tree;
 
     const input = findMultiTextInput(tree!);
     // Ensure AgentInput has selection state set to start-of-input.
@@ -239,9 +274,7 @@ describe('AgentInput (history navigation)', () => {
     const { AgentInput } = await import('./AgentInput');
     let tree: renderer.ReactTestRenderer;
 
-    await act(async () => {
-      tree = renderer.create(
-        <AgentInput
+    tree = (await renderScreen(<AgentInput
           value="draft"
           onChangeText={mocks.onChangeText}
           placeholder="p"
@@ -252,9 +285,7 @@ describe('AgentInput (history navigation)', () => {
           metadata={null}
           disabled={false}
           showAbortButton={false}
-        />
-      );
-    });
+        />)).tree;
 
     const input = findMultiTextInput(tree!);
     await act(async () => {

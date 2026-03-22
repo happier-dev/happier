@@ -2,12 +2,18 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { t } from '@/text';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: () => {} }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: () => {} },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/friends/useRequireFriendsEnabled', () => ({
     useRequireFriendsEnabled: () => true,
@@ -21,11 +27,14 @@ vi.mock('@/track', () => ({
     trackFriendsConnect: () => {},
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: async () => {},
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: async () => {},
+        },
+    }).module;
+});
 
 vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
     RequireFriendsIdentityForFriends: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -64,20 +73,21 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const stub: any = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        FlatList: ({ data, renderItem, ItemSeparatorComponent, keyExtractor }: any) => (
-            <>
-                {(data ?? []).map((item: any, index: number) => (
-                    <React.Fragment key={keyExtractor ? keyExtractor(item, index) : String(item?.id ?? index)}>
-                        {renderItem({ item, index })}
-                        {ItemSeparatorComponent ? <ItemSeparatorComponent /> : null}
-                    </React.Fragment>
-                ))}
-            </>
-        ),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    FlatList: ({ data, renderItem, ItemSeparatorComponent, keyExtractor }: any) => (
+                            <>
+                                {(data ?? []).map((item: any, index: number) => (
+                                    <React.Fragment key={keyExtractor ? keyExtractor(item, index) : String(item?.id ?? index)}>
+                                        {renderItem({ item, index })}
+                                        {ItemSeparatorComponent ? <ItemSeparatorComponent /> : null}
+                                    </React.Fragment>
+                                ))}
+                            </>
+                        ),
+                }
+    );
 });
 
 function TextStub(props: { children?: React.ReactNode }) {
@@ -88,9 +98,7 @@ describe('SearchFriendsScreen', () => {
     it('updates the user row status after sending a friend request', async () => {
         const { default: SearchFriendsScreen } = await import('@/app/(app)/friends/search');
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(<SearchFriendsScreen />);
-        });
+        tree = (await renderScreen(<SearchFriendsScreen />)).tree;
 
         // Press the "Add Friend" button.
         const buttons = tree!.root.findAll(

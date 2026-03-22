@@ -1,14 +1,22 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import {
+    LEGACY_ACP_SESSION_MODES_STATE_KEY,
+    LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
+    parsePermissionIntentAlias,
+    readMetadataAliasValue,
+    SESSION_MODES_STATE_KEY,
+    SESSION_MODE_OVERRIDE_KEY,
+} from '@happier-dev/agents';
+import { resolveRequestedSessionModeId } from '@happier-dev/protocol';
 import { tLoose } from '@/text';
 
 import { parseAcpSessionModesState, parseAcpSessionModeOverrideState } from './schema';
 
 export function supportsSessionModeOverrides(agentId: AgentId): boolean {
     const kind = getAgentCore(agentId).sessionModes.kind;
-    return kind === 'acpAgentModes' || kind === 'staticAgentModes';
+    return kind !== 'none';
 }
 
 export type SessionModeOption = Readonly<{
@@ -27,6 +35,13 @@ export type SessionModePickerControl = Readonly<{
     effectiveModeName: string;
     isPending: boolean;
 }>;
+
+export function resolveRequestedSessionModeIdForMetadata(
+    control: SessionModePickerControl | null | undefined,
+    requestedModeId: string,
+): string {
+    return resolveRequestedSessionModeId(requestedModeId, control?.options ?? []);
+}
 
 function computeLegacyRequestedModeIdFromPermissionMode(metadata: Metadata | null | undefined): string | null {
     const raw = typeof (metadata as any)?.permissionMode === 'string' ? String((metadata as any).permissionMode) : '';
@@ -55,7 +70,9 @@ function computeStaticSessionModePickerControl(params: {
     const defaultOption = options.find((o) => o.id === 'default') ?? null;
     if (!defaultOption) return null;
 
-    const modeOverride = parseAcpSessionModeOverrideState((params.metadata as any)?.acpSessionModeOverrideV1);
+    const modeOverride = parseAcpSessionModeOverrideState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
+    );
     const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
     const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
     const requestedMode = requestedModeId ? options.find((mode) => mode.id === requestedModeId) ?? null : null;
@@ -84,9 +101,12 @@ function computeAcpSessionModePickerControlInternal(params: {
     agentId: AgentId;
     metadata: Metadata | null | undefined;
 }): SessionModePickerControl | null {
-    if (getAgentCore(params.agentId).sessionModes.kind !== 'acpAgentModes') return null;
+    const kind = getAgentCore(params.agentId).sessionModes.kind;
+    if (kind !== 'acpAgentModes' && kind !== 'acpPolicyPresets') return null;
 
-    const state = parseAcpSessionModesState(params.metadata?.acpSessionModesV1);
+    const state = parseAcpSessionModesState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
+    );
     if (!state) return null;
     if (state.provider !== params.agentId) return null;
     if (state.availableModes.length === 0) return null;
@@ -95,7 +115,9 @@ function computeAcpSessionModePickerControlInternal(params: {
     const currentModeId = state.currentModeId;
     if (!currentModeId) return null;
 
-    const modeOverride = parseAcpSessionModeOverrideState((params.metadata as any)?.acpSessionModeOverrideV1);
+    const modeOverride = parseAcpSessionModeOverrideState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
+    );
     const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
     const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
     const effectiveModeId = requestedModeId ?? currentModeId;

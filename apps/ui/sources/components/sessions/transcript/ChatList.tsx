@@ -40,6 +40,8 @@ import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/
 import { JumpToBottomButton } from '@/components/sessions/transcript/scroll/JumpToBottomButton';
 import { reduceTranscriptScrollPinState, type TranscriptScrollPinState } from '@/components/sessions/transcript/scroll/transcriptScrollPinController';
 import { shouldPrefetchOlderFromTop } from '@/components/sessions/transcript/scroll/shouldPrefetchOlderFromTop';
+import { resolveTranscriptInitialFillTuning } from '@/components/sessions/transcript/scroll/resolveTranscriptInitialFillTuning';
+import { resolveWebPinRetryTimeoutMs } from '@/components/sessions/transcript/scroll/resolveWebPinRetryTimeoutMs';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -47,11 +49,12 @@ import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils
 import { buildChatListNativeId } from './chatListNativeId';
 import { useWebFlashListCrashFallback } from '@/components/ui/lists/useWebFlashListCrashFallback';
 import { buildTranscriptHotColdSegments } from '@/components/sessions/transcript/segments/buildTranscriptHotColdSegments';
+import { resolveWebHotColdScrollDecision } from '@/components/sessions/transcript/segments/resolveWebHotColdScrollDecision';
 import {
-    canRollbackLatestTurnConversation,
     isMessageRolledBack,
     readSessionRollbackRangesV1,
-    resolveLatestActiveMessageId,
+    resolveTranscriptRollbackActions,
+    type TranscriptRollbackAction,
     type SessionRollbackRangeV1,
 } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import {
@@ -214,31 +217,15 @@ export const ChatList = React.memo((props: {
         () => readSessionRollbackRangesV1((props.session.metadata as Record<string, unknown> | null | undefined) ?? null),
         [props.session.metadata],
     );
-    const latestActiveCommittedMessageId = React.useMemo(
-        () => resolveLatestActiveMessageId({ messageIdsOldestFirst, messagesById, rollbackRanges }),
-        [messageIdsOldestFirst, messagesById, rollbackRanges],
+    const rollbackActionsByMessageId = React.useMemo(
+        () => resolveTranscriptRollbackActions({
+            session: props.session,
+            messageIdsOldestFirst,
+            messagesById,
+            rollbackRanges,
+        }),
+        [messageIdsOldestFirst, messagesById, props.session, rollbackRanges],
     );
-    const canRollbackLatestTurn = React.useMemo(
-        () => canRollbackLatestTurnConversation({ session: props.session }),
-        [props.session],
-    );
-    const latestRollbackTurnId = React.useMemo(() => {
-        if (!canRollbackLatestTurn || groupingMode !== 'turns' || !latestActiveCommittedMessageId) return null;
-        const turns = turnsCache?.turns ?? [];
-        for (let index = turns.length - 1; index >= 0; index -= 1) {
-            const turn = turns[index];
-            if (!turn) continue;
-            if (turn.userMessageId === latestActiveCommittedMessageId) return turn.id;
-            if (turn.content.some((content) =>
-                content.kind === 'message'
-                    ? content.messageId === latestActiveCommittedMessageId
-                    : content.toolMessageIds.includes(latestActiveCommittedMessageId),
-            )) {
-                return turn.id;
-            }
-        }
-        return null;
-    }, [canRollbackLatestTurn, groupingMode, latestActiveCommittedMessageId, turnsCache]);
 
     const latestThinkingMessageId = useSessionLatestThinkingMessageId(props.session.id);
     const latestThinkingMessageActivityAtMs = useSessionLatestThinkingMessageActivityAtMs(props.session.id);
@@ -291,11 +278,9 @@ export const ChatList = React.memo((props: {
             messagesById={messagesById}
             committedMessagesCount={messageIdsOldestFirst.length}
             latestCommittedActivityKey={latestCommittedActivityKey}
-            latestActiveCommittedMessageId={latestActiveCommittedMessageId}
             activeThinkingMessageId={activeThinkingMessageId}
             rollbackRanges={rollbackRanges}
-            canRollbackLatestTurn={canRollbackLatestTurn}
-            latestRollbackTurnId={latestRollbackTurnId}
+            rollbackActionsByMessageId={rollbackActionsByMessageId}
             isLoaded={isLoaded}
             bottomNotice={props.bottomNotice}
             controlledByUserOverride={props.controlledByUserOverride}
@@ -364,7 +349,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     resolveThinkingExpanded: (messageId: string) => boolean;
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
-    showRollbackAction?: boolean;
+    rollbackAction?: TranscriptRollbackAction | null;
     historical?: boolean;
 }) {
     const originSessionId = props.originSessionId ?? props.sessionId;
@@ -393,7 +378,7 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
                     thinkingExpanded={isThinking ? props.resolveThinkingExpanded(message.id) : undefined}
                     onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
                     interaction={readOnlyInteraction}
-                    showRollbackAction={props.showRollbackAction}
+                    rollbackAction={props.rollbackAction ?? null}
                     historical={props.historical}
                 />
             </View>
@@ -410,11 +395,9 @@ const ChatListInternal = React.memo((props: {
     messagesById: Readonly<Record<string, Message>>,
     committedMessagesCount: number,
     latestCommittedActivityKey: string | null,
-    latestActiveCommittedMessageId: string | null,
     activeThinkingMessageId: string | null,
     rollbackRanges: readonly SessionRollbackRangeV1[],
-    canRollbackLatestTurn: boolean,
-    latestRollbackTurnId: string | null,
+    rollbackActionsByMessageId: Readonly<Record<string, TranscriptRollbackAction>>,
     isLoaded: boolean,
     bottomNotice?: ChatListBottomNotice | null,
     controlledByUserOverride?: boolean;
@@ -953,17 +936,18 @@ const ChatListInternal = React.memo((props: {
                 0;
             return wrapTranscriptItemForAnchor(item.id, (
                 <TranscriptEnterWrapper id={item.id} createdAt={turnCreatedAt}>
-                      <TurnView
-                          turn={item.turn}
-                          metadata={props.metadata}
-                          sessionId={props.sessionId}
-                          interaction={props.interaction}
-                          showRollbackAction={props.canRollbackLatestTurn && props.latestRollbackTurnId === item.turn.id}
-                          activeThinkingMessageId={props.activeThinkingMessageId}
-                          getMessageById={resolveTurnMessageById}
-                            resolveThinkingExpanded={resolveThinkingExpanded}
-                            setThinkingExpanded={setThinkingExpanded}
-                          expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
+                          <TurnView
+                           turn={item.turn}
+                           metadata={props.metadata}
+                           sessionId={props.sessionId}
+                           interaction={props.interaction}
+                           activeThinkingMessageId={props.activeThinkingMessageId}
+                           getMessageById={resolveTurnMessageById}
+                           isMessageHistorical={(messageId) => isMessageRolledBack({ message: props.messagesById[messageId] ?? null, rollbackRanges: props.rollbackRanges })}
+                           resolveRollbackAction={(messageId) => props.rollbackActionsByMessageId[messageId] ?? null}
+                             resolveThinkingExpanded={resolveThinkingExpanded}
+                             setThinkingExpanded={setThinkingExpanded}
+                           expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
                           setToolCallsGroupExpanded={setToolCallsGroupExpanded}
                       />
                   </TranscriptEnterWrapper>
@@ -994,7 +978,7 @@ const ChatListInternal = React.memo((props: {
                             resolveThinkingExpanded={resolveThinkingExpanded}
                             setThinkingExpanded={setThinkingExpanded}
                             interaction={props.interaction}
-                            showRollbackAction={props.canRollbackLatestTurn && props.latestActiveCommittedMessageId === item.messageId}
+                            rollbackAction={props.rollbackActionsByMessageId[item.messageId] ?? null}
                             historical={isMessageRolledBack({ message: props.messagesById[item.messageId] ?? null, rollbackRanges: props.rollbackRanges })}
                         />
                     </View>
@@ -1002,7 +986,7 @@ const ChatListInternal = React.memo((props: {
             ));
         }
         return null;
-      }, [expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId, props.canRollbackLatestTurn, props.interaction, props.latestActiveCommittedMessageId, props.latestRollbackTurnId, props.messagesById, props.metadata, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, resolveTurnMessageById, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
+      }, [expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.messagesById, props.metadata, props.rollbackActionsByMessageId, props.rollbackRanges, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, resolveTurnMessageById, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode, wrapTranscriptItemForAnchor]);
     const renderTranscriptItemAtIndex = React.useCallback((item: ChatTranscriptListItem, index: number) => {
         return renderItem({ item, index });
     }, [renderItem]);
@@ -1341,6 +1325,8 @@ const ChatListInternal = React.memo((props: {
                     ? Math.max(16, Math.trunc(retryIntervalMsRaw))
                     : 250;
 
+            const startedAtMs = Date.now();
+
             if (attempt()) {
                 return () => {
                     cancelled = true;
@@ -1374,11 +1360,16 @@ const ChatListInternal = React.memo((props: {
                 }
                 const delayMs = delays[delayIndex];
                 delayIndex += 1;
+                const timeoutMs = resolveWebPinRetryTimeoutMs({
+                    startedAtMs,
+                    nowMs: Date.now(),
+                    milestoneMs: delayMs,
+                });
                 timeoutId = setTimeout(() => {
                     timeoutId = null;
                     if (attempt()) return;
                     scheduleNext();
-                }, delayMs);
+                }, timeoutMs);
             };
 
             scheduleNext();
@@ -1590,12 +1581,24 @@ const ChatListInternal = React.memo((props: {
                     await Promise.resolve();
                 },
                 scrollToIndex: (index) => {
+                    if (shouldUseWebHotColdSplit) {
+                        const decision = resolveWebHotColdScrollDecision({
+                            fullIndex: index,
+                            coldCount: transcriptHotColdSegments.coldItems.length,
+                        });
+                        if (decision.kind === 'pin_to_bottom') {
+                            pinToBottom();
+                            return;
+                        }
+                        listRef.current?.scrollToIndex({ index: decision.index, animated: true, viewPosition: 0.5 });
+                        return;
+                    }
                     listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
                 },
                 maxLoads: 25,
             });
         })(), { tag: 'ChatList.jumpToTranscriptSeq' });
-    }, [props.isLoaded, props.jumpToSeq, props.sessionId, resolveJumpIndex]);
+    }, [pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId, resolveJumpIndex, shouldUseWebHotColdSplit, transcriptHotColdSegments.coldItems.length]);
 
     React.useEffect(() => {
         if (!props.isLoaded) return;
@@ -1620,8 +1623,10 @@ const ChatListInternal = React.memo((props: {
 
             const tuning = sync.getSyncTuning();
             const startedAtMs = Date.now();
-            const budgetMs = tuning.transcriptInitialFillBudgetMs;
-            const maxNoProgressLoads = tuning.transcriptInitialFillMaxNoProgressLoads;
+            const { budgetMs, maxNoProgressLoads } = resolveTranscriptInitialFillTuning({
+                transcriptInitialFillBudgetMs: tuning.transcriptInitialFillBudgetMs,
+                transcriptInitialFillMaxNoProgressLoads: tuning.transcriptInitialFillMaxNoProgressLoads,
+            });
             let consecutiveNoProgressLoads = 0;
 
             while (true) {

@@ -1,6 +1,7 @@
-import React from 'react';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class { } };
@@ -11,19 +12,9 @@ const transcriptListSpy = vi.fn();
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => {
-    type PlatformSelectOptions<T> = { web?: T; default?: T };
-    return {
-        Platform: { OS: 'web', select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default },
-        AppState: { addEventListener: () => ({ remove: () => {} }) },
-        Dimensions: {
-            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-        },
-        TurboModuleRegistry: { getEnforcing: () => ({}) },
-        View: 'View',
-        Text: 'Text',
-        ActivityIndicator: 'ActivityIndicator',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -31,66 +22,24 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 const routerMock = { back: vi.fn(), push: vi.fn(), replace: vi.fn() };
-vi.mock('expo-router', () => {
-    const Stack: { Screen: () => null } = { Screen: () => null };
-    return {
-        Stack,
-        useLocalSearchParams: () => ({ token: 'tok-1' }),
-        useRouter: () => routerMock,
-    };
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: routerMock,
+        params: { token: 'tok-1' },
+    });
+    return expoRouterMock.module;
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                textLink: '#00f',
-                groupped: { background: '#fff', sectionTitle: '#000' },
-                textDestructive: '#f00',
-                text: '#000',
-                textSecondary: '#666',
-                header: { tint: '#000' },
-                divider: '#ddd',
-                surfaceHigh: '#fff',
-                shadow: { color: '#000', opacity: 0.1 },
-                status: { error: '#f00' },
-                button: { primary: { background: '#000', tint: '#fff' } },
-                input: { background: '#fff', text: '#000' },
-                permissionButton: { inactive: { background: '#ccc' } },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (arg: any) => {
-            if (typeof arg === 'function') {
-                const theme = {
-                    colors: {
-                        surface: '#fff',
-                        textLink: '#00f',
-                        groupped: { background: '#fff', sectionTitle: '#000' },
-                        textDestructive: '#f00',
-                        text: '#000',
-                        textSecondary: '#666',
-                        header: { tint: '#000' },
-                        divider: '#ddd',
-                        surfaceHigh: '#fff',
-                        shadow: { color: '#000', opacity: 0.1 },
-                        status: { error: '#f00' },
-                        button: { primary: { background: '#000', tint: '#fff' } },
-                        input: { background: '#fff', text: '#000' },
-                        permissionButton: { inactive: { background: '#ccc' } },
-                    },
-                };
-                // Support both `StyleSheet.create((theme) => ...)` and `StyleSheet.create(({ theme }) => ...)`.
-                return arg({ ...theme, theme, colors: theme.colors });
-            }
-            return arg;
-        },
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: serverFetchSpy,
@@ -163,14 +112,10 @@ describe('PublicShareViewerScreen (plaintext)', () => {
 
         const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
-        await act(async () => {
-            renderer.create(<PublicShareViewerScreen />);
-        });
+        await renderScreen(<PublicShareViewerScreen />);
 
         // Allow async effect to resolve.
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(decryptDataKeyFromPublicShareSpy).not.toHaveBeenCalled();
         expect(serverFetchSpy).toHaveBeenCalledWith(
@@ -247,14 +192,10 @@ describe('PublicShareViewerScreen (plaintext)', () => {
 
         const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
-        await act(async () => {
-            renderer.create(<PublicShareViewerScreen />);
-        });
+        await renderScreen(<PublicShareViewerScreen />);
 
         // Allow async effect to resolve.
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
         const seqs = Array.isArray(last?.messages) ? last.messages.map((m: any) => (m as any)?.seq ?? null) : [];

@@ -59,16 +59,22 @@ npm config set prefix "$prefix" >/dev/null
 npm config set cache "$cache_dir" >/dev/null
 npm cache clean --force >/dev/null 2>&1 || true
 
+with_cli="${HAPPIER_WITH_CLI:-1}"
+
 rm -rf "$prefix/lib/node_modules/@happier-dev/cli"
 rm -rf "$prefix/lib/node_modules/@happier-dev/stack"
 
-npm install -g /packs/cli.tgz --no-audit --no-fund >/dev/null
+if [[ "$with_cli" == "1" ]]; then
+  npm install -g /packs/cli.tgz --no-audit --no-fund >/dev/null
+fi
 
-if [[ ! -x "$prefix/bin/happier" ]]; then
+if [[ "$with_cli" == "1" && ! -x "$prefix/bin/happier" ]]; then
   echo "[install-shim] expected $prefix/bin/happier to exist after install" >&2
   exit 1
 fi
-ln -sf "$prefix/bin/happier" "$HOME/.happier/bin/happier"
+if [[ "$with_cli" == "1" ]]; then
+  ln -sf "$prefix/bin/happier" "$HOME/.happier/bin/happier"
+fi
 
 if [[ -f /packs/stack.tgz ]]; then
   npm install -g /packs/stack.tgz --no-audit --no-fund >/dev/null

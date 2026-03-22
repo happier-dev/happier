@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -43,21 +45,72 @@ let currentArtifact: any = {
     }),
 };
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        ActivityIndicator: 'ActivityIndicator',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    };
+const sessionFixtures: Record<string, any> = {
+    'session-1': {
+        id: 'session-1',
+        metadata: {
+            name: 'Repo session',
+            path: '/Users/leeroy/repo',
+            homeDir: '/Users/leeroy',
+            machineId: 'machine-stale',
+        },
+    },
+};
+
+const machineFixtures: Record<string, any> = {
+    'machine-target': {
+        id: 'machine-target',
+        metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
+    },
+};
+
+const storageState = {
+    sessions: {
+        'session-1': {
+            active: false,
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+            },
+        },
+    },
+    machines: {
+        'machine-target': {
+            id: 'machine-target',
+            active: true,
+            activeAt: 10,
+            metadata: { host: 'workstation.local' },
+        },
+    },
+    getProjectForSession: (sessionId: string) =>
+        sessionId === 'session-1'
+            ? {
+                key: {
+                    machineId: 'machine-target',
+                    path: '/Users/leeroy/repo',
+                },
+            }
+            : null,
+    updateArtifact: vi.fn(),
+};
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (value: unknown) => value },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 groupped: { background: '#111' },
@@ -72,16 +125,21 @@ vi.mock('react-native-unistyles', () => ({
                 status: { error: '#f00' },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: backSpy, push: pushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { back: backSpy, push: pushSpy },
+    });
+    return expoRouterMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -100,12 +158,15 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
         React.createElement('RoundButton', { title, testID, onPress, disabled }),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: vi.fn(async () => true),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: vi.fn(async () => true),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -129,33 +190,17 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useArtifact: () => currentArtifact,
-    useSession: (sessionId: string) =>
-        sessionId === 'session-1'
-            ? {
-                  id: 'session-1',
-                  metadata: {
-                      name: 'Repo session',
-                      path: '/Users/leeroy/repo',
-                      homeDir: '/Users/leeroy',
-                      machineId: 'machine-1',
-                  },
-              }
-            : null,
-    useMachine: (machineId: string) =>
-        machineId === 'machine-1'
-            ? {
-                  id: 'machine-1',
-                  metadata: { displayName: 'Workstation', host: 'workstation.local' },
-              }
-            : null,
+    useSession: (sessionId: string) => sessionFixtures[sessionId] ?? null,
+    useMachine: (machineId: string) => machineFixtures[machineId] ?? null,
     storage: {
-        getState: () => ({
-            updateArtifact: vi.fn(),
-        }),
+        getState: () => storageState,
     },
-}));
+});
+});
 
 function collectText(node: renderer.ReactTestRenderer): string[] {
     return node.root
@@ -175,6 +220,34 @@ describe('ApprovalDetailScreen', () => {
         fetchArtifactWithBodySpy.mockClear();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache');
+        sessionFixtures['session-1'] = {
+            id: 'session-1',
+            metadata: {
+                name: 'Repo session',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+                machineId: 'machine-stale',
+            },
+        };
+        machineFixtures['machine-target'] = {
+            id: 'machine-target',
+            metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
+        };
+        storageState.sessions['session-1'] = {
+            active: false,
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+            },
+        };
+        storageState.machines['machine-target'] = {
+            id: 'machine-target',
+            active: true,
+            activeAt: 10,
+            metadata: { host: 'workstation.local' },
+        };
+        storageState.updateArtifact = vi.fn();
         currentArtifact = {
             id: 'artifact-1',
             header: {
@@ -213,15 +286,13 @@ describe('ApprovalDetailScreen', () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ApprovalDetailScreen artifactId="artifact-1" />);
-        });
+        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
 
         const text = collectText(tree!);
         expect(text).toContain('Approve answering the user');
         expect(text).toContain('Respond to user-action request');
         expect(text).toContain('Repo session');
-        expect(text).toContain('Workstation');
+        expect(text).toContain('Rebound workstation');
         expect(text).toContain('~/repo');
         expect(text).toContain('codex');
         expect(text).toContain('Agent wants to answer the pending question');
@@ -233,13 +304,10 @@ describe('ApprovalDetailScreen', () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ApprovalDetailScreen artifactId="artifact-1" />);
-        });
+        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
 
-        const openButton = tree!.root.findByProps({ testID: 'approvals.open-session' });
         await act(async () => {
-            openButton.props.onPress();
+            await tree!.pressByTestIdAsync('approvals.open-session');
         });
 
         expect(pushSpy).toHaveBeenCalledWith('/session/session-1');
@@ -250,10 +318,7 @@ describe('ApprovalDetailScreen', () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ApprovalDetailScreen artifactId="artifact-1" />);
-            await Promise.resolve();
-        });
+        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
 
         expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('artifact-1');
         expect(tree).toBeTruthy();
@@ -265,10 +330,7 @@ describe('ApprovalDetailScreen', () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ApprovalDetailScreen artifactId="artifact-1" />);
-            await Promise.resolve();
-        });
+        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
 
         const text = collectText(tree!);
         expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('artifact-1');
@@ -287,9 +349,7 @@ describe('ApprovalDetailScreen', () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ApprovalDetailScreen artifactId="artifact-1" />);
-        });
+        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
 
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -297,9 +357,8 @@ describe('ApprovalDetailScreen', () => {
             }),
         );
 
-        const approveButton = tree!.root.findByProps({ testID: 'approvals.approve' });
         await act(async () => {
-            await approveButton.props.onPress();
+            await tree!.pressByTestIdAsync('approvals.approve');
         });
 
         expect(executeSpy).toHaveBeenCalledWith(

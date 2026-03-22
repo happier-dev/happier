@@ -3,12 +3,14 @@ import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
 
 import {
-    AGENT_IDS,
+    AGENT_IDS as SHARED_AGENT_IDS,
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor as resolveAgentIdFromFlavorShared,
     type AgentId,
     type AgentModelConfig,
-    type ResumeRuntimeGate,
+    type AgentSessionStorage,
+    type AgentToolsDelivery,
+    type AgentToolsSupportLevel,
     type VendorResumeIdField,
 } from '@happier-dev/agents';
 
@@ -20,10 +22,11 @@ import { AUGGIE_CORE } from '@/agents/providers/auggie/core';
 import { QWEN_CORE } from '@/agents/providers/qwen/core';
 import { KIMI_CORE } from '@/agents/providers/kimi/core';
 import { KILO_CORE } from '@/agents/providers/kilo/core';
+import { KIRO_CORE } from '@/agents/providers/kiro/core';
+import { CUSTOM_ACP_CORE } from '@/agents/providers/customAcp/core';
 import { PI_CORE } from '@/agents/providers/pi/core';
 import { COPILOT_CORE } from '@/agents/providers/copilot/core';
 
-export { AGENT_IDS, DEFAULT_AGENT_ID };
 export type { AgentId };
 
 export type PermissionModeGroupId = 'claude' | 'codexLike';
@@ -81,7 +84,7 @@ export type AgentCoreConfig = Readonly<{
         detectKey: string;
         /**
          * Profile-level machine-login identifier used when `profile.authMode=machineLogin`.
-         * Stored in `profile.requiresMachineLogin`.
+         * Resolved against `profile.requiresMachineLoginTargetKey` when the profile is saved.
          */
         machineLoginKey: MachineLoginKey;
         /**
@@ -150,11 +153,6 @@ export type AgentCoreConfig = Readonly<{
          */
         supportsVendorResume: boolean;
         /**
-         * Runtime-gated resume support mechanism (when `supportsVendorResume=false`).
-         * When set, the UI/CLI can detect resume support dynamically per machine.
-         */
-        runtimeGate: ResumeRuntimeGate;
-        /**
          * When true, vendor-resume support is considered experimental and must be enabled explicitly
          * by callers (e.g. via feature flags / experiments).
          */
@@ -166,6 +164,15 @@ export type AgentCoreConfig = Readonly<{
          * that can be mirrored in the UI and switched to/from remote mode.
          */
         supported: boolean;
+        /**
+         * `exclusive`: local terminal owns the turn and remote input should switch or queue.
+         * `shared`: local terminal is only an attached client; remote UI remains writable.
+         */
+        topology?: 'exclusive' | 'shared';
+        /**
+         * Attachment mechanism used by terminal attach flows.
+         */
+        attachStrategy?: 'tmux' | 'provider_attach' | 'unsupported';
     }>;
     toolRendering: Readonly<{
         /**
@@ -173,6 +180,11 @@ export type AgentCoreConfig = Readonly<{
          */
         hideUnknownToolsByDefault: boolean;
     }>;
+    tools: Readonly<{
+        delivery: AgentToolsDelivery;
+        support: AgentToolsSupportLevel;
+    }>;
+    sessionStorage: AgentSessionStorage;
     ui: Readonly<{
         /**
          * Icon used in agent picker UIs (Ionicons name).
@@ -190,7 +202,7 @@ export type AgentCoreConfig = Readonly<{
     }>;
 }>;
 
-export const AGENTS_CORE: Readonly<Record<AgentId, AgentCoreConfig>> = Object.freeze({
+export const AGENTS_CORE = Object.freeze({
     claude: CLAUDE_CORE,
     codex: CODEX_CORE,
     opencode: OPENCODE_CORE,
@@ -199,20 +211,33 @@ export const AGENTS_CORE: Readonly<Record<AgentId, AgentCoreConfig>> = Object.fr
     qwen: QWEN_CORE,
     kimi: KIMI_CORE,
     kilo: KILO_CORE,
+    kiro: KIRO_CORE,
+    customAcp: CUSTOM_ACP_CORE,
     pi: PI_CORE,
     copilot: COPILOT_CORE,
-});
+}) satisfies Readonly<Record<string, AgentCoreConfig>>;
+
+export const AGENT_IDS = Object.freeze(
+    Object.keys(AGENTS_CORE) as AgentId[],
+);
+
+export { DEFAULT_AGENT_ID };
 
 export function isAgentId(value: unknown): value is AgentId {
     return typeof value === 'string' && (AGENT_IDS as readonly string[]).includes(value);
 }
 
 export function getAgentCore(id: AgentId): AgentCoreConfig {
-    return AGENTS_CORE[id];
+    const core = (AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id];
+    if (!core) {
+        throw new Error(`Unsupported UI agent core: ${id}`);
+    }
+    return core;
 }
 
 export function resolveAgentIdFromFlavor(flavor: string | null | undefined): AgentId | null {
-    return resolveAgentIdFromFlavorShared(flavor);
+    const resolved = resolveAgentIdFromFlavorShared(flavor);
+    return resolved && (SHARED_AGENT_IDS as readonly string[]).includes(resolved) && isAgentId(resolved) ? resolved : null;
 }
 
 export function resolveAgentIdFromCliDetectKey(detectKey: string | null | undefined): AgentId | null {

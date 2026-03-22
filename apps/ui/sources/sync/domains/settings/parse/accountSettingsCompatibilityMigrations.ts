@@ -3,7 +3,7 @@ import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
 
 import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
-import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { SessionTmuxMachineOverrideSchema } from '../registry/account/accountRuntimeSettingDefinitions';
 import { migrateAccountFeatureToggles } from './accountSettingsFeatureToggleMigration';
@@ -100,6 +100,22 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         next.backendEnabledByTargetKey = byTargetKey;
     }
 
+    if (!('backendCliSourcePreferenceByTargetKey' in input)) {
+        const byTargetKey = next.backendCliSourcePreferenceByTargetKey && typeof next.backendCliSourcePreferenceByTargetKey === 'object'
+            ? { ...(next.backendCliSourcePreferenceByTargetKey as Record<string, 'system-first' | 'managed-first'>) }
+            : {};
+        const legacyByAgent = input.backendCliSourcePreferenceById;
+        if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
+            for (const agentId of AGENT_IDS) {
+                const raw = (legacyByAgent as Record<string, unknown>)[agentId];
+                if (raw === 'system-first' || raw === 'managed-first') {
+                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw;
+                }
+            }
+        }
+        next.backendCliSourcePreferenceByTargetKey = byTargetKey;
+    }
+
     if (!('sessionDefaultPermissionModeByTargetKey' in input)) {
         const byTargetKey = next.sessionDefaultPermissionModeByTargetKey && typeof next.sessionDefaultPermissionModeByTargetKey === 'object'
             ? { ...(next.sessionDefaultPermissionModeByTargetKey as Record<string, PermissionMode>) }
@@ -108,8 +124,11 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
             for (const agentId of AGENT_IDS) {
                 const raw = (legacyByAgent as Record<string, unknown>)[agentId];
-                if (typeof raw === 'string') {
-                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw as PermissionMode;
+                if (isPermissionMode(raw)) {
+                    const group = getAgentCore(agentId).permissions.modeGroup;
+                    const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
+                    if (!(allowed as readonly string[]).includes(raw)) continue;
+                    byTargetKey[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] = raw;
                 }
             }
         }
@@ -145,7 +164,12 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
     }
 
     if (inputSchemaVersion < 6) {
-        next.codexBackendMode = 'acp';
+        const rawCodexBackendMode = input.codexBackendMode;
+        if (rawCodexBackendMode === 'mcp' || rawCodexBackendMode === 'acp' || rawCodexBackendMode === 'appServer') {
+            next.codexBackendMode = rawCodexBackendMode;
+        } else if (next.codexBackendMode !== 'mcp' && next.codexBackendMode !== 'acp' && next.codexBackendMode !== 'appServer') {
+            next.codexBackendMode = 'appServer';
+        }
     }
 
     if (inputSchemaVersion < 4 && !Object.prototype.hasOwnProperty.call(input, 'sessionThinkingInlinePresentation') && next.sessionThinkingDisplayMode === 'inline') {

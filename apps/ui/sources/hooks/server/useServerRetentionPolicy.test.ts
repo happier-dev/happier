@@ -11,8 +11,6 @@ afterEach(() => {
 
 describe('useServerRetentionPolicy', () => {
     it('returns server retention capabilities for the requested server', async () => {
-        vi.resetModules();
-
         const { buildServerFeaturesResponse } = await import('./serverFeaturesTestUtils');
         const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');

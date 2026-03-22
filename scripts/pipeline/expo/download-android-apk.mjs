@@ -167,8 +167,8 @@ async function main() {
 
   const environment = String(values.environment ?? '').trim();
   if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  if (environment !== 'development' && environment !== 'canary' && environment !== 'preview' && environment !== 'production') {
+    fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment})`);
   }
 
   const dryRun = values['dry-run'] === true;
@@ -233,7 +233,11 @@ async function main() {
   const assetRel =
     environment === 'production'
       ? path.join(outDirRel, `happier-production-android-v${appVersion}.apk`)
-      : path.join(outDirRel, 'happier-preview-android.apk');
+      : environment === 'preview'
+        ? path.join(outDirRel, 'happier-preview-android.apk')
+        : environment === 'canary'
+          ? path.join(outDirRel, 'happier-canary-android.apk')
+          : path.join(outDirRel, 'happier-development-android.apk');
   const assetAbs = path.resolve(repoRoot, assetRel);
 
   if (!dryRun) {

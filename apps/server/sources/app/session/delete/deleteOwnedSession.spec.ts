@@ -54,6 +54,7 @@ describe('deleteOwnedSession', () => {
     });
 
     it('deletes a session by id for system-initiated retention and emits owner + share updates', async () => {
+        const { log } = await import('@/utils/logging/log');
         findFirst.mockResolvedValueOnce({
             id: 's1',
             accountId: 'owner',
@@ -73,6 +74,16 @@ describe('deleteOwnedSession', () => {
         expect(deleteReports).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteAccessKeys).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteSession).toHaveBeenCalledWith({ where: { id: 's1' } });
+        expect(log).toHaveBeenCalledWith(
+            expect.objectContaining({
+                module: 'session-delete',
+                sessionId: 's1',
+                deletedMessages: 2,
+                deletedReports: 1,
+                deletedAccessKeys: 1,
+            }),
+            'Session deleted successfully',
+        );
         expect(emitUpdate).toHaveBeenCalledTimes(2);
     });
 
@@ -121,6 +132,7 @@ describe('deleteOwnedSession', () => {
     });
 
     it('returns false when the final guarded delete no longer matches and does not emit updates', async () => {
+        const { log } = await import('@/utils/logging/log');
         findFirst.mockResolvedValueOnce({
             id: 's1',
             accountId: 'owner',
@@ -141,11 +153,19 @@ describe('deleteOwnedSession', () => {
         expect(ok).toBe(false);
         expect(deleteSession).toHaveBeenCalledWith({
             where: {
-                id: 's1',
-                updatedAt: { lt: new Date('2025-01-01T00:00:00.000Z') },
-                lastActiveAt: { lt: new Date('2025-01-01T00:00:00.000Z') },
+                AND: [
+                    { id: 's1' },
+                    {
+                        updatedAt: { lt: new Date('2025-01-01T00:00:00.000Z') },
+                        lastActiveAt: { lt: new Date('2025-01-01T00:00:00.000Z') },
+                    },
+                ],
             },
         });
+        expect(log).not.toHaveBeenCalledWith(
+            expect.objectContaining({ module: 'session-delete', sessionId: 's1' }),
+            'Session deleted successfully',
+        );
         expect(emitUpdate).not.toHaveBeenCalled();
     });
 });

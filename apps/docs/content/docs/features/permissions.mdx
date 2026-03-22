@@ -30,6 +30,7 @@ Legacy note:
 - some older sessions and compatibility paths may still carry `plan` in permission metadata
 - in current Happier builds, **Plan** is treated as a **session mode**, not a normal permission choice
 - when Happier sees legacy `permissionMode=plan`, it maps that to **Mode = Plan** for compatible providers
+
 ## Session modes
 
 Some providers expose **session modes** (for example, `plan` vs `build` or `default` vs `plan`).
@@ -109,7 +110,7 @@ For Codex specifically:
 
 - resume depends on the session metadata and the selected backend path
 - **App Server** is the default resumable path in Happier
-- if Codex is set to plain `mcp`, resume depends on the Codex resume helper being installed on the target machine
+- if Codex is set to plain `mcp`, fresh sessions can still run there, but vendor resume is not available on that path
 - explicit resume remains **fail-closed**: Happier errors instead of silently starting a fresh session
 
 For the user-facing workflow, see [Resume inactive sessions](/docs/features/session-resume).
@@ -306,15 +307,15 @@ without reopening the dropdown.
 
 ## Provider notes (what to expect)
 
-### Codex (App Server default, ACP optional, MCP fallback)
+### Codex (App Server default, ACP optional, MCP for fresh sessions)
 
 Codex can run via different backends:
 
 - **App Server**: the default backend in Happier and the normal resume path when the session has valid Codex resume metadata
 - **ACP**: still available when you explicitly switch Codex to ACP mode; resume can also work there
-- **MCP**: still usable for normal fresh sessions; resume on plain MCP depends on the Codex resume helper
+- **MCP**: still usable for normal fresh sessions, but plain MCP is not a vendor-resume path in current Happier builds
 
-In Happier, **permissions remain the primary control** for Codex. Happier maps your selected permission intent to the closest Codex ACP policy preset when available.
+In Happier, **permissions remain the primary control** for Codex. Happier maps your selected permission intent to the closest backend-native policy for the active Codex backend.
 
 Model IDs can also vary by Codex build and account. If model selection isn’t shown in the app for your Codex session, you can still set it via the CLI (when supported by your installed Codex backend).
 

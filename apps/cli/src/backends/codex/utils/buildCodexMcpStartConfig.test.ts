@@ -33,6 +33,18 @@ describe('buildCodexMcpStartConfig (canonical suite)', () => {
     expect(out.model).toBe('gpt-5-codex-high');
   });
 
+  it('includes cwd when provided', () => {
+    const out = buildCodexMcpStartConfig({
+      prompt: 'hi',
+      sandbox: 'workspace-write',
+      approvalPolicy: 'untrusted',
+      mcpServers: {},
+      cwd: '  /tmp/happier-review-worktree  ',
+    });
+
+    expect(out.cwd).toBe('/tmp/happier-review-worktree');
+  });
+
   it('omits model when provided as whitespace', () => {
     const out = buildCodexMcpStartConfig({
       prompt: 'hi',

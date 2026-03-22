@@ -1,18 +1,23 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: { ...rn.Platform, OS: 'web' },
-        View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            Platform: {
+                                                            OS: 'web',
+                                                        },
+                                                            View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
+                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                                                        }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -49,17 +54,21 @@ vi.mock('@/components/sessions/files/views/SessionScmStashDetailsView', () => ({
     SessionScmStashDetailsView: (props: any) => SessionScmStashDetailsViewMock(props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'editorFocusModeEnabled') return false;
         return null;
     },
     useLocalSettingMutable: () => [false, vi.fn()],
-}));
+});
+});
 
 const scopeState = {
     details: {
@@ -88,9 +97,7 @@ describe('SessionDetailsPanel (scmStash)', () => {
     it('renders the stash details view when a scmStash tab is active', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        await act(async () => {
-            renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
         expect(SessionScmStashDetailsViewMock).toHaveBeenCalledTimes(1);
         expect(SessionScmStashDetailsViewMock.mock.calls[0]?.[0]?.sessionId).toBe('s1');

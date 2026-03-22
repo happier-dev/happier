@@ -4,6 +4,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { AgentId } from '@/agents/catalog/catalog';
+import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getModelOptionsForAgentType, type ModelOption } from '@/sync/domains/models/modelOptions';
 
@@ -20,7 +21,11 @@ export function getModelDropdownMenuItems(params: {
         id: opt.value,
         title: opt.label,
         subtitle: opt.description,
-        icon: <Ionicons name="layers-outline" size={iconSize} color={params.iconColor} />,
+        icon: renderDropdownItemIcon({
+            name: 'layers-outline',
+            color: params.iconColor,
+            size: iconSize,
+        }),
     }));
 
     if (!params.probe || typeof params.probe.onRefresh !== 'function') return base;
@@ -34,7 +39,11 @@ export function getModelDropdownMenuItems(params: {
                 : 'Fetch the latest model list.';
 
     const icon = phase === 'idle'
-        ? <Ionicons name="refresh-outline" size={iconSize} color={params.iconColor} />
+        ? renderDropdownItemIcon({
+            name: 'refresh-outline',
+            color: params.iconColor,
+            size: iconSize,
+        })
         : (
             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivityIndicator />

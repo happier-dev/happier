@@ -399,6 +399,7 @@ export function upsertServerProfile(
         serverUrl: string;
         name?: string;
         source?: ServerProfileSource;
+        replaceEquivalentStoredUrl?: boolean;
     }>,
 ): ServerProfile {
     const url = normalizeUrl(params.serverUrl);
@@ -420,7 +421,10 @@ export function upsertServerProfile(
             ?? defaultServerNameFromUrl(url)
             ?? id,
         ).trim() || id,
-        serverUrl: url,
+        serverUrl:
+            existingEquivalent && params.replaceEquivalentStoredUrl !== true
+                ? existingEquivalent.serverUrl
+                : url,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,

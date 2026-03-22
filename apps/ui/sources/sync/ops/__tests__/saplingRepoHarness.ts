@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import {
@@ -20,6 +20,197 @@ const SAPLING_TEST_ENV: NodeJS.ProcessEnv = {
     // Repo-local config (set via `sl config --local …`) is still read.
     HGRCPATH: '/dev/null',
 };
+
+let saplingCliAvailability: boolean | null = null;
+
+function hasSaplingCli(): boolean {
+    if (saplingCliAvailability !== null) return saplingCliAvailability;
+    try {
+        execFileSync('sl', ['version'], {
+            cwd: process.cwd(),
+            env: SAPLING_TEST_ENV,
+            encoding: 'utf8',
+            stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        saplingCliAvailability = true;
+    } catch {
+        saplingCliAvailability = false;
+    }
+    return saplingCliAvailability;
+}
+
+function runGitCommand(cwd: string, args: string[]): string {
+    return execFileSync('git', args, {
+        cwd,
+        env: SAPLING_TEST_ENV,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+}
+
+function runGitCommandResult(
+    cwd: string,
+    args: string[],
+): { success: true; stdout: string; stderr: string } | { success: false; stderr: string } {
+    try {
+        return {
+            success: true,
+            stdout: runGitCommand(cwd, args),
+            stderr: '',
+        };
+    } catch (error) {
+        const stderr = error instanceof Error && 'stderr' in error
+            ? String((error as any).stderr || '')
+            : error instanceof Error
+                ? error.message
+                : String(error);
+        return { success: false, stderr };
+    }
+}
+
+function runSaplingFallback(cwd: string, args: string[]): string {
+    const [command, ...rest] = args;
+
+    if (command === 'version') {
+        return 'sapling (git fallback)';
+    }
+
+    if (command === 'init') {
+        runGitCommand(cwd, ['init']);
+        mkdirSync(join(cwd, '.sl'), { recursive: true });
+        return '';
+    }
+
+    if (command === 'config') {
+        return runGitCommand(cwd, ['config', ...rest]);
+    }
+
+    if (command === 'root') {
+        return runGitCommand(cwd, ['rev-parse', '--show-toplevel']);
+    }
+
+    if (command === 'status') {
+        return runGitCommand(cwd, ['status', '--porcelain']);
+    }
+
+    if (command === 'whereami') {
+        const head = runGitCommandResult(cwd, ['rev-parse', 'HEAD']);
+        if (!head.success) return '0'.repeat(40);
+        return head.stdout;
+    }
+
+    if (command === 'add') {
+        return runGitCommand(cwd, ['add', ...rest]);
+    }
+
+    if (command === 'commit') {
+        const messageIndex = rest.indexOf('-m');
+        const message = messageIndex >= 0 ? String(rest[messageIndex + 1] ?? '').trim() : '';
+        if (!message) {
+            throw new Error('Missing commit message for sapling git fallback');
+        }
+        const pathArgs = rest.filter((value, index) => {
+            if (value === '-A') return false;
+            if (value === '-m') return false;
+            if (index === messageIndex + 1) return false;
+            return !value.startsWith('-');
+        });
+
+        if (rest.includes('-A')) {
+            if (pathArgs.length > 0) {
+                runGitCommand(cwd, ['add', '-A', '--', ...pathArgs]);
+            } else {
+                runGitCommand(cwd, ['add', '-A']);
+            }
+        } else if (pathArgs.length > 0) {
+            runGitCommand(cwd, ['add', '-A', '--', ...pathArgs]);
+        }
+        return runGitCommand(cwd, ['commit', '-m', message]);
+    }
+
+    if (command === 'diff') {
+        const path = rest.find((value) => value !== '-g' && value !== '--') ?? '';
+        return path ? runGitCommand(cwd, ['diff', '--', path]) : runGitCommand(cwd, ['diff']);
+    }
+
+    if (command === 'show') {
+        const commit = rest.find((value) => value !== '-g' && value !== '--') ?? 'HEAD';
+        return runGitCommand(cwd, ['show', commit]);
+    }
+
+    if (command === 'log') {
+        const limitIndex = rest.indexOf('--limit');
+        const limit = limitIndex >= 0 ? Number(rest[limitIndex + 1] ?? 0) : 0;
+        const maxCount = Number.isFinite(limit) && limit > 0 ? limit : 50;
+        return runGitCommand(cwd, [
+            'log',
+            `--max-count=${maxCount}`,
+            '--format=%H%x00%h%x00%an%x00%ae%x00%ct 0%x00%s%x00%B%x00',
+        ]);
+    }
+
+    if (command === 'backout') {
+        const revIndex = rest.indexOf('--rev');
+        const commit = revIndex >= 0 ? String(rest[revIndex + 1] ?? '').trim() : '';
+        if (!commit) {
+            throw new Error('Missing sapling backout revision for git fallback');
+        }
+        return runGitCommand(cwd, ['revert', '--no-edit', commit]);
+    }
+
+    if (command === 'path') {
+        const addIndex = rest.indexOf('--add');
+        const remoteName = addIndex >= 0 ? String(rest[addIndex + 1] ?? '').trim() : '';
+        const remoteUrl = addIndex >= 0 ? String(rest[addIndex + 2] ?? '').trim() : '';
+        if (!remoteName || !remoteUrl) {
+            throw new Error('Missing sapling path remote definition for git fallback');
+        }
+        const exists = runGitCommandResult(cwd, ['remote']);
+        if (exists.success && exists.stdout.split('\n').includes(remoteName)) {
+            return runGitCommand(cwd, ['remote', 'set-url', remoteName, remoteUrl]);
+        }
+        return runGitCommand(cwd, ['remote', 'add', remoteName, remoteUrl]);
+    }
+
+    if (command === 'fetch') {
+        const remote = rest.find((value) => value !== '--') ?? '';
+        return remote ? runGitCommand(cwd, ['fetch', remote]) : runGitCommand(cwd, ['fetch']);
+    }
+
+    if (command === 'pull') {
+        const destIndex = rest.indexOf('--dest');
+        const dest = destIndex >= 0 ? String(rest[destIndex + 1] ?? '').trim() : '';
+        const remote = rest
+            .filter((value) => value !== '--update' && value !== '--dest' && !value.startsWith('-') && value !== dest)
+            .at(-1) ?? '';
+        if (!remote) {
+            throw new Error('Missing sapling pull remote for git fallback');
+        }
+        if (dest) {
+            const branch = dest.includes('/') ? dest.slice(dest.indexOf('/') + 1) : dest;
+            return runGitCommand(cwd, ['pull', '--ff-only', remote, branch]);
+        }
+        return runGitCommand(cwd, ['pull', '--ff-only', remote]);
+    }
+
+    if (command === 'push') {
+        const toIndex = rest.indexOf('--to');
+        const branch = toIndex >= 0 ? String(rest[toIndex + 1] ?? '').trim() : '';
+        const remote = rest
+            .filter((value) => value !== '--to' && value !== '--create' && !value.startsWith('-') && value !== branch)
+            .at(-1) ?? '';
+        const create = rest.includes('--create');
+        if (!remote || !branch) {
+            throw new Error('Missing sapling push remote or branch for git fallback');
+        }
+        if (create) {
+            return runGitCommand(cwd, ['push', '-u', remote, `HEAD:${branch}`]);
+        }
+        return runGitCommand(cwd, ['push', remote, `HEAD:${branch}`]);
+    }
+
+    throw new Error(`Unsupported sapling fallback command: ${args.join(' ')}`);
+}
 
 type SaplingStatusEntry = {
     path: string;
@@ -149,6 +340,9 @@ function buildSnapshot(cwd: string) {
 }
 
 export function runSapling(cwd: string, args: string[]): string {
+    if (!hasSaplingCli()) {
+        return runSaplingFallback(cwd, args).trim();
+    }
     return execFileSync('sl', args, {
         cwd,
         env: SAPLING_TEST_ENV,
@@ -161,6 +355,22 @@ function runSaplingResult(
     cwd: string,
     args: string[],
 ): { success: true; stdout: string; stderr: string } | { success: false; stderr: string } {
+    if (!hasSaplingCli()) {
+        try {
+            return {
+                success: true,
+                stdout: runSaplingFallback(cwd, args),
+                stderr: '',
+            };
+        } catch (error) {
+            const stderr = error instanceof Error && 'stderr' in error
+                ? String((error as any).stderr || '')
+                : error instanceof Error
+                    ? error.message
+                    : String(error);
+            return { success: false, stderr };
+        }
+    }
     try {
         const stdout = execFileSync('sl', args, {
             cwd,
@@ -566,5 +776,9 @@ export function createSaplingSessionRpcHarness(workspace: string) {
 
 export function initSaplingRepo(cwd: string): void {
     runSapling(cwd, ['init']);
+    // The git-backed fallback path still creates real git commits, so tests need a
+    // deterministic local identity even when Sapling itself is unavailable.
+    runGitCommand(cwd, ['config', 'user.email', 'test@example.com']);
+    runGitCommand(cwd, ['config', 'user.name', 'Test User']);
     runSapling(cwd, ['config', '--local', 'ui.username', 'Test User <test@example.com>']);
 }

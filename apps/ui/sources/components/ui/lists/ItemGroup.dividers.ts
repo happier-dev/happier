@@ -10,6 +10,19 @@ type FragmentProps = {
 };
 
 export function withItemGroupDividers(children: React.ReactNode): React.ReactNode {
+    const stripNonElementChildren = (node: React.ReactNode): React.ReactNode => {
+        return React.Children.map(node, (child) => {
+            if (!React.isValidElement(child)) {
+                return null;
+            }
+            if (child.type === React.Fragment) {
+                const fragment = child as React.ReactElement<FragmentProps>;
+                return React.cloneElement(fragment, {}, stripNonElementChildren(fragment.props.children));
+            }
+            return child;
+        });
+    };
+
     const countNonFragmentElements = (node: React.ReactNode): number => {
         return React.Children.toArray(node).reduce<number>((count, child) => {
             if (!React.isValidElement(child)) {
@@ -24,7 +37,9 @@ export function withItemGroupDividers(children: React.ReactNode): React.ReactNod
     };
 
     const total = countNonFragmentElements(children);
-    if (total === 0) return children;
+    if (total === 0) return null;
+
+    const elementChildren = stripNonElementChildren(children);
 
     let index = 0;
     const apply = (node: React.ReactNode): React.ReactNode => {
@@ -52,5 +67,5 @@ export function withItemGroupDividers(children: React.ReactNode): React.ReactNod
         });
     };
 
-    return apply(children);
+    return apply(elementChildren);
 }

@@ -1,24 +1,39 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { renderScreen } from '@/dev/testkit';
+
 
 type SearchParams = { id?: string; jumpSeq?: string };
 let searchParams: SearchParams = {};
+const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve());
+let hydrateReady = true;
+const routerMock = createSessionRouterMock();
+
+function createSessionRouterMock() {
+    return createExpoRouterMock({
+        params: () => searchParams,
+    });
+}
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        View: (props: any) => React.createElement('View', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                    },
+                    View: (props: any) => React.createElement('View', props, props.children),
+                }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => searchParams,
-}));
+vi.mock('expo-router', async () => {
+    return routerMock.module;
+});
 
 vi.mock('@react-navigation/native', () => ({
     useRoute: () => {
@@ -31,21 +46,39 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
         React.createElement('SessionView', { id, jumpToSeq, paneUrlState }),
 }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => {
+        if (sessionId) {
+            ensureSessionVisibleSpy(sessionId);
+        }
+        return hydrateReady;
+    },
+}));
+
+async function renderSessionScreenTree() {
+    routerMock.state.params = searchParams;
+    const Screen = (await import('@/app/(app)/session/[id]')).default;
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    tree = (await renderScreen(React.createElement(Screen))).tree;
+    await act(async () => {
+        await Promise.resolve();
+    });
+
+    return tree!;
+}
+
 async function renderSessionScreen() {
-  const Screen = (await import('@/app/(app)/session/[id]')).default;
-
-  let tree: renderer.ReactTestRenderer | null = null;
-  await act(async () => {
-    tree = renderer.create(React.createElement(Screen));
-  });
-
-  const sessionView = tree!.root.findByType('SessionView');
-  return { tree: tree!, sessionView };
+    const tree = await renderSessionScreenTree();
+    const sessionView = tree.root.findByType('SessionView');
+    return { tree, sessionView };
 }
 
 describe('session/[id] param parsing', () => {
   afterEach(() => {
     vi.resetModules();
+    ensureSessionVisibleSpy.mockClear();
+    hydrateReady = true;
   });
 
   it('renders the session view using expo-router search params', async () => {
@@ -84,5 +117,29 @@ describe('session/[id] param parsing', () => {
       rightTabId: 'files',
       details: { kind: 'file', path: 'src/app.ts' },
     });
+  });
+
+  it('hydrates sessions for deep links by requesting session visibility', async () => {
+    vi.resetModules();
+    searchParams = { id: 'session-123' };
+    await renderSessionScreen();
+    expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-123');
+  });
+
+  it('still renders SessionView while hydration is pending so deleted-session UI can recover', async () => {
+    vi.resetModules();
+    hydrateReady = false;
+    searchParams = { id: 'session-123' };
+    const { sessionView } = await renderSessionScreen();
+    expect(sessionView.props.id).toBe('session-123');
+  });
+
+  it('renders an invalid-link fallback when session id is missing', async () => {
+        vi.resetModules();
+        searchParams = {};
+        const tree = await renderSessionScreenTree();
+        expect(ensureSessionVisibleSpy).not.toHaveBeenCalled();
+        expect(tree.root.findAllByType('SessionView')).toHaveLength(0);
+        expect(tree.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
   });
 });

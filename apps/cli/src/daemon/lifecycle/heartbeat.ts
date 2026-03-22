@@ -1,15 +1,15 @@
 import { readFileSync } from 'fs';
-import { join } from 'path';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import { readDaemonState, writeDaemonState } from '@/persistence';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { writeSessionExitReport } from '@/daemon/sessionExitReport';
 import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
+import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
+import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 
 import { reportDaemonObservedSessionExit } from '../sessionTermination';
 import type { TrackedSession } from '../types';
@@ -206,25 +206,18 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       // Check if daemon needs update
       // If version on disk is different from the one in package.json - we need to restart
       // BIG if - does this get updated from underneath us on npm upgrade?
-      let projectVersion: string | null = null;
-      try {
-        projectVersion = JSON.parse(
-          readFileSync(join(projectPath(), 'package.json'), 'utf-8'),
-        ).version;
-      } catch (error) {
-        logger.debug('[DAEMON RUN] Failed to read package.json version; skipping self-restart check', error);
-      }
+      const projectVersion = resolveComparableCliVersion({
+        fallbackVersion: currentCliVersion,
+        projectRootPath: projectPath(),
+        readFileSyncImpl: readFileSync,
+      });
 
       if (projectVersion && projectVersion !== currentCliVersion) {
         logger.debug('[DAEMON RUN] Daemon is outdated, triggering self-restart with latest version');
 
         let spawnStarted = false;
         try {
-          const spawned = spawnHappyCLI(['daemon', 'start-sync'], {
-            detached: true,
-            stdio: 'ignore',
-            env: process.env,
-          });
+          const spawned = await spawnDetachedDaemonStartSync();
           spawned.unref?.();
           spawnStarted = true;
         } catch (error) {
@@ -264,6 +257,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           httpPort: controlPort,
           startedAt: fileState.startedAt,
           startedWithCliVersion: fileState.startedWithCliVersion,
+          machineId: fileState.machineId,
           lastHeartbeatAt: Date.now(),
           daemonLogPath: fileState.daemonLogPath,
           controlToken: fileState.controlToken,

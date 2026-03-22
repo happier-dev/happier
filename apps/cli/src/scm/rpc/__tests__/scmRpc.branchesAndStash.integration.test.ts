@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { rmSync } from 'fs';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -81,6 +82,26 @@ describe('git RPC handlers (branches + stash)', () => {
         });
         expect(list.success).toBe(true);
         expect(list.branches?.some((branch: any) => branch.name === 'new-branch' && branch.isCurrent)).toBe(true);
+    });
+
+    it('creates a worktree through SCM worktree RPCs', async () => {
+        const { workspace } = initGitWorkspace();
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const create = await call<any, { cwd?: string; displayName?: string; baseRef?: string }>(
+            RPC_METHODS.SCM_WORKTREE_CREATE,
+            {
+                cwd: '.',
+                displayName: 'feature-auth',
+                baseRef: 'HEAD',
+            },
+        );
+
+        expect(create.success).toBe(true);
+        expect(create.branchName).toBe('feature-auth');
+        expect(create.worktreePath).toContain('/.dev/worktree/feature-auth');
+        expect(git(workspace, ['worktree', 'list', '--porcelain'])).toContain(`worktree ${create.worktreePath}`);
+        expect(git(create.worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('feature-auth');
     });
 
     it('stashes on current branch when switching with stash strategy', async () => {
@@ -176,5 +197,41 @@ describe('git RPC handlers (branches + stash)', () => {
                 branch: 'other>target',
             }),
         );
+    });
+
+    it('removes sibling worktrees through SCM worktree RPCs', async () => {
+        const { workspace } = initGitWorkspace();
+        const worktreePath = join(workspace, '.dev', 'worktree', 'feature-auth');
+        git(workspace, ['worktree', 'add', worktreePath, '-b', 'feature-auth']);
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const remove = await call<any, { cwd?: string; worktreePath: string }>(
+            RPC_METHODS.SCM_WORKTREE_REMOVE,
+            {
+                cwd: '.',
+                worktreePath,
+            },
+        );
+
+        expect(remove.success).toBe(true);
+        expect(git(workspace, ['worktree', 'list', '--porcelain'])).not.toContain(`worktree ${worktreePath}`);
+    });
+
+    it('prunes stale sibling worktrees through SCM worktree RPCs', async () => {
+        const { workspace } = initGitWorkspace();
+        const worktreePath = join(workspace, '.dev', 'worktree', 'feature-prune');
+        git(workspace, ['worktree', 'add', worktreePath, '-b', 'feature-prune']);
+        rmSync(worktreePath, { recursive: true, force: true });
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const prune = await call<any, { cwd?: string }>(
+            RPC_METHODS.SCM_WORKTREE_PRUNE,
+            {
+                cwd: '.',
+            },
+        );
+
+        expect(prune.success).toBe(true);
+        expect(git(workspace, ['worktree', 'list', '--porcelain'])).not.toContain(`worktree ${worktreePath}`);
     });
 });

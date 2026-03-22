@@ -2,14 +2,18 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 
 import { cleanupHookSettingsFile, generateHookSettingsFile } from './generateHookSettings';
 
 describe('generateHookSettingsFile', () => {
   const createdFiles: string[] = [];
   const createdDirs: string[] = [];
-  const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const envKeys = ['CLAUDE_CONFIG_DIR', 'HAPPIER_MANAGED_NODE_BIN', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
 
   afterEach(() => {
     for (const filePath of createdFiles.splice(0, createdFiles.length)) {
@@ -18,8 +22,8 @@ describe('generateHookSettingsFile', () => {
     for (const dirPath of createdDirs.splice(0, createdDirs.length)) {
       rmSync(dirPath, { recursive: true, force: true });
     }
-    if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
   });
 
   it('creates SessionStart hook settings by default', () => {
@@ -47,10 +51,55 @@ describe('generateHookSettingsFile', () => {
     expect(permissionCommand).toContain('test-secret-123');
   });
 
+  it('uses the managed node override for hook forwarders when configured', () => {
+    const overrideDir = mkdtempSync(join(tmpdir(), 'happier-hook-settings-managed-node-'));
+    createdDirs.push(overrideDir);
+    const overridePath = writeExecutableShimSync({
+      dir: overrideDir,
+      fileName: process.platform === 'win32' ? 'managed-node.cmd' : 'managed-node',
+      contents: process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n',
+    });
+    envScope.patch({ HAPPIER_MANAGED_NODE_BIN: overridePath });
+
+    const filePath = generateHookSettingsFile(43126);
+    createdFiles.push(filePath);
+
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as any;
+    const command = parsed.hooks?.SessionStart?.[0]?.hooks?.[0]?.command as string;
+    expect(command).toContain(overridePath);
+  });
+
+  it('fails closed when no JavaScript runtime is available for hook forwarders', async () => {
+    const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-hook-settings-no-runtime-'));
+    createdDirs.push(happyHomeDir);
+    envScope.patch({ HAPPIER_HOME_DIR: happyHomeDir });
+
+    vi.resetModules();
+    vi.doMock('@/runtime/js/resolveJavaScriptRuntimeExecutable', () => ({
+      resolveJavaScriptRuntimeExecutable: () => null,
+    }));
+    vi.doMock('@/utils/runtime', () => ({
+      isBun: () => true,
+    }));
+
+    try {
+      const { generateHookSettingsFile: runtimeResolvedGenerateHookSettingsFile } =
+        (await import('./generateHookSettings')) as typeof import('./generateHookSettings');
+
+      expect(() => runtimeResolvedGenerateHookSettingsFile(43127)).toThrow(
+        /No JavaScript runtime available to execute session hook forwarder/,
+      );
+    } finally {
+      vi.doUnmock('@/runtime/js/resolveJavaScriptRuntimeExecutable');
+      vi.doUnmock('@/utils/runtime');
+      vi.resetModules();
+    }
+  });
+
   it('does not read or copy arbitrary keys from Claude settings.json', () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-claude-settings-'));
     createdDirs.push(dir);
-    process.env.CLAUDE_CONFIG_DIR = dir;
+    envScope.patch({ CLAUDE_CONFIG_DIR: dir });
 
     writeFileSync(join(dir, 'settings.json'), JSON.stringify({
       includeCoAuthoredBy: true,

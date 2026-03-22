@@ -1,27 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { resolveAndroidDevClientInstallStrategy } from './dev_client_android_strategy.mjs';
 
-async function writeStubBin(binDir, name, body = '#!/bin/bash\nexit 0\n') {
-  const p = join(binDir, name);
-  await writeFile(p, body, 'utf-8');
-  if (process.platform !== 'win32') {
-    await chmod(p, 0o755);
-  }
-  return p;
-}
-
 test('resolveAndroidDevClientInstallStrategy prefers expo run:android when Android SDK env is present', async () => {
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-android-strategy-'));
+    const tmp = await mkdtemp(join(tmpdir(), 'hstack-android-strategy-'));
   try {
     const binDir = join(tmp, 'bin');
     await mkdir(binDir, { recursive: true });
-    await writeStubBin(binDir, 'adb');
-    await writeStubBin(binDir, 'java');
+    writeFakeBin({ root: tmp, name: 'adb', content: '#!/bin/bash\nexit 0\n' });
+    writeFakeBin({ root: tmp, name: 'java', content: '#!/bin/bash\nexit 0\n' });
 
     const env = {
       PATH: `${binDir}:/usr/bin:/bin`,
@@ -40,8 +32,8 @@ test('resolveAndroidDevClientInstallStrategy falls back to EAS local (Dagger) wh
   try {
     const binDir = join(tmp, 'bin');
     await mkdir(binDir, { recursive: true });
-    await writeStubBin(binDir, 'dagger');
-    await writeStubBin(binDir, 'docker');
+    writeFakeBin({ root: tmp, name: 'dagger', content: '#!/bin/bash\nexit 0\n' });
+    writeFakeBin({ root: tmp, name: 'docker', content: '#!/bin/bash\nexit 0\n' });
 
     const env = {
       PATH: `${binDir}:/usr/bin:/bin`,

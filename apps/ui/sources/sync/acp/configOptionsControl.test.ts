@@ -32,13 +32,13 @@ describe('computeAcpConfigOptionControls', () => {
 
     it('returns config options with pending state when override differs from currentValue', () => {
         const metadata = createMetadata({
-            acpConfigOptionsV1: {
+            sessionConfigOptionsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
                 configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
             },
-            acpConfigOptionOverridesV1: {
+            sessionConfigOptionOverridesV1: {
                 v: 1,
                 updatedAt: 2,
                 overrides: { telemetry: { updatedAt: 2, value: 'true' } },
@@ -57,21 +57,21 @@ describe('computeAcpConfigOptionControls', () => {
 
     it('hides config options that would duplicate the dedicated Mode/Model controls', () => {
         const metadata = createMetadata({
-            acpSessionModesV1: {
+            sessionModesV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
                 currentModeId: 'build',
                 availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
             },
-            acpSessionModelsV1: {
+            sessionModelsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
                 currentModelId: 'm1',
                 availableModels: [{ id: 'm1', name: 'Model 1' }],
             },
-            acpConfigOptionsV1: {
+            sessionConfigOptionsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
@@ -89,7 +89,7 @@ describe('computeAcpConfigOptionControls', () => {
 
     it('drops malformed options and ignores blank override values', () => {
         const metadata = createMetadata({
-            acpConfigOptionsV1: {
+            sessionConfigOptionsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
@@ -98,7 +98,7 @@ describe('computeAcpConfigOptionControls', () => {
                     { id: 'null_current', name: 'Null current', type: 'string', currentValue: null },
                 ],
             },
-            acpConfigOptionOverridesV1: {
+            sessionConfigOptionOverridesV1: {
                 v: 1,
                 updatedAt: 2,
                 overrides: {
@@ -118,7 +118,7 @@ describe('computeAcpConfigOptionControls', () => {
 
     it('normalizes boolean and numeric values to string ids', () => {
         const metadata = createMetadata({
-            acpConfigOptionsV1: {
+            sessionConfigOptionsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
@@ -127,7 +127,7 @@ describe('computeAcpConfigOptionControls', () => {
                     { id: 'maxRetries', name: 'Max retries', type: 'number', currentValue: 3 },
                 ],
             },
-            acpConfigOptionOverridesV1: {
+            sessionConfigOptionOverridesV1: {
                 v: 1,
                 updatedAt: 2,
                 overrides: {
@@ -152,5 +152,24 @@ describe('computeAcpConfigOptionControls', () => {
                 isPending: true,
             }),
         ]);
+    });
+
+    it('falls back to legacy ACP keys when canonical config keys are absent', () => {
+        const metadata = createMetadata({
+            acpConfigOptionsV1: {
+                v: 1,
+                provider: 'opencode',
+                updatedAt: 1,
+                configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
+            },
+            acpConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 2,
+                overrides: { telemetry: { updatedAt: 2, value: 'true' } },
+            },
+        });
+
+        const res = computeAcpConfigOptionControls({ agentId: 'opencode', metadata });
+        expect(res?.[0]?.effectiveValue).toBe('true');
     });
 });

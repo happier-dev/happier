@@ -1,111 +1,419 @@
-import React from 'react';
-import renderer from 'react-test-renderer';
+import * as React from 'react';
+import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    TextInput: ({ children, ...props }: any) => React.createElement('TextInput', props, children),
-    Platform: {
-        OS: 'web',
-        select: (spec: Record<string, unknown>) =>
-            spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
-    },
+const createModelSpy = vi.fn(() => ({
+    getValue: () => '',
+    setValue: () => {},
+    dispose: () => {},
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+const createEditorSpy = vi.fn(() => ({
+    onDidChangeModelContent: () => ({ dispose: () => {} }),
+    onDidBlurEditorText: () => ({ dispose: () => {} }),
+    updateOptions: () => {},
+    dispose: () => {},
+}));
+
+function assertCallable(value: unknown, label: string): (...args: unknown[]) => unknown {
+    if (typeof value !== 'function') throw new Error(`expected ${label} to be callable`);
+    return value as (...args: unknown[]) => unknown;
+}
+
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    try {
+        return await run();
+    } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    }
+}
+
+function setupMonacoGlobals() {
+    (globalThis as any).window = (globalThis as any).window ?? {};
+    (globalThis as any).document = (globalThis as any).document ?? {};
+
+    (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+        if (typeof onOk === 'function') onOk();
+    };
+    (globalThis as any).window.monaco = {
+        editor: {
+            createModel: createModelSpy,
+            create: createEditorSpy,
+        },
+    };
+}
+
+vi.mock('react-native', async () => {
+    const React = await import('react');
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const View = React.forwardRef((props: any, ref: any) => {
+        React.useImperativeHandle(ref, () => ({}), []);
+        return React.createElement('View', props, props.children);
+    });
+    return createReactNativeWebMock({
+        View,
+    });
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
-            dark: false,
             colors: {
-                divider: '#ddd',
-                text: '#111',
+                divider: '#000',
+                text: '#000',
                 surfaceHighest: '#fff',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'uiFontScale') return 2;
-        return null;
-    },
+    useLocalSetting: () => 1,
 }));
 
+vi.mock('../codeEditorFontMetrics', () => ({
+    resolveCodeEditorFontMetrics: () => ({ fontSize: 12, lineHeight: 14 }),
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    TextInput: (props: any) => React.createElement('TextInput', props),
+}));
+
+import { MonacoEditorSurface } from './MonacoEditorSurface.web';
+import { renderScreen } from '@/dev/testkit';
+
+
 describe('MonacoEditorSurface (web)', () => {
-    it('renders a fallback TextInput when Monaco is unavailable', async () => {
-        const { MonacoEditorSurface } = await import('./MonacoEditorSurface.web');
+    it('boots Monaco even when initially not ready', async () => {
+        setupMonacoGlobals();
 
-        let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <MonacoEditorSurface
-                    resetKey="1"
-                    value="hello"
-                    language="typescript"
-                    onChange={() => {}}
-                />,
-            );
-        });
+        await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange: vi.fn(),
+                    wrapLines: true,
+                    showLineNumbers: true,
+                }));
 
-        const inputs = tree.root.findAllByType('TextInput' as any);
-        expect(inputs).toHaveLength(1);
-        expect(inputs[0]!.props.value).toBe('hello');
-
-        const style = inputs[0]!.props.style;
-        const flattened = Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : style;
-        expect(flattened.fontSize).toBe(26);
+        expect(createModelSpy).toHaveBeenCalledTimes(1);
+        expect(createEditorSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('loads Monaco basic languages contributions when Monaco is available', async () => {
-        const requireCalls: any[] = [];
+    it('debounces onChange when changeDebounceMs is set', async () => {
+        await withFakeTimers(async () => {
+            let currentValue = 'start';
+            let changeHandler: null | ((..._args: any[]) => void) = null;
+            let blurHandler: null | ((..._args: any[]) => void) = null;
 
-        const requireFn: any = (deps: any[], onOk?: any, _onErr?: any) => {
-            requireCalls.push(deps);
-            if (Array.isArray(deps) && deps.includes('vs/editor/editor.main')) {
-                (globalThis as any).window.monaco = {
-                    editor: {
-                        createModel: () => ({ getValue: () => '', setValue: () => {}, dispose: () => {} }),
-                        create: () => ({ onDidChangeModelContent: () => {}, updateOptions: () => {}, dispose: () => {} }),
-                    },
-                };
-            }
+            (globalThis as any).window = (globalThis as any).window ?? {};
+            (globalThis as any).document = (globalThis as any).document ?? {};
+
+            (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+                if (typeof onOk === 'function') onOk();
+            };
+            (globalThis as any).window.monaco = {
+                editor: {
+                    createModel: () => ({
+                        getValue: () => currentValue,
+                        setValue: () => {},
+                        dispose: () => {},
+                    }),
+                    create: () => ({
+                        onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                            changeHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
+                            blurHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        updateOptions: () => {},
+                        dispose: () => {},
+                    }),
+                },
+            };
+
+            const onChange = vi.fn();
+
+            await renderScreen(React.createElement(MonacoEditorSurface, {
+                        resetKey: '1',
+                        value: currentValue,
+                        language: 'markdown',
+                        onChange,
+                        changeDebounceMs: 50,
+                    }));
+
+            const triggerChange = assertCallable(changeHandler, 'change handler');
+
+            currentValue = 'a';
+            triggerChange({});
+            currentValue = 'ab';
+            triggerChange({});
+            currentValue = 'abc';
+            triggerChange({});
+
+            expect(onChange).toHaveBeenCalledTimes(0);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(50);
+            });
+
+            expect(onChange).toHaveBeenCalledTimes(1);
+            expect(onChange).toHaveBeenLastCalledWith('abc');
+        });
+    });
+
+    it('flushes pending debounced change on blur', async () => {
+        await withFakeTimers(async () => {
+            let currentValue = 'start';
+            let changeHandler: null | ((..._args: any[]) => void) = null;
+            let blurHandler: null | ((..._args: any[]) => void) = null;
+
+            (globalThis as any).window = (globalThis as any).window ?? {};
+            (globalThis as any).document = (globalThis as any).document ?? {};
+
+            (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+                if (typeof onOk === 'function') onOk();
+            };
+            (globalThis as any).window.monaco = {
+                editor: {
+                    createModel: () => ({
+                        getValue: () => currentValue,
+                        setValue: () => {},
+                        dispose: () => {},
+                    }),
+                    create: () => ({
+                        onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                            changeHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
+                            blurHandler = handler;
+                            return { dispose: () => {} };
+                        },
+                        updateOptions: () => {},
+                        dispose: () => {},
+                    }),
+                },
+            };
+
+            const onChange = vi.fn();
+
+            await renderScreen(React.createElement(MonacoEditorSurface, {
+                        resetKey: '1',
+                        value: currentValue,
+                        language: 'markdown',
+                        onChange,
+                        changeDebounceMs: 50,
+                    }));
+
+            const triggerChange = assertCallable(changeHandler, 'change handler');
+            const triggerBlur = assertCallable(blurHandler, 'blur handler');
+
+            currentValue = 'blur-me';
+            triggerChange({});
+
+            expect(onChange).toHaveBeenCalledTimes(0);
+
+            await act(async () => {
+                triggerBlur({});
+                await Promise.resolve();
+            });
+
+            expect(onChange).toHaveBeenCalledTimes(1);
+            expect(onChange).toHaveBeenLastCalledWith('blur-me');
+        });
+    });
+
+    it('exposes a stable imperative handle for flush/getValue', async () => {
+        const ref = React.createRef<any>();
+
+        let currentValue = 'hello';
+        let blurHandler: null | (() => void) = null;
+
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
+
+        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
             if (typeof onOk === 'function') onOk();
         };
-        requireFn.config = () => {};
+        (globalThis as any).window.monaco = {
+            editor: {
+                createModel: () => ({
+                    getValue: () => currentValue,
+                    setValue: () => {},
+                    dispose: () => {},
+                }),
+                create: () => ({
+                    onDidChangeModelContent: () => ({ dispose: () => {} }),
+                    onDidBlurEditorText: (handler: () => void) => {
+                        blurHandler = handler;
+                        return { dispose: () => {} };
+                    },
+                    updateOptions: () => {},
+                    dispose: () => {},
+                }),
+            },
+        };
 
-        const previousWindow = (globalThis as any).window;
-        const previousDocument = (globalThis as any).document;
+        const onChange = vi.fn();
 
-        (globalThis as any).window = { require: requireFn };
-        (globalThis as any).document = {};
+        await renderScreen(React.createElement(MonacoEditorSurface, {
+                    ref,
+                    resetKey: '1',
+                    value: currentValue,
+                    language: 'markdown',
+                    onChange,
+                    changeDebounceMs: 50,
+                }));
 
-        const { MonacoEditorSurface } = await import('./MonacoEditorSurface.web');
+        expect(ref.current).toBeTruthy();
+        expect(typeof ref.current.getValue).toBe('function');
+        expect(typeof ref.current.flushPendingChange).toBe('function');
+        expect(ref.current.getValue()).toBe('hello');
 
-        let tree!: renderer.ReactTestRenderer;
-        await renderer.act(async () => {
-            tree = renderer.create(
-                <MonacoEditorSurface
-                    resetKey="1"
-                    value="hello"
-                    language="markdown"
-                    onChange={() => {}}
-                />,
+        currentValue = 'world';
+        expect(ref.current.getValue()).toBe('world');
+
+        // Flush should be safe to call even if no timer is pending; blur handler should exist.
+        await act(async () => {
+            await ref.current.flushPendingChange();
+        });
+        expect(blurHandler).not.toBeNull();
+    });
+
+    it('updates editor readOnly mode when the prop changes after mount', async () => {
+        const updateOptionsSpy = vi.fn();
+
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
+
+        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+            if (typeof onOk === 'function') onOk();
+        };
+        (globalThis as any).window.monaco = {
+            editor: {
+                createModel: () => ({
+                    getValue: () => 'hello',
+                    setValue: () => {},
+                    dispose: () => {},
+                }),
+                create: () => ({
+                    onDidChangeModelContent: () => ({ dispose: () => {} }),
+                    onDidBlurEditorText: () => ({ dispose: () => {} }),
+                    updateOptions: updateOptionsSpy,
+                    dispose: () => {},
+                }),
+            },
+        };
+
+        const onChange = vi.fn();
+        let tree: renderer.ReactTestRenderer;
+
+        tree = (await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange,
+                    readOnly: true,
+                }))).tree;
+
+        updateOptionsSpy.mockClear();
+
+        await act(async () => {
+            tree!.update(
+                React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange,
+                    readOnly: false,
+                }),
             );
             await Promise.resolve();
         });
 
-        // Cleanup
-        renderer.act(() => {
-            tree.unmount();
-        });
-        (globalThis as any).window = previousWindow;
-        (globalThis as any).document = previousDocument;
+        expect(updateOptionsSpy).toHaveBeenCalledWith(expect.objectContaining({ readOnly: false }));
+    });
 
-        const flattened = requireCalls.flat();
-        expect(flattened).toContain('vs/editor/editor.main');
-        expect(flattened).toContain('vs/basic-languages/monaco.contribution');
+    it('boots Monaco with the latest readOnly mode when props change before Monaco resolves', async () => {
+        const createEditorWithLatestOptionsSpy = vi.fn(() => ({
+            onDidChangeModelContent: () => ({ dispose: () => {} }),
+            onDidBlurEditorText: () => ({ dispose: () => {} }),
+            updateOptions: () => {},
+            dispose: () => {},
+        }));
+
+        let resolveEditorMain: null | (() => void) = null;
+
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
+
+        delete (globalThis as any).window.monaco;
+        (globalThis as any).window.require = Object.assign(
+            (deps: any, onOk?: any, _onErr?: any) => {
+                if (Array.isArray(deps) && deps[0] === 'vs/editor/editor.main') {
+                    resolveEditorMain = () => {
+                        (globalThis as any).window.monaco = {
+                            editor: {
+                                createModel: () => ({
+                                    getValue: () => 'hello',
+                                    setValue: () => {},
+                                    dispose: () => {},
+                                }),
+                                create: createEditorWithLatestOptionsSpy,
+                            },
+                        };
+                        if (typeof onOk === 'function') onOk();
+                    };
+                    return;
+                }
+                if (typeof onOk === 'function') onOk();
+            },
+            { config: vi.fn() },
+        );
+
+        const onChange = vi.fn();
+        let tree: renderer.ReactTestRenderer;
+
+        tree = (await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange,
+                    readOnly: true,
+                }))).tree;
+
+        await act(async () => {
+            tree!.update(
+                React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange,
+                    readOnly: false,
+                }),
+            );
+            await Promise.resolve();
+        });
+
+        expect(createEditorWithLatestOptionsSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            if (!resolveEditorMain) throw new Error('expected editor main loader callback');
+            resolveEditorMain();
+            await Promise.resolve();
+        });
+
+        expect(createEditorWithLatestOptionsSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ readOnly: false }),
+        );
     });
 });

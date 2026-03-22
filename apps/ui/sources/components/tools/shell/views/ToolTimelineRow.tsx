@@ -12,7 +12,11 @@ import { ToolInlineBody } from '@/components/tools/shell/views/ToolInlineBody';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
-import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import {
+    isPendingUserActionRequest,
+    resolvePermissionPromptSurface,
+    shouldShowGenericPermissionPromptForRequest,
+} from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { t } from '@/text';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
@@ -21,6 +25,11 @@ import {
     type ToolViewExpandedDetailLevelSetting,
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { ToolTimelineRowHeader } from '@/components/tools/shell/views/timeline/ToolTimelineRowHeader';
+import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
+import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
+import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
+import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { PermissionFooter } from '../permissions/PermissionFooter';
 
 export const ToolTimelineRow = React.memo((props: {
     tool: ToolCall;
@@ -28,10 +37,12 @@ export const ToolTimelineRow = React.memo((props: {
     messages?: Message[];
     sessionId?: string;
     messageId?: string;
+    forcePermissionPromptsInTranscript?: boolean;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
         permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
+        disableToolNavigation?: boolean;
     };
 }) => {
     const { theme } = useUnistyles();
@@ -55,6 +66,8 @@ export const ToolTimelineRow = React.memo((props: {
     const toolViewExpandedDetailLevelByToolName = useSetting('toolViewExpandedDetailLevelByToolName');
     const toolViewTimelineFeedDefaultExpanded = useSetting('toolViewTimelineFeedDefaultExpanded');
     const toolViewTapAction = useSetting('toolViewTapAction');
+    const permissionPromptSurface = useSetting('permissionPromptSurface');
+    const isWaitingForPermission = headerModel.isWaitingForPermission;
     const isPendingUserAction = isPendingUserActionRequest({
         toolName: toolForRendering.name,
         requestKind: toolForRendering.permission?.kind,
@@ -71,13 +84,21 @@ export const ToolTimelineRow = React.memo((props: {
         setIsExpanded(true);
     }, [forceExpandedForPendingUserAction]);
 
-    const handleOpen = React.useCallback(() => {
-        if (props.sessionId && props.messageId) {
-            router.push(`/session/${props.sessionId}/message/${props.messageId}`);
-        }
-    }, [props.messageId, props.sessionId, router]);
+    const routeMessageId = React.useMemo(() => {
+        if (props.interaction?.disableToolNavigation === true) return null;
+        return buildToolCallMessageRouteId({
+            toolId: typeof toolForRendering.id === 'string' ? toolForRendering.id : null,
+            fallbackMessageId: props.messageId,
+        });
+    }, [props.interaction?.disableToolNavigation, props.messageId, toolForRendering.id]);
 
-    const canOpen = !!(props.sessionId && props.messageId);
+    const handleOpen = React.useCallback(() => {
+        if (props.sessionId && routeMessageId) {
+            router.push(`/session/${encodeURIComponent(props.sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+        }
+    }, [props.sessionId, routeMessageId, router]);
+
+    const canOpen = !!(props.sessionId && routeMessageId);
     const primaryTapAction: 'expand' | 'open' =
         toolViewTapAction === 'open' && canOpen ? 'open' : 'expand';
 
@@ -142,9 +163,22 @@ export const ToolTimelineRow = React.memo((props: {
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
     const effectiveIsExpanded = forceExpandedForPendingUserAction ? true : isExpanded;
+
+    const transcriptSidechainId = React.useMemo(() => {
+        return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
+    }, [normalizedToolName, toolForRendering]);
+
+    useEnsureSidechainsLoaded({
+        enabled:
+            effectiveIsExpanded &&
+            isSubAgentTranscriptToolName(normalizedToolName),
+        sessionId: props.sessionId,
+        sidechainIds: [transcriptSidechainId],
+    });
+
     const effectiveDetailLevel = effectiveIsExpanded ? expandedDetailLevel : collapsedDetailLevel;
     const inlineDetailLevel =
-        normalizedToolName === 'Task' && effectiveDetailLevel === 'full'
+        isGenericSubAgentToolName(normalizedToolName) && effectiveDetailLevel === 'full'
             ? 'summary'
             : effectiveDetailLevel;
 
@@ -163,7 +197,7 @@ export const ToolTimelineRow = React.memo((props: {
     }, [headerModel.icon, iconSize, props.metadata, props.tool, theme.colors.text, theme.colors.textSecondary]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
-    const showTaskRunningIndicator = normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun';
+    const showTaskRunningIndicator = isSubAgentTranscriptToolName(normalizedToolName);
     const headerRightElement =
         headerActions ??
         (showTaskRunningIndicator && toolForRendering.state === 'running' ? <ActivityIndicator size="small" /> : null);
@@ -193,11 +227,35 @@ export const ToolTimelineRow = React.memo((props: {
 
     const actionRequiredStatusText = isPendingUserAction ? t('status.actionRequired') : null;
     const headerStatusText = effectiveDetailLevel === 'title' ? null : (actionRequiredStatusText ?? statusText);
+    const resolvedPermissionPromptSurface = props.forcePermissionPromptsInTranscript
+        ? 'transcript'
+        : resolvePermissionPromptSurface(permissionPromptSurface);
+    const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
+    const permissionFooter =
+        showPermissionPromptsInTranscript &&
+        toolForRendering.permission &&
+        props.sessionId &&
+        isWaitingForPermission &&
+        shouldShowGenericPermissionPromptForRequest({
+            toolName: toolForRendering.name,
+            requestKind: toolForRendering.permission.kind,
+        }) ? (
+            <PermissionFooter
+                permission={toolForRendering.permission}
+                sessionId={props.sessionId}
+                toolName={normalizedToolName}
+                toolInput={toolForRendering.input}
+                metadata={props.metadata}
+                canApprovePermissions={props.interaction?.canApprovePermissions ?? true}
+                disabledReason={props.interaction?.permissionDisabledReason}
+            />
+        ) : null;
 
     return (
         <View style={styles.container}>
             <ToolTimelineRowHeader
                 testID="tool-timeline-row"
+                openActionTestID="tool-timeline-row-open"
                 density={density}
                 icon={icon}
                 title={title}
@@ -228,6 +286,8 @@ export const ToolTimelineRow = React.memo((props: {
                     </View>
                 </TranscriptCollapsible>
             )}
+
+            {permissionFooter}
         </View>
     );
 });

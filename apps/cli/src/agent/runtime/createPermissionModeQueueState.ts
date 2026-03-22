@@ -21,17 +21,20 @@ export function createPermissionModeQueueState(opts: {
    */
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
+  messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   getCurrentPermissionModeUpdatedAt: () => number;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
   const resolveQueueKey = opts.resolvePermissionModeQueueKey;
-  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>(
+  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>(
     (mode) =>
       hashObject({
         permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
+        appendSystemPrompt: Object.prototype.hasOwnProperty.call(mode, 'appendSystemPrompt')
+          ? (mode.appendSystemPrompt ?? null)
+          : '__unset__',
       }),
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),

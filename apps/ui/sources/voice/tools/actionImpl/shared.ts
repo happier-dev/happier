@@ -1,5 +1,7 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
 export type VoiceUpdatesPrefs = Readonly<{
   snippetsMaxMessages: number;
@@ -13,14 +15,15 @@ export type VoiceUpdatesPrefs = Readonly<{
 
 export function resolveVoiceUpdatesPrefs(settings: Settings): VoiceUpdatesPrefs {
   const voice: any = (settings as any)?.voice ?? {};
+  const privacy = readVoicePrivacySettings(settings);
   return {
     snippetsMaxMessages: voice?.ui?.updates?.snippetsMaxMessages ?? 3,
-    shareRecentMessages: voice?.privacy?.shareRecentMessages !== false,
+    shareRecentMessages: privacy.shareRecentMessages,
     otherSessionsSnippetsMode: voice?.ui?.updates?.otherSessionsSnippetsMode ?? 'on_demand_only',
     includeUserMessagesInSnippets: voice?.ui?.updates?.includeUserMessagesInSnippets === true,
-    shareToolNames: voice?.privacy?.shareToolNames !== false,
-    shareToolArgs: voice?.privacy?.shareToolArgs !== false,
-    shareFilePaths: voice?.privacy?.shareFilePaths !== false,
+    shareToolNames: privacy.shareToolNames,
+    shareToolArgs: privacy.shareToolArgs,
+    shareFilePaths: privacy.shareFilePaths,
   } as const;
 }
 
@@ -37,32 +40,18 @@ export function normalizeNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function redactFilePathsInString(value: string): string {
-  // Conservative redaction for absolute paths (opt-out via privacy settings).
-  return value
-    .replace(/\/Users\/[^\s"'<>]+/g, '<path_redacted>')
-    .replace(/\/home\/[^\s"'<>]+/g, '<path_redacted>')
-    .replace(/\/tmp\/[^\s"'<>]+/g, '<path_redacted>')
-    .replace(/[A-Za-z]:\\\\[^\s"'<>]+/g, '<path_redacted>')
-    .replace(/\\\\\\\\[^\s"'<>]+/g, '<path_redacted>');
-}
+export function resolveVoiceMachineLabel(machine: unknown): string {
+  const record = machine && typeof machine === 'object' ? (machine as Record<string, unknown>) : null;
+  const metadata = record?.metadata && typeof record.metadata === 'object'
+    ? (record.metadata as Record<string, unknown>)
+    : null;
 
-export function redactFilePathsDeep(input: unknown): unknown {
-  const seen = new Set<object>();
-  const walk = (value: unknown, depth: number): unknown => {
-    if (depth > 20) return value;
-    if (typeof value === 'string') return redactFilePathsInString(value);
-    if (!value || typeof value !== 'object') return value;
-    if (seen.has(value as object)) return null;
-    seen.add(value as object);
-    if (Array.isArray(value)) return value.map((v) => walk(v, depth + 1));
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = walk(v, depth + 1);
-    }
-    return out;
-  };
-  return walk(input, 0);
+  return (
+    normalizeNonEmptyString(metadata?.displayName)
+    ?? normalizeNonEmptyString(metadata?.host)
+    ?? normalizeNonEmptyString(record?.id)
+    ?? 'machine'
+  );
 }
 
 export type CursorKey = { updatedAt: number; id: string };
@@ -99,11 +88,11 @@ export function toRoleAndText(
   prefs: Readonly<{ shareToolNames: boolean; shareToolArgs?: boolean; shareFilePaths?: boolean }>,
 ): { role: 'assistant' | 'user' | 'tool' | null; text: string | null } {
   if (message.kind === 'agent-text') {
-    const text = prefs.shareFilePaths === false ? redactFilePathsInString(message.text) : message.text;
+    const text = prefs.shareFilePaths === false ? redactVoicePathLikeString(message.text) : message.text;
     return { role: 'assistant', text };
   }
   if (message.kind === 'user-text') {
-    const text = prefs.shareFilePaths === false ? redactFilePathsInString(message.text) : message.text;
+    const text = prefs.shareFilePaths === false ? redactVoicePathLikeString(message.text) : message.text;
     return { role: 'user', text };
   }
   if (message.kind === 'tool-call') {
@@ -111,9 +100,8 @@ export function toRoleAndText(
     const desc = message.tool.description ? ` - ${message.tool.description}` : '';
     const base = `Tool: ${message.tool.name}${desc}`;
     if (!prefs.shareToolArgs) return { role: 'tool', text: base };
-    const args = prefs.shareFilePaths === false ? redactFilePathsDeep(message.tool.input ?? null) : (message.tool.input ?? null);
+    const args = prefs.shareFilePaths === false ? redactVoicePathLikeData(message.tool.input ?? null) : (message.tool.input ?? null);
     return { role: 'tool', text: `${base}\nArgs: ${JSON.stringify(args)}` };
   }
   return { role: null, text: null };
 }
-

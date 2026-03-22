@@ -1,57 +1,125 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { createRouterMock, enableReactActEnvironment, PICKER_NAV_STATE, PICKER_THEME_COLORS } from './testHarness';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    enableReactActEnvironment,
+    PICKER_NAV_STATE,
+} from './testHarness';
+import { createMissingRequiredSecretScenario } from './profileSecretRequirementTestHarness';
+import type { ProfilesListProps } from '@/components/profiles/ProfilesList';
 
 enableReactActEnvironment();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+type CapturedProfilesListProps = Pick<ProfilesListProps, 'onPressProfile'>;
+
+const modalMockRef = vi.hoisted(() => ({
+    current: null as {
+        module: unknown;
+        spies: {
+            show: ReturnType<typeof vi.fn>;
+            alert: ReturnType<typeof vi.fn>;
+            prompt: ReturnType<typeof vi.fn>;
+            confirm: ReturnType<typeof vi.fn>;
+        };
+    } | null,
 }));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-    Pressable: 'Pressable',
-    View: 'View',
-}));
+const missingRequiredSecretScenario = createMissingRequiredSecretScenario();
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+let capturedProfilesListProps: CapturedProfilesListProps | null = null;
 
-const routerMock = createRouterMock();
+function captureProfilesListProps(props: CapturedProfilesListProps) {
+    capturedProfilesListProps = props;
+}
 
-vi.mock('expo-router', () => ({
-    Stack: { Screen: () => null },
-    useRouter: () => routerMock,
-    useNavigation: () => ({ getState: () => PICKER_NAV_STATE, dispatch: vi.fn(), setParams: vi.fn() }),
-    useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1' }),
-}));
+function resetProfileSecretRequirementHarness() {
+    capturedProfilesListProps = null;
+    modalMockRef.current?.spies.show.mockReset();
+    modalMockRef.current?.spies.alert.mockReset();
+    modalMockRef.current?.spies.prompt.mockReset();
+    modalMockRef.current?.spies.confirm.mockReset();
+}
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: PICKER_THEME_COLORS } }),
-    StyleSheet: { create: () => ({}) },
-}));
+function getCapturedProfilePressHandler() {
+    const onPressProfile = capturedProfilesListProps?.onPressProfile;
+    if (!onPressProfile) {
+        throw new Error('Expected ProfilesList onPressProfile handler');
+    }
+    return onPressProfile;
+}
 
-const modalShowMock = vi.fn();
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), show: (...args: readonly unknown[]) => modalShowMock(...args) },
-}));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'useProfiles') return true;
-        if (key === 'experiments') return false;
-        return false;
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: { OS: 'ios' },
+    });
+});
+
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+
+const { routerMock, navigationMock } = vi.hoisted(() => ({
+    routerMock: {
+        push: vi.fn(),
+        back: vi.fn(),
+        replace: vi.fn(),
+        setParams: vi.fn(),
     },
-    useSettingMutable: (key: string) => {
-        if (key === 'secrets') return [[], vi.fn()];
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()];
-        if (key === 'profiles') return [[], vi.fn()];
-        if (key === 'favoriteProfiles') return [[], vi.fn()];
-        return [[], vi.fn()];
+    navigationMock: {
+        dispatch: vi.fn(),
+        getState: () => ({
+            index: 1,
+            routes: [{ key: 'a' }, { key: 'b' }],
+        }),
+        goBack: vi.fn(),
+        setParams: vi.fn(),
     },
 }));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const module = createExpoRouterMock({
+        navigation: navigationMock,
+        params: { selectedId: '', machineId: 'm1' },
+        router: {
+            push: routerMock.push,
+            back: routerMock.back,
+            replace: routerMock.replace,
+            setParams: routerMock.setParams,
+        },
+    }).module;
+
+    return {
+        ...module,
+        useNavigation: () => navigationMock,
+    };
+});
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMockRef.current = modalMock;
+    return modalMock.module;
+});
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (await import('@/dev/testkit/mocks/storage')).createUseSettingMock({
+                values: {
+                    useProfiles: true,
+                    experiments: false,
+                },
+            }),
+            useSettingMutable: () => [[], vi.fn()],
+        },
+    }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
@@ -61,45 +129,41 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
 }));
 
-type ProfileCompatibility = {
-    claude: boolean;
-    codex: boolean;
-    gemini: boolean;
-};
-type ProfileRow = {
-    id: string;
-    name: string;
-    isBuiltIn: boolean;
-    compatibility: ProfileCompatibility;
-};
-type CapturedProfilesListProps = {
-    onPressProfile?: (profile: ProfileRow) => Promise<void> | void;
-};
-
-let capturedProfilesListProps: CapturedProfilesListProps | null = null;
-vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: (props: CapturedProfilesListProps) => {
-        capturedProfilesListProps = props;
-        return null;
-    },
-}));
+vi.mock('@/components/profiles/ProfilesList', async () => {
+    return {
+        ProfilesList: (props: ProfilesListProps) => {
+            captureProfilesListProps({ onPressProfile: props.onPressProfile });
+            return null;
+        },
+    };
+});
 
 vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
-    getRequiredSecretEnvVarNames: () => ['DEESEEK_AUTH_TOKEN'],
+    getRequiredSecretEnvVarNames: () => [...missingRequiredSecretScenario.secretEnvVarNames],
 }));
 
 vi.mock('@/sync/ops', () => ({
     machinePreviewEnv: vi.fn(async () => ({ supported: false })),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    getProfileEnvironmentVariables: () => ({}),
-}));
+vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
+    return {
+        ...actual,
+        getProfileEnvironmentVariables: () => ({}),
+    };
+});
 
 vi.mock('@/utils/secrets/secretSatisfaction', () => ({
     getSecretSatisfaction: () => ({
         isSatisfied: false,
-        items: [{ envVarName: 'DEESEEK_AUTH_TOKEN', required: true, isSatisfied: false }],
+        items: [
+            {
+                envVarName: missingRequiredSecretScenario.secretEnvVarName,
+                required: true,
+                isSatisfied: false,
+            },
+        ],
     }),
 }));
 
@@ -117,40 +181,36 @@ vi.mock('@/components/secrets/requirements', () => ({
 }));
 
 describe('ProfilePickerScreen (native secret requirement)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('navigates to the secret requirement screen when required secrets are missing', async () => {
         const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
-        capturedProfilesListProps = null;
+        resetProfileSecretRequirementHarness();
         routerMock.push.mockClear();
-        modalShowMock.mockClear();
-
-        await act(async () => {
-            renderer.create(React.createElement(ProfilePickerScreen));
+        navigationMock.getState = () => ({
+            index: PICKER_NAV_STATE.index,
+            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
         });
 
-        const profilesListProps = capturedProfilesListProps as CapturedProfilesListProps | null;
-        const onPressProfile = profilesListProps?.onPressProfile;
-        if (!onPressProfile) {
-            throw new Error('Expected ProfilesList onPressProfile handler');
-        }
+        await renderScreen(React.createElement(ProfilePickerScreen));
+
+        const onPressProfile = getCapturedProfilePressHandler();
 
         await act(async () => {
-            await onPressProfile({
-                id: 'deepseek',
-                name: 'DeepSeek',
-                isBuiltIn: true,
-                compatibility: { claude: true, codex: true, gemini: true },
-            });
+            await onPressProfile(missingRequiredSecretScenario.profile);
         });
 
-        expect(modalShowMock).not.toHaveBeenCalled();
+        expect(modalMockRef.current?.spies.show).not.toHaveBeenCalled();
         expect(routerMock.push).toHaveBeenCalledTimes(1);
         expect(routerMock.push).toHaveBeenCalledWith({
             pathname: '/new/pick/secret-requirement',
             params: expect.objectContaining({
                 profileId: 'deepseek',
                 machineId: 'm1',
-                secretEnvVarName: 'DEESEEK_AUTH_TOKEN',
-                secretEnvVarNames: 'DEESEEK_AUTH_TOKEN',
+                secretEnvVarName: missingRequiredSecretScenario.secretEnvVarName,
+                secretEnvVarNames: missingRequiredSecretScenario.secretEnvVarNames.join(','),
                 revertOnCancel: '0',
             }),
         });

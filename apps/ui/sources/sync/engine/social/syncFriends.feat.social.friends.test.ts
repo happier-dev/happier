@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 

@@ -5,8 +5,14 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { repoRootDir } from '../paths';
+import {
+  inspectOwnedProcess,
+  registerProcessOwnershipLease,
+  resolveProcessOwnershipLeasesDir,
+  sweepProcessOwnershipLeases,
+} from '../process/processOwnershipLease';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
-import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { terminateProcessTreeByPid } from '../process/processTree';
 
 export type DaemonState = {
@@ -109,6 +115,24 @@ type ProcessInspectionResult =
   | { ok: true; command: string; looksLikeDaemon: boolean }
   | { ok: false; reason: 'ps_missing' | 'inspect_failed' };
 
+function looksLikeDaemonCommand(command: string): boolean {
+  const normalized = command.replaceAll('\\', '/');
+  const hasStartSync = normalized.includes('daemon start-sync');
+  const hasCliEntrypoint =
+    normalized.includes('apps/cli/dist/index.mjs') ||
+    normalized.includes('apps/cli/dist/index.js') ||
+    (normalized.includes('apps/cli') && normalized.includes('dist/index.mjs')) ||
+    (normalized.includes('apps/cli') && normalized.includes('dist/index.js')) ||
+    normalized.includes('dist/index.mjs') ||
+    normalized.includes('dist/index.js') ||
+    normalized.includes('happier') && normalized.includes('daemon start-sync') && normalized.includes('dist/index');
+  return hasStartSync && hasCliEntrypoint;
+}
+
+function looksLikeTestDaemonLeaseCommand(command: string): boolean {
+  return command.replaceAll('\\', '/').includes('daemon start-sync');
+}
+
 function inspectProcess(pid: number): ProcessInspectionResult {
   try {
     // Use wide output to avoid truncating long monorepo entrypoint paths. Truncation can cause
@@ -120,20 +144,10 @@ function inspectProcess(pid: number): ProcessInspectionResult {
     if (res.status !== 0) return { ok: false, reason: 'inspect_failed' };
     const command = String(res.stdout || '').trim();
     if (!command) return { ok: false, reason: 'inspect_failed' };
-    const normalized = command.replaceAll('\\', '/');
-    const hasStartSync = normalized.includes('daemon start-sync');
-    const hasCliEntrypoint =
-      normalized.includes('apps/cli/dist/index.mjs') ||
-      normalized.includes('apps/cli/dist/index.js') ||
-      (normalized.includes('apps/cli') && normalized.includes('dist/index.mjs')) ||
-      (normalized.includes('apps/cli') && normalized.includes('dist/index.js')) ||
-      normalized.includes('dist/index.mjs') ||
-      normalized.includes('dist/index.js') ||
-      normalized.includes('happier') && normalized.includes('daemon start-sync') && normalized.includes('dist/index');
     return {
       ok: true,
       command,
-      looksLikeDaemon: hasStartSync && hasCliEntrypoint,
+      looksLikeDaemon: looksLikeDaemonCommand(command),
     };
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
@@ -344,7 +358,12 @@ export async function stopDaemonFromHomeDir(
 
   const gracefulTimeoutMs = opts?.gracefulTimeoutMs ?? 30_000;
   const exited = await waitForPidExit(state.pid, gracefulTimeoutMs);
-  if (exited) return;
+  if (exited) {
+    // A daemon can still leave detached daemon-owned session processes behind even after
+    // acknowledging /stop and exiting cleanly. Sweep marker-owned leftovers on the clean path too.
+    await stopDaemonLeakedSessionsFromMarkersBestEffort(happyHomeDir).catch(() => {});
+    return;
+  }
 
   const hardKill = opts?.hardKill ?? true;
   if (!hardKill) return;
@@ -364,6 +383,10 @@ export type StartedDaemon = {
   stop: () => Promise<void>;
 };
 
+export function resolveTestDaemonOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
+  return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'test-daemon' });
+}
+
 export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sanitized = { ...env };
   delete sanitized.TMUX;
@@ -375,25 +398,62 @@ export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.Proces
   delete sanitized.HAPPY_SESSION_ATTACH_FILE;
   delete sanitized.HAPPIER_STACK_TOOL_TRACE_FILE;
   delete sanitized.HAPPY_STACK_TOOL_TRACE_FILE;
+  if (sanitized.HAPPIER_DISABLE_CAFFEINATE === undefined || sanitized.HAPPIER_DISABLE_CAFFEINATE === '') {
+    sanitized.HAPPIER_DISABLE_CAFFEINATE = '1';
+  }
+  if (sanitized.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED === undefined || sanitized.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED === '') {
+    sanitized.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED = '0';
+  }
   return sanitized;
+}
+
+function resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec: Readonly<{ command: string; args: string[] }>): NodeJS.ProcessEnv {
+  if (cliLaunchSpec.command !== process.execPath) return {};
+  if (cliLaunchSpec.args.length !== 1) return {};
+  const entrypoint = cliLaunchSpec.args[0]?.trim() ?? '';
+  if (!entrypoint.endsWith('.mjs')) return {};
+  return {
+    HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+    HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+  };
 }
 
 export async function startTestDaemon(params: {
   testDir: string;
   happyHomeDir: string;
   env: NodeJS.ProcessEnv;
+  startupTimeoutMs?: number;
 }): Promise<StartedDaemon> {
-  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+  const currentOwnerInspection = inspectOwnedProcess(process.pid);
+  if (currentOwnerInspection.ok) {
+    await sweepProcessOwnershipLeases({
+      rootDir: repoRootDir(),
+      leaseKind: 'test-daemon',
+      currentOwnerPid: process.pid,
+      currentOwnerStartTime: currentOwnerInspection.startTime,
+      isOwnedProcessCommand: (command) => looksLikeTestDaemonLeaseCommand(command),
+    });
+  }
+
+  const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
-    { snapshotDir: resolve(params.testDir, 'cli-dist') },
+    {
+      snapshotDir: resolve(params.testDir, 'cli-dist'),
+      skipDistIntegrityCheck: true,
+      skipSourceFreshnessCheck: true,
+    },
   );
 
+  await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
+
   const proc = spawnLoggedProcess({
-    command: process.execPath,
-    args: [cliDistEntrypoint, 'daemon', 'start-sync'],
-    cwd: repoRootDir(),
+    command: cliLaunchSpec.command,
+    args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
+    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
       ...sanitizeDaemonEnvForSpawn(params.env),
+      ...(cliLaunchSpec.env ?? {}),
+      ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
       CI: '1',
       HAPPIER_HOME_DIR: params.happyHomeDir,
     },
@@ -401,10 +461,22 @@ export async function startTestDaemon(params: {
     stderrPath: resolve(params.testDir, 'daemon.stderr.log'),
   });
 
+  await registerProcessOwnershipLease({
+    rootDir: repoRootDir(),
+    leaseKind: 'test-daemon',
+    child: proc.child,
+    ownerPid: process.pid,
+    ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+    metadata: {
+      happyHomeDir: params.happyHomeDir,
+      testDir: params.testDir,
+    },
+  });
+
   let state: DaemonState;
   try {
     state = await Promise.race([
-      waitForDaemonState(params.happyHomeDir, { timeoutMs: 45_000 }),
+      waitForDaemonState(params.happyHomeDir, { timeoutMs: params.startupTimeoutMs ?? 45_000 }),
       new Promise<never>((_, reject) => {
         proc.child.once('exit', (code, signal) => {
           const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;

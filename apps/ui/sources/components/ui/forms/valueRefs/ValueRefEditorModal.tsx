@@ -102,7 +102,7 @@ export type ValueRefEditorModalProps = CustomModalInjectedProps & Readonly<{
 export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const [liveSecrets, setLiveSecrets] = useSettingMutable('secrets');
+    const [liveSecrets] = useSettingMutable('secrets');
 
     const initialSource: ValueRefSource = props.initialValueRef.t === 'savedSecret' ? 'savedSecret' : 'literal';
 
@@ -144,14 +144,12 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
         Modal.show({
             component: SavedSecretPickerModal,
             props: {
-                secrets: liveSecrets,
-                onChangeSecrets: setLiveSecrets,
                 selectedId: secretId,
                 onSelectId: (id) => setSecretId(id),
             },
             closeOnBackdrop: true,
         });
-    }, [liveSecrets, secretId, setLiveSecrets]);
+    }, [secretId]);
 
     const onSave = React.useCallback(() => {
         if (!keyValid) {

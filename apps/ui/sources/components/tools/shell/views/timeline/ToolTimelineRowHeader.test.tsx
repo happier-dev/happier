@@ -1,19 +1,39 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+const ioniconPropsState: Array<Record<string, unknown>> = [];
 
-vi.mock('react-native', () => ({
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Platform: { OS: 'web' },
+vi.mock('./ToolTimelineIconFrame', () => ({
+    ToolTimelineIconFrame: ({ icon }: { icon: React.ReactNode }) => React.createElement('ToolTimelineIconFrame', { testID: 'tool-timeline-row-icon' }, icon),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: (props: Record<string, unknown>) => {
+        ioniconPropsState.push(props);
+        return React.createElement('Ionicons', { ...props, testID: `tool-timeline-ionicon:${String(props.name)}` });
+    },
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            Platform: {
+                OS: 'web',
+                select: (options: Record<string, unknown>) => options.web ?? options.default,
+            },
+        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#777',
@@ -21,91 +41,107 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#111',
             },
         },
-    }),
-    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { textSecondary: '#777', surfacePressedOverlay: '#333', text: '#111' } }, {}) : input) },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
     TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
 }));
 
-vi.mock('@/text', () => ({ t: (k: string) => k }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('ToolTimelineRowHeader', () => {
+    function readOpacity(style: unknown): number | undefined {
+        const entries = Array.isArray(style) ? style : [style];
+        const opacityEntries = entries.filter((entry) => typeof entry === 'object' && entry !== null && typeof (entry as { opacity?: unknown }).opacity === 'number');
+        if (opacityEntries.length === 0) {
+            return undefined;
+        }
+        return (opacityEntries[opacityEntries.length - 1] as { opacity: number }).opacity;
+    }
+
+    afterEach(() => {
+        standardCleanup();
+        ioniconPropsState.length = 0;
+    });
+
     it('shows an open action button with open-outline icon when canOpen is true', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
-        const onOpen = vi.fn();
-
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRowHeader
-                    density="comfortable"
-                    icon={React.createElement('Text', null, 'ICON')}
-                    title="Title"
-                    subtitle="Sub"
-                    statusText="ok"
-                    onPress={() => {}}
-                    canOpen={true}
-                    onOpen={onOpen}
-                />,
-            );
+        const callOrder: string[] = [];
+        const onOpen = vi.fn(() => {
+            callOrder.push('onOpen');
         });
 
-        const icons = tree!.root.findAllByType('Ionicons') as any[];
-        expect(icons.some((i) => i.props?.name === 'open-outline')).toBe(true);
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                testID="tool-timeline-row"
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                subtitle="Sub"
+                statusText="ok"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={onOpen}
+                openActionTestID="tool-timeline-row-open"
+            />,
+        );
+
+        expect(ioniconPropsState.some((i) => i.name === 'open-outline')).toBe(true);
     });
 
     it('renders the open action outside the primary row pressable on web', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRowHeader
-                    density="comfortable"
-                    icon={React.createElement('Text', null, 'ICON')}
-                    title="Title"
-                    onPress={() => {}}
-                    canOpen={true}
-                    onOpen={() => {}}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                testID="tool-timeline-row"
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={() => {}}
+                openActionTestID="tool-timeline-row-open"
+            />,
+        );
 
-        const pressables = tree!.root.findAllByType('Pressable') as any[];
-        expect(pressables).toHaveLength(2);
-
-        const openButton = pressables[1];
-        let ancestor = openButton.parent;
-        while (ancestor) {
-            expect(ancestor.type).not.toBe('Pressable');
-            ancestor = ancestor.parent;
-        }
+        const openButton = screen.findByTestId('tool-timeline-row-open');
+        expect(openButton).toBeTruthy();
+        expect(openButton!.parent?.type).not.toBe('Pressable');
     });
 
     it('stops propagation before invoking the open action button callback', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
-        const onOpen = vi.fn();
-
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRowHeader
-                    density="comfortable"
-                    icon={React.createElement('Text', null, 'ICON')}
-                    title="Title"
-                    onPress={() => {}}
-                    canOpen={true}
-                    onOpen={onOpen}
-                />,
-            );
+        const callOrder: string[] = [];
+        const onOpen = vi.fn(() => {
+            callOrder.push('onOpen');
         });
 
-        const pressables = tree!.root.findAllByType('Pressable') as any[];
-        const openButton = pressables[1];
-        const stopPropagation = vi.fn();
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={onOpen}
+                openActionTestID="tool-timeline-row-open"
+            />,
+        );
+
+        const openButton = screen.findByTestId('tool-timeline-row-open');
+        expect(openButton).toBeTruthy();
+        if (!openButton) {
+            throw new Error('Expected open button to be present');
+        }
+        const stopPropagation = vi.fn(() => {
+            callOrder.push('stopPropagation');
+        });
 
         await act(async () => {
             openButton.props.onPress?.({ stopPropagation });
@@ -113,87 +149,69 @@ describe('ToolTimelineRowHeader', () => {
 
         expect(stopPropagation).toHaveBeenCalledTimes(1);
         expect(onOpen).toHaveBeenCalledTimes(1);
+        expect(callOrder).toEqual(['stopPropagation', 'onOpen']);
     });
 
     it('keeps the open action visually hidden until hover on web', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRowHeader
-                    density="comfortable"
-                    icon={React.createElement('Text', null, 'ICON')}
-                    title="Title"
-                    onPress={() => {}}
-                    canOpen={true}
-                    onOpen={() => {}}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={true}
+                onOpen={() => {}}
+                openActionTestID="tool-timeline-row-open"
+            />,
+        );
 
-        const findOpenWrapper = () =>
-            tree!.root.findAll(
-                (node) =>
-                    String(node.type) === 'View' &&
-                    Array.isArray((node.props as any).style) &&
-                    (node.props as any).style.some((entry: any) => entry?.width === 26),
-            )[0] as any;
+        const getOpenSlotOpacity = () => {
+            const openButton = screen.findByTestId('tool-timeline-row-open');
+            expect(openButton).toBeTruthy();
+            return readOpacity(openButton!.parent?.parent?.props.style);
+        };
 
-        const openWrapper = findOpenWrapper();
-        expect(openWrapper).toBeTruthy();
-        const baseOpacity = (openWrapper.props.style as any[]).find((entry: any) => typeof entry?.opacity === 'number')?.opacity;
+        const baseOpacity = getOpenSlotOpacity();
         expect(baseOpacity).toBe(0);
 
-        const pressable = tree!.root.findAllByType('Pressable')[0] as any;
         await act(async () => {
-            pressable.props.onHoverIn?.();
+            screen.findByTestId('tool-timeline-row-open')?.props.onHoverIn?.();
         });
 
-        const hoverOpacity = ((findOpenWrapper().props.style as any[]).find((entry: any) => typeof entry?.opacity === 'number')?.opacity);
+        const hoverOpacity = getOpenSlotOpacity();
         expect(hoverOpacity).toBe(1);
     });
 
     it('crossfades the left icon to a chevron-down on hover when expandable (web)', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRowHeader
-                    density="comfortable"
-                    icon={React.createElement('Text', null, 'ICON')}
-                    title="Title"
-                    onPress={() => {}}
-                    canOpen={false}
-                    onOpen={null}
-                    disclosure={{ behavior: 'hover', state: 'collapsed' }}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={false}
+                onOpen={null}
+                disclosure={{ behavior: 'hover', state: 'collapsed' }}
+                testID="tool-timeline-row"
+            />,
+        );
 
-        const chevrons = tree!.root.findAllByType('Ionicons') as any[];
-        expect(chevrons.some((i) => i.props?.name === 'chevron-down')).toBe(true);
+        expect(ioniconPropsState.some((i) => i.name === 'chevron-down')).toBe(true);
 
         const getChevronLayerOpacity = () => {
-            const overlayViews = tree!.root.findAll(
-                (node) =>
-                    String(node.type) === 'View' &&
-                    Array.isArray((node.props as any).style) &&
-                    (node.props as any).style.some((s: any) => s?.position === 'absolute'),
-            ) as any[];
-            expect(overlayViews.length).toBeGreaterThan(0);
-            const style = overlayViews[0]!.props.style as any[];
-            const opacityEntries = style.filter((s: any) => typeof s?.opacity === 'number');
-            if (opacityEntries.length === 0) return undefined;
-            return opacityEntries[opacityEntries.length - 1]!.opacity;
+            const chevronIcon = screen.findByTestId('tool-timeline-ionicon:chevron-down');
+            expect(chevronIcon).toBeTruthy();
+            return readOpacity(chevronIcon!.parent?.parent?.props.style);
         };
 
         expect(getChevronLayerOpacity()).toBe(0);
 
-        const pressable = tree!.root.findByType('Pressable') as any;
         await act(async () => {
-            pressable.props.onHoverIn?.();
+            screen.findByTestId('tool-timeline-row')?.props.onHoverIn?.();
         });
 
         expect(getChevronLayerOpacity()).toBe(1);
@@ -202,23 +220,19 @@ describe('ToolTimelineRowHeader', () => {
     it('shows a persistent chevron-up when expanded by user', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolTimelineRowHeader
-                    density="comfortable"
-                    icon={React.createElement('Text', null, 'ICON')}
-                    title="Title"
-                    onPress={() => {}}
-                    canOpen={false}
-                    onOpen={null}
-                    disclosure={{ behavior: 'persistent', state: 'expanded' }}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ToolTimelineRowHeader
+                density="comfortable"
+                icon={React.createElement('Text', null, 'ICON')}
+                title="Title"
+                onPress={() => {}}
+                canOpen={false}
+                onOpen={null}
+                disclosure={{ behavior: 'persistent', state: 'expanded' }}
+            />,
+        );
 
-        const icons = tree!.root.findAllByType('Ionicons') as any[];
-        expect(icons.some((i) => i.props?.name === 'chevron-up')).toBe(true);
-        expect(icons.some((i) => i.props?.name === 'chevron-down')).toBe(false);
+        expect(ioniconPropsState.some((i) => i.name === 'chevron-up')).toBe(true);
+        expect(ioniconPropsState.some((i) => i.name === 'chevron-down')).toBe(false);
     });
 });

@@ -11,8 +11,10 @@ export const ApiMessageSchema = z.object({
     id: z.string(),
     seq: z.number(),
     localId: z.string().nullish(),
+    sidechainId: z.string().nullable().optional(),
     content: SessionStoredMessageContentSchema,
     createdAt: z.number(),
+    updatedAt: z.number().optional(),
 });
 
 export type ApiMessage = z.infer<typeof ApiMessageSchema>;

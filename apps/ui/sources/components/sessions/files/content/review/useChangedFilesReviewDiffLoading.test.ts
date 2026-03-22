@@ -5,6 +5,8 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { renderScreen } from '@/dev/testkit';
+
 
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: vi.fn(async (_sessionId: string, input: { path: string; area: ScmDiffArea }) => ({
@@ -55,10 +57,7 @@ async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () =
         return null;
     }
     let root: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        root = renderer.create(React.createElement(Test));
-        await flushAsync();
-    });
+    root = (await renderScreen(React.createElement(Test))).tree;
     return {
         getCurrent: () => {
             if (!current) throw new Error('Hook did not render');
@@ -275,10 +274,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-            await flushAsync(16);
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         await waitForCondition(() =>
             current!.diffStateSource.getDiffState('a.ts').status === 'loaded'
@@ -324,10 +320,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-            await flushAsync(16);
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(vi.mocked(sessionScmDiffFile)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(sessionScmDiffFile).mock.calls[0]?.[1]).toEqual({ path: 'a.ts', area: 'pending' });

@@ -15,7 +15,7 @@ export const providerUiTools = {
         result: z.object({}).partial().passthrough()
     },
     WorkspaceIndexingPermission: {
-        title: 'Workspace indexing',
+        title: t('tools.workspaceIndexingPermission.defaultTitle'),
         icon: ICON_EDIT,
         minimal: true,
         noStatus: true,

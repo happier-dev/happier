@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 
 import { resolveMcpCommandDeps, type McpCommandDeps } from './mcp/deps';
 import { runMcpServersSubcommand } from './mcp/servers/subcommands';

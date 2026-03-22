@@ -1,8 +1,7 @@
-import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { renderHook } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -73,30 +72,23 @@ describe('useMachineCapabilitiesCache (race)', () => {
     });
     await p2;
 
-    const latestRef: { current: ReturnType<typeof useMachineCapabilitiesCache>['state'] | null } = { current: null };
-    function Test() {
-      latestRef.current = useMachineCapabilitiesCache({
+    const hook = await renderHook(() => useMachineCapabilitiesCache({
         machineId: 'm1',
         enabled: false,
         request: request2,
         timeoutMs: 1,
-      }).state;
-      return React.createElement('View');
-    }
-
-    act(() => {
-      renderer.create(React.createElement(Test));
+      }).state, {
+        flushOptions: { cycles: 0 },
     });
 
-    if (!latestRef.current) {
-      throw new Error('Expected cache state');
-    }
-    expect(latestRef.current.status).toBe('loaded');
-    if (latestRef.current.status !== 'loaded') {
+    const state = hook.getCurrent();
+    expect(state.status).toBe('loaded');
+    if (state.status !== 'loaded') {
       throw new Error('Expected loaded cache state');
     }
-    const result = latestRef.current.snapshot?.response?.results?.['dep.test'];
+    const result = state.snapshot?.response?.results?.['dep.test'];
     const version = result && result.ok ? (result.data as { version?: string }).version : null;
     expect(version).toBe('2');
+    await hook.unmount();
   });
 });

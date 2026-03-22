@@ -1,5 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
-import { buildCatalogProviderCliUiConfig } from '@/agents/providers/_shared/buildCatalogProviderCliUiConfig';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';

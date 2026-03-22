@@ -19,6 +19,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
     onBatchApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
 }>): Readonly<{
     enqueue: (sessionId: string, messages: NormalizedMessage[]) => void;
+    dropQueuedMessageIds: (sessionId: string, messageIds: readonly string[]) => void;
     flush: (sessionId: string) => void;
     flushAll: () => void;
     getQueuedMaxSeq: (sessionId: string) => number;
@@ -114,6 +115,25 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
         scheduleFlush(sessionId, state, windowMs);
     }
 
+    function dropQueuedMessageIds(sessionId: string, messageIds: readonly string[]): void {
+        if (messageIds.length === 0) return;
+
+        const state = queues.get(sessionId);
+        if (!state || state.queued.length === 0) return;
+
+        const queuedCountBefore = state.queued.length;
+        const messageIdSet = new Set(messageIds.filter((messageId) => messageId.length > 0));
+        if (messageIdSet.size === 0) return;
+
+        state.queued = state.queued.filter((message) => !messageIdSet.has(message.id));
+        if (state.queued.length === queuedCountBefore) return;
+
+        if (state.queued.length === 0) {
+            clearFlushTimer(state);
+            queues.delete(sessionId);
+        }
+    }
+
     function flushAll(): void {
         for (const sessionId of queues.keys()) {
             flush(sessionId);
@@ -132,5 +152,5 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
         return maxSeq;
     }
 
-    return { enqueue, flush, flushAll, getQueuedMaxSeq };
+    return { enqueue, dropQueuedMessageIds, flush, flushAll, getQueuedMaxSeq };
 }

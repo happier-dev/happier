@@ -1,6 +1,12 @@
+import * as React from 'react';
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import {
+    createRootLayoutFeaturesResponse,
+    flushHookEffects,
+    renderScreen,
+    type RenderScreenResult,
+} from '@/dev/testkit';
 
 type ProviderState = { enabled: boolean; configured: boolean };
 
@@ -152,3 +158,45 @@ export function createWelcomeFeaturesResponse(
         },
     });
 }
+
+export async function renderWelcomeScreen(
+    options: RenderWelcomeScreenOptions = {},
+): Promise<RenderScreenResult> {
+    const { default: Screen } = await import('@/app/(app)/index');
+    const element = options.strictMode
+        ? React.createElement(React.StrictMode, null, React.createElement(Screen))
+        : React.createElement(Screen);
+
+    const screen = await renderScreen(element);
+    await flushHookEffects();
+    return screen;
+}
+
+export async function waitForWelcomeText(
+    screen: Pick<RenderScreenResult, 'getTextContent'>,
+    expectedText: string,
+    turns = 10,
+): Promise<string> {
+    let textContent = screen.getTextContent();
+    for (let turn = 0; turn < turns && !textContent.includes(expectedText); turn += 1) {
+        await flushHookEffects();
+        textContent = screen.getTextContent();
+    }
+    return textContent;
+}
+
+export async function waitForWelcomeTestId(
+    screen: Pick<RenderScreenResult, 'findAllByTestId'>,
+    testID: string,
+    turns = 10,
+): Promise<number> {
+    let count = screen.findAllByTestId(testID).length;
+    for (let turn = 0; turn < turns && count === 0; turn += 1) {
+        await flushHookEffects();
+        count = screen.findAllByTestId(testID).length;
+    }
+    return count;
+}
+type RenderWelcomeScreenOptions = Readonly<{
+    strictMode?: boolean;
+}>;

@@ -1159,8 +1159,8 @@ export async function startLocalDaemonWithAuth({
   if (migrateCreds) {
     await seedCredentialsIfMissing({ cliHomeDir });
   }
-  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: baseEnv });
-  const mirrored = await ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalServerUrl, env: baseEnv });
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
+  const mirrored = await ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalServerUrl, env: daemonEnv });
   if (mirrored.copied) {
     console.log(`[local] migrated daemon credentials to server profile: ${mirrored.source} -> ${mirrored.target}`);
   }
@@ -1179,7 +1179,7 @@ export async function startLocalDaemonWithAuth({
     credentialRepair = await ensureActiveAccessKeyValid({
       cliHomeDir,
       serverUrl: internalServerUrl,
-      env: baseEnv,
+      env: daemonEnv,
       timeoutMs: credentialValidateTimeoutMs,
     });
     if (credentialRepair.kind === 'repaired') {
@@ -1195,14 +1195,14 @@ export async function startLocalDaemonWithAuth({
         stackName: resolvedStackName,
         cliHomeDir,
         internalServerUrl,
-        env: baseEnv,
+        env: daemonEnv,
         quiet: true,
       });
     } catch (error) {
       logInvalidDaemonCredentialsGuidance({
         stackName: resolvedStackName,
         cliIdentity: resolvedCliIdentity,
-        env: baseEnv,
+        env: daemonEnv,
       });
       throw error;
     }
@@ -1211,7 +1211,7 @@ export async function startLocalDaemonWithAuth({
       logInvalidDaemonCredentialsGuidance({
         stackName: resolvedStackName,
         cliIdentity: resolvedCliIdentity,
-        env: baseEnv,
+        env: daemonEnv,
         skippedReason: reseedResult?.reason ?? 'unknown',
       });
       throw new Error(`Failed to auto re-seed daemon credentials (${reseedResult?.reason ?? 'unknown'})`);
@@ -1221,7 +1221,7 @@ export async function startLocalDaemonWithAuth({
     credentialRepair = await ensureActiveAccessKeyValid({
       cliHomeDir,
       serverUrl: internalServerUrl,
-      env: baseEnv,
+      env: daemonEnv,
       timeoutMs: credentialValidateTimeoutMs,
     });
     if (credentialRepair.kind === 'repaired') {
@@ -1231,7 +1231,7 @@ export async function startLocalDaemonWithAuth({
       logInvalidDaemonCredentialsGuidance({
         stackName: resolvedStackName,
         cliIdentity: resolvedCliIdentity,
-        env: baseEnv,
+        env: daemonEnv,
         staleSeed: reseedResult.seed,
       });
       throw new Error('Failed to start daemon (after auth re-seed)');
@@ -1246,7 +1246,7 @@ export async function startLocalDaemonWithAuth({
         : null;
     console.log(
       formatDaemonAuthScopeDiagnostic({
-        activeServerId: baseEnv.HAPPIER_ACTIVE_SERVER_ID,
+        activeServerId: daemonEnv.HAPPIER_ACTIVE_SERVER_ID,
         activeCredentialPath: credentialPaths.serverScopedPath,
         tokenSub: tokenSub ? String(tokenSub) : null,
         tokenSubBeforeRepair: tokenSubBeforeRepair ? String(tokenSubBeforeRepair) : null,

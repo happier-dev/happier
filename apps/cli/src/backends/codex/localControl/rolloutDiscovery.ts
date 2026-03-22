@@ -215,7 +215,16 @@ export async function discoverCodexRolloutFileOnce(opts: {
                 const sessionMeta = await readCodexSessionMetaFromRollout(entry.filePath);
                 if (sessionMeta) return { filePath: entry.filePath, sessionMeta };
                 const idFromName = parseResumeIdFromRolloutFilename(entry.filePath);
-                if (idFromName) return { filePath: entry.filePath, sessionMeta: { id: idFromName, timestamp: new Date(entry.mtimeMs).toISOString() } };
+                if (idFromName) {
+                    return {
+                        filePath: entry.filePath,
+                        sessionMeta: {
+                            id: idFromName,
+                            timestamp: new Date(entry.mtimeMs).toISOString(),
+                            cwd: opts.cwd,
+                        },
+                    };
+                }
             }
         }
     }

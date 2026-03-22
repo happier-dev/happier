@@ -1,6 +1,13 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,28 +61,53 @@ const machineExecutionRunsListSpy = vi.fn(async (_machineId: string, _opts?: Rec
 const stackScreenSpy = vi.fn((_props: any) => null);
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
+const routerReplaceSpy = vi.fn();
+const navigationCanGoBackSpy = vi.fn(() => true);
 let localSearchParamsMock: Record<string, unknown> = { id: 'session-1', runId: 'run_1' };
 let hydrateReady = true;
 let SessionRunDetailsScreen: typeof import('@/app/(app)/session/[id]/runs/[runId]').default;
+const sessionFixture: Session = {
+    id: 'session-1',
+    seq: 0,
+    createdAt: 0,
+    updatedAt: 0,
+    active: false,
+    activeAt: 0,
+    metadata: { flavor: 'codex' } as Session['metadata'],
+    metadataVersion: 0,
+    agentState: null,
+    agentStateVersion: 0,
+    thinking: false,
+    thinkingAt: 0,
+    presence: 'online',
+    accessLevel: 'edit',
+    canApprovePermissions: true,
+};
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.web ?? values?.default,
-    },
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    TextInput: 'TextInput',
-    AppState: {
-        currentState: 'active',
-        addEventListener: () => ({ remove: () => {} }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                Platform: {
+                                                    OS: 'web',
+                                                    select: (values: any) => values?.web ?? values?.default,
+                                                },
+                                                View: 'View',
+                                                Text: 'Text',
+                                                Pressable: 'Pressable',
+                                                ActivityIndicator: 'ActivityIndicator',
+                                                TextInput: 'TextInput',
+                                                AppState: {
+                                                    currentState: 'active',
+                                                    addEventListener: () => ({ remove: () => {} }),
+                                                },
+                                            }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#111',
@@ -85,38 +117,33 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#aaa',
                 textLink: '#06f',
                 textDestructive: '#f00',
+                accent: { indigo: '#33f' },
                 groupped: { sectionTitle: '#888' },
                 shadow: { color: '#000' },
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    surface: '#111',
-                    surfaceHigh: '#222',
-                    divider: '#333',
-                    text: '#eee',
-                    textSecondary: '#aaa',
-                    surfaceHighest: '#222',
-                    link: '#06f',
-                    textLink: '#06f',
-                    textDestructive: '#f00',
-                    groupped: { sectionTitle: '#888' },
-                    shadow: { color: '#000' },
-                },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
-    },
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => localSearchParamsMock,
-    useRouter: () => ({ push: routerPushSpy, back: routerBackSpy }),
-    Stack: { Screen: (props: any) => stackScreenSpy(props) },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        navigation: {
+            canGoBack: navigationCanGoBackSpy,
+        },
+        router: {
+            push: routerPushSpy,
+            back: routerBackSpy,
+            replace: routerReplaceSpy,
+            setParams: vi.fn(),
+        },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => localSearchParamsMock,
+        Stack: { Screen: (props: any) => stackScreenSpy(props) },
+    };
+});
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
@@ -127,14 +154,17 @@ vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
     SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, vars?: any) => {
-        if (key === 'runs.detail.pid') return `pid ${vars?.pid ?? ''}`.trim();
-        if (key === 'runs.detail.cpu') return `cpu ${vars?.percent ?? ''}`.trim();
-        if (key === 'runs.detail.memory') return `memory ${vars?.megabytes ?? ''}`.trim();
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, vars?: any) => {
+            if (key === 'runs.detail.pid') return `pid ${vars?.pid ?? ''}`.trim();
+            if (key === 'runs.detail.cpu') return `cpu ${vars?.percent ?? ''}`.trim();
+            if (key === 'runs.detail.memory') return `memory ${vars?.megabytes ?? ''}`.trim();
+            return key;
+        },
+    });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -154,40 +184,63 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-        storage: {
-            getState: () => ({
-                sessions: {
-                    'session-1': { id: 'session-1', updatedAt: 0, metadata: { machineId: 'machine-1' } },
-                },
-                sessionMessages: {
-                    'session-1': {
-                        reducerState: {
-                            toolIdToMessageId: new Map<string, string>([['side_1', 'message-side-1']]),
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            storage: {
+                getState: () => ({
+                    sessions: {
+                        'session-1': {
+                            id: 'session-1',
+                            active: false,
+                            updatedAt: 0,
+                            metadata: {
+                                machineId: 'machine-stale',
+                                path: '/Users/leeroy/repo',
+                                homeDir: '/Users/leeroy',
+                            },
                         },
                     },
-                },
-            }),
+                    machines: {
+                        'machine-target': {
+                            id: 'machine-target',
+                            active: true,
+                            activeAt: 10,
+                            metadata: { host: 'workstation.local' },
+                        },
+                    },
+                    getProjectForSession: (sessionId: string) =>
+                        sessionId === 'session-1'
+                            ? {
+                                key: {
+                                    machineId: 'machine-target',
+                                    path: '/Users/leeroy/repo',
+                                },
+                            }
+                            : null,
+                    sessionMessages: {
+                        'session-1': {
+                            reducerState: {
+                                toolIdToMessageId: new Map<string, string>([['side_1', 'message-side-1']]),
+                            },
+                        },
+                    },
+                }),
+            } as any,
+            useSession: () => sessionFixture,
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useResolvedSessionMessageRouteId: () => null,
+            useMessage: () => null,
         },
-        useSession: () => ({ id: 'session-1', metadata: { flavor: 'codex' }, accessLevel: 'edit', canApprovePermissions: true }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useResolvedSessionMessageRouteId: () => null,
-        useMessage: () => null,
-    };
+    });
 });
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
     SessionMessageDetailsView: () => React.createElement('SessionMessageDetailsView'),
 }));
 vi.mock('@/components/sessions/runs/details/SessionExecutionRunInfoCard', () => ({
-    SessionExecutionRunInfoCard: (props: any) => React.createElement(
-        'View',
-        null,
-        React.createElement('Text', null, props.run?.runId),
-        React.createElement('Text', null, props.daemonProcessLine ?? ''),
-    ),
+    SessionExecutionRunInfoCard: (props: any) => React.createElement('SessionExecutionRunInfoCard', props),
 }));
 
 describe('Session Run Details Screen', () => {
@@ -203,16 +256,24 @@ describe('Session Run Details Screen', () => {
         stackScreenSpy.mockClear();
         routerPushSpy.mockReset();
         routerBackSpy.mockReset();
+        routerReplaceSpy.mockReset();
+        navigationCanGoBackSpy.mockReturnValue(true);
         localSearchParamsMock = { id: 'session-1', runId: 'run_1' };
         hydrateReady = true;
     });
 
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    async function renderRunDetailsScreen() {
+        const screen = await renderScreen(React.createElement(SessionRunDetailsScreen));
+        await flushHookEffects();
+        return screen;
+    }
+
     it('configures the run details header and constrains the content width', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderRunDetailsScreen();
 
         expect(stackScreenSpy).toHaveBeenCalled();
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
@@ -220,26 +281,14 @@ describe('Session Run Details Screen', () => {
         expect(typeof stackOptions?.headerLeft).toBe('function');
         expect(typeof stackOptions?.headerRight).toBe('function');
 
-        let headerLeftTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            headerLeftTree = renderer.create(React.createElement(stackOptions.headerLeft));
-        });
-        const backButton = headerLeftTree!.root.findByType('Pressable');
-        await act(async () => {
-            backButton.props.onPress();
-        });
+        const headerLeftScreen = await renderScreen(React.createElement(stackOptions.headerLeft));
+        await headerLeftScreen.pressByTestIdAsync('session-run-details-back');
         expect(routerBackSpy).toHaveBeenCalledTimes(1);
 
-        let headerRightTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        });
-        const refreshButton = headerRightTree!.root.findAllByType('Pressable')
-            .find((node: any) => node.props.accessibilityLabel === 'runs.runDetails.a11y.refreshRun');
-        expect(refreshButton).toBeDefined();
+        const headerRightScreen = await renderScreen(React.createElement(stackOptions.headerRight));
+        expect(headerRightScreen.findByTestId('session-run-details-refresh')).toBeTruthy();
 
-        const views = tree!.root.findAllByType('View');
-        const hasConstrainedContainer = views.some((node: any) => {
+        const constrainedContainer = screen.findAllByType('View').find((node: any) => {
             const raw = node.props.style;
             const styles = Array.isArray(raw) ? raw : [raw];
             return styles.some((entry: any) => {
@@ -248,45 +297,49 @@ describe('Session Run Details Screen', () => {
             });
         });
 
-        expect(hasConstrainedContainer).toBe(true);
+        expect(constrainedContainer).toBeTruthy();
+    });
+
+    it('falls back to the parent session route when the run details screen has no back history', async () => {
+        navigationCanGoBackSpy.mockReturnValue(false);
+        const screen = await renderRunDetailsScreen();
+
+        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
+        expect(typeof stackOptions?.headerLeft).toBe('function');
+
+        const headerLeftScreen = await renderScreen(React.createElement(stackOptions.headerLeft));
+        await headerLeftScreen.pressByTestIdAsync('session-run-details-back');
+
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1');
     });
 
     it('renders invalid-link fallback when the run id param is missing', async () => {
         localSearchParamsMock = { id: 'session-1' };
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
-        expect(tree!.root.findAllByType('ActivityIndicator')).toHaveLength(0);
-        expect(tree!.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
+        const screen = await renderRunDetailsScreen();
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
     });
 
-    it('still loads run details while hydration is pending so deleted-session recovery is not blocked', async () => {
+    it('does not load run details until route hydration is ready', async () => {
         hydrateReady = false;
+        const screen = await renderRunDetailsScreen();
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(getRunSpy).not.toHaveBeenCalled();
+    });
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
-        expect(tree).not.toBeNull();
-        expect(getRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
+    it('keeps the loading state visible while route hydration is pending even if params are not ready yet', async () => {
+        hydrateReady = false;
+        localSearchParamsMock = {};
+        const screen = await renderRunDetailsScreen();
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(screen.findAllByTestId('session-invalid-link')).toHaveLength(0);
     });
 
     it('loads run details via session execution run get', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
+        const screen = await renderRunDetailsScreen();
         expect(getRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
+        expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.run?.runId).toBe('run_1');
     });
 
     it('retries run details load once when session encryption is not yet available', async () => {
@@ -313,29 +366,16 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
+        const screen = await renderRunDetailsScreen();
         expect(getRunSpy).toHaveBeenCalledTimes(2);
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
+        expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.run?.runId).toBe('run_1');
     });
 
     it('renders daemon process stats when machine execution runs list includes the run', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
-        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', expect.anything());
-        const textNodes = tree!.root.findAllByType('Text');
-        const joined = textNodes.map((n: any) => String(n.props.children)).join('\n');
-        expect(joined).toContain('pid 123');
-        expect(joined).toContain('cpu 12.5');
+        const screen = await renderRunDetailsScreen();
+        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-stale', expect.anything());
+        expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine).toContain('pid 123');
+        expect(screen.findByType('SessionExecutionRunInfoCard' as any).props.daemonProcessLine).toContain('cpu 12.5');
     });
 
     it('renders structured meta using the structured message registry when available', async () => {
@@ -361,33 +401,16 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
-        const textNodes = tree!.root.findAllByType('Text');
+        const screen = await renderRunDetailsScreen();
         // The structured renderer should render the card, not the raw JSON "structured" debug block.
-        expect(textNodes.some((n: any) => String(n.props.children).includes('structured'))).toBe(false);
+        expect(screen.getTextContent()).not.toContain('structured');
     });
 
     it('opens the owning tool details when the run sidechain maps to a transcript tool message', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderRunDetailsScreen();
+        expect(screen.findByTestId('session-run-details-open-tool-message')).toBeTruthy();
 
-        const openDetailsButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'toolView.open';
-        });
-        expect(openDetailsButtons).toHaveLength(1);
-
-        await act(async () => {
-            await openDetailsButtons[0]!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-run-details-open-tool-message');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/message/tool%3Aside_1');
     });
@@ -409,36 +432,18 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        const screen = await renderRunDetailsScreen();
+        expect(screen.findByTestId('session-run-details-send-input')).toBeTruthy();
         await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
+            screen.changeTextByTestId('session-run-details-send-input', 'hello');
         });
 
-        const inputs = tree!.root.findAllByType('TextInput');
-        expect(inputs).toHaveLength(1);
-        await act(async () => {
-            inputs[0]!.props.onChangeText('hello');
-        });
-
-        const sendButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
-        });
-        expect(sendButtons).toHaveLength(1);
-        await act(async () => {
-            await sendButtons[0]!.props.onPress();
-        });
+        expect(screen.findByTestId('session-run-details-send')).toBeTruthy();
+        await screen.pressByTestIdAsync('session-run-details-send');
         expect(sendRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1', message: 'hello' }));
 
-        const stopButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.stop.stopRunA11y';
-        });
-        expect(stopButtons).toHaveLength(1);
-        await act(async () => {
-            await stopButtons[0]!.props.onPress();
-        });
+        expect(screen.findByTestId('session-run-details-stop')).toBeTruthy();
+        await screen.pressByTestIdAsync('session-run-details-stop');
         expect(stopRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
     });
 
@@ -459,18 +464,9 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
-            await Promise.resolve();
-        });
-
-        expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
-        const sendButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
-        });
-        expect(sendButtons).toHaveLength(0);
+        const screen = await renderRunDetailsScreen();
+        expect(screen.findAllByTestId('session-run-details-send-input')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-run-details-send')).toHaveLength(0);
         expect(sendRunSpy).not.toHaveBeenCalled();
     });
 });

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text/Text';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 
 export type WizardSectionHeaderRowAction = {
@@ -21,9 +22,22 @@ export type WizardSectionHeaderRowProps = {
 };
 
 export const WizardSectionHeaderRow = React.memo((props: WizardSectionHeaderRowProps) => {
+    const leadingIcon = normalizeNodeForView(
+        <Ionicons name={props.iconName} size={18} color={props.iconColor} />,
+    );
+    const actionIcon = props.action
+        ? normalizeNodeForView(
+            <Ionicons
+                name={props.action.iconName}
+                size={18}
+                color={props.action.iconColor}
+            />,
+        )
+        : null;
+
     return (
         <View style={props.rowStyle}>
-            <Ionicons name={props.iconName} size={18} color={props.iconColor} />
+            {leadingIcon}
             <Text style={props.titleStyle}>{props.title}</Text>
             {props.action ? (
                 <Pressable
@@ -33,14 +47,9 @@ export const WizardSectionHeaderRow = React.memo((props: WizardSectionHeaderRowP
                     accessibilityRole="button"
                     accessibilityLabel={props.action.accessibilityLabel}
                 >
-                    <Ionicons
-                        name={props.action.iconName}
-                        size={18}
-                        color={props.action.iconColor}
-                    />
+                    {actionIcon}
                 </Pressable>
             ) : null}
         </View>
     );
 });
-

@@ -1,131 +1,156 @@
-import type { MemoryEmbeddingsSettingsV1 } from '@happier-dev/protocol';
+import type { OperationalMemoryEmbeddingsSettings } from '@/daemon/memory/resolveOperationalMemoryEmbeddingsSettings';
+import { logger } from '@/ui/logger';
+import { createHash } from 'node:crypto';
 
-export type EmbeddingsProvider = Readonly<{
-  provider: string;
-  modelId: string;
-  embedQuery: (text: string) => Promise<Float32Array>;
-  embedDocuments: (texts: readonly string[]) => Promise<Float32Array[]>;
-}>;
+import {
+  createFeatureExtractionPipelineWithFallback,
+  createLocalTransformersEmbeddingsProvider,
+  importTransformersModuleWithFallback,
+} from './createLocalTransformersEmbeddingsProvider';
+import { createOpenAiCompatibleEmbeddingsProvider } from './createOpenAiCompatibleEmbeddingsProvider';
+import type { EmbeddingsProviderResolution } from './embeddingsProviderTypes';
 
-type FeatureExtractionTensorLike = {
-  tolist?: () => any;
-  data?: unknown;
-  dims?: unknown;
-};
+const providerCache = new Map<string, Promise<EmbeddingsProviderResolution>>();
 
-function normalizeId(raw: unknown): string {
-  return String(raw ?? '').trim();
-}
-
-function toFloat32ArrayRow(value: unknown): Float32Array | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const out = new Float32Array(value.length);
-  for (let i = 0; i < value.length; i += 1) {
-    const n = Number(value[i]);
-    out[i] = Number.isFinite(n) ? n : 0;
-  }
-  return out;
-}
-
-function splitBatchFromFlat(data: Float32Array, batch: number, dims: number): Float32Array[] {
-  const out: Float32Array[] = [];
-  for (let i = 0; i < batch; i += 1) {
-    const start = i * dims;
-    const end = start + dims;
-    out.push(new Float32Array(data.slice(start, end)));
-  }
-  return out;
-}
-
-async function tensorToVectors(tensor: FeatureExtractionTensorLike, expectedBatch: number): Promise<Float32Array[]> {
-  const tolist = typeof tensor?.tolist === 'function' ? tensor.tolist : null;
-  if (tolist) {
-    const list = await tolist();
-    if (Array.isArray(list) && expectedBatch === 1 && Array.isArray(list[0])) {
-      const row = toFloat32ArrayRow(list[0]);
-      return row ? [row] : [];
+function buildCacheKey(params: Readonly<{
+  cacheDir: string;
+  providerConfig: NonNullable<OperationalMemoryEmbeddingsSettings['providerConfig']> | null;
+}>): string {
+  const providerConfig = params.providerConfig;
+  const providerConfigKey = (() => {
+    if (!providerConfig) return null;
+    if (providerConfig.kind === 'local_transformers') {
+      return {
+        kind: providerConfig.kind,
+        modelId: providerConfig.modelId,
+        queryPrefix: providerConfig.queryPrefix ?? null,
+        documentPrefix: providerConfig.documentPrefix ?? null,
+      };
     }
-    if (Array.isArray(list) && expectedBatch > 1 && Array.isArray(list[0])) {
-      const rows: Float32Array[] = [];
-      for (const rowValue of list) {
-        const row = toFloat32ArrayRow(rowValue);
-        if (row) rows.push(row);
-      }
-      return rows;
-    }
-  }
 
-  const dimsRaw = tensor?.dims;
-  const dims = Array.isArray(dimsRaw) ? dimsRaw.map((v) => Number(v)) : null;
-  const dataRaw = tensor?.data;
-  const data = dataRaw instanceof Float32Array ? dataRaw : null;
-  if (!dims || dims.length < 2 || !data) return [];
+    const apiKeyMaterial =
+      providerConfig.apiKey?.encryptedValue?.c ??
+      providerConfig.apiKey?.value ??
+      '';
+    return {
+      kind: providerConfig.kind,
+      baseUrl: providerConfig.baseUrl ?? null,
+      model: providerConfig.model,
+      dimensions: providerConfig.dimensions ?? null,
+      apiKeyHash: createHash('sha256').update(apiKeyMaterial).digest('hex'),
+    };
+  })();
 
-  const batch = Number.isFinite(dims[0] as number) ? Math.trunc(dims[0] as number) : 0;
-  const width = Number.isFinite(dims[1] as number) ? Math.trunc(dims[1] as number) : 0;
-  if (batch <= 0 || width <= 0) return [];
-  if (batch !== expectedBatch) return [];
-  if (data.length !== batch * width) return [];
-  return splitBatchFromFlat(data, batch, width);
+  return JSON.stringify({
+    cacheDir: params.cacheDir,
+    providerConfig: providerConfigKey,
+  });
 }
 
-const providerCache = new Map<string, Promise<EmbeddingsProvider | null>>();
+function hasRequiredProviderConfig(
+  providerConfig: NonNullable<OperationalMemoryEmbeddingsSettings['providerConfig']>,
+): boolean {
+  if (providerConfig.kind === 'local_transformers') {
+    return String(providerConfig.modelId ?? '').trim().length > 0;
+  }
+
+  return (
+    String(providerConfig.baseUrl ?? '').trim().length > 0 &&
+    String(providerConfig.model ?? '').trim().length > 0 &&
+    (
+      String(providerConfig.apiKey?.value ?? '').trim().length > 0 ||
+      String(providerConfig.apiKey?.encryptedValue?.c ?? '').trim().length > 0
+    )
+  );
+}
 
 export async function resolveEmbeddingsProvider(params: Readonly<{
-  settings: MemoryEmbeddingsSettingsV1;
+  settings: OperationalMemoryEmbeddingsSettings | null;
   cacheDir: string;
-}>): Promise<EmbeddingsProvider | null> {
-  if (params.settings.enabled !== true) return null;
-  const provider = normalizeId(params.settings.provider);
-  const modelId = normalizeId(params.settings.modelId);
-  if (!provider || !modelId) return null;
+  settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
+}>): Promise<EmbeddingsProviderResolution> {
+  const settings = params.settings;
+  if (!settings?.enabled || !settings.providerConfig || !settings.providerKind || !settings.modelId) {
+    return {
+      provider: null,
+      mode: settings?.mode ?? 'disabled',
+      presetId: settings?.presetId ?? null,
+      providerKind: settings?.providerKind ?? null,
+      modelId: settings?.modelId ?? null,
+      runtimeState: 'unavailable',
+      usingFallback: false,
+    };
+  }
+  const providerConfig = settings.providerConfig!;
+  const providerKind = settings.providerKind!;
+  const modelId = settings.modelId!;
+  if (!hasRequiredProviderConfig(providerConfig)) {
+    return {
+      provider: null,
+      mode: settings.mode,
+      presetId: settings.presetId,
+      providerKind,
+      modelId,
+      runtimeState: 'unavailable',
+      usingFallback: false,
+    };
+  }
 
-  const cacheKey = `${provider}::${modelId}::${normalizeId(params.cacheDir)}`;
+  const cacheKey = buildCacheKey({
+    cacheDir: params.cacheDir,
+    providerConfig,
+  });
   const cached = providerCache.get(cacheKey);
   if (cached) return await cached;
 
-  const promise = (async (): Promise<EmbeddingsProvider | null> => {
-    if (provider === 'local_transformers') {
-      // Lazy import: only used when embeddings are enabled.
-      const mod: any = await import('@huggingface/transformers');
-      const pipeline: any = mod?.pipeline;
-      const env: any = mod?.env;
-      if (env && typeof params.cacheDir === 'string' && params.cacheDir.trim()) {
-        env.cacheDir = params.cacheDir;
-      }
-      if (typeof pipeline !== 'function') {
-        throw new Error('transformers pipeline is unavailable');
-      }
+  const promise = (async (): Promise<EmbeddingsProviderResolution> => {
+    try {
+      const provider =
+        providerConfig.kind === 'local_transformers'
+          ? await createLocalTransformersEmbeddingsProvider({
+            config: providerConfig,
+            cacheDir: params.cacheDir,
+          })
+          : await createOpenAiCompatibleEmbeddingsProvider({
+            config: providerConfig,
+            settingsSecretsReadKeys: params.settingsSecretsReadKeys ?? [],
+          });
 
-      const extractor = await pipeline('feature-extraction', modelId);
-
-      const embedDocuments = async (texts: readonly string[]): Promise<Float32Array[]> => {
-        const clean = texts.map((t) => String(t ?? '').trim());
-        if (clean.length === 0) return [];
-        const out = await extractor(clean, { pooling: 'mean', normalize: true });
-        return await tensorToVectors(out as FeatureExtractionTensorLike, clean.length);
+      return {
+        provider,
+        mode: settings.mode,
+        presetId: settings.presetId,
+        providerKind: provider.providerKind,
+        modelId: provider.modelId,
+        runtimeState: 'ready',
+        usingFallback: false,
       };
-
-      const embedQuery = async (text: string): Promise<Float32Array> => {
-        const clean = String(text ?? '').trim();
-        const out = await extractor(clean, { pooling: 'mean', normalize: true });
-        const rows = await tensorToVectors(out as FeatureExtractionTensorLike, 1);
-        if (!rows[0]) throw new Error('No embedding produced');
-        return rows[0];
+    } catch (error) {
+      logger.debug('[memoryWorker] Embeddings provider init failed (best-effort)', {
+        providerKind,
+        modelId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      providerCache.delete(cacheKey);
+      return {
+        provider: null,
+        mode: settings.mode,
+        presetId: settings.presetId,
+        providerKind,
+        modelId,
+        runtimeState: 'error',
+        usingFallback: true,
       };
-
-      return { provider, modelId, embedQuery, embedDocuments };
     }
-
-    // Not implemented in v1.
-    return null;
   })();
 
   providerCache.set(cacheKey, promise);
   return await promise;
 }
 
+export { importTransformersModuleWithFallback };
+export { createFeatureExtractionPipelineWithFallback };
+
 export function resetEmbeddingsProviderCacheForTests(): void {
   providerCache.clear();
 }
-

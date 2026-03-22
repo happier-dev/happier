@@ -5,7 +5,6 @@ import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
 import { SearchResultsList } from '@/components/sessions/files/content/SearchResultsList';
-import { ChangedFilesTreeList } from '@/components/sessions/files/content/ChangedFilesTreeList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
@@ -37,6 +36,7 @@ import { shouldUseRepositoryRootDropTarget } from '@/components/sessions/files/r
 import { createRepositoryTreeUploadMenuConfig } from '@/components/sessions/files/repositoryTree/createRepositoryTreeUploadMenuConfig';
 import { useRepositoryTreeWebDropState } from '@/components/sessions/files/repositoryTree/useRepositoryTreeWebDropState';
 import { promptRepositoryUploadDestination } from '@/components/sessions/files/views/promptRepositoryUploadDestination';
+import { RepositoryTreeChangedFilesPane } from '@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane';
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     sessionId: string;
@@ -725,7 +725,17 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             ) : null}
             <WebDropTargetView testID="repository-tree-drop-zone" style={{ flex: 1 }} {...dropZoneHandlersWithRoot}>
                 <View style={{ flex: 1, position: 'relative' }}>
-                    {shouldShowSearchResults ? (
+                    {showChangedOnly ? (
+                        <RepositoryTreeChangedFilesPane
+                            sessionId={props.sessionId}
+                            scmSnapshot={scmSnapshot}
+                            searchQuery={searchQuery}
+                            onSearchQueryChange={setSearchQuery}
+                            onShowAllRepositoryFiles={() => setShowChangedOnly(false)}
+                            onOpenFile={props.onOpenFile}
+                            onOpenFilePinned={props.onOpenFilePinned}
+                        />
+                    ) : shouldShowSearchResults ? (
                         <SearchResultsList
                             theme={theme}
                             isSearching={isSearching}
@@ -733,18 +743,6 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                             searchResults={searchResults}
                             onFilePress={(file) => props.onOpenFile(file.fullPath)}
                             onFilePressPinned={(file) => (props.onOpenFilePinned ?? props.onOpenFile)(file.fullPath)}
-                            onLayout={scrollFades.onViewportLayout}
-                            onContentSizeChange={scrollFades.onContentSizeChange}
-                            onScroll={scrollFades.onScroll}
-                            scrollEventThrottle={16}
-                        />
-                    ) : showChangedOnly && scmSnapshot?.repo.isRepo ? (
-                        <ChangedFilesTreeList
-                            theme={theme}
-                            snapshot={scmSnapshot}
-                            searchQuery={searchQuery}
-                            onOpenFile={props.onOpenFile}
-                            onOpenFilePinned={props.onOpenFilePinned}
                             onLayout={scrollFades.onViewportLayout}
                             onContentSizeChange={scrollFades.onContentSizeChange}
                             onScroll={scrollFades.onScroll}

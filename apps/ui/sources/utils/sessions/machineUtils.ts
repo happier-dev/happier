@@ -39,3 +39,19 @@ export function isMachineOnline(machine: Machine, nowMs: number = Date.now()): b
     const ageMs = Math.max(0, nowMs - activeAt);
     return ageMs <= graceMs;
 }
+
+export function getMachineDisplayName(
+    machine:
+        | Readonly<{ id?: string | null; metadata?: Readonly<{ displayName?: string | null; host?: string | null }> | null }>
+        | null
+        | undefined,
+): string | null {
+    const displayName = typeof machine?.metadata?.displayName === 'string' ? machine.metadata.displayName.trim() : '';
+    if (displayName) return displayName;
+
+    const host = typeof machine?.metadata?.host === 'string' ? machine.metadata.host.trim() : '';
+    if (host) return host;
+
+    const id = typeof machine?.id === 'string' ? machine.id.trim() : '';
+    return id || null;
+}

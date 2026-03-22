@@ -1,6 +1,7 @@
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import { readBackendChildSessionId } from '@/agent/executionRuns/controllers/types';
+import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import { areExecutionRunBackendTargetsEqual } from '@/agent/executionRuns/runtime/backendTargets';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 
 export function enqueueExecutionRunMarkerWrite(args: Readonly<{
@@ -50,8 +51,9 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     callId: run.callId,
     sidechainId: run.sidechainId,
     intent: run.intent,
-    backendId: run.backendId,
+    backendTarget: run.backendTarget,
     ...(run.display ? { display: run.display } : {}),
+    permissionMode: run.permissionMode,
     runClass: run.runClass,
     ioMode: run.ioMode,
     retentionPolicy: run.retentionPolicy,
@@ -62,11 +64,15 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     ...(typeof run.summary === 'string' && run.summary.trim().length > 0 ? { summary: run.summary } : {}),
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
     resumeHandle: (() => {
-      const vendorSessionId = readBackendChildSessionId(args.controllers.get(args.runId) ?? null);
+      const vendorSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
       if (typeof vendorSessionId === 'string' && vendorSessionId.trim().length > 0) {
-        return { kind: 'vendor_session.v1', backendId: run.backendId, vendorSessionId };
+        return { kind: 'vendor_session.v1', backendTarget: run.backendTarget, vendorSessionId };
       }
-      return run.resumeHandle ?? null;
+      return run.resumeHandle
+        && run.resumeHandle.kind === 'vendor_session.v1'
+        && areExecutionRunBackendTargetsEqual(run.resumeHandle.backendTarget, run.backendTarget)
+        ? run.resumeHandle
+        : null;
     })(),
   } as const;
   await args.enqueueMarkerWrite(args.runId, () => writeExecutionRunMarker(markerPayload)).catch(() => {});

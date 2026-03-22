@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (
     globalThis as typeof globalThis & {
@@ -10,16 +12,23 @@ import renderer, { act } from 'react-test-renderer';
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'ios',
-        select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Text: 'Text',
+                    Pressable: 'Pressable',
+                    Platform: {
+                        OS: 'ios',
+                        select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
+                    },
+                    AppState: {
+                        addEventListener: () => ({ remove: () => {} }),
+                    },
+                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -28,19 +37,26 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 
 const show = vi.fn();
-vi.mock('@/modal', () => ({
-    Modal: {
-        show,
-        alert: vi.fn(),
-        prompt: vi.fn(),
-        confirm: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: show,
+            alert: vi.fn(),
+            prompt: vi.fn(),
+            confirm: vi.fn(),
+        },
+    }).module;
+});
 
 const push = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -94,17 +110,20 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: {
         onPress?: () => void;
         rightElement?: React.ReactNode;
+        testID?: string;
     }) => {
         const dismissElement =
-            React.isValidElement<{ accessibilityLabel?: string }>(props.rightElement)
+            React.isValidElement<{ accessibilityLabel?: string; testID?: string }>(props.rightElement)
                 ? React.cloneElement(props.rightElement, {
                       accessibilityLabel: 'recovery-key-dismiss',
+                      testID: 'recovery-key-dismiss',
                   })
                 : props.rightElement;
         return (
             <>
                 {React.createElement('Pressable', {
                     accessibilityLabel: 'recovery-key-item',
+                    testID: 'recovery-key-item',
                     onPress: props.onPress,
                 })}
                 {dismissElement}
@@ -121,10 +140,8 @@ async function flushEffects(turns = 4): Promise<void> {
 
 async function renderBanner() {
     const { RecoveryKeyReminderBanner } = await import('./RecoveryKeyReminderBanner');
-    let tree: renderer.ReactTestRenderer | undefined;
-    await act(async () => {
-        tree = renderer.create(<RecoveryKeyReminderBanner />);
-    });
+    let tree: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    tree = await renderScreen(<RecoveryKeyReminderBanner />);
     await flushEffects();
     return tree!;
 }
@@ -158,12 +175,8 @@ describe('RecoveryKeyReminderBanner', () => {
         getRecoveryKeyReminderDismissed.mockResolvedValue(false);
         setRecoveryKeyReminderDismissed.mockResolvedValue(true);
 
-        const tree = await renderBanner();
-        const openItem = tree.root.findByProps({ accessibilityLabel: 'recovery-key-item' });
-
-        await act(async () => {
-            openItem.props.onPress();
-        });
+        const screen = await renderBanner();
+        await screen.pressByTestIdAsync('recovery-key-item');
 
         expect(show).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -172,9 +185,11 @@ describe('RecoveryKeyReminderBanner', () => {
             }),
         );
 
-        const dismissButton = tree.root.findByProps({ accessibilityLabel: 'recovery-key-dismiss' });
+        const dismissButton = screen.findByTestId('recovery-key-dismiss');
+        expect(dismissButton).toBeTruthy();
+
         await act(async () => {
-            dismissButton.props.onPress({ stopPropagation: vi.fn() });
+            await dismissButton!.props.onPress({ stopPropagation: vi.fn() });
         });
 
         expect(setRecoveryKeyReminderDismissed).toHaveBeenCalledWith(true);
@@ -188,7 +203,7 @@ describe('RecoveryKeyReminderBanner', () => {
         getRecoveryKeyReminderDismissed.mockResolvedValue(false);
 
         const tree = await renderBanner();
-        const itemNodes = tree.root.findAllByProps({ accessibilityLabel: 'recovery-key-item' });
+        const itemNodes = tree.findAllByTestId('recovery-key-item');
 
         expect(itemNodes).toHaveLength(0);
         expect(show).not.toHaveBeenCalled();

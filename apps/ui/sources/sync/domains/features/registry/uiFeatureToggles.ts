@@ -38,7 +38,7 @@ export function listUiFeatureToggleDefinitions(): ReadonlyArray<UiFeatureToggleD
     return out;
 }
 
-export function resolveUiFeatureToggleEnabled(settings: FeatureToggleSettings, featureId: FeatureId): boolean {
+export function resolveUiFeatureToggleEnabled<TSettings extends FeatureToggleSettings>(settings: TSettings, featureId: FeatureId): boolean {
     const def = getUiFeatureDefinition(featureId);
     const toggle = def.settingsToggle;
     if (!toggle) return true;

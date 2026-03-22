@@ -1,6 +1,6 @@
 import {
     PromptRegistryFetchItemRequestV1Schema,
-    PromptRegistryFetchItemResponseV1Schema,
+    PromptRegistryFetchedItemV1Schema,
     PromptRegistryInstallRequestV1Schema,
     PromptRegistryInstallResponseV1Schema,
     PromptRegistryListAdaptersResponseV1Schema,
@@ -9,7 +9,7 @@ import {
     PromptRegistryScanSourceRequestV1Schema,
     PromptRegistryScanSourceResponseV1Schema,
     type PromptRegistryFetchItemRequestV1,
-    type PromptRegistryFetchItemResponseV1,
+    type PromptRegistryFetchedItemV1,
     type PromptRegistryInstallRequestV1,
     type PromptRegistryInstallResponseV1,
     type PromptRegistryListAdaptersResponseV1,
@@ -20,6 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { downloadBulkJsonPayload } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 type MachinePromptRegistriesOpts = Readonly<{
@@ -89,24 +90,64 @@ export async function machinePromptRegistriesScanSource(
     return parsed.data;
 }
 
-export async function machinePromptRegistriesFetchItem(
+export type MachinePromptRegistryDownloadItemResponse =
+    | Readonly<{
+        ok: true;
+        item: PromptRegistryFetchedItemV1;
+    }>
+    | Readonly<{
+        ok: false;
+        error: string;
+    }>;
+
+export async function machinePromptRegistriesDownloadItem(
     machineId: string,
     input: PromptRegistryFetchItemRequestV1,
     opts?: MachinePromptRegistriesOpts,
-): Promise<PromptRegistryFetchItemResponseV1> {
+): Promise<MachinePromptRegistryDownloadItemResponse> {
     const payload = PromptRegistryFetchItemRequestV1Schema.parse(input);
-    const response = await machineRpcWithServerScope<unknown, PromptRegistryFetchItemRequestV1>({
-        machineId,
-        serverId: opts?.serverId,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_FETCH_ITEM,
-        payload,
+    const result = await downloadBulkJsonPayload<PromptRegistryFetchedItemV1>({
+        init: async (request) =>
+            await machineRpcWithServerScope({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
+                payload: {
+                    ...payload,
+                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                },
+            }),
+        readChunk: async (request) =>
+            await machineRpcWithServerScope({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
+                payload: request,
+            }),
+        finalize: async (request) =>
+            await machineRpcWithServerScope({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
+                payload: request,
+            }),
+        parsePayload: (value) => {
+            const parsed = PromptRegistryFetchedItemV1Schema.safeParse(value);
+            return parsed.success ? parsed.data : null;
+        },
     });
-    const parsed = PromptRegistryFetchItemResponseV1Schema.safeParse(response);
-    if (!parsed.success) {
-        throwUnsupportedResponse(RPC_METHODS.DAEMON_PROMPT_REGISTRY_FETCH_ITEM);
+
+    if (!result.ok) {
+        return result;
     }
-    return parsed.data;
+
+    return {
+        ok: true,
+        item: result.payload,
+    };
 }
 
 export async function machinePromptRegistriesInstall(

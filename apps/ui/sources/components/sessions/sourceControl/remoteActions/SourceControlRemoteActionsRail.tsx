@@ -8,7 +8,7 @@ import { t } from '@/text';
 
 export type SourceControlRemoteAction = Readonly<{
     key: 'fetch' | 'pull' | 'push' | 'publish';
-    iconName: 'sync' | 'arrow-down' | 'arrow-up' | 'cloud-upload';
+    iconName: 'sync' | 'arrow-down' | 'arrow-up' | 'upload';
     label: string;
     disabled: boolean;
     onPress: () => void;
@@ -43,7 +43,7 @@ export const SourceControlRemoteActionsRail = React.memo((props: SourceControlRe
                 opacity: p.disabled ? 0.45 : pressed ? 0.78 : 1,
             })}
         >
-            <Octicons name={p.iconName as any} size={16} color={props.theme.colors.textSecondary} />
+            <Octicons name={p.iconName} size={16} color={props.theme.colors.textSecondary} />
         </Pressable>
     );
 

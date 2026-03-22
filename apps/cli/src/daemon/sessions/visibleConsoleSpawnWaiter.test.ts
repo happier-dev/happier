@@ -110,6 +110,43 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     });
   });
 
+  it('uses the shared default webhook timeout window instead of a visible-console-specific short timeout', async () => {
+    vi.useFakeTimers();
+
+    const aliveRef = { alive: true };
+    installProcessKillMock(aliveRef);
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    const pid = 22334;
+    const { pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = createWaiterState();
+
+    const promise = waitForVisibleConsoleSessionWebhook({
+      pid,
+      pollMs: 10,
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+      onChildExited,
+    });
+
+    const awaiter = pidToAwaiter.get(pid);
+    expect(typeof awaiter).toBe('function');
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 90_000);
+
+    awaiter?.({ startedBy: 'daemon', pid, happySessionId: 'session-visible-late' });
+
+    await expect(promise).resolves.toEqual({ type: 'success', sessionId: 'session-visible-late' });
+
+    aliveRef.alive = false;
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(onChildExited).toHaveBeenCalledWith(pid, {
+      reason: 'process-exited',
+      code: null,
+      signal: null,
+    });
+  });
+
   it('resolves immediately when a canonical session id is already available', async () => {
     const pid = 9876;
     const { pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = createWaiterState();

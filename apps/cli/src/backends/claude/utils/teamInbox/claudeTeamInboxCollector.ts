@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { logger } from '@/ui/logger';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
+import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';
 
 type LeadInboxEntry = Readonly<{
   from?: unknown;
@@ -24,17 +25,6 @@ function readFirstNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function tryParseJsonObject(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function extractToolUseResultFromToolResultItem(toolResultItem: unknown): Record<string, unknown> | null {
@@ -182,7 +172,7 @@ export function createClaudeTeamInboxCollector(params: Readonly<{
 
       // In agent-team sessions, teammate spawns can be inferred directly from the tool_use input:
       // the tool_use id is the sidechain anchor we want to attach inbox messages to.
-      if (tool.name === 'Agent' || tool.name === 'Task') {
+      if (isGenericSubAgentToolName(tool.name)) {
         const teamFromInput = resolveTeamNameFromToolUseInput(tool.input);
         const memberName = resolveMemberNameFromToolUseInput(tool.input);
         if (teamFromInput) {
@@ -336,3 +326,4 @@ export function createClaudeTeamInboxCollector(params: Readonly<{
 
   return { observe, syncAll, cleanup };
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';

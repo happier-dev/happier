@@ -2,17 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import tweetnacl from 'tweetnacl';
 
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
-import {
-  captureConsoleLogAndMuteStdout,
-  createEnvKeyScope,
-  setStdioTtyForTest,
-} from '@/ui/testkit/authNonInteractiveGlobals.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { setStdioTtyForTest } from '@/testkit/process/stdio';
 
 type LegacyRequestRow = { response: string | null; pollCount: number };
 
@@ -82,7 +78,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
   beforeEach(async () => {
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
-    homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-auth-legacy-'));
+    homeDir = await createTempDir('happier-cli-auth-legacy-');
     envScope.patch({
       HAPPIER_HOME_DIR: homeDir,
       HAPPIER_NO_BROWSER_OPEN: '1',
@@ -101,7 +97,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
     envScope.restore();
     vi.resetModules();
     vi.unstubAllGlobals();
-    await rm(homeDir, { recursive: true, force: true });
+    await removeTempDir(homeDir);
   });
 
   it('falls back to legacy /v1/auth/request polling when /v1/auth/request/claim is missing', async () => {

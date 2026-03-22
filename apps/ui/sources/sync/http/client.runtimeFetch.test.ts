@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { resetRuntimeFetch } from './client';
+
 afterEach(() => {
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
     vi.resetModules();
     vi.clearAllMocks();

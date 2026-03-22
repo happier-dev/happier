@@ -10,8 +10,13 @@ export function getInactiveSessionUiState(opts: {
     isSessionActive: boolean;
     isResumable: boolean;
     isMachineOnline: boolean;
+    allowInputWhileInactive?: boolean;
 }): InactiveSessionUiState {
     if (opts.isSessionActive) {
+        return { shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' };
+    }
+
+    if (opts.allowInputWhileInactive) {
         return { shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' };
     }
 
@@ -37,4 +42,3 @@ export function getInactiveSessionUiState(opts: {
         noticeKind: 'none',
     };
 }
-

@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 
 import { assertGuidedAuthWebappReadyOrThrow, buildStackAuthLoginInvocation } from './utils/auth/stack_guided_login.mjs';
 import { createAuthStackFixture, getStackRootFromMeta } from './testkit/auth_testkit.mjs';
+import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 
 test('guided stack auth login invokes core happier auth login directly', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
@@ -60,37 +61,25 @@ test('guided stack auth login invocation uses the active runtime snapshot cli wh
   });
 
   try {
-    const snapshotDir = join(fixture.storageDir, 'dev-built', 'runtime', 'builds', 'snap-auth');
-    await mkdir(join(snapshotDir, 'ui'), { recursive: true });
-    await mkdir(join(snapshotDir, 'server'), { recursive: true });
-    await mkdir(join(snapshotDir, 'cli'), { recursive: true });
-    await writeFile(join(snapshotDir, 'ui', 'index.html'), '<!doctype html><html><body>runtime ui</body></html>\n', 'utf-8');
-    await writeFile(join(snapshotDir, 'server', 'happier-server'), '#!/bin/sh\nexit 0\n', 'utf-8');
-    await writeFile(join(snapshotDir, 'cli', 'happier'), '#!/bin/sh\nexit 0\n', 'utf-8');
-    await writeFile(
-      join(snapshotDir, 'manifest.json'),
-      JSON.stringify({
-        version: 1,
-        snapshotId: 'snap-auth',
-        sourceFingerprint: 'src-auth',
-        components: {
-          web: { artifactFingerprint: 'web-auth', entrypoint: 'ui/index.html' },
-          server: { artifactFingerprint: 'srv-auth', entrypoint: 'server/happier-server' },
-          daemon: { artifactFingerprint: 'cli-auth', entrypoint: 'cli/happier' },
-        },
-      }) + '\n',
-      'utf-8',
-    );
-    await writeFile(
-      join(fixture.storageDir, 'dev-built', 'runtime', 'current.json'),
-      JSON.stringify({
-        version: 1,
-        snapshotId: 'snap-auth',
-        snapshotPath: snapshotDir,
-        sourceFingerprint: 'src-auth',
-      }) + '\n',
-      'utf-8',
-    );
+    const { snapshotDir } = await writeRuntimeSnapshotLayout({
+      stackDir: join(fixture.storageDir, 'dev-built'),
+      snapshotId: 'snap-auth',
+      sourceFingerprint: 'src-auth',
+      web: {
+        content: '<!doctype html><html><body>runtime ui</body></html>\n',
+        artifactFingerprint: 'web-auth',
+      },
+      server: {
+        content: '#!/bin/sh\nexit 0\n',
+        artifactFingerprint: 'srv-auth',
+      },
+      daemon: {
+        content: '#!/bin/sh\nexit 0\n',
+        artifactFingerprint: 'cli-auth',
+        nodeEntrypoint: 'cli/package-dist/index.mjs',
+        nodeContent: 'export {};\n',
+      },
+    });
 
     const inv = await buildStackAuthLoginInvocation({
       rootDir,

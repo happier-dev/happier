@@ -1,10 +1,15 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
 import type {
+    AcpConfigOptionOverridesV1,
+    AgentRuntimeDescriptorV1,
     BackendTargetRefV1,
     SessionMcpSelectionV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
+
+import { buildCodexBackendTransportFields, type CodexBackendTransportFields } from '../codexBackendTransport';
 
 // Options for spawning a session
 export interface SpawnSessionOptions {
@@ -13,7 +18,6 @@ export interface SpawnSessionOptions {
     directory: string;
     transcriptStorage?: 'persisted' | 'direct';
     approvedNewDirectoryCreation?: boolean;
-    token?: string;
     backendTarget: BackendTargetRefV1;
     // Session-scoped profile identity (non-secret). Empty string means "no profile".
     profileId?: string;
@@ -30,17 +34,22 @@ export interface SpawnSessionOptions {
     resume?: string;
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
+    agentModeId?: string;
+    agentModeUpdatedAt?: number;
     /**
      * Optional: seed a session-wide model override at spawn time.
      * This is persisted to session metadata so the model choice follows the session across devices.
      */
     modelId?: string;
     modelUpdatedAt?: number;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     /**
      * Experimental: route Codex through ACP (codex-acp).
      * When enabled, Codex sessions use ACP instead of MCP.
      */
     experimentalCodexAcp?: boolean;
+    codexBackendMode?: CodexBackendMode;
+    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
     terminal?: TerminalSpawnOptions | null;
     /**
      * Windows-only: when starting a session remotely via the daemon, optionally open a visible console window
@@ -58,21 +67,23 @@ export interface SpawnSessionOptions {
     mcpSelection?: SessionMcpSelectionV1;
 }
 
-export type SpawnHappySessionRpcParams = {
+export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     type: 'spawn-in-directory'
     directory: string
     transcriptStorage?: 'persisted' | 'direct'
     approvedNewDirectoryCreation?: boolean
-    token?: string
     backendTarget: BackendTargetRefV1
     profileId?: string
     environmentVariables?: Record<string, string>
     resume?: string
+    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1
     permissionMode?: PermissionMode
     permissionModeUpdatedAt?: number
+    agentModeId?: string
+    agentModeUpdatedAt?: number
     modelId?: string
     modelUpdatedAt?: number
-    experimentalCodexAcp?: boolean
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1
     terminal?: TerminalSpawnOptions
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode
     windowsRemoteSessionConsole?: 'hidden' | 'visible'
@@ -85,16 +96,20 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation = false,
-        token,
         backendTarget,
         environmentVariables,
         profileId,
         resume,
         permissionMode,
         permissionModeUpdatedAt,
+        agentModeId,
+        agentModeUpdatedAt,
         modelId,
         modelUpdatedAt,
+        sessionConfigOptionOverrides,
         experimentalCodexAcp,
+        codexBackendMode,
+        agentRuntimeDescriptorV1,
         terminal,
         windowsRemoteSessionLaunchMode,
         windowsRemoteSessionConsole,
@@ -108,21 +123,47 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         normalizedModelId !== 'default' &&
         typeof modelUpdatedAt === 'number' &&
         Number.isFinite(modelUpdatedAt);
+    const codexTransportFields = buildCodexBackendTransportFields({ codexBackendMode, experimentalCodexAcp, agentRuntimeDescriptorV1 });
+    const canonicalCodexBackendMode = codexTransportFields.codexBackendMode;
 
     const params: SpawnHappySessionRpcParams = {
         type: 'spawn-in-directory',
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation,
-        token,
         backendTarget,
         profileId,
         environmentVariables,
         resume,
         permissionMode,
         permissionModeUpdatedAt,
+        ...(typeof agentModeId === 'string' && agentModeId.trim().length > 0
+            ? {
+                agentModeId: agentModeId.trim(),
+                ...(typeof agentModeUpdatedAt === 'number' && Number.isFinite(agentModeUpdatedAt)
+                    ? { agentModeUpdatedAt }
+                    : {}),
+            }
+            : {}),
         ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
-        experimentalCodexAcp,
+        ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
+        ...codexTransportFields,
+        ...(() => {
+            if (agentRuntimeDescriptorV1) {
+                return { agentRuntimeDescriptorV1 };
+            }
+
+            if (backendTarget.kind === 'builtInAgent' && backendTarget.agentId === 'codex' && canonicalCodexBackendMode) {
+                return {
+                    agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+                        backendMode: canonicalCodexBackendMode,
+                        vendorSessionId: resume,
+                    }),
+                };
+            }
+
+            return {};
+        })(),
         connectedServices,
         ...(mcpSelection ? { mcpSelection } : {}),
     };

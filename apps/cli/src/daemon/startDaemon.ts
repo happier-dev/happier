@@ -9,7 +9,11 @@ import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { TrackedSession } from './types';
 import { MachineMetadata, DaemonState, type Metadata } from '@/api/types';
-import { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import {
+  resolveCanonicalCodexBackendMode,
+  SpawnSessionOptions,
+  SpawnSessionResult,
+} from '@/rpc/handlers/registerSessionHandlers';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { configuration } from '@/configuration';
@@ -30,14 +34,16 @@ import { createSessionAttachFile } from './sessionAttachFile';
 import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from './shutdownPolicy';
 import { shouldRetryMachineRegistrationError } from './machineRegistrationRetryPolicy';
 
-import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
+import { isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
 import {
-  createSessionHandoffDirectPeerRegistry,
-  startSessionHandoffDirectPeerServer,
-} from '@/session/handoff/transfer/sessionHandoffDirectPeerServer';
+  createDirectPeerTransferRegistry,
+  requestDirectPeerTransferToFile,
+  startDirectPeerTransferServer,
+} from '@/machines/transfer/directPeerTransport';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
+import { buildHandoffSessionMetadataFromTrackedSession } from './sessions/buildHandoffSessionMetadataFromTrackedSession';
 import { createOnChildExited } from './sessions/onChildExited';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
@@ -47,6 +53,7 @@ import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
 import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
 import { projectPath } from '@/projectPath';
+import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
@@ -70,6 +77,7 @@ import { resolveExistingSessionAttachContext } from './sessionEncryption/resolve
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
+import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsystemGates';
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
@@ -77,10 +85,12 @@ import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
+import { createDaemonConnectivityCoordinator } from './connection/createDaemonConnectivityCoordinator';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
+import { startConnectedServiceRefreshLoop } from './connectedServices/refresh/startConnectedServiceRefreshLoop';
 import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
@@ -123,6 +133,47 @@ function resolveCliSubcommandFromBackendTarget(target: BackendTargetRefV1 | unde
   return resolveAgentCliSubcommand(readBuiltInCatalogAgentIdFromBackendTarget(target));
 }
 
+function mapExistingSessionAttachFailureToSpawnError(reason: import('./sessionEncryption/resolveExistingSessionAttachContext').ExistingSessionAttachContextFailureReason): SpawnSessionResult {
+  switch (reason) {
+    case 'missingSessionId':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Existing session id is required for resume attach.',
+      };
+    case 'missingToken':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'Missing auth token to fetch existing session for resume.',
+      };
+    case 'sessionNotFound':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Existing session not found or access denied for resume.',
+      };
+    case 'fetchFailed':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'Failed to fetch existing session for resume.',
+      };
+    case 'missingCredentials':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+        errorMessage: 'Missing credentials to open the session encryption key for resume.',
+      };
+    case 'invalidEncryptionKey':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+        errorMessage: 'Failed to open session encryption key for resume.',
+      };
+  }
+}
+
 export async function startDaemon(): Promise<void> {
   // We don't have cleanup function at the time of server construction
   // Control flow is:
@@ -135,21 +186,10 @@ export async function startDaemon(): Promise<void> {
 
   logger.debug('[DAEMON RUN] Starting daemon process...');
   logger.debugLargeJson('[DAEMON RUN] Environment', getEnvironmentInfo());
+  const diagnosticSubsystemGates = resolveDaemonDiagnosticSubsystemGates(process.env);
 
   const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const { waitForAuthEnabled, waitForAuthTimeoutMs } = resolveWaitForAuthConfig(process.env);
-
-  // Check if already running
-  // Check if running daemon version matches current CLI version
-  const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledHappyVersion();
-  if (!runningDaemonVersionMatches) {
-    logger.debug('[DAEMON RUN] Daemon version mismatch detected, restarting daemon with current CLI version');
-    await stopDaemon();
-  } else {
-    logger.debug('[DAEMON RUN] Daemon version matches, keeping existing daemon');
-    console.log('Daemon already running with matching version');
-    process.exit(0);
-  }
 
   let daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>> = null;
 
@@ -181,6 +221,35 @@ export async function startDaemon(): Promise<void> {
     let machineId = auth.machineId;
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
 
+    const api = await ApiClient.create(credentials);
+    const preferredHost = await getPreferredHostName();
+    const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
+    let preflightMachineRegistration: Awaited<ReturnType<typeof ensureMachineRegistered>> | null = null;
+
+    const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledHappyVersion({
+      expectedMachineId: machineId,
+    });
+    if (!runningDaemonVersionMatches) {
+      logger.debug('[DAEMON RUN] Daemon version or machine identity mismatch detected, restarting daemon with current CLI version');
+      await stopDaemon();
+    } else {
+      preflightMachineRegistration = await ensureMachineRegistered({
+        api,
+        machineId,
+        metadata: metadataForRegistration,
+        caller: 'startDaemon preflight',
+      });
+      machineId = preflightMachineRegistration.machineId;
+      if (preflightMachineRegistration.didRotateMachineId) {
+        logger.debug('[DAEMON RUN] Same-version daemon matched a stale machine id, restarting daemon with recovered machine identity');
+        await stopDaemon();
+      } else {
+        logger.debug('[DAEMON RUN] Daemon version and machine identity match, keeping existing daemon');
+        console.log('Daemon already running with matching version');
+        process.exit(0);
+      }
+    }
+
     // Acquire exclusive lock (proves daemon is running)
     if (!daemonLockHandle) {
       daemonLockHandle = await acquireDaemonLock(5, 200);
@@ -202,19 +271,27 @@ export async function startDaemon(): Promise<void> {
         const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
       const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
       let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
-      let connectedServiceRefreshInterval: NodeJS.Timeout | null = null;
+      let connectedServiceRefreshLoopHandle: Readonly<{
+        stop: () => void;
+        pause: () => void;
+        resume: () => void;
+      }> | null = null;
       let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
       let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
-            let apiMachineForSessions: ApiMachineClient | null = null;
+      let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
+      let apiMachine: ApiMachineClient | null = null;
+      let machineConnectionStateCleanup: (() => void) | null = null;
+      let shutdownInitiated = false;
+      let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
 
         // Session spawning awaiter system
-        const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+            const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
             const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
             const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
             const spawnConcurrencyGate = createSpawnConcurrencyGate(
-              resolvePositiveIntEnv(process.env.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS, 4, { min: 1, max: 64 }),
+              resolvePositiveIntEnv(process.env.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS, 0, { min: 0, max: 64 }),
             );
 
         const spawnRecentSuccessTtlMs = resolvePositiveIntEnv(
@@ -330,6 +407,19 @@ export async function startDaemon(): Promise<void> {
 
         // Helper functions
         const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+        const loadLocalSessionMetadataForHandoff = async (sessionId: string): Promise<SessionHandoffLocalMetadataSource | null> => {
+            for (const trackedSession of pidToTrackedSession.values()) {
+                if (trackedSession.happySessionId !== sessionId) {
+                    continue;
+            }
+            return buildHandoffSessionMetadataFromTrackedSession({
+              trackedSession,
+              machineId,
+              fallbackHomeDir: os.homedir(),
+            });
+          }
+          return null;
+        };
 
         await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
@@ -360,7 +450,7 @@ export async function startDaemon(): Promise<void> {
             }
 
             return await spawnConcurrencyGate.run(async () => {
-              // Do NOT log raw options: it may include secrets (token / env vars).
+              // Do NOT log raw options: it may include secrets (env vars).
               const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
                 ? Object.keys(options.environmentVariables as Record<string, unknown>)
                 : [];
@@ -372,7 +462,6 @@ export async function startDaemon(): Promise<void> {
                 approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
                 backendTarget: options.backendTarget,
                 profileId: options.profileId,
-                hasToken: !!options.token,
                 hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
                 hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
                 windowsRemoteSessionLaunchMode: options.windowsRemoteSessionLaunchMode,
@@ -395,20 +484,28 @@ export async function startDaemon(): Promise<void> {
                     directory,
                     sessionId,
                     machineId,
-                    token,
                     approvedNewDirectoryCreation = true,
                     resume,
                     existingSessionId,
                     permissionMode,
                     permissionModeUpdatedAt,
+                    agentModeId,
+                    agentModeUpdatedAt,
                     modelId,
                     modelUpdatedAt,
                     initialPrompt,
                     experimentalCodexAcp,
+                    codexBackendMode,
+                    agentRuntimeDescriptorV1,
                     backendTarget,
                   } = options;
               const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
               const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
+              const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+                codexBackendMode,
+                experimentalCodexAcp,
+                agentRuntimeDescriptorV1,
+              });
 
               const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
 
@@ -419,26 +516,17 @@ export async function startDaemon(): Promise<void> {
               let sessionAttachPayload: import('@/agent/runtime/sessionAttachPayload').SessionAttachFilePayload | null = null;
               if (normalizedExistingSessionId) {
                 const credentials = await readCredentials().catch(() => null);
-                const tokenForFetch = typeof token === 'string' && token.trim().length > 0
-                  ? token
-                  : (credentials?.token ?? '');
+                const tokenForFetch = credentials?.token ?? '';
 
                 const attachContext = await resolveExistingSessionAttachContext({
                   token: tokenForFetch,
                   sessionId: normalizedExistingSessionId,
                   agent: backendTarget?.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
                   credentials,
-                }).catch(() => null);
+                });
 
-                if (!attachContext) {
-                  const missingCredentials = !credentials;
-                  return {
-                    type: 'error',
-                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-                    errorMessage: missingCredentials
-                      ? 'Missing credentials to open the session encryption key for resume.'
-                      : 'Failed to open session encryption key for resume.',
-                  };
+                if (!attachContext.ok) {
+                  return mapExistingSessionAttachFailureToSpawnError(attachContext.reason);
                 }
 
                 sessionAttachPayload = attachContext.attachPayload;
@@ -462,7 +550,11 @@ export async function startDaemon(): Promise<void> {
                 const vendorResumeSupport = await getVendorResumeSupport(
                   catalogAgentId,
                 );
-                const ok = vendorResumeSupport({ experimentalCodexAcp });
+                const ok = vendorResumeSupport(
+                  canonicalCodexBackendMode
+                    ? { codexBackendMode: canonicalCodexBackendMode }
+                    : { experimentalCodexAcp },
+                );
                 if (!ok) {
                   const supportLevel = requireCatalogEntry(catalogAgentId).vendorResumeSupport;
                   const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
@@ -659,6 +751,8 @@ export async function startDaemon(): Promise<void> {
                     backendTarget,
                     permissionMode,
                     permissionModeUpdatedAt,
+                    agentModeId,
+                    agentModeUpdatedAt,
                     modelId,
                     modelUpdatedAt,
                   }),
@@ -793,6 +887,8 @@ export async function startDaemon(): Promise<void> {
                 backendTarget,
                 permissionMode,
                 permissionModeUpdatedAt,
+                agentModeId,
+                agentModeUpdatedAt,
                 modelId,
                 modelUpdatedAt,
               }));
@@ -1240,19 +1336,19 @@ export async function startDaemon(): Promise<void> {
     // Start control server
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
       getChildren: getCurrentChildren,
+      machineId,
       stopSession,
       spawnSession,
       requestShutdown: () => requestShutdown('happier-cli'),
       beforeShutdown,
-      onHappySessionWebhook
-      ,
+      onHappySessionWebhook,
       controlToken,
     });
-    let directPeerRegistry: ReturnType<typeof createSessionHandoffDirectPeerRegistry> | null = null;
-    const { port: directPeerPort, stop: stopDirectPeerServer } = await startSessionHandoffDirectPeerServer({
+    let directPeerRegistry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
+    const { port: directPeerPort, stop: stopDirectPeerServer } = await startDirectPeerTransferServer({
       readPublishedTransfer: (input) => directPeerRegistry?.readPublishedTransfer(input) ?? null,
     });
-    directPeerRegistry = createSessionHandoffDirectPeerRegistry({
+    directPeerRegistry = createDirectPeerTransferRegistry({
       advertisedPort: directPeerPort,
     });
 
@@ -1266,6 +1362,7 @@ export async function startDaemon(): Promise<void> {
       httpPort: controlPort,
       startedAt: Date.now(),
       startedWithCliVersion: packageJson.version,
+      machineId,
       daemonLogPath: logger.logFilePath,
       controlToken,
     };
@@ -1286,8 +1383,6 @@ export async function startDaemon(): Promise<void> {
           startedAt: Date.now()
         };
 
-        // Create API client
-        const api = await ApiClient.create(credentials);
       const connectedServicesRefreshEnabled = resolveBoolEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
       if (connectedServicesRefreshEnabled) {
         const refreshTickMs = resolvePositiveIntEnv(
@@ -1331,12 +1426,14 @@ export async function startDaemon(): Promise<void> {
           ...(onAuthUpdated ? { onAuthUpdated } : {}),
         });
 
-        connectedServiceRefreshInterval = setInterval(() => {
-          void connectedServiceRefreshCoordinator?.tickOnce().catch((error) => {
+        connectedServiceRefreshLoopHandle = startConnectedServiceRefreshLoop({
+          enabled: true,
+          tickMs: refreshTickMs,
+          coordinator: connectedServiceRefreshCoordinator,
+          onTickError: (error) => {
             logger.debug('[DAEMON RUN] Connected services refresh tick failed (non-fatal)', error);
-          });
-        }, refreshTickMs) as unknown as NodeJS.Timeout;
-        (connectedServiceRefreshInterval as unknown as { unref?: () => void })?.unref?.();
+          },
+        });
       }
 
       const connectedServicesQuotasEnabled = await resolveConnectedServicesQuotasDaemonEnabled({
@@ -1383,10 +1480,7 @@ export async function startDaemon(): Promise<void> {
         });
       }
 
-            let apiMachine: ApiMachineClient | null = null;
-      let shutdownInitiated = false;
-            const preferredHost = await getPreferredHostName();
-        const machineRegistrationTimeoutMs = resolvePositiveIntEnv(
+      const machineRegistrationTimeoutMs = resolvePositiveIntEnv(
         process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_TIMEOUT_MS,
         10_000,
         { min: 250, max: 120_000 },
@@ -1404,11 +1498,10 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
-        const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
         let attempts = 0;
         while (!shutdownInitiated) {
           try {
-            const ensured = await ensureMachineRegistered({
+            const ensured = preflightMachineRegistration ?? await ensureMachineRegistered({
               api,
               machineId,
               metadata: metadataForRegistration,
@@ -1416,7 +1509,12 @@ export async function startDaemon(): Promise<void> {
               timeoutMs: machineRegistrationTimeoutMs,
               caller: 'startDaemon',
             });
+            preflightMachineRegistration = null;
             machineId = ensured.machineId;
+            if (fileState.machineId !== machineId) {
+              fileState.machineId = machineId;
+              writeDaemonState(fileState);
+            }
             const machine = ensured.machine;
             logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
@@ -1425,17 +1523,23 @@ export async function startDaemon(): Promise<void> {
             }
 
             // Create realtime machine session
-            const connectedApiMachine = api.machineSyncClient(machine);
+            const connectedApiMachine = diagnosticSubsystemGates.disableMachineSync
+              ? null
+              : api.machineSyncClient(machine);
             apiMachine = connectedApiMachine;
             apiMachineForSessions = connectedApiMachine;
 
             // Set RPC handlers
-            automationWorker = startAutomationWorker({
-              token: credentials.token,
-              machineId,
-              encryption: credentials.encryption,
-              spawnSession,
-            });
+            if (diagnosticSubsystemGates.disableAutomationWorker) {
+              logger.warn('[DAEMON RUN] Diagnostic gate enabled: automation worker disabled');
+            } else {
+              automationWorker = startAutomationWorker({
+                token: credentials.token,
+                machineId,
+                encryption: credentials.encryption,
+                spawnSession,
+              });
+            }
 
             memoryWorker = await (async () => {
               try {
@@ -1449,88 +1553,136 @@ export async function startDaemon(): Promise<void> {
               }
             })();
 
-            connectedApiMachine.setRPCHandlers({
-              spawnSession,
-              stopSession,
-              requestShutdown: () => {
-                void beforeShutdown().finally(() => requestShutdown('happier-app'));
-              },
-              ...(memoryWorker ? { memory: memoryWorker } : {}),
-              machineTransferChannel: {
-                onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
-                sendEnvelope: (payload) => connectedApiMachine.sendMachineTransferEnvelope(payload),
-              },
-              ...(directPeerRegistry
-                ? {
-                  directPeerTransfer: {
-                    publishTransfer: ({ handoffId, bundles }) =>
-                      directPeerRegistry!.publishTransfer({
-                        handoffId,
-                        bundles,
-                      }).endpointCandidates,
-                    clearPublishedTransfer: (handoffId) => directPeerRegistry!.clearPublishedTransfer(handoffId),
-                  },
+            if (connectedApiMachine) {
+              connectedApiMachine.setRPCHandlers({
+                spawnSession,
+                stopSession,
+                isSessionActive: isSessionAlreadyRunning,
+                loadLocalSessionMetadata: loadLocalSessionMetadataForHandoff,
+                requestShutdown: () => {
+                  void beforeShutdown().finally(() => requestShutdown('happier-app'));
+                },
+                ...(memoryWorker ? { memory: memoryWorker } : {}),
+                machineTransferChannel: {
+                  onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
+                  sendEnvelope: (payload) => connectedApiMachine.sendMachineTransferEnvelope(payload),
+                },
+                ...(directPeerRegistry
+                  ? {
+                      directPeerTransfer: {
+                        publishTransfer: ({ transferId, payload: _payload, payloadSource }) => {
+                          if (!payloadSource) {
+                            throw new Error('Direct peer handoff publish requires a file-backed payload source');
+                          }
+                          return directPeerRegistry!.publishTransfer({
+                            transferId,
+                            payloadSource,
+                          }).endpointCandidates;
+                        },
+                        requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath }) =>
+                          await requestDirectPeerTransferToFile({
+                            transferId,
+                            endpointCandidates,
+                            destinationPath,
+                          }),
+                        clearPublishedTransfer: (transferId) => directPeerRegistry!.clearPublishedTransfer(transferId),
+                      },
+                    }
+                  : {}),
+              });
+
+              connectedApiMachine.onUpdate((update) => {
+                if (!automationWorker) return false;
+                const t = (update?.body as any)?.t;
+                if (t === 'automation-assignment-updated' || t === 'automation-run-updated') {
+                  automationWorker.handleServerUpdate(update);
+                  return true;
                 }
-                : {}),
-            });
+                return false;
+              });
 
-            connectedApiMachine.onUpdate((update) => {
-              if (!automationWorker) return false;
-              const t = (update?.body as any)?.t;
-              if (t === 'automation-assignment-updated' || t === 'automation-run-updated') {
-                automationWorker.handleServerUpdate(update);
-                return true;
-              }
-              return false;
-            });
+              daemonConnectivityCoordinator = createDaemonConnectivityCoordinator({
+                resources: [
+                  ...(automationWorker
+                    ? [{
+                      name: 'automationWorker',
+                      pause: () => automationWorker!.pause(),
+                      resume: () => automationWorker!.resume(),
+                    }]
+                    : []),
+                  ...(connectedServiceQuotasLoopHandle
+                    ? [{
+                      name: 'connectedServiceQuotasLoop',
+                      pause: () => connectedServiceQuotasLoopHandle!.pause(),
+                      resume: () => connectedServiceQuotasLoopHandle!.resume(),
+                    }]
+                    : []),
+                  ...(connectedServiceRefreshLoopHandle
+                    ? [{
+                      name: 'connectedServiceRefreshLoop',
+                      pause: () => connectedServiceRefreshLoopHandle!.pause(),
+                      resume: () => connectedServiceRefreshLoopHandle!.resume(),
+                    }]
+                    : []),
+                ],
+              });
 
-            let didRefreshMachineMetadata = false;
-            connectedApiMachine.connect({
-              onConnect: async () => {
-                if (shutdownInitiated) return;
+              machineConnectionStateCleanup = connectedApiMachine.onConnectionStateChange((state) => {
+                void daemonConnectivityCoordinator!.applyState(state).catch((error) => {
+                  logger.warn('[DAEMON RUN] Failed to apply daemon connectivity state', error);
+                });
+              });
 
-                if (automationWorker) {
-                  await automationWorker.refreshAssignments().catch((error) => {
-                    logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
-                  });
-                }
+              let didRefreshMachineMetadata = false;
+              connectedApiMachine.connect({
+                onConnect: async () => {
+                  if (shutdownInitiated) return;
 
-                if (didRefreshMachineMetadata) return;
-                didRefreshMachineMetadata = true;
-                // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
-                await connectedApiMachine.updateMachineMetadata((metadata) => {
-                  const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
-                  const next: MachineMetadata = {
-                    ...base,
-                    host: preferredHost,
-                    platform: os.platform(),
-                    happyCliVersion: packageJson.version,
-                    homeDir: os.homedir(),
-                    happyHomeDir: configuration.happyHomeDir,
-                    happyLibDir: projectPath(),
-                  } as MachineMetadata;
-
-                  // If nothing changes, skip emitting an update entirely.
-                  const current = base as Partial<MachineMetadata>;
-                  const isSame =
-                    current.host === next.host &&
-                    current.platform === next.platform &&
-                    current.happyCliVersion === next.happyCliVersion &&
-                    current.homeDir === next.homeDir &&
-                    current.happyHomeDir === next.happyHomeDir &&
-                    current.happyLibDir === next.happyLibDir;
-
-                  if (isSame) {
-                    return base as MachineMetadata;
+                  if (automationWorker) {
+                    await automationWorker.refreshAssignments().catch((error) => {
+                      logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
+                    });
                   }
 
-                  return next;
-                }).catch((error) => {
-                  didRefreshMachineMetadata = false;
-                  logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
-                });
-              },
-            });
+                  if (didRefreshMachineMetadata) return;
+                  didRefreshMachineMetadata = true;
+                  // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
+                  await connectedApiMachine.updateMachineMetadata((metadata) => {
+                    const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
+                    const next: MachineMetadata = {
+                      ...base,
+                      host: preferredHost,
+                      platform: os.platform(),
+                      happyCliVersion: packageJson.version,
+                      homeDir: os.homedir(),
+                      happyHomeDir: configuration.happyHomeDir,
+                      happyLibDir: projectPath(),
+                    } as MachineMetadata;
+
+                    // If nothing changes, skip emitting an update entirely.
+                    const current = base as Partial<MachineMetadata>;
+                    const isSame =
+                      current.host === next.host &&
+                      current.platform === next.platform &&
+                      current.happyCliVersion === next.happyCliVersion &&
+                      current.homeDir === next.homeDir &&
+                      current.happyHomeDir === next.happyHomeDir &&
+                      current.happyLibDir === next.happyLibDir;
+
+                    if (isSame) {
+                      return base as MachineMetadata;
+                    }
+
+                    return next;
+                  }).catch((error) => {
+                    didRefreshMachineMetadata = false;
+                    logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
+                  });
+                },
+              });
+            } else {
+              logger.warn('[DAEMON RUN] Diagnostic gate enabled: machine sync disabled');
+            }
 
             return;
           } catch (error) {
@@ -1604,16 +1756,18 @@ export async function startDaemon(): Promise<void> {
             clearInterval(restartOnStaleVersionAndHeartbeat);
         logger.debug('[DAEMON RUN] Health check interval cleared');
       }
-      if (connectedServiceRefreshInterval) {
-        clearInterval(connectedServiceRefreshInterval);
-        connectedServiceRefreshInterval = null;
+      if (connectedServiceRefreshLoopHandle) {
+        connectedServiceRefreshLoopHandle.stop();
+        connectedServiceRefreshLoopHandle = null;
       }
       if (connectedServiceQuotasLoopHandle) {
         connectedServiceQuotasLoopHandle.stop();
         connectedServiceQuotasLoopHandle = null;
       }
 
-          if (apiMachine) {
+      if (apiMachine) {
+        machineConnectionStateCleanup?.();
+        machineConnectionStateCleanup = null;
           const daemonStateUpdateTimeoutMs = resolvePositiveIntEnv(
             process.env.HAPPIER_DAEMON_SHUTDOWN_STATE_UPDATE_TIMEOUT_MS,
             250,
@@ -1656,7 +1810,6 @@ export async function startDaemon(): Promise<void> {
 
       await stopDirectPeerServer();
       await stopControlServer();
-          await cleanupDaemonState();
           await stopCaffeinate();
           if (daemonLockHandle) {
             await releaseDaemonLock(daemonLockHandle);

@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
-import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import {
+    decryptSecretStringV1,
+    deriveAccountMachineKeyFromRecoverySecret,
+    deriveSettingsSecretsKeyV1,
+    encryptSecretStringV1,
+    openAccountScopedBlobCiphertext,
+    sealAccountScopedBlobCiphertext,
+} from '@happier-dev/protocol';
 
 const mocks = vi.hoisted(() => {
     const settingsParse = vi.fn((value: unknown) => {
@@ -65,14 +72,58 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverUrl: 'http://127.0.0.1:3009' }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => mocks.storageState,
     },
-}));
+});
+});
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     loadPendingSettings: () => ({}),
+    loadSettings: () => ({
+        settings: { ...mocks.storageState.settings },
+        version: mocks.storageState.settingsVersion,
+    }),
+    loadLocalSettings: () => ({}),
+    loadPurchases: () => ({}),
+    loadProfile: () => ({}),
+    loadThemePreference: () => 'adaptive',
+    loadSessionDrafts: () => ({}),
+    loadSessionReviewCommentsDrafts: () => ({}),
+    loadSessionActionDrafts: () => ({}),
+    loadNewSessionDraft: () => null,
+    loadSessionPermissionModes: () => ({}),
+    loadSessionPermissionModeUpdatedAts: () => ({}),
+    loadSessionLastViewed: () => ({}),
+    loadSessionModelModes: () => ({}),
+    loadSessionModelModeUpdatedAts: () => ({}),
+    loadSessionMaterializedMaxSeqById: () => ({}),
+    loadChangesCursor: () => null,
+    loadLastChangesCursorByAccountId: () => ({}),
+    loadDeviceAnalyticsId: () => null,
+    saveSettings: vi.fn(),
+    saveLocalSettings: vi.fn(),
+    savePurchases: vi.fn(),
+    saveProfile: vi.fn(),
+    saveSessionDrafts: vi.fn(),
+    saveSessionReviewCommentsDrafts: vi.fn(),
+    saveSessionActionDrafts: vi.fn(),
+    saveNewSessionDraft: vi.fn(),
+    clearNewSessionDraft: vi.fn(),
+    saveSessionPermissionModes: vi.fn(),
+    saveSessionPermissionModeUpdatedAts: vi.fn(),
+    saveSessionLastViewed: vi.fn(),
+    saveSessionModelModes: vi.fn(),
+    saveSessionModelModeUpdatedAts: vi.fn(),
+    saveSessionMaterializedMaxSeqById: vi.fn(),
+    saveChangesCursor: vi.fn(),
+    saveLastChangesCursorByAccountId: vi.fn(),
+    savePendingSettings: vi.fn(),
+    saveDeviceAnalyticsId: vi.fn(),
+    clearPersistence: vi.fn(),
 }));
 
 vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
@@ -285,5 +336,95 @@ describe('syncSettings account settings ciphertext', () => {
         const body = JSON.parse(String(initV1?.body)) as { settings?: unknown; expectedVersion?: unknown };
         expect(typeof body.settings).toBe('string');
         expect(body.expectedVersion).toBe(9);
+    });
+
+    it('migrates legacy-sealed saved secrets to canonical machine-key sealing after fetch', async () => {
+        const recoverySecret = new Uint8Array(32).fill(6);
+        const machineKey = deriveAccountMachineKeyFromRecoverySecret(recoverySecret);
+        const legacySettingsKey = deriveSettingsSecretsKeyV1(recoverySecret);
+        const canonicalSettingsKey = deriveSettingsSecretsKeyV1(machineKey);
+        const legacyCredentials: AuthCredentials = {
+            token: 'token',
+            secret: Buffer.from(recoverySecret).toString('base64url'),
+        } as any;
+
+        const encryptionStub = {
+            getContentPrivateKey: () => machineKey,
+            decryptRaw: vi.fn(async () => {
+                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
+            }),
+        } as unknown as Encryption;
+
+        const legacyEncryptedSecret = encryptSecretStringV1(
+            'sk-legacy',
+            legacySettingsKey,
+            mocks.getRandomBytes,
+        );
+        const fetchedCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey },
+            payload: {
+                analyticsOptOut: true,
+                secrets: [
+                    {
+                        id: 'sec1',
+                        name: 'Legacy Secret',
+                        kind: 'apiKey',
+                        encryptedValue: { _isSecretValue: true, encryptedValue: legacyEncryptedSecret },
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 12 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 13 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await syncSettings({
+            credentials: legacyCredentials,
+            encryption: encryptionStub,
+            pendingSettings: {},
+            settingsSecretsKey: canonicalSettingsKey,
+            settingsSecretsReadKeys: [canonicalSettingsKey, legacySettingsKey],
+            clearPendingSettings: vi.fn(),
+        });
+
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(3);
+        expect(mocks.serverFetch.mock.calls[2]?.[0]).toBe('/v2/account/settings');
+        expect(mocks.serverFetch.mock.calls[2]?.[1]?.method).toBe('POST');
+
+        const migrateBody = JSON.parse(String(mocks.serverFetch.mock.calls[2]?.[1]?.body)) as {
+            content?: { t?: unknown; c?: unknown };
+            expectedVersion?: unknown;
+        };
+        expect(migrateBody.expectedVersion).toBe(12);
+        expect(migrateBody.content?.t).toBe('encrypted');
+
+        const opened = openAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey },
+            ciphertext: String(migrateBody.content?.c ?? ''),
+        });
+        const migratedSecret = ((opened?.value as any)?.secrets?.[0]?.encryptedValue?.encryptedValue);
+        expect(decryptSecretStringV1(migratedSecret, canonicalSettingsKey)).toBe('sk-legacy');
     });
 });

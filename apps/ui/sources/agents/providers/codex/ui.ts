@@ -5,6 +5,7 @@ import type { AgentUiConfig } from '@/agents/registry/registryUi';
 export const CODEX_UI: AgentUiConfig = {
     id: 'codex',
     icon: require('@/assets/images/icon-gpt.png'),
+    svgIconXml: null,
     tintColor: (theme: UnistylesThemes[keyof UnistylesThemes]) => theme.colors.text,
     avatarOverlay: {
         circleScale: 0.35,
@@ -12,4 +13,3 @@ export const CODEX_UI: AgentUiConfig = {
     },
     cliGlyph: '꩜',
 };
-

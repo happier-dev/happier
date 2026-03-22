@@ -1,66 +1,46 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('expo-router', () => createExpoRouterMock().module);
 
-vi.mock('expo-linear-gradient', () => ({
-    LinearGradient: 'LinearGradient',
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({
-        push: vi.fn(),
-        back: vi.fn(),
-        navigate: vi.fn(),
-        replace: vi.fn(),
-    }),
-}));
-
-vi.mock('expo-localization', () => ({
-    getLocales: () => [{ languageTag: 'en-US' }],
-}));
-
-vi.mock('expo-system-ui', () => ({
-    setBackgroundColorAsync: vi.fn(),
-}));
-
-vi.mock('@/theme', () => ({
-    darkTheme: { colors: { groupped: { background: '#000' } } },
-    lightTheme: { colors: { groupped: { background: '#fff' } } },
-}));
-
+vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
+vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
+vi.mock('@/theme', () => ({ darkTheme: { colors: { groupped: { background: '#000' } } }, lightTheme: { colors: { groupped: { background: '#fff' } } } }));
 vi.mock('react-native', async () => {
-    const actual = await import('@/dev/reactNativeStub');
-    return {
-        ...actual,
-        AppState: {
-            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-        },
-        Platform: {
-            OS: 'ios',
-            select: (spec: Record<string, unknown>) =>
-                spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-        },
-        Appearance: {
-            getColorScheme: () => 'light',
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Appearance: { getColorScheme: () => 'light' },
+                        }
+    );
 });
 
-vi.mock('@expo/vector-icons', async () => {
-    const Ionicons = Object.assign(
-        (props: any) => React.createElement('Ionicons', props),
-        { glyphMap: {} },
-    );
-    return { Ionicons };
-});
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+vi.mock('react-native-unistyles', async () => await createUnistylesMock({
+    theme: {
+        colors: {
+            accent: { blue: '#00f', orange: '#f90', indigo: '#6366f1' },
+            status: { connecting: '#09f' },
+            shadow: { color: '#000' },
+            surface: '#fff',
+            text: '#111',
+            divider: '#ddd',
+        },
+    },
+}));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    ...createTextModuleMock(),
     getLanguageNativeName: () => 'English',
     SUPPORTED_LANGUAGES: { en: { name: 'English' } },
 }));
@@ -78,7 +58,15 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
+    Switch: 'Switch',
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => 'desktop',
 }));
 
 type MutableHookResult<T> = readonly [T, (next: T) => void];
@@ -90,59 +78,56 @@ function createNoopMutable<T>(value: T): MutableHookResult<T> {
 const useSettingMutableMock = vi.fn();
 const useLocalSettingMutableMock = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => useSettingMutableMock(key),
-    useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createStorageModuleMock({
+    importOriginal,
+    overrides: {
+        useSettingMutable: (key: string) => useSettingMutableMock(key),
+        useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
+    },
 }));
 
-describe('AppearanceSettingsScreen (session list controls)', () => {
+describe('AppearanceSettingsScreen (focused groups after redistribution)', () => {
     beforeEach(() => {
         vi.resetModules();
 
         useSettingMutableMock.mockImplementation((key: string) => {
-            if (key === 'viewInline') return createNoopMutable(false);
-            if (key === 'expandTodos') return createNoopMutable(false);
-            if (key === 'showLineNumbers') return createNoopMutable(false);
-            if (key === 'showLineNumbersInToolViews') return createNoopMutable(false);
-            if (key === 'wrapLinesInDiffs') return createNoopMutable(false);
-            if (key === 'alwaysShowContextSize') return createNoopMutable(false);
-            if (key === 'agentInputActionBarLayout') return createNoopMutable('auto' as any);
-            if (key === 'agentInputChipDensity') return createNoopMutable('auto' as any);
             if (key === 'avatarStyle') return createNoopMutable('gradient' as any);
             if (key === 'showFlavorIcons') return createNoopMutable(true);
-            if (key === 'compactSessionView') return createNoopMutable(false);
-            if (key === 'compactSessionViewMinimal') return createNoopMutable(false);
             if (key === 'preferredLanguage') return createNoopMutable(null);
-
-            // Session list settings we are moving into appearance:
-            if (key === 'hideInactiveSessions') return createNoopMutable(false);
-            if (key === 'sessionListActiveGroupingV1') return createNoopMutable('project' as any);
-            if (key === 'sessionListInactiveGroupingV1') return createNoopMutable('date' as any);
-
             return createNoopMutable(null);
         });
 
         useLocalSettingMutableMock.mockImplementation((key: string) => {
             if (key === 'themePreference') return createNoopMutable('adaptive' as any);
             if (key === 'uiFontScale') return createNoopMutable(1 as any);
+            if (key === 'uiItemDensity') return createNoopMutable('comfortable' as any);
+            if (key === 'uiMultiPanePanelsEnabled') return createNoopMutable(false);
+            if (key === 'detailsPaneTabsBehavior') return createNoopMutable('preview' as any);
+            if (key === 'editorFocusModeEnabled') return createNoopMutable(false);
             return createNoopMutable(null);
         });
     });
 
-    it('renders session list grouping controls and hide-inactive toggle', async () => {
+    it('renders core appearance settings after redistribution', async () => {
         const { default: AppearanceSettingsScreen } = await import('@/app/(app)/settings/appearance');
+        const screen = await renderScreen(React.createElement(AppearanceSettingsScreen));
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AppearanceSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
+        const items = screen.root.findAllByType('Item' as any);
         const titles = items.map((i) => i.props.title);
+        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const dropdownTitles = dropdowns.map((node: any) => node.props?.itemTrigger?.title).filter(Boolean);
 
-        expect(titles).toContain('settingsFeatures.hideInactiveSessions');
-        expect(titles).toContain('settingsFeatures.sessionListActiveGrouping');
-        expect(titles).toContain('settingsFeatures.sessionListInactiveGrouping');
-        expect(titles).toContain('settingsAppearance.textSize');
+        // Core appearance settings that remain
+        expect(titles).toContain('settings.appearance');
+        expect(titles).toContain('settingsAppearance.avatarStyle');
+        expect(titles).toContain('settingsAppearance.showFlavorIcons');
+        expect(titles).toContain('settingsAppearance.multiPanePanels');
+        expect(dropdownTitles).toContain('settingsAppearance.textSize');
+        expect(dropdownTitles).toContain('settingsAppearance.itemDensity');
+
+        // Session list settings moved to session.tsx — should NOT be here
+        expect(titles).not.toContain('settingsFeatures.hideInactiveSessions');
+        expect(titles).not.toContain('settingsFeatures.sessionListActiveGrouping');
+        expect(titles).not.toContain('settingsFeatures.sessionListInactiveGrouping');
     });
 });

@@ -158,7 +158,7 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     avatarStyle: {
-        schema: z.string(),
+        schema: z.enum(['pixelated', 'gradient', 'brutalist']),
         default: 'brutalist',
         description: 'Avatar display style',
         storageScope: 'account',

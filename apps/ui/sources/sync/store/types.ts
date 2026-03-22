@@ -14,12 +14,15 @@ import type { Profile } from '../domains/profiles/profile';
 import type { Purchases } from '../domains/purchases/purchases';
 import type { Settings } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
+import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import type { CustomerInfo } from '../domains/purchases/types';
 import type { SessionMessages } from './domains/messages';
 import type { SessionPending } from './domains/pending';
 import type { NativeUpdateStatus, RealtimeMode, RealtimeStatus, SocketStatus, SyncError } from './domains/realtime';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
+import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionListItem = string | Session;
@@ -32,7 +35,7 @@ export interface SettingsDomainSlice {
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
     applySettingsLocal: (settings: Partial<Settings>) => void;
-    applyLocalSettings: (settings: Partial<LocalSettings>) => void;
+    applyLocalSettings: (settings: Partial<LocalSettings>, options?: { source?: SettingsAnalyticsSource }) => void;
 }
 
 export interface ProfileDomainSlice {
@@ -48,6 +51,7 @@ export interface LegacySessionsSlice {
 
 export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
+    sessionListRenderables: Record<string, SessionListRenderableSession>;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
     sessionScmStatus: Record<string, ScmStatus | null>;
@@ -56,6 +60,7 @@ export interface SessionsDomainSlice {
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
+    replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
     applyScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getActiveSessions: () => Session[];
     getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
@@ -79,6 +84,7 @@ export interface SessionsDomainSlice {
     clearSessionActionDrafts: (sessionId: string) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
+    clearSessionThinkingGrace: (sessionId: string) => void;
     markSessionViewed: (sessionId: string) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => void;
@@ -87,6 +93,7 @@ export interface SessionsDomainSlice {
 
 export interface MachinesDomainSlice {
     machines: Record<string, Machine>;
+    machineDisplayById: Record<string, MachineDisplayRenderable>;
     /**
      * Server-scoped machine lists used for multi-server group/picker contexts.
      * Active server machines still live in `machines` (record) for fast lookup.
@@ -94,11 +101,19 @@ export interface MachinesDomainSlice {
     machineListByServerId: Record<string, Machine[] | null>;
     machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
+    replaceMachineDisplays: (machines: MachineDisplayRenderable[]) => void;
 }
 
 export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
+    applyTranscriptDraftDelta: (sessionId: string, params: {
+        localId: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        deltaText: string;
+        createdAtMs: number;
+    }) => void;
     applyMessagesLoaded: (sessionId: string) => void;
     resetSessionMessages: (sessionId: string) => void;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;

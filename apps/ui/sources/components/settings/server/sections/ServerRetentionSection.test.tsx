@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,30 +12,10 @@ vi.mock('@/hooks/server/useServerRetentionPolicy', () => ({
     useServerRetentionPolicy,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: { count?: number }) => {
-        if (key === 'server.retention.title') return 'Retention policy';
-        if (key === 'server.retention.summary') return 'Summary';
-        if (key === 'server.retention.keepForever') return 'No automatic deletion';
-        if (key === 'server.retention.deleteInactiveSessionsDays') return `Deletes inactive sessions after ${params?.count ?? 0} days.`;
-        if (key === 'server.retention.deleteOlderThanDays') return `Deletes data after ${params?.count ?? 0} days.`;
-        if (key === 'server.retention.sessionNotice') return `This server deletes inactive sessions after ${params?.count ?? 0} days of inactivity.`;
-        if (key === 'server.retention.sessions') return 'Sessions';
-        if (key === 'server.retention.accountChanges') return 'Account changes';
-        if (key === 'server.retention.voiceSessionLeases') return 'Voice session leases';
-        if (key === 'server.retention.feedItems') return 'Feed items';
-        if (key === 'server.retention.sessionShareAccessLogs') return 'Session share access logs';
-        if (key === 'server.retention.publicShareAccessLogs') return 'Public share access logs';
-        if (key === 'server.retention.terminalAuthRequests') return 'Terminal auth requests';
-        if (key === 'server.retention.accountAuthRequests') return 'Account auth requests';
-        if (key === 'server.retention.authPairingSessions') return 'Auth pairing sessions';
-        if (key === 'server.retention.repeatKeys') return 'Repeat keys';
-        if (key === 'server.retention.globalLocks') return 'Global locks';
-        if (key === 'server.retention.automationRuns') return 'Automation runs';
-        if (key === 'server.retention.automationRunEvents') return 'Automation run events';
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
@@ -49,9 +31,7 @@ describe('ServerRetentionSection', () => {
         const { ServerRetentionSection } = await import('./ServerRetentionSection');
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ServerRetentionSection, { serverId: 'server-a' }));
-        });
+        tree = (await renderScreen(React.createElement(ServerRetentionSection, { serverId: 'server-a' }))).tree;
 
         expect(tree!.root.findAllByType('ItemGroup' as any)).toHaveLength(0);
     });
@@ -80,9 +60,7 @@ describe('ServerRetentionSection', () => {
         const { ServerRetentionSection } = await import('./ServerRetentionSection');
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ServerRetentionSection, { serverId: 'server-a' }));
-        });
+        tree = (await renderScreen(React.createElement(ServerRetentionSection, { serverId: 'server-a' }))).tree;
 
         const items = tree!.root.findAllByType('Item' as any);
         expect(items.length).toBeGreaterThan(0);

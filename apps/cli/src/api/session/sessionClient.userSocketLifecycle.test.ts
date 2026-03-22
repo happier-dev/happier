@@ -1,100 +1,48 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Session } from '@/api/types';
+import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import {
+  type ApiSessionSocketStub,
+  createApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 
-type SocketStub = {
-  socket: {
-    id: string;
-    connected: boolean;
-    on: (event: string, handler: (...args: any[]) => void) => void;
-    off: (event: string, handler?: (...args: any[]) => void) => void;
-    close: () => void;
-    connect: () => void;
-    disconnect: () => void;
-    emit: (...args: any[]) => void;
-    timeout: (ms: number) => any;
-    emitWithAck: (event: string, payload: unknown) => Promise<unknown>;
-  };
-  emit: (event: string, ...args: any[]) => void;
-  calls: {
-    connect: number;
-    disconnect: number;
-  };
-};
-
-function createSocketStub(params: { id: string; connected: boolean }): SocketStub {
-  const handlers = new Map<string, Set<(...args: any[]) => void>>();
-  const calls = { connect: 0, disconnect: 0 };
-  const state = { connected: params.connected };
-
-  const emit = (event: string, ...args: any[]) => {
-    const set = handlers.get(event);
-    if (!set) return;
-    for (const handler of Array.from(set)) {
-      handler(...args);
-    }
-  };
-
-  const socket: SocketStub['socket'] = {
-    id: params.id,
-    get connected() {
-      return state.connected;
-    },
-    set connected(value: boolean) {
-      state.connected = value;
-    },
-    on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-      const set = handlers.get(event) ?? new Set<(...args: any[]) => void>();
-      set.add(handler);
-      handlers.set(event, set);
-      return socket;
-    }),
-    off: vi.fn((event: string, handler?: (...args: any[]) => void) => {
-      if (!handler) {
-        handlers.delete(event);
-        return socket;
-      }
-      const set = handlers.get(event);
-      set?.delete(handler);
-      if (set && set.size === 0) handlers.delete(event);
-      return socket;
-    }),
-    close: vi.fn(() => {
-      state.connected = false;
-      emit('disconnect', 'io client disconnect');
-    }),
-    connect: vi.fn(() => {
-      calls.connect += 1;
-      state.connected = true;
-      emit('connect');
-    }),
-    disconnect: vi.fn(() => {
-      calls.disconnect += 1;
-      state.connected = false;
-      emit('disconnect', 'io client disconnect');
-    }),
-    emit: vi.fn(),
-    timeout: vi.fn(function timeout() {
-      return socket;
-    }),
-    emitWithAck: vi.fn(async () => ({ ok: true })),
-  };
-
-  return { socket, emit, calls };
-}
-
-let sessionSocketStub: SocketStub | null = null;
-let userSocketStub: SocketStub | null = null;
+let sessionSocketStub: ApiSessionSocketStub | null = null;
+let userSocketStub: ApiSessionSocketStub | null = null;
 
 vi.mock('./sockets', () => ({
-  createSessionScopedSocket: () => {
-    if (!sessionSocketStub) throw new Error('Missing session socket stub');
-    return sessionSocketStub.socket as any;
-  },
   createUserScopedSocket: () => {
     if (!userSocketStub) throw new Error('Missing user socket stub');
-    return userSocketStub.socket as any;
+    return userSocketStub as any;
   },
+}));
+
+vi.mock('./connection/createSessionSocketTransport', () => ({
+  createSessionSocketTransport: () => {
+    if (!sessionSocketStub) throw new Error('Missing session socket stub');
+    return {
+      socket: sessionSocketStub as any,
+      transport: {
+        connect: async () => {},
+        disconnect: async () => {},
+        destroy: async () => {},
+        isConnected: () => sessionSocketStub?.connected === true,
+        onConnected: () => () => {},
+        onDisconnected: () => () => {},
+        onError: () => () => {},
+      },
+    };
+  },
+}));
+
+vi.mock('@happier-dev/connection-supervisor', () => ({
+  DEFAULT_MANAGED_CONNECTION_POLICY: {},
+  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
+    start: async () => {
+      params.createTransport();
+      await params.onConnected?.();
+    },
+    stop: async () => {},
+  }),
 }));
 
 vi.mock('./sessionMessageCatchUp', () => ({
@@ -110,49 +58,29 @@ describe('ApiSessionClient user socket lifecycle', () => {
     vi.useRealTimers();
   });
 
-  function createSession(): Session {
-    return {
-      id: 's1',
-      seq: 0,
-      encryptionMode: 'plain',
-      encryptionKey: new Uint8Array([1, 2, 3]),
-      encryptionVariant: 'legacy',
-      metadata: {
-        path: '/tmp',
-        host: 'test',
-        homeDir: '/home/test',
-        happyHomeDir: '/home/test/.happier',
-        happyLibDir: '/home/test/.happier/lib',
-        happyToolsDir: '/home/test/.happier/tools',
-      },
-      metadataVersion: 0,
-      agentState: null,
-      agentStateVersion: 0,
-    };
-  }
-
   it('connects the user-scoped socket when agent user-message callback attaches', async () => {
     vi.resetModules();
-    sessionSocketStub = createSocketStub({ id: 'session-socket', connected: true });
-    userSocketStub = createSocketStub({ id: 'user-socket', connected: false });
+    sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
 
     const { ApiSessionClient } = await import('./sessionClient');
-    const client = new ApiSessionClient('tok', createSession());
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
 
-    expect(userSocketStub.calls.connect).toBe(0);
+    expect(userSocketStub.connect).toHaveBeenCalledTimes(0);
     client.onUserMessage(() => {});
-    expect(userSocketStub.calls.connect).toBe(1);
+    await Promise.resolve();
+    expect(userSocketStub.connect).toHaveBeenCalledTimes(1);
 
     await client.close();
   });
 
   it('keeps the user-scoped socket connected while a user-message callback is attached', async () => {
     vi.resetModules();
-    sessionSocketStub = createSocketStub({ id: 'session-socket', connected: true });
-    userSocketStub = createSocketStub({ id: 'user-socket', connected: false });
+    sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
 
     const { ApiSessionClient } = await import('./sessionClient');
-    const client = new ApiSessionClient('tok', createSession());
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     client.onUserMessage(() => {});
 
     const abortController = new AbortController();
@@ -162,8 +90,42 @@ describe('ApiSessionClient user socket lifecycle', () => {
 
     await vi.advanceTimersByTimeAsync(2_100);
 
-    expect(userSocketStub.calls.disconnect).toBe(0);
+    expect(userSocketStub.disconnect).toHaveBeenCalledTimes(0);
 
     await client.close();
   });
+
+  it('emits metadata-updated after storing the fresh metadata snapshot from update-session', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const snapshots: Array<string | null> = [];
+
+    client.on('metadata-updated', () => {
+      snapshots.push(client.getMetadataSnapshot()?.path ?? null);
+    });
+
+    sessionSocketStub.trigger('update', {
+      id: 'u1',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        sid: 's1',
+        metadata: {
+          version: 1,
+          value: JSON.stringify({ path: '/tmp/fresh', host: 'test' }),
+        },
+      },
+    });
+
+    expect(snapshots).toEqual(['/tmp/fresh']);
+    expect(client.getMetadataSnapshot()?.path).toBe('/tmp/fresh');
+
+    await client.close();
+  });
+
 });

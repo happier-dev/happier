@@ -1,18 +1,31 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => {
-  const React = require('react');
-  return {
-    View: (props: any) => React.createElement('View', props, props.children),
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    useWindowDimensions: () => ({ width: 390, height: 700, scale: 2, fontScale: 2 }),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: (values: any) => values?.ios ?? values?.default,
+                                    },
+                                    View: (props: any) => React.createElement('View', props, props.children),
+                                    Text: (props: any) => React.createElement('Text', props, props.children),
+                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                                    AppState: {
+                                        currentState: 'active',
+                                        addEventListener: () => ({ remove: () => {} }),
+                                        removeEventListener: () => {},
+                                    },
+                                    useWindowDimensions: () => ({ width: 390, height: 700, scale: 2, fontScale: 2 }),
+                                }
+    );
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -27,10 +40,10 @@ function findStyleValue(style: any, key: string) {
   return undefined;
 }
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: any) => styles },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         surface: '#fff',
         surfaceHigh: '#f5f5f5',
@@ -40,8 +53,8 @@ vi.mock('react-native-unistyles', () => ({
         shadow: { color: '#000', opacity: 0.1 },
       },
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => {
   const React = require('react');
@@ -69,13 +82,11 @@ describe('BugReportDiagnosticsPreviewModal', () => {
     ];
 
     let tree: renderer.ReactTestRenderer | null = null;
-    act(() => {
-      tree = renderer.create(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />);
-    });
+    tree = (await renderScreen(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />)).tree;
 
     // window.height=700, insets top+bottom=40, extra padding=96 => 564
     const expected = 564;
-    const rootView = tree!.root.findByType('View' as any);
+    const rootView = tree!.findByType('View' as any);
     expect(findStyleValue(rootView.props.style, 'height')).toBe(expected);
     expect(findStyleValue(rootView.props.style, 'maxHeight')).toBe(expected);
   });
@@ -95,9 +106,7 @@ describe('BugReportDiagnosticsPreviewModal', () => {
     ];
 
     let tree: renderer.ReactTestRenderer | null = null;
-    act(() => {
-      tree = renderer.create(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />);
-    });
+    tree = (await renderScreen(<BugReportDiagnosticsPreviewModal artifacts={artifacts as any} onClose={onClose} />)).tree;
 
     const openButtons = tree!.root
       .findAllByProps({ accessibilityLabel: 'Open app-context.json' })
@@ -108,8 +117,8 @@ describe('BugReportDiagnosticsPreviewModal', () => {
       openButtons[0]!.props.onPress();
     });
 
-    expect(tree!.root.findAllByProps({ accessibilityLabel: 'Back' }).length).toBeGreaterThan(0);
-    const textNodes = tree!.root.findAllByType('Text' as any);
+    expect(tree!.findAllByProps({ accessibilityLabel: 'Back' }).length).toBeGreaterThan(0);
+    const textNodes = tree!.findAllByType('Text' as any);
     const combined = textNodes.map((node) => String(node.props.children ?? '')).join('\n');
     expect(combined).toContain('app-context.json');
     expect(combined).toContain('{"hello":"world"}');

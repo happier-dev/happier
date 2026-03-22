@@ -1,6 +1,9 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (
     globalThis as typeof globalThis & {
@@ -61,20 +64,31 @@ const settingsState = vi.hoisted(() => ({
     serverSelectionActiveTargetId: null as string | null,
 }));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                        select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>
+                            options.web ?? options.default ?? options.ios ?? options.android,
+                    },
+                    View: 'View',
+                    Text: 'Text',
+                    Pressable: 'Pressable',
+                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 status: {
                     connected: '#00ff00',
                     connecting: '#ffcc00',
+                    actionRequired: '#ff9900',
                     disconnected: '#ff0000',
                     error: '#ff0000',
                     default: '#999999',
@@ -83,52 +97,17 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#666666',
             },
         },
-    }),
-    StyleSheet: {
-        create: (
-            factory: (
-                theme: {
-                    colors: {
-                        status: {
-                            connected: string;
-                            connecting: string;
-                            disconnected: string;
-                            error: string;
-                            default: string;
-                        };
-                        text: string;
-                        textSecondary: string;
-                    };
-                },
-                runtime: Record<string, unknown>,
-            ) => unknown,
-        ) =>
-            factory(
-                {
-                    colors: {
-                        status: {
-                            connected: '#00ff00',
-                            connecting: '#ffcc00',
-                            disconnected: '#ff0000',
-                            error: '#ff0000',
-                            default: '#999999',
-                        },
-                        text: '#111111',
-                        textSecondary: '#666666',
-                    },
-                },
-                {},
-            ),
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -164,7 +143,9 @@ vi.mock('@/components/ui/popover', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSocketStatus: () => ({ status: 'connected' }),
     useSyncError: () => null,
     useLastSyncAt: () => null,
@@ -174,25 +155,33 @@ vi.mock('@/sync/domains/state/storage', () => ({
             (settingsState as Record<string, unknown>)[String(key)] = value;
         },
     ],
-}));
+});
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: authMocks.refreshFromActiveServer }),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalMocks.confirm,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: modalMocks.confirm,
+        },
+    }).module;
+});
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: tokenStorageMock,
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerMocks.push, replace: routerMocks.replace }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerMocks.push, replace: routerMocks.replace },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: { retryNow: vi.fn() },
@@ -200,6 +189,16 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: connectionMocks.switchConnectionToActiveServer,
+}));
+
+vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
+    useConnectionHealth: () => ({
+        kind: 'no_machine',
+        color: '#ff9900',
+        isPulsing: false,
+        statusLabelKey: 'status.actionRequired',
+        machineLabelKey: 'newSession.noMachinesFound',
+    }),
 }));
 
 function getActionLabels(): string[] {
@@ -215,6 +214,13 @@ function getActionLabels(): string[] {
 async function importConnectionStatusControl() {
     const module = await import('./ConnectionStatusControl');
     return module.ConnectionStatusControl;
+}
+
+function findTrigger(screen: renderer.ReactTestRenderer) {
+    return screen.find((node) => (
+        node.props?.accessibilityRole === 'button'
+        && typeof node.props?.onPress === 'function'
+    ));
 }
 
 afterEach(() => {
@@ -235,21 +241,20 @@ describe('ConnectionStatusControl (native popover config)', () => {
     it('toggles the popover when pressing the trigger twice', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-        });
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        tree = screen.tree;
 
         expect(capture.popoverProps?.open).toBe(false);
 
-        const trigger = tree!.root.findByType('Pressable');
+        const trigger = findTrigger(screen.tree);
         await act(async () => {
-            trigger.props.onPress();
+            await pressTestInstanceAsync(trigger);
         });
 
         expect(capture.popoverProps?.open).toBe(true);
 
         await act(async () => {
-            trigger.props.onPress();
+            await pressTestInstanceAsync(trigger);
         });
 
         expect(capture.popoverProps?.open).toBe(false);
@@ -262,9 +267,8 @@ describe('ConnectionStatusControl (native popover config)', () => {
     it('enables a native portal so the menu is not width-constrained to the trigger', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-        });
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        tree = screen.tree;
 
         expect(capture.popoverProps).toBeTruthy();
         expect(capture.popoverProps?.portal?.web).toBe(true);
@@ -274,6 +278,28 @@ describe('ConnectionStatusControl (native popover config)', () => {
         await act(async () => {
             tree?.unmount();
         });
+    });
+
+    it('shows readiness and machines rows in the popover', async () => {
+        const ConnectionStatusControl = await importConnectionStatusControl();
+        let tree: renderer.ReactTestRenderer | undefined;
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        tree = screen.tree;
+
+        const trigger = findTrigger(screen.tree);
+        await act(async () => {
+            await pressTestInstanceAsync(trigger);
+        });
+
+        const textNodes = tree!.findAllByType('Text' as any);
+        const allText = textNodes
+            .map((node: any) => String(node.props.children ?? ''))
+            .join('\n');
+
+        expect(allText).toContain('profile.status');
+        expect(allText).toContain('status.actionRequired');
+        expect(allText).toContain('settings.machines');
+        expect(allText).toContain('newSession.noMachinesFound');
     });
 
     it('includes server and group target actions when configured', async () => {
@@ -297,13 +323,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const ConnectionStatusControl = await importConnectionStatusControl();
 
             let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-            });
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
 
-            const trigger = tree!.root.findByType('Pressable');
+            const trigger = findTrigger(screen.tree);
             await act(async () => {
-                trigger.props.onPress();
+                await pressTestInstanceAsync(trigger);
             });
 
             const actionLabels = getActionLabels();
@@ -340,13 +365,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const ConnectionStatusControl = await importConnectionStatusControl();
 
             let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-            });
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
 
-            const trigger = tree!.root.findByType('Pressable');
+            const trigger = findTrigger(screen.tree);
             await act(async () => {
-                trigger.props.onPress();
+                await pressTestInstanceAsync(trigger);
             });
 
             const actionLabels = getActionLabels();
@@ -378,13 +402,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const ConnectionStatusControl = await importConnectionStatusControl();
 
             let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-            });
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
 
-            const trigger = tree!.root.findByType('Pressable');
+            const trigger = findTrigger(screen.tree);
             await act(async () => {
-                trigger.props.onPress();
+                await pressTestInstanceAsync(trigger);
             });
 
             const switchAction = capture.actionSections
@@ -435,14 +458,13 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const ConnectionStatusControl = await importConnectionStatusControl();
 
             let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-            });
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
 
-            const trigger = tree!.root.findByType('Pressable');
+            const trigger = findTrigger(screen.tree);
             await act(async () => {
                 trigger.props.onPress();
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             const switchAction = capture.actionSections
@@ -455,7 +477,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             await act(async () => {
                 switchAction?.onPress?.();
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             expect(modalMocks.confirm).toHaveBeenCalledTimes(1);
@@ -508,14 +530,13 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const ConnectionStatusControl = await importConnectionStatusControl();
 
             let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-            });
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
 
-            const trigger = tree!.root.findByType('Pressable');
+            const trigger = findTrigger(screen.tree);
             await act(async () => {
                 trigger.props.onPress();
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             const groupAction = capture.actionSections
@@ -528,7 +549,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             await act(async () => {
                 groupAction?.onPress?.();
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             expect(modalMocks.confirm).toHaveBeenCalledTimes(1);
@@ -565,13 +586,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const ConnectionStatusControl = await importConnectionStatusControl();
 
             let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
-            });
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
 
-            const trigger = tree!.root.findByType('Pressable');
+            const trigger = findTrigger(screen.tree);
             await act(async () => {
-                trigger.props.onPress();
+                await pressTestInstanceAsync(trigger);
             });
 
             const actionIds = new Set(

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createDbMocks, installDbModuleMock, installPrismaModuleMock } from "../testkit/dbMocks";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 vi.mock("@/app/share/accessControl", () => ({
@@ -58,16 +60,24 @@ vi.mock("@/app/presence/sessionCache", () => ({
     },
 }));
 
-vi.mock("@/storage/prisma", () => ({
+vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
+    refreshSessionParticipantBadgePushes: vi.fn(async () => {}),
+}));
+
+installPrismaModuleMock(() => ({
     isPrismaErrorCode: () => false,
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        sessionMessage: {
-            findFirst: vi.fn(),
-        },
-    },
+const { db, reset: resetDbMocks } = createDbMocks({
+    sessionMessage: ["findFirst"],
+} as const);
+const txDbMocks = createDbMocks({
+    session: ["findUnique", "update"],
+    sessionMessage: ["findUnique", "findFirst", "create", "update"],
+} as const);
+
+installDbModuleMock(() => ({
+    db,
 }));
 
 type TestSessionMessageContent =
@@ -84,26 +94,6 @@ type TestSessionMessageRow = Readonly<{
     updatedAt: Date;
 }>;
 
-const txSessionMessageFindUnique = vi.fn<(args: any) => Promise<TestSessionMessageRow | null>>(async () => null);
-const txSessionMessageCreate = vi.fn<(args: any) => Promise<TestSessionMessageRow>>(async () => ({
-    id: "m1",
-    seq: 55,
-    localId: "l1",
-    sidechainId: null,
-    content: { t: "encrypted", c: "enc" },
-    createdAt: new Date(1),
-    updatedAt: new Date(1),
-}));
-const txSessionMessageUpdate = vi.fn<(args: any) => Promise<TestSessionMessageRow>>(async () => ({
-    id: "m1",
-    seq: 55,
-    localId: "l1",
-    sidechainId: null,
-    content: { t: "encrypted", c: "enc" },
-    createdAt: new Date(1),
-    updatedAt: new Date(1),
-}));
-
 vi.mock("@/storage/inTx", () => {
     const afterTx = (tx: any, callback: () => void) => {
         tx.__afterTxCallbacks.push(callback);
@@ -112,24 +102,8 @@ vi.mock("@/storage/inTx", () => {
     const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
         const tx: any = {
             __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
-            session: {
-                findUnique: vi.fn(async (args: any) => {
-                    if (args?.select?.id === true) {
-                        return { id: "s1" };
-                    }
-                    return {
-                        accountId: "owner",
-                        shares: [{ sharedWithUserId: "u2" }],
-                    };
-                }),
-                update: vi.fn(async () => ({ seq: 55 })),
-            },
-            sessionMessage: {
-                findUnique: txSessionMessageFindUnique,
-                findFirst: vi.fn(async () => null),
-                create: txSessionMessageCreate,
-                update: txSessionMessageUpdate,
-            },
+            session: txDbMocks.db.session,
+            sessionMessage: txDbMocks.db.sessionMessage,
         };
 
         const result = await fn(tx);
@@ -151,12 +125,22 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
         randomKeyNaked.mockClear();
         markAccountChanged.mockClear();
         socketMessageAckInc.mockClear();
-        txSessionMessageFindUnique.mockReset();
-        txSessionMessageCreate.mockReset();
-        txSessionMessageUpdate.mockReset();
+        resetDbMocks();
+        txDbMocks.reset();
 
-        txSessionMessageFindUnique.mockResolvedValue(null);
-        txSessionMessageCreate.mockResolvedValue({
+        txDbMocks.db.session.findUnique.mockImplementation(async (args: any) => {
+            if (args?.select?.id === true) {
+                return { id: "s1" };
+            }
+            return {
+                accountId: "owner",
+                shares: [{ sharedWithUserId: "u2" }],
+            };
+        });
+        txDbMocks.db.session.update.mockResolvedValue({ seq: 55 });
+        txDbMocks.db.sessionMessage.findFirst.mockResolvedValue(null);
+        txDbMocks.db.sessionMessage.findUnique.mockResolvedValue(null);
+        txDbMocks.db.sessionMessage.create.mockResolvedValue({
             id: "m1",
             seq: 55,
             localId: "l1",
@@ -165,7 +149,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
             createdAt: new Date(1),
             updatedAt: new Date(1),
         });
-        txSessionMessageUpdate.mockResolvedValue({
+        txDbMocks.db.sessionMessage.update.mockResolvedValue({
             id: "m1",
             seq: 55,
             localId: "l1",
@@ -221,7 +205,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
     it("emits message-updated when upserting an existing message row", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        txSessionMessageFindUnique.mockResolvedValue({
+        txDbMocks.db.sessionMessage.findUnique.mockResolvedValue({
             id: "m1",
             seq: 55,
             localId: "l1",
@@ -230,7 +214,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
             createdAt: new Date(1),
             updatedAt: new Date(1),
         });
-        txSessionMessageUpdate.mockResolvedValue({
+        txDbMocks.db.sessionMessage.update.mockResolvedValue({
             id: "m1",
             seq: 55,
             localId: "l1",
@@ -262,7 +246,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
     it("forwards sidechainId to session message writes", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        txSessionMessageCreate.mockResolvedValueOnce({
+        txDbMocks.db.sessionMessage.create.mockResolvedValueOnce({
             id: "m1",
             seq: 55,
             localId: "l1",
@@ -283,7 +267,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
 
         await handler({ sid: "s1", message: "enc", localId: "l1", sidechainId: "sc-1" });
 
-        expect(txSessionMessageCreate).toHaveBeenCalledWith(
+        expect(txDbMocks.db.sessionMessage.create).toHaveBeenCalledWith(
             expect.objectContaining({
                 data: expect.objectContaining({ sidechainId: "sc-1" }),
             }),

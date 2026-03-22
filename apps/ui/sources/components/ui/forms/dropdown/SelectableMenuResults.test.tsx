@@ -1,15 +1,20 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                    },
+                }
+    );
 });
 
 vi.mock('@/components/ui/lists/SelectableRow', () => ({
@@ -41,9 +46,7 @@ describe('SelectableMenuResults', () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SelectableMenuResults
+        tree = (await renderScreen(<SelectableMenuResults
                     categories={[
                         { id: 'c1', title: '', items: [{ id: 'a', title: 'A' }] },
                     ]}
@@ -52,9 +55,7 @@ describe('SelectableMenuResults', () => {
                     onPressItem={() => {}}
                     rowVariant="slim"
                     emptyLabel="Empty"
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree).not.toBeNull();
         const textNodes = (tree as any).root.findAllByType('Text');
@@ -65,20 +66,37 @@ describe('SelectableMenuResults', () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SelectableMenuResults
+        tree = (await renderScreen(<SelectableMenuResults
                     categories={[]}
                     selectedIndex={0}
                     onSelectionChange={() => {}}
                     onPressItem={() => {}}
                     rowVariant="slim"
                     emptyLabel={null as any}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree).not.toBeNull();
         expect((tree as any).toJSON()).toBe(null);
+    });
+
+    it('forwards compact item props to item rows', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<SelectableMenuResults
+                    categories={[
+                        { id: 'c1', title: '', items: [{ id: 'a', title: 'Alpha', subtitle: 'Selected subtitle' }] },
+                    ]}
+                    selectedIndex={0}
+                    onSelectionChange={() => {}}
+                    onPressItem={() => {}}
+                    rowVariant="slim"
+                    rowKind="item"
+                    itemProps={{ density: 'compact' }}
+                />)).tree;
+
+        const item = (tree as any).root.findByType('Item');
+        expect(item.props.density).toBe('compact');
+        expect(item.props.subtitle).toBe('Selected subtitle');
     });
 });

@@ -6,7 +6,7 @@ import { Stack } from 'expo-router';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
-import { createOkFetchResponse, createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import { createOkFetchResponse, createRootLayoutFeaturesResponse, renderScreen } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -67,9 +67,7 @@ async function flushEffects(): Promise<void> {
 async function renderRootLayout() {
     const { default: RootLayout } = await import('@/app/(app)/_layout');
     let tree: ReturnType<typeof renderer.create> | undefined;
-    act(() => {
-        tree = renderer.create(<RootLayout />);
-    });
+    tree = (await renderScreen(<RootLayout />)).tree;
     await act(async () => {
         await flushEffects();
     });

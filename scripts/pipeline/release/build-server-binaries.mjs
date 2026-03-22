@@ -8,12 +8,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   SERVER_TARGETS,
-  commandExists,
-  compileBunBinary,
-  execOrThrow,
-  ensureFileExists,
   normalizeChannel,
-  packageTargetBinary,
+  packagePreparedTargetBinary,
   parseArgs,
   parseCsv,
   readVersionFromPackageJson,
@@ -22,14 +18,11 @@ import {
   maybeSignFile,
   writeChecksumsFile,
 } from './lib/binary-release.mjs';
+import { buildServerBinaryArtifactPayload } from '@happier-dev/cli-common/componentArtifacts';
 
 async function main() {
   const repoRoot = resolveRepoRoot();
   const { kv } = parseArgs(process.argv.slice(2));
-
-  if (!commandExists('bun')) {
-    throw new Error('[release] bun is required to build binaries');
-  }
 
   const channel = normalizeChannel(kv.get('--channel'));
   const version = String(kv.get('--version') ?? '').trim()
@@ -46,103 +39,31 @@ async function main() {
     availableTargets: SERVER_TARGETS,
     requested: kv.get('--targets'),
   });
-
-  await ensureFileExists(entrypoint);
   await mkdir(tempBaseDir, { recursive: true });
   await rm(tempDir, { recursive: true, force: true });
   await mkdir(tempDir, { recursive: true });
   await mkdir(outDir, { recursive: true });
-
-  // Ensure generated Prisma clients are present before compiling the server binary.
-  // Workspace installs do not reliably run app-level postinstall scripts in CI.
-  const yarn = commandExists('yarn')
-    ? { cmd: 'yarn', args: [] }
-    : commandExists('corepack')
-      ? { cmd: 'corepack', args: ['yarn'] }
-      : null;
-  if (!yarn) {
-    throw new Error('[release] building server binaries requires yarn or corepack (corepack yarn)');
-  }
   const buildDbProviders = String(
     process.env.HAPPIER_BUILD_DB_PROVIDERS ?? process.env.HAPPY_BUILD_DB_PROVIDERS ?? 'all',
   ).trim() || 'all';
-  execOrThrow(
-    yarn.cmd,
-    [...yarn.args, '--cwd', 'apps/server', '-s', 'generate:providers'],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HAPPIER_BUILD_DB_PROVIDERS: buildDbProviders,
-        HAPPY_BUILD_DB_PROVIDERS: buildDbProviders,
-      },
-    },
-  );
-
-  const parseGeneratedProviderDirs = async () => {
-    const normalized = buildDbProviders.toLowerCase();
-    const requested = normalized === 'all'
-      ? ['sqlite', 'mysql']
-      : normalized
-          .split(',')
-          .map((value) => value.trim())
-          .filter((value) => value === 'sqlite' || value === 'mysql');
-    const deduped = [...new Set(requested)];
-    const entries = [];
-    for (const provider of deduped) {
-      const sourcePath = join(repoRoot, 'apps', 'server', 'generated', `${provider}-client`);
-      const info = await stat(sourcePath).catch(() => null);
-      if (!info?.isDirectory()) {
-        throw new Error(`[release] missing generated Prisma directory for provider ${provider}: ${sourcePath}`);
-      }
-      entries.push({
-        sourcePath,
-        targetPath: join('generated', `${provider}-client`),
-      });
-    }
-    if (deduped.includes('sqlite')) {
-      const migrationsPath = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
-      const migrationsInfo = await stat(migrationsPath).catch(() => null);
-      if (!migrationsInfo?.isDirectory()) {
-        throw new Error(`[release] missing sqlite migrations directory: ${migrationsPath}`);
-      }
-      entries.push({
-        sourcePath: migrationsPath,
-        targetPath: join('prisma', 'sqlite', 'migrations'),
-      });
-    }
-    const postgresPrismaClientPath = join(repoRoot, 'node_modules', '.prisma', 'client');
-    const postgresPrismaClientInfo = await stat(postgresPrismaClientPath).catch(() => null);
-    if (!postgresPrismaClientInfo?.isDirectory()) {
-      throw new Error(`[release] missing generated postgres Prisma client directory: ${postgresPrismaClientPath}`);
-    }
-    entries.push({
-      sourcePath: postgresPrismaClientPath,
-      targetPath: join('node_modules', '.prisma', 'client'),
-    });
-    return entries;
-  };
-  const additionalStageEntries = await parseGeneratedProviderDirs();
 
   const artifacts = [];
   for (const target of targets) {
-    const compiledPath = join(tempDir, `happier-server-${target.os}-${target.arch}${target.exeExt}`);
-    await compileBunBinary({
+    const stageDir = join(tempDir, `happier-server-v${version}-${target.os}-${target.arch}`);
+    await buildServerBinaryArtifactPayload({
+      repoRoot,
+      payloadDir: stageDir,
+      target,
       entrypoint,
-      bunTarget: target.bunTarget,
-      outfile: compiledPath,
-      cwd: repoRoot,
       externals,
+      buildDbProviders,
     });
-    const artifact = await packageTargetBinary({
+    const artifact = await packagePreparedTargetBinary({
       product: 'happier-server',
       version,
       target,
-      executableName: 'happier-server',
-      buildTempDir: tempDir,
+      stageDir,
       outDir,
-      compiledPath,
-      additionalStageEntries,
     });
     artifacts.push(artifact);
   }

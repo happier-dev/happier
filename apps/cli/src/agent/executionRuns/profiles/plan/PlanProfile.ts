@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PlanOutputV1Schema } from '@happier-dev/protocol';
+import { PlanOutputV1Schema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type {
   ExecutionRunIntentProfile,
@@ -8,6 +8,7 @@ import type {
   ExecutionRunStructuredMeta,
 } from '../ExecutionRunIntentProfile';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
+import { deriveLoosePlanSections } from '../shared/deriveLoosePlanSections';
 
 function buildPlanGuidanceBlock(): string {
   return [
@@ -33,6 +34,7 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   callId: string;
   sidechainId: string;
   backendId: string;
+  backendTarget: BackendTargetRefV1;
   startedAtMs: number;
   finishedAtMs: number;
   rawText: string;
@@ -54,6 +56,48 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   }).passthrough();
   const parsedModel = ModelOutputSchema.safeParse(parsedJson);
   if (!parsedModel.success) {
+    const loose = params.backendId === 'pi' ? deriveLoosePlanSections(trimmed) : null;
+    if (loose) {
+      const payload = PlanOutputV1Schema.parse({
+        runRef: {
+          runId: params.runId,
+          callId: params.callId,
+          backendId: params.backendId,
+          backendTarget: params.backendTarget,
+        },
+        summary: loose.summary,
+        sections: loose.sections,
+        generatedAtMs: params.finishedAtMs,
+      });
+
+      const summary = payload.summary || 'Plan completed.';
+      const structuredMeta: ExecutionRunStructuredMeta = { kind: 'plan_output.v1', payload };
+
+      const sectionsDigest = payload.sections.slice(0, 10).map((s) => ({
+        title: s.title,
+        items: s.items.slice(0, 10),
+      }));
+
+      return {
+        status: 'succeeded',
+        summary,
+        toolResultOutput: {
+          status: 'succeeded',
+          summary,
+          runId: params.runId,
+          callId: params.callId,
+          sidechainId: params.sidechainId,
+          backendId: params.backendId,
+          intent: 'plan',
+          startedAtMs: params.startedAtMs,
+          finishedAtMs: params.finishedAtMs,
+          sectionsDigest,
+        },
+        toolResultMeta: { happier: structuredMeta } as any,
+        structuredMeta,
+      };
+    }
+
     const summary = 'Invalid plan output (expected strict JSON).';
     return {
       status: 'failed',
@@ -74,7 +118,12 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   }
 
   const payload = PlanOutputV1Schema.parse({
-    runRef: { runId: params.runId, callId: params.callId, backendId: params.backendId },
+    runRef: {
+      runId: params.runId,
+      callId: params.callId,
+      backendId: params.backendId,
+      backendTarget: params.backendTarget,
+    },
     summary: parsedModel.data.summary,
     sections: parsedModel.data.sections,
     risks: parsedModel.data.risks,
@@ -121,6 +170,7 @@ export const PlanProfile: ExecutionRunIntentProfile = {
       callId: start.callId,
       sidechainId: start.sidechainId,
       backendId: start.backendId,
+      backendTarget: start.backendTarget,
       startedAtMs: start.startedAtMs,
       finishedAtMs,
       rawText,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { INSTALLABLES_CATALOG } from './installables.js';
+import { CODEX_ACP_DIST_TAG, INSTALLABLES_CATALOG } from './installables.js';
 
 describe('installables catalog', () => {
   it('has unique keys', () => {
@@ -12,5 +12,8 @@ describe('installables catalog', () => {
     const ids = INSTALLABLES_CATALOG.map((e) => e.capabilityId);
     expect(new Set(ids).size).toBe(ids.length);
   });
-});
 
+  it('preserves the legacy dist-tag export for public consumers', () => {
+    expect(CODEX_ACP_DIST_TAG).toBe('latest');
+  });
+});

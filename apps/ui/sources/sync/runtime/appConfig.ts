@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 
 export interface AppConfig {
     variant?: string;
@@ -14,11 +15,32 @@ export interface AppConfig {
     serverUrl?: string;
     enableDevPushTokenRegistration?: boolean;
     socketForceWebsocketOnly?: boolean;
+    filesPreviewMaxBytes?: number;
 }
+
+const DEFAULT_FILES_PREVIEW_MAX_BYTES = 2_500_000;
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
     const parsed = parseOptionalBooleanEnv(value);
     return parsed === null ? undefined : parsed;
+}
+
+function parseOptionalPositiveIntEnv(value: string | undefined): number | undefined {
+    const raw = String(value ?? '').trim();
+    if (!raw) return undefined;
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return undefined;
+    const int = Math.floor(num);
+    if (int <= 0) return undefined;
+    return int;
+}
+
+function readConfiguredFilesPreviewMaxBytesEnv(): number | undefined {
+    return (
+        parseOptionalPositiveIntEnv(process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES)
+        ?? parseOptionalPositiveIntEnv(process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES)
+        ?? parseOptionalPositiveIntEnv(process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES)
+    );
 }
 
 /**
@@ -97,9 +119,10 @@ export function loadAppConfig(): AppConfig {
         if (__DEV__) console.log('[loadAppConfig] Override postHogHost from EXPO_PUBLIC_POSTHOG_HOST');
         config.postHogHost = process.env.EXPO_PUBLIC_POSTHOG_HOST;
     }
-    if (process.env.EXPO_PUBLIC_SERVER_URL && config.serverUrl !== process.env.EXPO_PUBLIC_SERVER_URL) {
-        if (__DEV__) console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_SERVER_URL');
-        config.serverUrl = process.env.EXPO_PUBLIC_SERVER_URL;
+    const configuredServerUrl = readConfiguredServerUrlEnv();
+    if (configuredServerUrl && config.serverUrl !== configuredServerUrl) {
+        if (__DEV__) console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_HAPPIER_SERVER_URL/EXPO_PUBLIC_HAPPY_SERVER_URL/EXPO_PUBLIC_SERVER_URL');
+        config.serverUrl = configuredServerUrl;
     }
 
     const enableDevPushFromEnv = parseBooleanEnv(process.env.EXPO_PUBLIC_ENABLE_DEV_PUSH_TOKEN_REGISTRATION);
@@ -113,6 +136,19 @@ export function loadAppConfig(): AppConfig {
         if (__DEV__) console.log('[loadAppConfig] Override socketForceWebsocketOnly from EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET');
         config.socketForceWebsocketOnly = forceWebsocketFromEnv;
     }
+
+    const filesPreviewMaxBytesFromEnv = readConfiguredFilesPreviewMaxBytesEnv();
+    if (filesPreviewMaxBytesFromEnv !== undefined && config.filesPreviewMaxBytes !== filesPreviewMaxBytesFromEnv) {
+        if (__DEV__) console.log('[loadAppConfig] Override filesPreviewMaxBytes from EXPO_PUBLIC_*_FILES_PREVIEW_MAX_BYTES');
+        config.filesPreviewMaxBytes = filesPreviewMaxBytesFromEnv;
+    }
+
+    const filesPreviewMaxBytesValue = typeof config.filesPreviewMaxBytes === 'number' && Number.isFinite(config.filesPreviewMaxBytes)
+        ? Math.floor(config.filesPreviewMaxBytes)
+        : null;
+    config.filesPreviewMaxBytes = filesPreviewMaxBytesValue && filesPreviewMaxBytesValue > 0
+        ? filesPreviewMaxBytesValue
+        : DEFAULT_FILES_PREVIEW_MAX_BYTES;
 
     return config as AppConfig;
 }

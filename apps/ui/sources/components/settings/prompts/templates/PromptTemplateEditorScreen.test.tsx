@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,25 +10,24 @@ const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const setInvocationsMock = vi.fn();
 
-vi.mock('react-native', () => ({
-    ScrollView: 'ScrollView',
-    View: 'View',
-    Switch: 'Switch',
-    Platform: { OS: 'web', select: ({ web, default: defaultValue }: any) => web ?? defaultValue },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                    ScrollView: 'ScrollView',
+                                                    View: 'View',
+                                                    Switch: 'Switch',
+                                                    Platform: {
+                                                        OS: 'web',
+                                                        select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                                    },
+                                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                groupped: { background: 'white' },
-                input: { background: '#fff', text: '#111', placeholder: '#666' },
-                accent: { blue: '#00f', indigo: '#60f' },
-                textSecondary: '#999',
-            },
-        }),
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 groupped: { background: 'white' },
@@ -36,13 +37,16 @@ vi.mock('react-native-unistyles', () => ({
                 textDestructive: '#f00',
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    Stack: { Screen: () => null },
-    useRouter: () => ({ push: routerPushSpy, back: routerBackSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy, back: routerBackSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -77,13 +81,14 @@ vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
     SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', props),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useArtifacts: () => ([
         { id: 'doc-1', title: 'Prompt One', header: { kind: 'prompt_doc.v2', title: 'Prompt One' } },
         { id: 'doc-2', title: 'Prompt Two', header: { kind: 'prompt_doc.v2', title: 'Prompt Two' } },
@@ -92,15 +97,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
         v: 1,
         entries: [],
     }, setInvocationsMock],
-}));
+});
+});
 
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'template-1',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('PromptTemplateEditorScreen', () => {
     beforeEach(() => {
@@ -113,9 +120,7 @@ describe('PromptTemplateEditorScreen', () => {
         const { PromptTemplateEditorScreen } = await import('./PromptTemplateEditorScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptTemplateEditorScreen, { invocationId: null }));
-        });
+        tree = (await renderScreen(React.createElement(PromptTemplateEditorScreen, { invocationId: null }))).tree;
 
         const dropdown = tree.root.findByType('DropdownMenu');
         expect(dropdown.props?.selectedId).toBe('');

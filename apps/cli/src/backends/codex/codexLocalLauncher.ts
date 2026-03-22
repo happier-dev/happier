@@ -11,16 +11,14 @@ import { createManagedChildProcess } from '@/subprocess/supervision/managedChild
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolveCodexCliInvocation } from './utils/resolveCodexCliInvocation';
+import { delay } from '@/utils/time';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 
 export type CodexLauncherResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export type CodexRolloutDiscoveryConfig = Readonly<{
   /**
@@ -59,15 +57,17 @@ function resolveCodexSessionsRootDir(): string {
   return join(os.homedir(), '.codex', 'sessions');
 }
 
-function resolveCodexTuiCommand(): string {
-  const override =
-    typeof process.env.HAPPIER_CODEX_TUI_BIN === 'string'
-      ? process.env.HAPPIER_CODEX_TUI_BIN.trim()
-      : typeof process.env.HAPPY_CODEX_TUI_BIN === 'string'
-        ? process.env.HAPPY_CODEX_TUI_BIN.trim()
-        : '';
-  if (override) return override;
-  return 'codex';
+async function resolveCodexTuiInvocation(opts: {
+  cwd: string;
+  resumeId?: string | null;
+  permissionMode: PermissionMode;
+}): Promise<{ command: string; args: string[] }> {
+  return await resolveCodexCliInvocation({
+    args: buildCodexTuiArgs(opts),
+    processEnv: process.env,
+    overrideEnvVarKeys: ['HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
+    targetLabel: 'Codex CLI',
+  });
 }
 
 function buildCodexTuiChildEnv(): NodeJS.ProcessEnv {
@@ -166,6 +166,20 @@ export async function codexLocalLauncher<TMode>(opts: {
   let mirror: CodexRolloutMirror | null = null;
   let child: ReturnType<typeof spawn> | null = null;
   let childStopRequested = false;
+
+  const publishRemoteControlState = (tag: 'switch' | 'exit' | 'launch_error'): void => {
+    try {
+      opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+    } catch {
+      // ignore
+    }
+    updateAgentStateBestEffort(
+      opts.session,
+      (current) => ({ ...current, controlledByUser: false }),
+      '[codex]',
+      `codex_local_launcher_${tag}`,
+    );
+  };
 
   const queueCodexSessionIdPublish = (raw: unknown): void => {
     const next = normalizeCodexSessionId(raw);
@@ -270,8 +284,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       return true;
     });
 
-    const command = resolveCodexTuiCommand();
-    const args = buildCodexTuiArgs({
+    const { command, args } = await resolveCodexTuiInvocation({
       cwd: opts.path,
       resumeId: opts.resumeId,
       permissionMode: opts.permissionMode ?? 'default',
@@ -474,31 +487,20 @@ export async function codexLocalLauncher<TMode>(opts: {
     mirror = null;
 
     if (exitReason) {
-      try {
-        opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
-      } catch {
-        // ignore
-      }
-      updateAgentStateBestEffort(
-        opts.session,
-        (current) => ({ ...current, controlledByUser: false }),
-        '[codex]',
-        'codex_local_launcher_switch',
-      );
+      publishRemoteControlState('switch');
       return exitReason;
     }
+    publishRemoteControlState('exit');
+    return { type: 'exit', code };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     try {
-      opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+      opts.session.sendSessionEvent({ type: 'message', message });
     } catch {
       // ignore
     }
-    updateAgentStateBestEffort(
-      opts.session,
-      (current) => ({ ...current, controlledByUser: false }),
-      '[codex]',
-      'codex_local_launcher_exit',
-    );
-    return { type: 'exit', code };
+    publishRemoteControlState('launch_error');
+    return { type: 'exit', code: 1 };
   } finally {
     opts.messageQueue.setOnMessage(null);
     try {
