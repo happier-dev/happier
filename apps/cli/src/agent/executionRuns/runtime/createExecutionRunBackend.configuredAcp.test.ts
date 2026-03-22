@@ -238,6 +238,28 @@ describe('createExecutionRunBackend (configured ACP)', () => {
     })).toThrow(/review-bot/i);
   });
 
+  it('rejects disabled configured ACP backends after bootstrapping account settings for the lazy path', async () => {
+    bootstrapAccountSettingsContextMock.mockResolvedValue({
+      settings: {
+        backendEnabledByTargetKey: {
+          'acpBackend:review-bot': false,
+        },
+      },
+    });
+    readCredentialsMock.mockResolvedValue({ token: 'cred-1' });
+
+    const { createExecutionRunBackend } = await import('./createExecutionRunBackend');
+    const backend = createExecutionRunBackend({
+      cwd: '/tmp/workspace',
+      backendId: 'customAcp',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      permissionMode: 'read_only',
+    });
+
+    await expect(backend.startSession()).rejects.toThrow(/review-bot/i);
+    expect(createConfiguredAcpBackendMock).not.toHaveBeenCalled();
+  });
+
   it('registers queued onMessage handlers only once when the lazy backend resolves', async () => {
     const onMessage = vi.fn();
     const backend = createStubBackend();
