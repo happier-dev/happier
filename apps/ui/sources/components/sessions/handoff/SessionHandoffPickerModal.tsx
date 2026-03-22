@@ -199,6 +199,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
     const [directTargetMode, setDirectTargetMode] = React.useState<'keep_direct' | 'convert_to_persisted'>(sessionHandoffDefaults.directTargetMode);
 
     const effectiveWorkspaceTransferEnabled = workspaceTransferPathSafety.allowed ? workspaceTransferEnabled : false;
+    const workspaceTransferControlsDisabled = !effectiveWorkspaceTransferEnabled;
 
     const handleCancel = React.useCallback(() => {
         onResolve(null);
@@ -222,8 +223,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                 : 'persisted',
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
         });
-        onClose();
-    }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isDirectSession, onClose, onResolve, selectedMachineId, workspaceTransferStrategy]);
+    }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isDirectSession, onResolve, selectedMachineId, workspaceTransferStrategy]);
 
     return (
         <View testID="session-handoff-modal" style={styles.container}>
@@ -311,6 +311,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 subtitle: t('settingsSession.handoff.workspaceTransfer.strategy.subtitle'),
                                 icon: <Octicons name="git-branch" size={18} color={theme.colors.textSecondary} />,
                                 itemProps: {
+                                    disabled: workspaceTransferControlsDisabled,
                                     testID: 'session-handoff-workspace-transfer-strategy-trigger',
                                 },
                             }}
@@ -320,6 +321,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 subtitle: t(item.subtitleKey),
                             }))}
                             onSelect={(itemId) => {
+                                if (workspaceTransferControlsDisabled) return;
                                 setWorkspaceTransferStrategy(itemId as 'transfer_snapshot' | 'sync_changes');
                                 setOpenWorkspaceTransferStrategyMenu(false);
                             }}
@@ -338,6 +340,9 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 title: t('settingsSession.handoff.conflictPolicy.title'),
                                 subtitle: t('settingsSession.handoff.conflictPolicy.subtitle'),
                                 icon: <Octicons name="copy" size={18} color={theme.colors.textSecondary} />,
+                                itemProps: {
+                                    disabled: workspaceTransferControlsDisabled,
+                                },
                             }}
                             items={SESSION_HANDOFF_CONFLICT_POLICY_OPTIONS.map((item) => ({
                                 id: item.id,
@@ -345,6 +350,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 subtitle: t(item.subtitleKey),
                             }))}
                             onSelect={(itemId) => {
+                                if (workspaceTransferControlsDisabled) return;
                                 setConflictPolicy(itemId as 'create_sibling_copy' | 'replace_existing');
                                 setOpenConflictPolicyMenu(false);
                             }}
@@ -363,6 +369,9 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 title: t('settingsSession.handoff.includeIgnoredMode.title'),
                                 subtitle: t('settingsSession.handoff.includeIgnoredMode.subtitle'),
                                 icon: <Octicons name="filter" size={18} color={theme.colors.textSecondary} />,
+                                itemProps: {
+                                    disabled: workspaceTransferControlsDisabled,
+                                },
                             }}
                             items={SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS.map((item) => ({
                                 id: item.id,
@@ -370,6 +379,7 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 subtitle: t(item.subtitleKey),
                             }))}
                             onSelect={(itemId) => {
+                                if (workspaceTransferControlsDisabled) return;
                                 setIncludeIgnoredMode(itemId as 'exclude' | 'include_selected');
                                 setOpenIgnoredModeMenu(false);
                             }}
@@ -381,10 +391,14 @@ export function SessionHandoffPickerModal({ onClose, onResolve, sessionId, sourc
                                 </Text>
                                 <TextInput
                                     value={ignoredIncludeGlobs.join(', ')}
-                                    onChangeText={(value) => setIgnoredIncludeGlobs(parseSessionHandoffIgnoredIncludeGlobs(value))}
+                                    onChangeText={(value) => {
+                                        if (workspaceTransferControlsDisabled) return;
+                                        setIgnoredIncludeGlobs(parseSessionHandoffIgnoredIncludeGlobs(value));
+                                    }}
                                     placeholder={t('settingsSession.handoff.includeIgnoredMode.globsPlaceholder')}
                                     autoCapitalize="none"
                                     autoCorrect={false}
+                                    editable={!workspaceTransferControlsDisabled}
                                     style={{
                                         minHeight: 44,
                                         borderRadius: 10,

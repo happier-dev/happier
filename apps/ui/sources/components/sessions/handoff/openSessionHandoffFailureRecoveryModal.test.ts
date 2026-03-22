@@ -2,11 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const showMock = vi.hoisted(() => vi.fn<(config: unknown) => string>());
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (config: unknown) => showMock(config),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (config: unknown) => showMock(config),
+        },
+    }).module;
+});
 
 vi.mock('./SessionHandoffFailureRecoveryModal', () => ({
     SessionHandoffFailureRecoveryModal: () => null,

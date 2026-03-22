@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,10 +11,15 @@ let machineListByServerIdState: Record<string, any> = {};
 let allMachinesState: any[] = [];
 let sessionsState: any[] = [];
 
-vi.mock('react-native', () => ({
-    Pressable: (props: any) => React.createElement('Pressable', props, typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
-    View: (props: any) => React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Pressable: (props: any) => React.createElement('Pressable', props, typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
+            View: (props: any) => React.createElement('View', props, props.children),
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -37,26 +44,9 @@ vi.mock('@happier-dev/protocol', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                surface: '#111',
-                shadow: { color: '#000' },
-                divider: '#333',
-                text: '#fff',
-                textSecondary: '#aaa',
-                header: { tint: '#fff' },
-                accent: {
-                    blue: '#00f',
-                    green: '#0f0',
-                    orange: '#f80',
-                    indigo: '#80f',
-                },
-            },
-        }),
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#111',
@@ -73,12 +63,17 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { show: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -86,9 +81,10 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: (props: any) => React.createElement('MachineSelector', props),
@@ -123,7 +119,9 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useMachineListByServerId: () => machineListByServerIdState,
     useMachineRecordValues: () => allMachinesState,
     useSessions: () => sessionsState,
@@ -133,7 +131,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             settingsState[key] = next;
         },
     ],
-}));
+});
+});
 
 vi.mock('@/utils/sessions/recentMachines', () => ({
     getRecentMachinesFromSessions: () => [],
@@ -183,28 +182,24 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const machineSelector = tree.root.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.testIdPrefix).toBe('session-handoff-machine');
         await act(async () => {
-            machineSelector.props.onSelect({ id: 'machine_target', metadata: { displayName: 'Target machine' } });
+            invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
 
-        const startButton = tree.root.findAllByType('RoundButton' as any).find((node: any) => node.props?.testID === 'session-handoff-start');
+        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { testID: 'session-handoff-start' });
         expect(startButton).toBeTruthy();
         await act(async () => {
-            startButton!.props.onPress();
+            await pressTestInstanceAsync(startButton!);
         });
 
         expect(onResolve).toHaveBeenCalledWith({
@@ -218,7 +213,7 @@ describe('SessionHandoffPickerModal', () => {
                 ignoredIncludeGlobs: ['dist/**'],
             },
         });
-        expect(onClose).toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     it('forces workspace transfer off for sessions rooted at the machine home directory', async () => {
@@ -239,37 +234,33 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const switchNode = tree.root.findByType('Switch' as any);
+        const switchNode = tree.findByType('Switch' as any);
         expect(switchNode.props.value).toBe(false);
         expect(switchNode.props.disabled).toBe(true);
 
-        const machineSelector = tree.root.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType('MachineSelector' as any);
         await act(async () => {
-            machineSelector.props.onSelect({ id: 'machine_target', metadata: { displayName: 'Target machine' } });
+            invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
 
-        const startButton = tree.root.findAllByType('RoundButton' as any).find((node: any) => node.props?.testID === 'session-handoff-start');
+        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { testID: 'session-handoff-start' });
         await act(async () => {
-            startButton!.props.onPress();
+            await pressTestInstanceAsync(startButton!);
         });
 
         expect(onResolve).toHaveBeenCalledWith({
             targetMachineId: 'machine_target',
             targetSessionStorageMode: 'persisted',
         });
-        expect(onClose).toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     it('forces workspace transfer off when session metadata is missing homeDir but the source machine home directory matches the path', async () => {
@@ -299,19 +290,15 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const switchNode = tree.root.findByType('Switch' as any);
+        const switchNode = tree.findByType('Switch' as any);
         expect(switchNode.props.value).toBe(false);
         expect(switchNode.props.disabled).toBe(true);
     });
@@ -343,22 +330,18 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const switchNode = tree.root.findByType('Switch' as any);
+        const switchNode = tree.findByType('Switch' as any);
         expect(switchNode.props.value).toBe(false);
         expect(switchNode.props.disabled).toBe(true);
 
-        const machineSelector = tree.root.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.machines).toEqual([
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
@@ -381,18 +364,14 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const switchNode = tree.root.findByType('Switch' as any);
+        const switchNode = tree.findByType('Switch' as any);
         expect(switchNode.props.value).toBe(false);
         expect(switchNode.props.disabled).toBe(true);
     });
@@ -403,29 +382,25 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const machineSelector = tree.root.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType('MachineSelector' as any);
         await act(async () => {
-            machineSelector.props.onSelect({ id: 'machine_target', metadata: { displayName: 'Target machine' } });
+            invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
 
-        const switchNode = tree.root.findByType('Switch' as any);
+        const switchNode = tree.findByType('Switch' as any);
         await act(async () => {
-            switchNode.props.onValueChange(false);
+            invokeTestInstanceHandler(switchNode, 'onValueChange', false);
         });
 
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = tree.findAllByType('DropdownMenu' as any);
         const strategyMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceTransfer.strategy.title');
         const conflictMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title');
         const directModeMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.directTargetMode.title');
@@ -433,23 +408,37 @@ describe('SessionHandoffPickerModal', () => {
 
         expect(strategyMenu?.props?.itemTrigger?.itemProps).toMatchObject({
             testID: 'session-handoff-workspace-transfer-strategy-trigger',
+            disabled: true,
         });
+        expect(conflictMenu?.props?.itemTrigger?.itemProps).toMatchObject({ disabled: true });
+        expect(ignoredMenu?.props?.itemTrigger?.itemProps).toMatchObject({ disabled: true });
 
         await act(async () => {
-            strategyMenu!.props.onSelect('sync_changes');
+            invokeTestInstanceHandler(strategyMenu!, 'onSelect', 'sync_changes');
             conflictMenu!.props.onSelect('replace_existing');
             ignoredMenu!.props.onSelect('include_selected');
             directModeMenu!.props.onSelect('keep_direct');
         });
 
-        const globInput = tree.root.findByType('TextInput' as any);
+        const globInput = tree.findByType('TextInput' as any);
+        expect(globInput.props.editable).toBe(false);
         await act(async () => {
             globInput.props.onChangeText('dist/**, .env.local');
         });
 
-        const startButton = tree.root.findAllByType('RoundButton' as any).find((node: any) => node.props?.title === 'session.handoff.title');
+        const dropdownsAfterAttempt = tree.findAllByType('DropdownMenu' as any);
+        const strategyMenuAfterAttempt = dropdownsAfterAttempt.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceTransfer.strategy.title');
+        const conflictMenuAfterAttempt = dropdownsAfterAttempt.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title');
+        const ignoredMenuAfterAttempt = dropdownsAfterAttempt.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.includeIgnoredMode.title');
+
+        expect(strategyMenuAfterAttempt?.props.selectedId).toBe('transfer_snapshot');
+        expect(conflictMenuAfterAttempt?.props.selectedId).toBe('create_sibling_copy');
+        expect(ignoredMenuAfterAttempt?.props.selectedId).toBe('include_selected');
+        expect(tree.findByType('TextInput' as any).props.value).toBe('dist/**');
+
+        const startButton = findTestInstanceByTypeWithProps(tree, 'RoundButton' as any, { title: 'session.handoff.title' });
         await act(async () => {
-            startButton!.props.onPress();
+            await pressTestInstanceAsync(startButton!);
         });
 
         expect(onResolve).toHaveBeenCalledWith({
@@ -474,19 +463,15 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionHandoffPickerModal
+        tree = (await renderScreen(<SessionHandoffPickerModal
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
                     serverId="server_a"
-                />,
-            );
-        });
+                />)).tree;
 
-        const machineSelector = tree.root.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.machines).toEqual([
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);

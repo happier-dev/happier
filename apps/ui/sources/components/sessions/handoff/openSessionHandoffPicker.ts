@@ -21,16 +21,33 @@ export async function openSessionHandoffPicker(params: Readonly<{
     }
     const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
     return await new Promise<SessionHandoffPickerResult | null>((resolve) => {
-        Modal.show({
+        let settled = false;
+        let modalId = '';
+        let hideAfterShow = false;
+        const resolveOnce = (value: SessionHandoffPickerResult | null) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+            if (modalId) {
+                Modal.hide(modalId);
+            } else {
+                hideAfterShow = true;
+            }
+        };
+
+        modalId = Modal.show({
             component: SessionHandoffPickerModal,
             props: {
                 sessionId: params.sessionId,
                 sourceMachineId: params.sourceMachineId ?? null,
                 serverId: params.serverId,
-                onResolve: (value: SessionHandoffPickerResult | null) => resolve(value),
-                onRequestClose: () => resolve(null),
+                onResolve: resolveOnce,
+                onRequestClose: () => resolveOnce(null),
             },
             closeOnBackdrop: true,
         });
+        if (hideAfterShow) {
+            Modal.hide(modalId);
+        }
     });
 }
