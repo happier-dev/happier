@@ -23,6 +23,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
 import { extractShellCommand } from './permissionToolIdentifier';
+import { resolveAgentRequestKind } from './requestKind';
 
 export type { PermissionResult, PendingRequest };
 
@@ -131,6 +132,10 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
   }
 
   private resolveDecisionForToolCall(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    if (resolveAgentRequestKind(toolName) === 'user_action') {
+      return null;
+    }
+
     const isAlwaysAutoApprove =
       this.isAlwaysAutoApproveTool(toolName, toolCallId) || this.isHappierToolsShellBridgeToolCall(toolName, input);
 
@@ -221,6 +226,20 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     // Metadata updates can arrive mid-turn (e.g. UI toggles "read-only" while a tool request is in flight).
     // Sync on each tool call so the decision reflects the latest persisted intent without requiring a user message.
     this.syncPermissionModeFromMetadataSnapshotIfNewer();
+    logger.debug(`${this.getLogPrefix()} handleToolCall`, {
+      toolCallId,
+      toolName,
+      requestKind: resolveAgentRequestKind(toolName),
+      permissionMode: this.currentPermissionMode,
+    });
+
+    if (resolveAgentRequestKind(toolName) === 'user_action') {
+      return new Promise<PermissionResult>((resolve, reject) => {
+        this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
+        this.addPendingRequestToState(toolCallId, toolName, input);
+        logger.debug(`${this.getLogPrefix()} User action request sent for tool: ${toolName} (${toolCallId})`);
+      });
+    }
 
     const isAlwaysAutoApprove =
       this.isAlwaysAutoApproveTool(toolName, toolCallId) || this.isHappierToolsShellBridgeToolCall(toolName, input);

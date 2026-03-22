@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { createProviderAttachStatePublisher } from './createProviderAttachStatePublisher';
 
@@ -11,7 +11,7 @@ describe('createProviderAttachStatePublisher', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_opencode_1',
       encryptionMode: 'plain',
       agentState: JSON.stringify({ existing: 'value' }),
@@ -82,7 +82,7 @@ describe('createProviderAttachStatePublisher', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_claude_1',
       encryptionMode: 'plain',
       metadata: JSON.stringify({ flavor: 'claude' }),

@@ -50,8 +50,7 @@ describe('createLocalRemoteModeController', () => {
     await controller.publishModeState('remote');
     await controller.publishModeState('remote');
 
-    expect(harness.session.sendSessionEvent).toHaveBeenCalledTimes(1);
-    expect(harness.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'switch', mode: 'remote' });
+    expect(harness.session.sendSessionEvent).not.toHaveBeenCalled();
     expect(harness.readAgentState()).toMatchObject({
       controlledByUser: false,
       marker: 'keep-me',
@@ -86,9 +85,8 @@ describe('createLocalRemoteModeController', () => {
     await controller.publishModeState('remote');
     await controller.publishModeState('local');
 
-    expect(harness.session.sendSessionEvent).toHaveBeenCalledTimes(2);
-    expect(harness.session.sendSessionEvent).toHaveBeenNthCalledWith(1, { type: 'switch', mode: 'remote' });
-    expect(harness.session.sendSessionEvent).toHaveBeenNthCalledWith(2, { type: 'switch', mode: 'local' });
+    expect(harness.session.sendSessionEvent).toHaveBeenCalledTimes(1);
+    expect(harness.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'switch', mode: 'local' });
     expect(harness.readAgentState()).toMatchObject({
       controlledByUser: true,
       localControl: {
@@ -98,6 +96,37 @@ describe('createLocalRemoteModeController', () => {
       },
     });
     expect(harness.session.keepAlive).toHaveBeenLastCalledWith(false, 'local');
+  });
+
+  it('publishes remote mode as non-attachable when local control support is unavailable', async () => {
+    const harness = createSessionHarness();
+    const resolveLocalSwitchAvailability = vi.fn(async () => ({ ok: false as const, reason: 'started-by-daemon' }));
+    const setRemoteUiAllowsSwitchToLocal = vi.fn();
+
+    const controller = createLocalRemoteModeController({
+      session: harness.session,
+      getThinking: () => false,
+      resolveLocalSwitchAvailability,
+      requestSwitchToLocalIfSupported: vi.fn(async () => false),
+      mountRemoteUi: vi.fn(),
+      unmountRemoteUi: vi.fn(async () => undefined),
+      setRemoteUiAllowsSwitchToLocal,
+    });
+
+    await controller.publishModeState('remote');
+
+    expect(resolveLocalSwitchAvailability).toHaveBeenCalledTimes(1);
+    expect(setRemoteUiAllowsSwitchToLocal).toHaveBeenCalledWith(false);
+    expect(harness.readAgentState()).toMatchObject({
+      controlledByUser: false,
+      localControl: {
+        attached: false,
+        topology: 'exclusive',
+        remoteWritable: true,
+        canAttach: false,
+        canDetach: false,
+      },
+    });
   });
 
   it('supports provider-specific local-control state publication', async () => {

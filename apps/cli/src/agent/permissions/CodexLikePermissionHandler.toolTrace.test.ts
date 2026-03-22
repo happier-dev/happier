@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { CodexLikePermissionHandler } from './CodexLikePermissionHandler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
+import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 
 class FakeRpcHandlerManager {
   handlers = new Map<string, (payload: any) => any>();
@@ -31,42 +30,37 @@ class FakeSession {
 
 describe('CodexLikePermissionHandler tool trace', () => {
   afterEach(() => {
-    delete process.env.HAPPIER_STACK_TOOL_TRACE;
-    delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
     __resetToolTraceForTests();
   });
 
   it('records permission-request events when enabled', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-codexlike-'));
-    const filePath = join(dir, 'tool-trace.jsonl');
-    process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-    process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
+    await withToolTraceFile('happy-tool-trace-codexlike-', async (filePath) => {
+      const session = new FakeSession();
+      const handler = new CodexLikePermissionHandler({
+        session: session as any,
+        logPrefix: '[TestCodexLike]',
+        toolTrace: { protocol: 'acp', provider: 'codex' },
+      });
 
-    const session = new FakeSession();
-    const handler = new CodexLikePermissionHandler({
-      session: session as any,
-      logPrefix: '[TestCodexLike]',
-      toolTrace: { protocol: 'acp', provider: 'codex' },
-    });
+      void handler.handleToolCall('perm-1', 'writeTextFile', { path: '/tmp/file.txt', bytes: 1 });
 
-    void handler.handleToolCall('perm-1', 'writeTextFile', { path: '/tmp/file.txt', bytes: 1 });
-
-    expect(existsSync(filePath)).toBe(true);
-    const raw = readFileSync(filePath, 'utf8');
-    const lines = raw.trim().split('\n');
-    expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)).toMatchObject({
-      v: 1,
-      direction: 'outbound',
-      sessionId: 'test-session-id',
-      protocol: 'acp',
-      provider: 'codex',
-      kind: 'permission-request',
-      payload: expect.objectContaining({
-        type: 'permission-request',
-        permissionId: 'perm-1',
-        toolName: 'writeTextFile',
-      }),
+      expect(existsSync(filePath)).toBe(true);
+      const raw = readFileSync(filePath, 'utf8');
+      const lines = raw.trim().split('\n');
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toMatchObject({
+        v: 1,
+        direction: 'outbound',
+        sessionId: 'test-session-id',
+        protocol: 'acp',
+        provider: 'codex',
+        kind: 'permission-request',
+        payload: expect.objectContaining({
+          type: 'permission-request',
+          permissionId: 'perm-1',
+          toolName: 'writeTextFile',
+        }),
+      });
     });
   });
 });

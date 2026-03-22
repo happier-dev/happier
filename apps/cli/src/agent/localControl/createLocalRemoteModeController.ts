@@ -28,26 +28,34 @@ export function createLocalRemoteModeController(params: {
   mountRemoteUi: () => void;
   unmountRemoteUi: () => Promise<void>;
   setRemoteUiAllowsSwitchToLocal: (allowed: boolean) => void;
-  buildAgentStateForMode?: (currentState: AgentState, nextMode: Mode) => AgentState;
+  buildAgentStateForMode?: (
+    currentState: AgentState,
+    nextMode: Mode,
+    context: Readonly<{ canSwitchToLocalFromRemote: boolean }>,
+  ) => AgentState;
 }) {
   let lastPublishedMode: Mode | null = null;
 
   const publishModeState = async (nextMode: Mode): Promise<void> => {
-    if (lastPublishedMode !== nextMode) {
+    const canSwitchToLocalFromRemote =
+      nextMode === 'remote' ? (await params.resolveLocalSwitchAvailability()).ok : false;
+
+    if (lastPublishedMode !== null && lastPublishedMode !== nextMode) {
       params.session.sendSessionEvent({ type: 'switch', mode: nextMode });
-      lastPublishedMode = nextMode;
     }
+    lastPublishedMode = nextMode;
 
     updateAgentStateBestEffort(
       params.session,
       (currentState) => (params.buildAgentStateForMode
-        ? params.buildAgentStateForMode(currentState, nextMode)
+        ? params.buildAgentStateForMode(currentState, nextMode, { canSwitchToLocalFromRemote })
         : {
           ...currentState,
           controlledByUser: nextMode === 'local',
           localControl: createAgentLocalControlState({
             attached: nextMode === 'local',
             topology: 'exclusive',
+            canAttach: canSwitchToLocalFromRemote,
           }),
         }),
       '[localControl]',
@@ -56,7 +64,7 @@ export function createLocalRemoteModeController(params: {
     params.session.keepAlive(params.getThinking(), nextMode);
 
     if (nextMode === 'remote') {
-      params.setRemoteUiAllowsSwitchToLocal((await params.resolveLocalSwitchAvailability()).ok);
+      params.setRemoteUiAllowsSwitchToLocal(canSwitchToLocalFromRemote);
       params.mountRemoteUi();
     } else {
       params.setRemoteUiAllowsSwitchToLocal(false);

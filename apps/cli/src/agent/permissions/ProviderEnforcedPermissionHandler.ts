@@ -96,11 +96,19 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       .filter(Boolean);
   }
 
+  private matchesSafeToolSegment(value: string, candidate: string): boolean {
+    const lowerValue = value.toLowerCase();
+    const lowerCandidate = candidate.toLowerCase();
+    return lowerValue === lowerCandidate || lowerValue.endsWith(`_${lowerCandidate}`);
+  }
+
   private isAlwaysAutoApprove(toolName: string, toolCallId: string): boolean {
     const toolNameTokens = this.splitNameTokens(toolName);
     const toolCallIdTokens = this.splitNameTokens(toolCallId);
     if (this.alwaysAutoApproveToolNameIncludes.some((n) => toolNameTokens.includes(n.toLowerCase()))) return true;
     if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => toolCallIdTokens.includes(n.toLowerCase()))) return true;
+    if (this.alwaysAutoApproveToolNameIncludes.some((n) => this.matchesSafeToolSegment(toolName, n))) return true;
+    if (this.alwaysAutoApproveToolCallIdIncludes.some((n) => this.matchesSafeToolSegment(toolCallId, n))) return true;
     return false;
   }
 

@@ -71,6 +71,47 @@ describe('CodexLikePermissionHandler', () => {
     expect(result.decision).toBe('denied');
   });
 
+  it('does not auto-approve AskUserQuestion in plan mode', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    handler.setPermissionMode('plan');
+
+    const promise = handler.handleToolCall('tool-ask', 'AskUserQuestion', {
+      questions: [
+        {
+          header: 'Export Shape',
+          question: 'Which session export behavior should the plan target?',
+          options: [{ label: 'Single JSON', description: 'Portable JSON export' }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(session.agentState.requests['tool-ask']).toEqual(
+      expect.objectContaining({
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+      }),
+    );
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({
+      id: 'tool-ask',
+      approved: true,
+      answers: {
+        'Which session export behavior should the plan target?': 'Single JSON',
+      },
+    });
+
+    await expect(promise).resolves.toEqual({
+      decision: 'approved',
+      answers: {
+        'Which session export behavior should the plan target?': 'Single JSON',
+      },
+    });
+  });
+
   it('prompts for write-like tools in safe-yolo mode', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
