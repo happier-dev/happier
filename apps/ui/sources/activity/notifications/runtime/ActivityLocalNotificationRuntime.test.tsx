@@ -1,14 +1,18 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
         switch (key) {
             case 'notifications.activity.defaultSessionTitle':
                 return 'Session';
@@ -22,9 +26,13 @@ vi.mock('@/text', () => ({
                 return key;
         }
     },
+    });
+});
+
+const reactNativeRuntime = vi.hoisted(() => ({
+    platformOs: 'ios' as 'web' | 'ios' | 'android',
 }));
 
-let platformOs: 'web' | 'ios' | 'android' = 'ios';
 let isTauriDesktopValue = false;
 let activeViewingSessionIdValue: string | null = null;
 let localSettingsValue: Record<string, unknown> = {
@@ -48,15 +56,22 @@ let sessionsByIdValue: Record<string, unknown> = {
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async () => 'notif-1'));
 const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
 
-vi.mock('react-native', () => ({
-    Platform: {
-        get OS() {
-            return platformOs;
-        },
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                get OS() {
+                    return reactNativeRuntime.platformOs;
+                },
+            },
+        }
+    );
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSettings: () => localSettingsValue,
     storage: {
         getState: () => ({
@@ -64,7 +79,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             localSettings: localSettingsValue,
         }),
     },
-}));
+});
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => 'https://stack.example.test',
@@ -88,7 +104,7 @@ vi.mock('../channels/sendTauriLocalNotification', () => ({
 
 describe('ActivityLocalNotificationRuntime', () => {
     afterEach(async () => {
-        platformOs = 'ios';
+        reactNativeRuntime.platformOs = 'ios';
         isTauriDesktopValue = false;
         activeViewingSessionIdValue = null;
         localSettingsValue = {
@@ -120,9 +136,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityLocalNotificationRuntime />);
-        });
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
 
         await act(async () => {
             notifyActivityReady('session-1', [
@@ -157,9 +171,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         };
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityLocalNotificationRuntime />);
-        });
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
 
         await act(async () => {
             notifyActivityReady('session-1', [
@@ -189,9 +201,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityLocalNotificationRuntime />);
-        });
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
 
         await act(async () => {
             notifyActivityReady('session-1', []);
@@ -206,7 +216,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     });
 
     it('respects per-topic device-local toggles and routes tauri events to the desktop channel', async () => {
-        platformOs = 'web';
+        reactNativeRuntime.platformOs = 'web';
         isTauriDesktopValue = true;
         localSettingsValue = {
             ...localSettingsValue,
@@ -217,9 +227,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         const { notifyActivityReady, notifyActivityAgentRequest } = await import('./activityLocalNotificationBus');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ActivityLocalNotificationRuntime />);
-        });
+        tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
 
         await act(async () => {
             notifyActivityReady('session-1', []);
