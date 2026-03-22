@@ -128,7 +128,7 @@ export function handleSessionNewMessageUpdate(params: {
                 params.pendingMessages.push(userResult.data);
             }
         } else {
-            params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue (self echo suppression)', {
+            params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue', {
                 source: source ?? null,
                 sentFrom: sentFrom ?? null,
                 localId,

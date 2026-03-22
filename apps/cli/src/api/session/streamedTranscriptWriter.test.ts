@@ -55,6 +55,11 @@ function createSessionStub() {
   return { session, draftCalls, durableCalls, bestEffortCalls };
 }
 
+async function settleCommittedSnapshot() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('createStreamedTranscriptWriter', () => {
   it('buffers draft deltas and emits them on the configured flush interval', async () => {
     vi.useFakeTimers();
@@ -72,15 +77,18 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     writer.appendAssistantDelta('Hello');
+    await settleCommittedSnapshot();
+    expect(draftCalls).toHaveLength(0);
 
+    writer.appendAssistantDelta(' world');
     expect(draftCalls).toHaveLength(0);
 
     vi.advanceTimersByTime(49);
-    await Promise.resolve();
+    await settleCommittedSnapshot();
     expect(draftCalls).toHaveLength(0);
 
     vi.advanceTimersByTime(1);
-    await Promise.resolve();
+    await settleCommittedSnapshot();
 
     expect(draftCalls).toHaveLength(1);
     expect(draftCalls[0]).toEqual({
@@ -88,7 +96,7 @@ describe('createStreamedTranscriptWriter', () => {
       localId: 'l1',
       segmentKind: 'assistant',
       sidechainId: null,
-      deltaText: 'Hello',
+      deltaText: ' world',
       createdAtMs: 50,
     });
   });
@@ -147,15 +155,16 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     writer.appendAssistantDelta('Hello');
-    await Promise.resolve();
+    await settleCommittedSnapshot();
+    writer.appendAssistantDelta(' world');
 
     expect(durableCalls).toHaveLength(1);
 
     await writer.flushAll({ reason: 'tool-call-boundary' });
-    await Promise.resolve();
+    await settleCommittedSnapshot();
 
     expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]!.deltaText).toBe('Hello');
+    expect(draftCalls[0]!.deltaText).toBe(' world');
     expect(draftCalls[0]!.localId).toBe('segment-1');
 
     expect(durableCalls).toHaveLength(2);
@@ -191,13 +200,18 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     writer.appendThinkingDelta('...', { sidechainId: 'sc-1' });
-    await Promise.resolve();
+    await settleCommittedSnapshot();
+    writer.appendThinkingDelta(' next', { sidechainId: 'sc-1' });
 
     await writer.flushAll({ reason: 'abort', interruptedReason: 'cancelled' });
-    await Promise.resolve();
+    await settleCommittedSnapshot();
 
     expect(draftCalls).toHaveLength(1);
-    expect(draftCalls[0]).toMatchObject({ sidechainId: 'sc-1', segmentKind: 'thinking' });
+    expect(draftCalls[0]).toMatchObject({
+      sidechainId: 'sc-1',
+      segmentKind: 'thinking',
+      deltaText: ' next',
+    });
 
     expect(durableCalls.length).toBeGreaterThanOrEqual(2);
     expect(durableCalls[durableCalls.length - 1]!.body).toMatchObject({ type: 'thinking', sidechainId: 'sc-1' });
@@ -222,13 +236,13 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     writer.appendAssistantDelta('READY ');
-    await Promise.resolve();
+    await settleCommittedSnapshot();
 
     writer.overrideAssistantText('READY_FOR_FOLLOWUP');
     await writer.flushAll({ reason: 'turn-end' });
-    await Promise.resolve();
+    await settleCommittedSnapshot();
 
-    expect(draftCalls.map((call) => call.deltaText)).toEqual(['READY ']);
+    expect(draftCalls).toEqual([]);
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[0]!.body).toMatchObject({ type: 'message', message: 'READY ' });
     expect(durableCalls[1]!.body).toMatchObject({ type: 'message', message: 'READY_FOR_FOLLOWUP' });
@@ -363,5 +377,59 @@ describe('createStreamedTranscriptWriter', () => {
     expect(durableCalls[1]!.meta).toMatchObject({
       happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
     });
+  });
+
+  it('does not emit unmatched draft text before the first durable snapshot settles', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, draftCalls, durableCalls } = createSessionStub();
+    let resolveFirstCommit: (() => void) | undefined;
+    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+      durableCalls.push({
+        provider: String(provider),
+        localId: String(opts.localId),
+        meta: opts.meta,
+        body,
+      });
+      if (durableCalls.length === 1) {
+        await new Promise<void>((resolve) => {
+          resolveFirstCommit = resolve;
+        });
+      }
+    });
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      draftFlushIntervalMs: 50,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('The disposable workspace ');
+    await settleCommittedSnapshot();
+    writer.appendAssistantDelta('is ready at /tmp/demo');
+
+    vi.advanceTimersByTime(50);
+    await settleCommittedSnapshot();
+
+    expect(draftCalls).toHaveLength(0);
+
+    const releaseFirstCommit = resolveFirstCommit;
+    if (!releaseFirstCommit) {
+      throw new Error('expected first durable commit resolver');
+    }
+    releaseFirstCommit();
+    await settleCommittedSnapshot();
+
+    expect(draftCalls).toEqual([
+      expect.objectContaining({
+        localId: 'segment-1',
+        segmentKind: 'assistant',
+        deltaText: 'is ready at /tmp/demo',
+      }),
+    ]);
   });
 });

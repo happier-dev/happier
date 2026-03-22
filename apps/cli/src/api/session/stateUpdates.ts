@@ -8,6 +8,21 @@ type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
 };
 
+function readLoggedCurrentModeId(metadata: Record<string, unknown> | null | undefined): string | null {
+    const genericCurrentModeId = typeof metadata?.sessionModesV1 === 'object'
+        && typeof (metadata as any).sessionModesV1?.currentModeId === 'string'
+        ? (metadata as any).sessionModesV1.currentModeId
+        : null;
+    if (genericCurrentModeId) {
+        return genericCurrentModeId;
+    }
+
+    return typeof metadata?.acpSessionModesV1 === 'object'
+        && typeof (metadata as any).acpSessionModesV1?.currentModeId === 'string'
+        ? (metadata as any).acpSessionModesV1.currentModeId
+        : null;
+}
+
 export async function updateSessionMetadataWithAck(opts: {
     socket: AckableSocket;
     sessionId: string;
@@ -37,12 +52,7 @@ export async function updateSessionMetadataWithAck(opts: {
             hasModeOverride: Boolean((updated as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
             hasModelOverride: Boolean((updated as Record<string, unknown> | null)?.modelOverrideV1),
             hasOpenCodeSessionId: typeof (updated as Record<string, unknown> | null)?.opencodeSessionId === 'string',
-            currentModeId:
-                typeof (updated as Record<string, unknown> | null)?.acpSessionModesV1 === 'object' &&
-                updated &&
-                typeof (updated as any).acpSessionModesV1?.currentModeId === 'string'
-                    ? (updated as any).acpSessionModesV1.currentModeId
-                    : null,
+            currentModeId: readLoggedCurrentModeId(updated as Record<string, unknown> | null),
         });
         const metadataPayload =
             opts.sessionEncryptionMode === 'plain'
@@ -64,12 +74,7 @@ export async function updateSessionMetadataWithAck(opts: {
                 hasModeOverride: Boolean((next as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
                 hasModelOverride: Boolean((next as Record<string, unknown> | null)?.modelOverrideV1),
                 hasOpenCodeSessionId: typeof (next as Record<string, unknown> | null)?.opencodeSessionId === 'string',
-                currentModeId:
-                    typeof (next as Record<string, unknown> | null)?.acpSessionModesV1 === 'object' &&
-                    next &&
-                    typeof (next as any).acpSessionModesV1?.currentModeId === 'string'
-                        ? (next as any).acpSessionModesV1.currentModeId
-                        : null,
+                currentModeId: readLoggedCurrentModeId(next as Record<string, unknown> | null),
             });
             opts.setMetadata(next);
             opts.setMetadataVersion(answer.version);
@@ -88,12 +93,7 @@ export async function updateSessionMetadataWithAck(opts: {
                     hasModeOverride: Boolean((next as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
                     hasModelOverride: Boolean((next as Record<string, unknown> | null)?.modelOverrideV1),
                     hasOpenCodeSessionId: typeof (next as Record<string, unknown> | null)?.opencodeSessionId === 'string',
-                    currentModeId:
-                        typeof (next as Record<string, unknown> | null)?.acpSessionModesV1 === 'object' &&
-                        next &&
-                        typeof (next as any).acpSessionModesV1?.currentModeId === 'string'
-                            ? (next as any).acpSessionModesV1.currentModeId
-                            : null,
+                    currentModeId: readLoggedCurrentModeId(next as Record<string, unknown> | null),
                 });
                 opts.setMetadata(next);
             }

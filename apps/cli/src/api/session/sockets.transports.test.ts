@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn<(url: string, opts: Record<string, unknown>) => unknown>(() => ({ on: vi.fn(), emit: vi.fn() })),
@@ -10,27 +12,25 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
 
-describe('session sockets transports', () => {
-  const originalEnv = {
-    serverUrl: process.env.HAPPIER_SERVER_URL,
-    webappUrl: process.env.HAPPIER_WEBAPP_URL,
-    forceWs: process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET,
-  };
+const envScope = createEnvKeyScope([
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_SOCKET_FORCE_WEBSOCKET',
+]);
 
+describe('session sockets transports', () => {
   beforeEach(() => {
-    mockIo.mockReset();
-    process.env.HAPPIER_SERVER_URL = 'http://localhost:3005';
-    process.env.HAPPIER_WEBAPP_URL = 'http://localhost:8080';
+    bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
+    envScope.patch({
+      HAPPIER_SERVER_URL: 'http://localhost:3005',
+      HAPPIER_WEBAPP_URL: 'http://localhost:8080',
+      HAPPIER_SOCKET_FORCE_WEBSOCKET: undefined,
+    });
     reloadConfiguration();
   });
 
   afterEach(() => {
-    if (originalEnv.serverUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalEnv.serverUrl;
-    if (originalEnv.webappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalEnv.webappUrl;
-    if (originalEnv.forceWs === undefined) delete process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET;
-    else process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET = originalEnv.forceWs;
+    envScope.restore();
     reloadConfiguration();
   });
 

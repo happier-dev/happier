@@ -3,7 +3,7 @@ import fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 describe('waitForTranscriptEncryptedMessageByLocalId', () => {
   let app: FastifyInstance | null = null;

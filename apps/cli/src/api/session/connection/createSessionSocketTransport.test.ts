@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TransportDisconnectEvent } from '@happier-dev/connection-supervisor';
 import axios from 'axios';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
@@ -13,87 +14,22 @@ vi.mock('socket.io-client', () => ({
     io: mockIo,
 }));
 
-type MockSocket = {
-    connected: boolean;
-    connect: ReturnType<typeof vi.fn>;
-    disconnect: ReturnType<typeof vi.fn>;
-    close: ReturnType<typeof vi.fn>;
-    on: ReturnType<typeof vi.fn>;
-    off: ReturnType<typeof vi.fn>;
-    removeAllListeners: ReturnType<typeof vi.fn>;
-    emit: ReturnType<typeof vi.fn>;
-};
-
-function createSocketStub(): {
-    socket: MockSocket;
-    trigger: (event: string, ...args: unknown[]) => void;
-} {
-    const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
-    const socket: MockSocket = {
-        connected: false,
-        connect: vi.fn(() => {
-            socket.connected = true;
-            trigger('connect');
-        }),
-        disconnect: vi.fn(() => {
-            socket.connected = false;
-            trigger('disconnect', 'io client disconnect');
-        }),
-        close: vi.fn(() => {
-            socket.connected = false;
-            trigger('disconnect', 'io client disconnect');
-        }),
-        on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-            const listeners = handlers.get(event) ?? new Set<(...args: unknown[]) => void>();
-            listeners.add(handler);
-            handlers.set(event, listeners);
-            return socket;
-        }),
-        off: vi.fn((event: string, handler?: (...args: unknown[]) => void) => {
-            if (!handler) {
-                handlers.delete(event);
-                return socket;
-            }
-            const listeners = handlers.get(event);
-            listeners?.delete(handler);
-            if (listeners && listeners.size === 0) {
-                handlers.delete(event);
-            }
-            return socket;
-        }),
-        removeAllListeners: vi.fn(() => {
-            handlers.clear();
-            return socket;
-        }),
-        emit: vi.fn(),
-    };
-
-    function trigger(event: string, ...args: unknown[]): void {
-        for (const handler of handlers.get(event) ?? []) {
-            handler(...args);
-        }
-    }
-
-    return { socket, trigger };
-}
-
 describe('createSessionSocketTransport', () => {
     it('creates a non-reconnecting socket transport and reports manual disconnects as intentional', async () => {
-        const stub = createSocketStub();
-        mockIo.mockReset();
-        mockIo.mockReturnValue(stub.socket);
+        const socket = createApiSessionSocketStub({ disconnectReason: 'io client disconnect' });
+        bindApiSessionSocketMock(mockIo, socket);
         vi.mocked(axios.get).mockReset();
         vi.mocked(axios.post).mockReset();
         vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accessKey: { id: 'existing-key' } } } as never);
 
         const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
-        const { socket, transport } = createSessionSocketTransport({
+        const { socket: transportSocket, transport } = createSessionSocketTransport({
             token: 'token-1',
             sessionId: 'session-1',
             machineId: 'machine-1',
         });
 
-        expect(socket).toBe(stub.socket);
+        expect(transportSocket).toBe(socket);
         const opts = mockIo.mock.calls[0]?.[1] as Record<string, unknown>;
         expect(opts.reconnection).toBe(false);
         expect(opts.autoConnect).toBe(false);
@@ -116,9 +52,8 @@ describe('createSessionSocketTransport', () => {
     });
 
     it('ensures a machine-bound session access key before connecting a session-scoped socket', async () => {
-        const stub = createSocketStub();
-        mockIo.mockReset();
-        mockIo.mockReturnValue(stub.socket);
+        const socket = createApiSessionSocketStub();
+        bindApiSessionSocketMock(mockIo, socket);
         vi.mocked(axios.get).mockReset();
         vi.mocked(axios.post).mockReset();
         vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accessKey: null } } as never);
@@ -153,6 +88,6 @@ describe('createSessionSocketTransport', () => {
                 }),
             }),
         );
-        expect(stub.socket.connect).toHaveBeenCalledTimes(1);
+        expect(socket.connect).toHaveBeenCalledTimes(1);
     });
 });

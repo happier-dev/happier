@@ -1,6 +1,6 @@
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt } from '../encryption';
-import { fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { isDeepStrictEqual } from 'node:util';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 

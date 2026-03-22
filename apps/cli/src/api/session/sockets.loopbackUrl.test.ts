@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn<(url: string, opts: Record<string, unknown>) => unknown>(() => ({ on: vi.fn(), emit: vi.fn() })),
@@ -10,38 +12,29 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
 
+const envScope = createEnvKeyScope([
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+]);
+
 describe('session sockets loopback url resolution', () => {
-  const originalEnv = {
-    homeDir: process.env.HAPPIER_HOME_DIR,
-    activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,
-    serverUrl: process.env.HAPPIER_SERVER_URL,
-    webappUrl: process.env.HAPPIER_WEBAPP_URL,
-    publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL,
-  };
-
   beforeEach(() => {
-    mockIo.mockReset();
-
-    process.env.HAPPIER_HOME_DIR = '/tmp/happier-cli-test-loopback-sockets';
-    process.env.HAPPIER_SERVER_URL = 'http://localhost:3005';
-    process.env.HAPPIER_WEBAPP_URL = 'http://localhost:8080';
-    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
+    envScope.patch({
+      HAPPIER_HOME_DIR: '/tmp/happier-cli-test-loopback-sockets',
+      HAPPIER_SERVER_URL: 'http://localhost:3005',
+      HAPPIER_WEBAPP_URL: 'http://localhost:8080',
+      HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_PUBLIC_SERVER_URL: undefined,
+    });
     reloadConfiguration();
   });
 
   afterEach(() => {
-    if (originalEnv.homeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalEnv.homeDir;
-    if (originalEnv.activeServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-    else process.env.HAPPIER_ACTIVE_SERVER_ID = originalEnv.activeServerId;
-    if (originalEnv.serverUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalEnv.serverUrl;
-    if (originalEnv.webappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalEnv.webappUrl;
-    if (originalEnv.publicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-    else process.env.HAPPIER_PUBLIC_SERVER_URL = originalEnv.publicServerUrl;
-
+    envScope.restore();
     reloadConfiguration();
   });
 

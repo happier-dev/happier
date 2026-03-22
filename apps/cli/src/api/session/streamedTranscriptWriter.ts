@@ -88,8 +88,10 @@ type SegmentRuntime = {
   startedAtMs: number;
   accumulatedText: string;
   pendingDraftDeltaText: string;
+  pendingDraftDeltaTextBeforeFirstCommit: string;
   draftFlushTimer: ReturnType<typeof setTimeout> | null;
   didWriteDurable: boolean;
+  didResolveFirstDurableCommit: boolean;
   lastCheckpointAtMs: number;
   lastCheckpointTextLen: number;
   isCommittingDurable: boolean;
@@ -210,6 +212,15 @@ export function createStreamedTranscriptWriter(params: {
       })
       .finally(() => {
         segment.isCommittingDurable = false;
+        if (!segment.didResolveFirstDurableCommit) {
+          segment.didResolveFirstDurableCommit = true;
+          const bufferedDraftText = segment.pendingDraftDeltaTextBeforeFirstCommit;
+          segment.pendingDraftDeltaTextBeforeFirstCommit = '';
+          if (bufferedDraftText && segments.has(segment.key)) {
+            segment.pendingDraftDeltaText += bufferedDraftText;
+            flushDraftBuffer(segment);
+          }
+        }
         const pendingCommit = segment.pendingDurableCommit;
         segment.pendingDurableCommit = null;
         if (pendingCommit) {
@@ -242,8 +253,10 @@ export function createStreamedTranscriptWriter(params: {
       startedAtMs: nowMs,
       accumulatedText: '',
       pendingDraftDeltaText: '',
+      pendingDraftDeltaTextBeforeFirstCommit: '',
       draftFlushTimer: null,
       didWriteDurable: false,
+      didResolveFirstDurableCommit: false,
       lastCheckpointAtMs: 0,
       lastCheckpointTextLen: 0,
       isCommittingDurable: false,
@@ -268,13 +281,17 @@ export function createStreamedTranscriptWriter(params: {
 
     const segment = getOrCreateSegment(kind, sidechainId);
     segment.accumulatedText += deltaText;
-    segment.pendingDraftDeltaText += deltaText;
-
-    enqueueDraftFlush(segment);
 
     if (!segment.didWriteDurable) {
       commitDurableSnapshot(segment, { state: 'streaming' });
       return;
+    }
+
+    if (!segment.didResolveFirstDurableCommit) {
+      segment.pendingDraftDeltaTextBeforeFirstCommit += deltaText;
+    } else {
+      segment.pendingDraftDeltaText += deltaText;
+      enqueueDraftFlush(segment);
     }
 
     const nowMs = Date.now();

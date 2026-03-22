@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 vi.mock('@/configuration', () => ({
     configuration: { serverUrl: 'http://example.invalid', apiServerUrl: 'http://example.invalid' },
@@ -16,7 +16,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
         getSpy.mockResolvedValueOnce({
             status: 200,
             data: {
-                session: makeSessionFixtureRow({
+                session: createSessionRecordFixture({
                     id: 's1',
                     encryptionMode: 'plain' as any,
                     metadataVersion: 2,
@@ -51,7 +51,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     getSpy.mockResolvedValueOnce({
       status: 200,
       data: {
-        session: makeSessionFixtureRow({
+        session: createSessionRecordFixture({
           id: 's1',
           encryptionMode: 'plain' as any,
           metadataVersion: 2,
@@ -84,7 +84,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
             .mockResolvedValueOnce({
                 status: 200,
                 data: {
-                    sessions: [makeSessionFixtureRow({ id: 's1', metadataVersion: 0, agentStateVersion: 0 })],
+                    sessions: [createSessionRecordFixture({ id: 's1', metadataVersion: 0, agentStateVersion: 0 })],
                     hasNext: false,
                     nextCursor: null,
                 },
@@ -133,7 +133,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     getSpy.mockResolvedValueOnce({
       status: 200,
       data: {
-        session: makeSessionFixtureRow({
+        session: createSessionRecordFixture({
           id: 's1',
           metadataVersion: 4,
           metadata: encodeBase64(encrypt(encryptionKey, 'legacy', serverMetadata)),

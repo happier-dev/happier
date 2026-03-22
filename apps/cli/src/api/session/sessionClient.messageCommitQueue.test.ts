@@ -1,22 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Session } from '@/api/types';
+import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import {
+  type ApiSessionSocketStub,
+  createApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 
 type Ack = { ok: true; id: string; seq: number; localId: string };
 
-type DelayedSocketStub = {
-  socket: {
-    id: string;
-    connected: boolean;
-    on: (event: string, handler: (...args: any[]) => void) => void;
-    off: (event: string, handler?: (...args: any[]) => void) => void;
-    close: () => void;
-    connect: () => void;
-    disconnect: () => void;
-    emit: (...args: any[]) => void;
-    timeout: (ms: number) => any;
-    emitWithAck: (event: string, payload: unknown) => Promise<unknown>;
-  };
+type DelayedSocketStub = ApiSessionSocketStub & {
   state: {
     maxInFlight: number;
     inFlight: number;
@@ -26,127 +18,92 @@ type DelayedSocketStub = {
 };
 
 function createDelayedSocketStub(): DelayedSocketStub {
-  const state: DelayedSocketStub['state'] = {
+  const state = {
     maxInFlight: 0,
     inFlight: 0,
-    pendingResolvers: [],
+    pendingResolvers: [] as Array<(ack: Ack) => void>,
   };
 
-  const socket: DelayedSocketStub['socket'] = {
-    id: 'sock-1',
-    connected: true,
-    on: vi.fn(),
-    off: vi.fn(),
-    close: vi.fn(),
-    connect: vi.fn(),
-    disconnect: vi.fn(),
-    emit: vi.fn(),
-    timeout: vi.fn(function timeout() {
-      return socket;
-    }),
-    emitWithAck: vi.fn((event: string) => {
-      if (event !== 'message') {
-        return Promise.resolve({ ok: true });
-      }
+  return Object.assign(
+    createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event: string) => {
+        if (event !== 'message') {
+          return { ok: true };
+        }
 
-      state.inFlight += 1;
-      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+        state.inFlight += 1;
+        state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
 
-      return new Promise((resolve) => {
-        state.pendingResolvers.push((ack) => {
-          state.inFlight -= 1;
-          resolve(ack);
+        return new Promise((resolve) => {
+          state.pendingResolvers.push((ack) => {
+            state.inFlight -= 1;
+            resolve(ack);
+          });
         });
-      });
+      },
     }),
-  };
-
-  return {
-    socket,
-    state,
-    resolveNext: (ack) => {
-      const next = state.pendingResolvers.shift();
-      if (!next) {
-        throw new Error('No pending socket ack resolver');
-      }
-      next(ack);
+    {
+      state,
+      resolveNext: (ack: Ack) => {
+        const next = state.pendingResolvers.shift();
+        if (!next) {
+          throw new Error('No pending socket ack resolver');
+        }
+        next(ack);
+      },
     },
-  };
-}
-
-type ImmediateSocketStub = {
-  socket: {
-    id: string;
-    connected: boolean;
-    on: (event: string, handler: (...args: any[]) => void) => void;
-    off: (event: string, handler?: (...args: any[]) => void) => void;
-    close: () => void;
-    connect: () => void;
-    disconnect: () => void;
-    emit: (...args: any[]) => void;
-    timeout: (ms: number) => any;
-    emitWithAck: (event: string, payload: unknown) => Promise<unknown>;
-  };
-};
-
-function createImmediateSocketStub(): ImmediateSocketStub {
-  const socket: ImmediateSocketStub['socket'] = {
-    id: 'sock-2',
-    connected: true,
-    on: vi.fn(),
-    off: vi.fn(),
-    close: vi.fn(),
-    connect: vi.fn(),
-    disconnect: vi.fn(),
-    emit: vi.fn(),
-    timeout: vi.fn(function timeout() {
-      return socket;
-    }),
-    emitWithAck: vi.fn(async () => ({ ok: true })),
-  };
-  return { socket };
+  );
 }
 
 let sessionSocketStub: DelayedSocketStub | null = null;
-let userSocketStub: ImmediateSocketStub | null = null;
+let userSocketStub: ApiSessionSocketStub | null = null;
 
 vi.mock('./sockets', () => ({
-  createSessionScopedSocket: () => {
-    if (!sessionSocketStub) throw new Error('Missing session socket stub');
-    return sessionSocketStub.socket as any;
-  },
   createUserScopedSocket: () => {
     if (!userSocketStub) throw new Error('Missing user socket stub');
-    return userSocketStub.socket as any;
+    return userSocketStub as any;
   },
+}));
+
+vi.mock('./connection/createSessionSocketTransport', () => ({
+  createSessionSocketTransport: () => {
+    if (!sessionSocketStub) throw new Error('Missing session socket stub');
+    return {
+      socket: sessionSocketStub as any,
+      transport: {
+        connect: async () => {},
+        disconnect: async () => {},
+        destroy: async () => {},
+        isConnected: () => sessionSocketStub?.connected === true,
+        onConnected: () => () => {},
+        onDisconnected: () => () => {},
+        onError: () => () => {},
+      },
+    };
+  },
+}));
+
+vi.mock('@happier-dev/connection-supervisor', () => ({
+  DEFAULT_MANAGED_CONNECTION_POLICY: {},
+  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
+    start: async () => {
+      params.createTransport();
+      await params.onConnected?.();
+    },
+    stop: async () => {},
+  }),
 }));
 
 describe('ApiSessionClient message commit queue', () => {
   it('serializes best-effort message commits to avoid concurrent socket acks', async () => {
     vi.resetModules();
     sessionSocketStub = createDelayedSocketStub();
-    userSocketStub = createImmediateSocketStub();
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
 
     const { ApiSessionClient } = await import('./sessionClient');
 
-	    const session: Session = {
-	      id: 's1',
-	      seq: 0,
-	      encryptionMode: 'plain',
-	      metadata: {
-	        path: '/tmp',
-	        host: 'test',
-        homeDir: '/home/test',
-        happyHomeDir: '/home/test/.happier',
-        happyLibDir: '/home/test/.happier/lib',
-        happyToolsDir: '/home/test/.happier/tools',
-      },
-      metadataVersion: 0,
-      agentState: null,
-      agentStateVersion: 0,
-    };
-
-    const client = new ApiSessionClient('tok', session);
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
 
     client.sendAgentMessage('opencode' as any, { type: 'message', message: 'a' } as any);
     client.sendAgentMessage('opencode' as any, { type: 'message', message: 'b' } as any);
