@@ -1,19 +1,26 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const clearPendingMock = vi.fn();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), replace: vi.fn() }),
-    useLocalSearchParams: () => ({ key: 'abc123', server: 'https://example.test' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), replace: vi.fn() },
+        params: { key: 'abc123', server: 'https://example.test' },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
@@ -29,15 +36,21 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: { colors: { textDestructive: '#f00', textSecondary: '#666', radio: { active: '#0af' }, text: '#000', success: '#0a0' } },
-    }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -83,9 +96,7 @@ describe('TerminalScreen authenticated buttons', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
+            tree = (await renderScreen(<Screen />)).tree;
             await act(async () => {});
 
             const buttonTestIds = tree!.root

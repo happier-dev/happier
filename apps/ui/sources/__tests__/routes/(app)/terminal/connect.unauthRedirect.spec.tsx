@@ -1,6 +1,7 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,13 +9,18 @@ const replaceMock = vi.fn();
 const setPendingMock = vi.fn((_pending: { publicKeyB64Url: string; serverUrl: string }) => {});
 const upsertActivateAndSwitchServerMock = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth?: unknown }) => true);
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), replace: replaceMock }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), replace: replaceMock },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
@@ -39,10 +45,18 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerMock,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: Record<string, unknown>) => options.web ?? options.default ?? options.ios ?? options.android,
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -74,6 +88,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 describe('TerminalConnectScreen unauthenticated redirect', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         vi.resetModules();
         replaceMock.mockClear();
@@ -92,9 +110,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
     it('stores pending connect and redirects to auth screen immediately', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
+        await renderScreen(<Screen />);
         await act(async () => {});
 
         expect(setPendingMock).toHaveBeenCalledWith({
