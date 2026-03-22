@@ -1,10 +1,11 @@
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
 import { writeDaemonState, clearDaemonState } from '@/persistence';
 import { spawnDaemonSession } from '@/daemon/controlClient';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 function listen(server: http.Server): Promise<{ port: number }> {
   return new Promise((resolve, reject) => {
@@ -21,14 +22,16 @@ function listen(server: http.Server): Promise<{ port: number }> {
 }
 
 describe('daemon control client (HTTP error responses)', () => {
+  let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
     await clearDaemonState();
-    delete process.env.HAPPIER_HOME_DIR;
+    envScope.restore();
+    envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
     reloadConfiguration();
     if (tmpHomeDir) {
-      await rm(tmpHomeDir, { recursive: true, force: true });
+      await removeTempDir(tmpHomeDir);
       tmpHomeDir = null;
     }
   });
@@ -55,8 +58,8 @@ describe('daemon control client (HTTP error responses)', () => {
     try {
       const { port } = await listen(server);
 
-      tmpHomeDir = await mkdtemp(`${process.env.TMPDIR ?? '/tmp'}/happier-daemon-client-test-`);
-      process.env.HAPPIER_HOME_DIR = tmpHomeDir;
+      tmpHomeDir = await createTempDir('happier-daemon-client-test-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
       reloadConfiguration();
       writeDaemonState({
         pid: process.pid,
@@ -98,8 +101,8 @@ describe('daemon control client (HTTP error responses)', () => {
     try {
       const { port } = await listen(server);
 
-      tmpHomeDir = await mkdtemp(`${process.env.TMPDIR ?? '/tmp'}/happier-daemon-client-test-`);
-      process.env.HAPPIER_HOME_DIR = tmpHomeDir;
+      tmpHomeDir = await createTempDir('happier-daemon-client-test-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
       reloadConfiguration();
       writeDaemonState({
         pid: process.pid,
@@ -144,8 +147,8 @@ describe('daemon control client (HTTP error responses)', () => {
     try {
       const { port } = await listen(server);
 
-      tmpHomeDir = await mkdtemp(`${process.env.TMPDIR ?? '/tmp'}/happier-daemon-client-test-`);
-      process.env.HAPPIER_HOME_DIR = tmpHomeDir;
+      tmpHomeDir = await createTempDir('happier-daemon-client-test-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
       reloadConfiguration();
       writeDaemonState({
         pid: process.pid,

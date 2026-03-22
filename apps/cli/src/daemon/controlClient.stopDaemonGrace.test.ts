@@ -1,40 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, writeFileSync } from 'node:fs';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 vi.mock('@/daemon/doctor', () => ({
   findHappyProcessByPid: async () => ({ type: 'daemon' as const }),
 }));
 
 describe('stopDaemon: graceful wait before force kill', () => {
-  const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-  const previousHttpTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
-  const previousStopWaitForDeathTimeout = process.env.HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS;
+  let envScope = createEnvKeyScope([
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_HTTP_TIMEOUT',
+    'HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS',
+  ]);
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-
-    if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = previousHomeDir;
-
-    if (previousHttpTimeout === undefined) delete process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
-    else process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = previousHttpTimeout;
-
-    if (previousStopWaitForDeathTimeout === undefined) delete process.env.HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS;
-    else process.env.HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = previousStopWaitForDeathTimeout;
+    envScope.restore();
+    envScope = createEnvKeyScope([
+      'HAPPIER_HOME_DIR',
+      'HAPPIER_DAEMON_HTTP_TIMEOUT',
+      'HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS',
+    ]);
   });
 
   it('uses HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS to avoid force killing during slow shutdown', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-05T00:00:00.000Z'));
 
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-stop-grace-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '1000';
-    process.env.HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = '5000';
+    const homeDir = createTempDirSync('happier-cli-daemon-stop-grace-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_HTTP_TIMEOUT: '1000',
+      HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS: '5000',
+    });
 
     const daemonPid = 12345;
     const daemonPort = 43210;
@@ -142,13 +143,14 @@ describe('stopDaemon: graceful wait before force kill', () => {
 
       expect(fetchMock).toHaveBeenCalled();
       expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(existsSync(configuration.daemonStateFile)).toBe(false);
 
       const forceSignals = killSpy.mock.calls
         .map(([, signal]) => signal)
         .filter((signal) => signal === 'SIGTERM' || signal === 'SIGKILL');
       expect(forceSignals).toEqual([]);
     } finally {
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   });
 });

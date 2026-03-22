@@ -72,7 +72,6 @@ describe('daemon control server: /spawn-session', () => {
           sessionId: 'explicit-session',
           spawnNonce: 'spawn-nonce-1',
           backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-          token: 'dummy-token',
           experimentalCodexAcp: true,
           transcriptStorage: 'direct',
           mcpSelection: {
@@ -111,7 +110,6 @@ describe('daemon control server: /spawn-session', () => {
         sessionId: 'explicit-session',
         spawnNonce: 'spawn-nonce-1',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        token: 'dummy-token',
         codexBackendMode: 'acp',
         transcriptStorage: 'direct',
         mcpSelection: {

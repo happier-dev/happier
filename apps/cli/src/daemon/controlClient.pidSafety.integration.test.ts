@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 describe.sequential('daemon control client PID safety', () => {
-  const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-  const previousTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
-  const previousSpawnTimeout = process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
-  const previousPingTimeout = process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS;
+  let envScope = createEnvKeyScope([
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_HTTP_TIMEOUT',
+    'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT',
+    'HAPPIER_DAEMON_PING_TIMEOUT_MS',
+  ]);
   const spawnedChildren: Array<ReturnType<typeof spawn>> = [];
 
   function killTrackedChildren(): void {
@@ -25,24 +27,22 @@ describe.sequential('daemon control client PID safety', () => {
 
   afterEach(() => {
     killTrackedChildren();
-    if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = previousHomeDir;
-
-    if (previousTimeout === undefined) delete process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
-    else process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = previousTimeout;
-
-    if (previousSpawnTimeout === undefined) delete process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
-    else process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT = previousSpawnTimeout;
-
-    if (previousPingTimeout === undefined) delete process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS;
-    else process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS = previousPingTimeout;
+    envScope.restore();
+    envScope = createEnvKeyScope([
+      'HAPPIER_HOME_DIR',
+      'HAPPIER_DAEMON_HTTP_TIMEOUT',
+      'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT',
+      'HAPPIER_DAEMON_PING_TIMEOUT_MS',
+    ]);
   });
 
   it('stopDaemon refuses to kill an unrelated PID when HTTP stop fails', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-stop-safety-'));
+    const homeDir = createTempDirSync('happier-cli-daemon-stop-safety-');
     try {
-      process.env.HAPPIER_HOME_DIR = homeDir;
-      process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '150';
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_HTTP_TIMEOUT: '150',
+      });
 
       // Spawn an unrelated long-lived process.
       const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
@@ -79,14 +79,16 @@ describe.sequential('daemon control client PID safety', () => {
       // Stale daemon state should be removed so future control commands can recover.
       expect(existsSync(configuration.daemonStateFile)).toBe(false);
     } finally {
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   }, 30_000);
 
   it('checkIfDaemonRunningAndCleanupStaleState probes /ping when controlToken is present', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '500';
+    const homeDir = createTempDirSync('happier-cli-daemon-ping-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_HTTP_TIMEOUT: '500',
+    });
 
     vi.resetModules();
     const [
@@ -175,21 +177,23 @@ describe.sequential('daemon control client PID safety', () => {
     } finally {
       vi.unstubAllGlobals();
       await app.close();
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   }, 30_000);
 
   it('checkIfDaemonRunningAndCleanupStaleState uses a configurable ping timeout budget', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-timeout-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '500';
+    const homeDir = createTempDirSync('happier-cli-daemon-ping-timeout-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_HTTP_TIMEOUT: '500',
+    });
 
     const daemonPort = 43210;
     const realFetch = globalThis.fetch;
 
     try {
       // Override ping timeout and verify it is used (instead of a hardcoded value).
-      process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS = '5000';
+      envScope.patch({ HAPPIER_DAEMON_PING_TIMEOUT_MS: '5000' });
 
       vi.resetModules();
       const [
@@ -262,14 +266,16 @@ describe.sequential('daemon control client PID safety', () => {
       await app.close();
     } finally {
       vi.unstubAllGlobals();
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   }, 30_000);
 
   it('checkIfDaemonRunningAndCleanupStaleState does not delete recent state when /ping is temporarily unreachable', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-grace-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '250';
+    const homeDir = createTempDirSync('happier-cli-daemon-ping-grace-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_HTTP_TIMEOUT: '250',
+    });
 
     vi.resetModules();
     const [{ configuration }, { checkIfDaemonRunningAndCleanupStaleState }] = await Promise.all([
@@ -309,14 +315,16 @@ describe.sequential('daemon control client PID safety', () => {
       expect(existsSync(configuration.daemonStateFile)).toBe(true);
     } finally {
       vi.unstubAllGlobals();
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   }, 30_000);
 
   it('checkIfDaemonRunningAndCleanupStaleState deletes old state when /ping remains unreachable', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-stale-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '250';
+    const homeDir = createTempDirSync('happier-cli-daemon-ping-stale-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_HTTP_TIMEOUT: '250',
+    });
 
     vi.resetModules();
     const [{ configuration }, { checkIfDaemonRunningAndCleanupStaleState }] = await Promise.all([
@@ -355,15 +363,17 @@ describe.sequential('daemon control client PID safety', () => {
       expect(existsSync(configuration.daemonStateFile)).toBe(false);
     } finally {
       vi.unstubAllGlobals();
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   }, 30_000);
 
   it('spawnDaemonSession uses an extended default timeout budget', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-spawn-timeout-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    delete process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
-    delete process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
+    const homeDir = createTempDirSync('happier-cli-daemon-spawn-timeout-');
+    envScope.patch({
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_DAEMON_HTTP_TIMEOUT: undefined,
+      HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT: undefined,
+    });
 
     vi.resetModules();
     const [
@@ -404,7 +414,7 @@ describe.sequential('daemon control client PID safety', () => {
     } finally {
       timeoutSpy.mockRestore();
       vi.unstubAllGlobals();
-      rmSync(homeDir, { recursive: true, force: true });
+      removeTempDirSync(homeDir);
     }
   });
 });
