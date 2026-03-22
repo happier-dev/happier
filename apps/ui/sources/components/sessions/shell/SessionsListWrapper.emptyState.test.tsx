@@ -1,6 +1,7 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { SessionsListWrapper } from './SessionsListWrapper';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,44 +10,38 @@ const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
     storageKinds: [] as string[],
 }));
-
 const featureDecisionState = vi.hoisted(() => ({
     enabled: false,
 }));
-
 const storageKindState = vi.hoisted(() => ({
     storageKind: 'persisted' as 'persisted' | 'direct',
     setStorageKind: vi.fn(),
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                View: 'View',
+                                ActivityIndicator: 'ActivityIndicator',
+                            }
+    );
 });
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: { colors: { textSecondary: '#777', groupped: { background: '#fff' } } },
-    }),
-    StyleSheet: {
-        create: (factory: any) =>
-            typeof factory === 'function'
-                ? factory({ colors: { groupped: { background: '#fff' } } })
-                : factory,
-    },
-}));
-
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
+            textSecondary: '#777',
+            groupped: { background: '#fff' },
+        },
+    });
+});
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: (storageKind?: string) => {
         sessionListState.storageKinds.push(storageKind ?? 'all');
         return sessionListState.data;
     },
 }));
-
 vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
     useSessionListStorageKind: () => ({
         directSessionsEnabled: featureDecisionState.enabled,
@@ -54,11 +49,9 @@ vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
         setStorageKind: storageKindState.setStorageKind,
     }),
 }));
-
 vi.mock('@/components/sessions/shell/SessionsListStorageChrome', () => ({
     SessionsListStorageChrome: (props: any) => React.createElement('SessionsListStorageChrome', props),
 }));
-
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
 }));
@@ -75,21 +68,24 @@ describe('SessionsListWrapper (empty state)', () => {
         storageKindState.setStorageKind.mockReset();
     });
 
-    it('renders getting started guidance when there are no sessions', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<SessionsListWrapper />);
-        });
+    afterEach(() => {
+        standardCleanup();
+    });
 
-        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
+    it('renders getting started guidance when there are no sessions', async () => {
+        const screen = await renderScreen(<SessionsListWrapper />);
+
+        expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).not.toThrow();
+
+        await screen.unmount();
     });
 
     it('uses the persisted storage filter when direct sessions are disabled', async () => {
-        act(() => {
-            renderer.create(<SessionsListWrapper />);
-        });
+        const screen = await renderScreen(<SessionsListWrapper />);
 
         expect(sessionListState.storageKinds).toEqual(['persisted']);
+
+        await screen.unmount();
     });
 
     it('shows storage tabs and uses the selected direct storage filter when direct sessions are enabled', async () => {
@@ -97,15 +93,14 @@ describe('SessionsListWrapper (empty state)', () => {
         storageKindState.storageKind = 'direct';
         sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<SessionsListWrapper />);
-        });
+        const screen = await renderScreen(<SessionsListWrapper />);
 
         expect(sessionListState.storageKinds).toEqual(['direct']);
-        expect(() => tree!.root.findByType('SessionsListStorageChrome')).not.toThrow();
-        expect(tree!.root.findByType('SessionsListStorageChrome').props.storageKind).toBe('direct');
-        expect(tree!.root.findByType('SessionsList').props.storageKind).toBe('direct');
+        expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
+        expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsList' as any).props.storageKind).toBe('direct');
+
+        await screen.unmount();
     });
 
     it('keeps the storage chrome visible in the direct empty state', async () => {
@@ -113,13 +108,12 @@ describe('SessionsListWrapper (empty state)', () => {
         storageKindState.storageKind = 'direct';
         sessionListState.data = [];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<SessionsListWrapper />);
-        });
+        const screen = await renderScreen(<SessionsListWrapper />);
 
-        expect(() => tree!.root.findByType('SessionsListStorageChrome')).not.toThrow();
-        expect(tree!.root.findByType('SessionsListStorageChrome').props.storageKind).toBe('direct');
+        expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
+        expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
+
+        await screen.unmount();
     });
 
     it('keeps the storage chrome visible when the direct tab already has sessions', async () => {
@@ -127,13 +121,12 @@ describe('SessionsListWrapper (empty state)', () => {
         storageKindState.storageKind = 'direct';
         sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<SessionsListWrapper />);
-        });
+        const screen = await renderScreen(<SessionsListWrapper />);
 
-        expect(() => tree!.root.findByType('SessionsListStorageChrome')).not.toThrow();
-        expect(tree!.root.findByType('SessionsListStorageChrome').props.storageKind).toBe('direct');
-        expect(tree!.root.findByType('SessionsList').props.storageKind).toBe('direct');
+        expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
+        expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsList' as any).props.storageKind).toBe('direct');
+
+        await screen.unmount();
     });
 });

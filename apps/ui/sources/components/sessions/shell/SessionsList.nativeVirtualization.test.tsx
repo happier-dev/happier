@@ -1,11 +1,14 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
+const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
@@ -16,15 +19,45 @@ const setCollapsedGroupKeysV1 = vi.fn();
 let allMachines = [
     {
         id: 'machine-target',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 10,
         active: true,
         activeAt: 10,
-        metadata: { displayName: 'Rebound workstation', host: 'target.local' },
+        metadata: {
+            displayName: 'Rebound workstation',
+            host: 'target.local',
+            platform: 'darwin',
+            happyCliVersion: '0.0.0',
+            happyHomeDir: '/Users/test/.happier',
+            homeDir: '/Users/test',
+        },
+        metadataVersion: 1,
+        accessTokenEncrypted: null,
+        accessTokenNonce: null,
+        daemonState: null,
+        daemonStateVersion: 1,
     },
     {
         id: 'machine-other',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 5,
         active: true,
         activeAt: 5,
-        metadata: { displayName: 'Other workstation', host: 'other.local' },
+        metadata: {
+            displayName: 'Other workstation',
+            host: 'other.local',
+            platform: 'darwin',
+            happyCliVersion: '0.0.0',
+            happyHomeDir: '/Users/test/.happier',
+            homeDir: '/Users/test',
+        },
+        metadataVersion: 1,
+        accessTokenEncrypted: null,
+        accessTokenNonce: null,
+        daemonState: null,
+        daemonStateVersion: 1,
     },
 ];
 let storageState: any = {
@@ -123,8 +156,9 @@ vi.mock('react-native-reanimated', () => ({
     useAnimatedStyle: (fn: () => any) => fn(),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 groupped: { background: '#f7f7f7', sectionTitle: '#333' },
@@ -136,24 +170,8 @@ vi.mock('react-native-unistyles', () => ({
                 shadow: { color: '#000' },
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({
-                    colors: {
-                        groupped: { background: '#f7f7f7', sectionTitle: '#333' },
-                        textSecondary: '#666',
-                        divider: '#ddd',
-                        accent: { blue: '#07f' },
-                        surface: '#fff',
-                        modal: { border: '#ddd' },
-                        shadow: { color: '#000' },
-                    },
-                })
-                : input,
-    },
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -162,40 +180,27 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('../../../dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'ios' },
-        TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        Platform: { OS: 'ios', select: (value: any) => value.ios ?? value.default },
+                                        TurboModuleRegistry: { get: () => ({}) },
+                                    }
+    );
 });
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
-        return React.createElement(
-            'FlashList',
-            { ...rest },
-            ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
-            (data ?? []).map((item: any, index: number) => {
-                const key = keyExtractor ? keyExtractor(item, index) : String(index);
-                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-            }),
-        );
-    },
+vi.mock('@shopify/flash-list', async () => ({
+    ...((await import('@/dev/testkit/mocks/flashList')) as typeof import('@/dev/testkit/mocks/flashList')).createCapturingFlashListMock({
+        componentName: 'FlashList',
+        renderItems: true,
+    }).module,
 }));
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-    FlashList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
-        return React.createElement(
-            'FlashListCompat',
-            { ...rest },
-            ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
-            (data ?? []).map((item: any, index: number) => {
-                const key = keyExtractor ? keyExtractor(item, index) : String(index);
-                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-            }),
-        );
-    },
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => ({
+    ...((await import('@/dev/testkit/mocks/flashList')) as typeof import('@/dev/testkit/mocks/flashList')).createCapturingFlashListMock({
+        componentName: 'FlashListCompat',
+        renderItems: true,
+    }).module,
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -203,10 +208,9 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('expo-router', () => ({
-    usePathname: () => '',
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    pathname: '',
+}).module);
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
@@ -269,18 +273,27 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
+            sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+        },
+    });
+});
+
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
@@ -327,27 +340,31 @@ vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'compactSessionView') return false;
-        if (key === 'compactSessionViewMinimal') return false;
-        if (key === 'sessionTagsEnabled') return true;
-        return null;
-    },
-    useHasUnreadMessages: () => false,
-    useAllMachines: () => allMachines,
-    useSettingMutable: (key: string) => {
-        if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-        if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
-        if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
-        if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
-        if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
-        return [null, vi.fn()];
-    },
-    storage: {
-        getState: () => storageState,
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'compactSessionView') return false;
+                if (key === 'compactSessionViewMinimal') return false;
+                if (key === 'sessionTagsEnabled') return true;
+                return null;
+            },
+            useHasUnreadMessages: () => false,
+            useAllMachines: () => allMachines,
+            useSettingMutable: (key: string) => {
+                if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
+                if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
+                if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
+                if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
+                return [null, vi.fn()];
+            },
+            storage: createStorageStoreMock(storageState),
+        },
+    });
+});
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),
@@ -358,49 +375,97 @@ vi.mock('./useSessionInlineDrag', () => ({
 }));
 
 vi.mock('./SessionItem', () => ({
-    SessionItem: (props: any) => React.createElement('SessionItem', props),
+    SessionItem: (props: any) => React.createElement('SessionItem', {
+        ...props,
+        testID: `session-list-session:${String(props.session?.id ?? 'unknown')}`,
+    }),
 }));
 
+function resetVisibleSessionListViewData(): void {
+    mockVisibleSessionListViewData = [
+        {
+            type: 'header',
+            title: 'Today',
+            headerKind: 'date',
+            groupKey,
+            serverId: 'server_a',
+            serverName: 'Server A',
+        },
+        {
+            type: 'session',
+            session: sessionA,
+            groupKey,
+            groupKind: 'date',
+            serverId: 'server_a',
+            serverName: 'Server A',
+        },
+        {
+            type: 'session',
+            session: sessionB,
+            groupKey,
+            groupKind: 'date',
+            serverId: 'server_a',
+            serverName: 'Server A',
+        },
+    ];
+}
+
+async function renderSessionsList() {
+    const { SessionsList } = await import('./SessionsList');
+    return renderScreen(<SessionsList />);
+}
+
+function findSessionItem(
+    screen: Awaited<ReturnType<typeof renderSessionsList>>,
+    sessionId: string,
+) {
+    return screen.findByTestId(`session-list-session:${sessionId}`);
+}
+
+function expectPresent<T>(value: T | null | undefined, label: string): T {
+    expect(value, label).toBeTruthy();
+    if (value == null) {
+        throw new Error(label);
+    }
+    return value;
+}
+
 describe('SessionsList (native virtualization)', () => {
-    it('renders session items with correct adjacency props on native', async () => {
+    beforeEach(() => {
         pinnedSessionKeysV1 = [];
         sessionTagsV1 = {};
         workspaceLabelsV1 = {};
         collapsedGroupKeysV1 = {};
         setPinnedSessionKeysV1.mockClear();
         setSessionTagsV1.mockClear();
+        setWorkspaceLabelsV1.mockClear();
+        setCollapsedGroupKeysV1.mockClear();
+        mockAllowedServerIds = ['server_a'];
+        readMachineTargetForSessionMock.mockReset();
+        readMachineTargetForSessionMock.mockImplementation(() => null);
+        resetVisibleSessionListViewData();
+    });
 
-        const { SessionsList } = await import('./SessionsList');
+    afterEach(() => {
+        standardCleanup();
+    });
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        expect(items).toHaveLength(2);
-        expect(items[0]?.props.isFirst).toBe(true);
-        expect(items[0]?.props.isLast).toBe(false);
-        expect(items[1]?.props.isFirst).toBe(false);
-        expect(items[1]?.props.isLast).toBe(true);
+    it('renders session items with correct adjacency props on native', async () => {
+        const screen = await renderSessionsList();
+        const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
+        const second = expectPresent(findSessionItem(screen, 'sess_b'), 'expected sess_b session row');
+        expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
+        expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(1);
+        expect(first.props.isFirst).toBe(true);
+        expect(first.props.isLast).toBe(false);
+        expect(second.props.isFirst).toBe(false);
+        expect(second.props.isLast).toBe(true);
     });
 
     it('passes path secondary-line mode for date-grouped rows', async () => {
-        pinnedSessionKeysV1 = [];
-        sessionTagsV1 = {};
-        workspaceLabelsV1 = {};
-        collapsedGroupKeysV1 = {};
-
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        expect(items[0]?.props.secondaryLineMode).toBe('path');
-        expect(items[1]?.props.secondaryLineMode).toBe('path');
+        const screen = await renderSessionsList();
+        expect(findSessionItem(screen, 'sess_a')?.props.secondaryLineMode).toBe('path');
+        expect(findSessionItem(screen, 'sess_b')?.props.secondaryLineMode).toBe('path');
     });
 
     it('passes status secondary-line mode for project-grouped rows', async () => {
@@ -432,16 +497,9 @@ describe('SessionsList (native virtualization)', () => {
             },
         ];
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        expect(items).toHaveLength(1);
-        expect(items[0]?.props.secondaryLineMode).toBe('status');
+        const screen = await renderSessionsList();
+        expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
+        expect(findSessionItem(screen, 'sess_a')?.props.secondaryLineMode).toBe('status');
 
         mockVisibleSessionListViewData = [
             {
@@ -472,20 +530,10 @@ describe('SessionsList (native virtualization)', () => {
     });
 
     it('wires pin toggling via pinnedSessionKeysV1', async () => {
-        pinnedSessionKeysV1 = [];
-        workspaceLabelsV1 = {};
-        collapsedGroupKeysV1 = {};
         setPinnedSessionKeysV1.mockClear();
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const first = items[0];
+        const screen = await renderSessionsList();
+        const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected first session item');
         expect(typeof first.props.onTogglePinned).toBe('function');
 
         await act(async () => {
@@ -497,21 +545,11 @@ describe('SessionsList (native virtualization)', () => {
     });
 
     it('writes session tags back to settings as a value (not an updater function)', async () => {
-        pinnedSessionKeysV1 = [];
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
-        workspaceLabelsV1 = {};
-        collapsedGroupKeysV1 = {};
         setSessionTagsV1.mockClear();
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const first = items[0];
+        const screen = await renderSessionsList();
+        const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected first session item');
         expect(typeof first.props.onSetTags).toBe('function');
         first.props.onSetTags(['urgent']);
 
@@ -524,35 +562,21 @@ describe('SessionsList (native virtualization)', () => {
     it('shows pinned server badges only when multiple servers are selected', async () => {
         pinnedSessionKeysV1 = ['server_a:sess_a'];
         sessionTagsV1 = {};
-        workspaceLabelsV1 = {};
-        collapsedGroupKeysV1 = {};
-        mockAllowedServerIds = ['server_a'];
-
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        expect(items[0]?.props.pinned).toBe(true);
-        expect(items[0]?.props.showServerBadge).toBe(false);
+        const screen = await renderSessionsList();
+        expect(findSessionItem(screen, 'sess_a')?.props.pinned).toBe(true);
+        expect(findSessionItem(screen, 'sess_a')?.props.showServerBadge).toBe(false);
 
         mockAllowedServerIds = ['server_a', 'server_b'];
-        await act(async () => {
-            tree?.update(<SessionsList />);
-        });
-
-        const items2 = (tree as any).root.findAllByType('SessionItem');
-        expect(items2[0]?.props.showServerBadge).toBe(true);
+        const updatedScreen = await renderSessionsList();
+        expect(findSessionItem(updatedScreen, 'sess_a')?.props.showServerBadge).toBe(true);
     });
 
     it('uses the reachable machine label and base path when row metadata is stale after handoff', async () => {
-        pinnedSessionKeysV1 = [];
-        sessionTagsV1 = {};
-        workspaceLabelsV1 = {};
-        collapsedGroupKeysV1 = {};
+        readMachineTargetForSessionMock.mockImplementation((sessionId: string) =>
+            sessionId === 'sess_a'
+                ? { machineId: 'machine-target', basePath: '/Volumes/target/repo' }
+                : null,
+        );
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -580,14 +604,11 @@ describe('SessionsList (native virtualization)', () => {
             },
         ];
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const item = (tree as any).root.findAllByType('SessionItem')[0];
+        const screen = await renderSessionsList();
+        const item = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected first session item',
+        );
         expect(item.props.subtitleOverride).toBe('Rebound workstation · /Volumes/target/repo');
     });
 });

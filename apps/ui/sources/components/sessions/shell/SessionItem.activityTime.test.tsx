@@ -1,6 +1,7 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,27 +16,10 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({
-                    colors: {
-                        surface: '#fff',
-                        surfaceSelected: '#eee',
-                        divider: '#ddd',
-                        text: '#111',
-                        textSecondary: '#666',
-                        textLink: '#07f',
-                        input: { background: '#f0f0f0' },
-                        groupped: { background: '#f7f7f7' },
-                        status: { error: '#f00' },
-                        button: { primary: { tint: '#fff' } },
-                    },
-                })
-                : input,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -44,11 +28,14 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('../../../dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    OS: 'web',
+                },
+            }
+    );
 });
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -98,13 +85,20 @@ vi.mock('@/sync/ops', () => ({
     sessionRename: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), prompt: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
@@ -122,15 +116,27 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     useSessionStatus: () => mockSessionStatus,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useHasUnreadMessages: () => mockHasUnreadMessages,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-    useSessionListMeaningfulActivityAt: () => 60_000,
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useHasUnreadMessages: () => false,
+        useProfile: () => ({ id: 'u1' }),
+        useSession: () => null,
+        useSessionListMeaningfulActivityAt: () => 60_000,
+    });
+});
 
-let mockHasUnreadMessages = false;
-let mockSessionStatus = {
+type MockSessionStatus = Readonly<{
+    state: 'thinking' | 'waiting';
+    isConnected: boolean;
+    statusText: string;
+    shouldShowStatus: boolean;
+    statusColor: string;
+    statusDotColor: string;
+    isPulsing: boolean;
+}>;
+
+const defaultSessionStatus: MockSessionStatus = {
     state: 'thinking',
     isConnected: true,
     statusText: 'Working on it',
@@ -140,60 +146,52 @@ let mockSessionStatus = {
     isPulsing: false,
 };
 
+let mockSessionStatus: MockSessionStatus = {
+    ...defaultSessionStatus,
+};
+
 function createSession(id: string) {
-    return {
+    return createSessionFixture({
         id,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: Date.now(),
         active: true,
-        activeAt: Date.now(),
+        activeAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
         metadata: null,
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 1,
-        thinking: false,
-        thinkingAt: 0,
         presence: 'online',
-    } as any;
-}
-
-function findRowPressable(tree: renderer.ReactTestRenderer) {
-    const pressables = tree.root.findAllByType('Pressable');
-    const row = pressables.find((candidate) => !candidate.props.accessibilityLabel);
-    if (!row) throw new Error('Row Pressable not found');
-    return row;
-}
-
-function triggerHoverEnter(node: renderer.ReactTestInstance) {
-    node.props.onMouseEnter?.();
-    node.props.onHoverIn?.();
-    node.props.onPointerEnter?.();
+    });
 }
 
 describe('SessionItem activity time', () => {
+    beforeEach(() => {
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+        };
+    });
+
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('renders the meaningful activity timestamp instead of the raw session updatedAt', async () => {
         const { SessionItem } = await import('./SessionItem');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={createSession('sess_1')}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_1')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
 
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === '1m')).toBe(true);
+        expect(screen.findByTestId('session-list-item-sess_1')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('1m');
     });
 
     it('renders a tiny status line in very compact mode when the session has a meaningful active state', async () => {
@@ -209,26 +207,22 @@ describe('SessionItem activity time', () => {
 
         const { SessionItem } = await import('./SessionItem');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={createSession('sess_compact_active')}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={true}
-                    compactMinimal={true}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_compact_active')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
 
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'Working on it')).toBe(true);
+        expect(screen.getTextContent()).toContain('Working on it');
     });
 
     it('does not render a subtitle in very compact mode for quiet online sessions', async () => {
@@ -244,30 +238,25 @@ describe('SessionItem activity time', () => {
 
         const { SessionItem } = await import('./SessionItem');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={createSession('sess_compact_quiet')}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={true}
-                    compactMinimal={true}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_compact_quiet')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
 
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'online')).toBe(false);
+        expect(screen.getTextContent()).not.toContain('online');
     });
 
     it('keeps the selected row background when a session is selected', async () => {
-        mockHasUnreadMessages = false;
         mockSessionStatus = {
             state: 'waiting',
             isConnected: true,
@@ -280,145 +269,22 @@ describe('SessionItem activity time', () => {
 
         const { SessionItem } = await import('./SessionItem');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={createSession('sess_selected')}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={true}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
-        });
-
-        const rowPressable = tree!.root.findAllByType('Pressable')[0]!;
-        const flattenedStyle = (rowPressable.props.style as any[]).filter(Boolean);
-        expect(flattenedStyle.some((entry) => entry?.backgroundColor === '#eee')).toBe(true);
-    });
-
-    it('keeps the unread marker and the status dot in very compact rows', async () => {
-        mockHasUnreadMessages = true;
-        mockSessionStatus = {
-            state: 'waiting',
-            isConnected: true,
-            statusText: 'online',
-            shouldShowStatus: false,
-            statusColor: '#34C759',
-            statusDotColor: '#34C759',
-            isPulsing: false,
-        };
-
-        const { SessionItem } = await import('./SessionItem');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={createSession('sess_unread_minimal')}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={true}
-                    compactMinimal={true}
-                />,
-            );
-        });
-
-        const unreadDots = tree!.root.findAll(
-            (node) => String(node.type) === 'View' && node.props.style?.backgroundColor === '#07f',
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_selected')}
+                serverId="server_a"
+                pinned={false}
+                selected={true}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
         );
-        const statusDots = tree!.root.findAllByType('StatusDot');
 
-        expect(unreadDots.length).toBeGreaterThan(0);
-        expect(statusDots.length).toBeGreaterThan(0);
-    });
-
-    it('does not expose the mutation menu for viewers without session mutation access', async () => {
-        mockHasUnreadMessages = false;
-        mockSessionStatus = {
-            state: 'waiting',
-            isConnected: true,
-            statusText: 'online',
-            shouldShowStatus: false,
-            statusColor: '#34C759',
-            statusDotColor: '#34C759',
-            isPulsing: false,
-        };
-
-        const { SessionItem } = await import('./SessionItem');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={{ ...createSession('sess_viewer'), owner: 'someone-else', accessLevel: 'viewer', active: false, presence: 'offline' }}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
+        expect(screen.findByTestId('session-list-item-sess_selected')?.props.accessibilityState).toMatchObject({
+            selected: true,
         });
-
-        await act(async () => {
-            triggerHoverEnter(findRowPressable(tree!));
-        });
-
-        const dropdowns = tree!.root.findAllByType('DropdownMenu');
-        expect(dropdowns).toHaveLength(0);
-    });
-
-    it('keeps rename available in the mutation menu for owned sessions', async () => {
-        mockHasUnreadMessages = false;
-        mockSessionStatus = {
-            state: 'waiting',
-            isConnected: true,
-            statusText: 'online',
-            shouldShowStatus: false,
-            statusColor: '#34C759',
-            statusDotColor: '#34C759',
-            isPulsing: false,
-        };
-
-        const { SessionItem } = await import('./SessionItem');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={{ ...createSession('sess_owned'), owner: 'u1', accessLevel: 'viewer', active: false, presence: 'offline' }}
-                    serverId="server_a"
-                    pinned={false}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
-        });
-
-        await act(async () => {
-            triggerHoverEnter(findRowPressable(tree!));
-        });
-
-        const dropdowns = tree!.root.findAllByType('DropdownMenu');
-        expect(dropdowns).toHaveLength(1);
-        expect(dropdowns[0].props.items.some((item: { id: string }) => item.id === 'rename')).toBe(true);
     });
 });

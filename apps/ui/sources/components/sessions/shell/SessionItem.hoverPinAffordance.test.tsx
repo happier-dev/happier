@@ -1,32 +1,32 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+type SessionItemProps = React.ComponentProps<(typeof import('./SessionItem'))['SessionItem']>;
 
+vi.mock('react-native-reanimated', () => ({}));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
-
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
 }));
-
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                Platform: { OS: 'web' },
+            }
+    );
 });
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
 }));
-
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
@@ -39,234 +39,210 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
         isPulsing: false,
     }),
 }));
-
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
-
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
-
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
 }));
-
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
-
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-        useHasUnreadMessages: () => false,
-        useProfile: () => ({ id: 'u1' }),
-        useSession: () => null,
-        useSessionListMeaningfulActivityAt: () => null,
-    };
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
+            sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+        },
+    });
 });
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useHasUnreadMessages: () => false,
+            useProfile: () => ({
+                id: 'u1',
+                timestamp: 0,
+                firstName: null,
+                lastName: null,
+                username: null,
+                avatar: null,
+                linkedProviders: [],
+                connectedServices: [],
+                connectedServicesV2: [],
+            }),
+            useSession: () => null,
+            useSessionListMeaningfulActivityAt: () => null,
+        },
+    });
+});
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key: string) => key,
 }));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
-
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
 }));
 
-const sessionItemModulePromise = import('./SessionItem');
-
-function createSession(id: string) {
-    return {
-        id,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: false,
-        activeAt: 1,
-        metadata: null,
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 1,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 'offline',
-    } as any;
-}
-
-function findRowPressable(tree: renderer.ReactTestRenderer) {
-    const pressables = tree.root.findAllByType('Pressable');
-    const row = pressables.find((p) => !p.props.accessibilityLabel);
-    if (!row) throw new Error('Row Pressable not found');
-    return row;
-}
-
-function findPinPressable(tree: renderer.ReactTestRenderer) {
-    return tree.root.findByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
-}
-
-function findPinPressables(tree: renderer.ReactTestRenderer) {
-    return tree.root.findAllByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
-}
-
-function triggerHoverEnter(node: renderer.ReactTestInstance) {
-    node.props.onMouseEnter?.();
-    node.props.onHoverIn?.();
-    node.props.onPointerEnter?.();
-}
-
-function triggerHoverLeave(node: renderer.ReactTestInstance) {
-    node.props.onMouseLeave?.();
-    node.props.onHoverOut?.();
-    node.props.onPointerLeave?.();
-}
-
-function findRightArea(tree: renderer.ReactTestRenderer) {
-    // The right area View has onPointerEnter/onPointerLeave handlers
-    const views = tree.root.findAllByType('View');
-    return views.find((v) => v.props.onPointerEnter && v.props.onPointerLeave);
-}
-
 describe('SessionItem pin hover affordance (web)', () => {
-    it('hides the pin action promptly after leaving the row', async () => {
-        const { SessionItem } = await sessionItemModulePromise;
-        const session = createSession('sess_1');
-        const onTogglePinned = vi.fn();
+    function createSession(id: string) {
+        return {
+            id,
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any;
+    }
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    pinned={false}
-                    onTogglePinned={onTogglePinned}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
+    async function renderSessionItem(props: SessionItemProps) {
+        const { SessionItem } = await import('./SessionItem');
+        return renderScreen(<SessionItem {...props} />);
+    }
+
+    function findSessionRow(screen: Awaited<ReturnType<typeof renderSessionItem>>, sessionId: string) {
+        return screen.root.findByProps({ testID: `session-list-item-${sessionId}` }) as any;
+    }
+
+    function findPinActions(row: ReturnType<typeof findSessionRow>) {
+        return row.findAllByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
+    }
+
+    function triggerHoverEnter(node: any) {
+        node.props.onMouseEnter?.();
+        node.props.onHoverIn?.();
+        node.props.onPointerEnter?.();
+    }
+
+    function triggerHoverLeave(node: any) {
+        node.props.onMouseLeave?.();
+        node.props.onHoverOut?.();
+        node.props.onPointerLeave?.();
+    }
+
+    function findRightArea(row: ReturnType<typeof findSessionRow>) {
+        return row.findByProps({ testID: 'session-item-right-area' }) as any;
+    }
+
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    it('hides the pin action promptly after leaving the row', async () => {
+        const screen = await renderSessionItem({
+            session: createSession('sess_1'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
         });
 
-        const row = findRowPressable(tree!);
+        const row = findSessionRow(screen, 'sess_1');
 
-        // Before hover: pin button should NOT be in the DOM
-        expect(findPinPressables(tree!)).toHaveLength(0);
+        expect(findPinActions(row)).toHaveLength(0);
 
         await act(async () => {
             triggerHoverEnter(row);
         });
 
-        // After hover: pin button should be in the DOM
-        expect(findPinPressables(tree!)).toHaveLength(1);
-        expect(findPinPressable(tree!)).toBeTruthy();
+        expect(findPinActions(row)).toHaveLength(1);
 
         await act(async () => {
             triggerHoverLeave(row);
         });
 
-        // After leaving: pin button should be gone again
-        expect(findPinPressables(tree!)).toHaveLength(0);
+        expect(findPinActions(row)).toHaveLength(0);
+
+        await screen.unmount();
     });
 
     it('keeps the actions visible when moving the cursor from the row to the actions area', async () => {
-        const { SessionItem } = await sessionItemModulePromise;
-        const session = createSession('sess_3');
-        const onTogglePinned = vi.fn();
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    pinned={false}
-                    onTogglePinned={onTogglePinned}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
+        const screen = await renderSessionItem({
+            session: createSession('sess_3'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
         });
 
-        const row = findRowPressable(tree!);
-        expect(findPinPressables(tree!)).toHaveLength(0);
+        const row = findSessionRow(screen, 'sess_3');
+        expect(findPinActions(row)).toHaveLength(0);
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(findPinPressables(tree!)).toHaveLength(1);
+        expect(findPinActions(row)).toHaveLength(1);
 
-        // Move cursor from the row to the right area (actions).
-        // The actions should remain visible because actions area hover keeps them shown.
-        const rightArea = findRightArea(tree!);
+        const rightArea = findRightArea(row);
         await act(async () => {
             triggerHoverLeave(row);
-            if (rightArea) triggerHoverEnter(rightArea);
+            triggerHoverEnter(rightArea);
         });
-        expect(findPinPressables(tree!)).toHaveLength(1);
+        expect(findPinActions(row)).toHaveLength(1);
 
         await act(async () => {
-            if (rightArea) triggerHoverLeave(rightArea);
+            triggerHoverLeave(rightArea);
         });
-        expect(findPinPressables(tree!)).toHaveLength(0);
+        expect(findPinActions(row)).toHaveLength(0);
+
+        await screen.unmount();
     });
 
     it('shows the actions when hovered and hides them when leaving the row', async () => {
-        const { SessionItem } = await sessionItemModulePromise;
-        const session = createSession('sess_2');
-        const onTogglePinned = vi.fn();
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    pinned={false}
-                    onTogglePinned={onTogglePinned}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
+        const screen = await renderSessionItem({
+            session: createSession('sess_2'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
         });
 
-        const row = findRowPressable(tree!);
+        const row = findSessionRow(screen, 'sess_2');
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(findPinPressables(tree!)).toHaveLength(1);
+        expect(findPinActions(row)).toHaveLength(1);
 
         await act(async () => {
             triggerHoverLeave(row);
         });
+        expect(findPinActions(row)).toHaveLength(0);
 
-        expect(findPinPressables(tree!)).toHaveLength(0);
+        await screen.unmount();
     });
 });

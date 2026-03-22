@@ -1,9 +1,13 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -36,6 +40,37 @@ const settingsState = vi.hoisted(() => ({ current: {} as any }));
 const settingByKeyState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
+const storageState = vi.hoisted(() => ({
+  sessions: {
+    s1: {
+      id: 's1',
+      seq: 1,
+      encryptionMode: 'plain',
+      presence: 'offline',
+      active: true,
+      accessLevel: 'edit',
+      canApprovePermissions: false,
+      metadata: {
+        machineId: 'machine-1',
+        host: 'happy-host',
+        flavor: 'codex',
+        version: '0.0.0',
+        path: '/tmp',
+        homeDir: '/tmp',
+        directSessionV1: {
+          v: 1,
+          providerId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'vendor-session-1',
+          source: { kind: 'codexHome', home: 'user' },
+        },
+      },
+      agentState: {},
+    } as any,
+  },
+  settings: {} as Record<string, unknown>,
+  sessionListViewDataByServerId: {} as Record<string, unknown>,
+}));
 const recipientStateState = vi.hoisted(() => ({
   current: {
     recipient: null as any,
@@ -53,28 +88,23 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
   Octicons: 'Octicons',
 }));
-vi.mock('react-native', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: {
-      ...actual.Platform,
-      OS: 'web',
-      select: (spec: Record<string, unknown>) =>
-        spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
-    },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Text: 'Text',
+                            Pressable: 'Pressable',
+                            ActivityIndicator: 'ActivityIndicator',
+                            useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                          }
+    );
 });
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-const themeColors = {
+const themeColors = vi.hoisted(() => ({
   text: '#000',
   textSecondary: '#666',
   textLink: '#00f',
@@ -106,42 +136,28 @@ const themeColors = {
   box: {
     warning: { background: '#fff4cc', border: '#f0d98a', text: '#000' },
   },
-};
-
-vi.mock('react-native-unistyles', () => ({
-  __esModule: true,
-  useUnistyles: () => ({
-    theme: {
-      dark: false,
-      colors: themeColors,
-    },
-  }),
-  StyleSheet: {
-    create: (styles: any) =>
-      typeof styles === 'function'
-        ? styles({ colors: themeColors }, {})
-        : styles,
-    absoluteFillObject: {},
-    hairlineWidth: 1,
-  },
 }));
+
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+  return createUnistylesMock({
+    theme: themeColors,
+  });
+});
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
   useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
-  usePathname: () => '/',
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+  translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
@@ -257,13 +273,17 @@ vi.mock('@/sync/sync', () => ({
     onSessionViewportChange: () => {},
   },
 }));
-vi.mock('@/sync/ops', () => ({
-  continueSessionWithReplay: vi.fn(),
-  sessionAbort: vi.fn(),
-  resumeSession: vi.fn(),
-  sessionAttachmentsUploadFile: vi.fn(),
-  sessionSwitch: vi.fn(async () => true),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    continueSessionWithReplay: vi.fn(),
+    sessionAbort: vi.fn(),
+    resumeSession: vi.fn(),
+    sessionAttachmentsUploadFile: vi.fn(),
+    sessionSwitch: vi.fn(async () => true),
+  };
+});
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
   machineDirectSessionStatusGet: machineDirectSessionStatusGetSpy,
   machineDirectSessionTakeover: machineDirectSessionTakeoverSpy,
@@ -273,14 +293,17 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-  AgentInput: (props: any) => React.createElement('AgentInput', props),
+  AgentInput: (props: any) => React.createElement('AgentInput', { testID: 'session-agent-input', ...props }),
 }));
 vi.mock('@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog', () => ({
   showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
 }));
-vi.mock('@/modal', () => ({
-  Modal: { alert: (...args: any[]) => modalAlertSpy(...args), confirm: vi.fn(async () => false), prompt: vi.fn(), show: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  const modalMock = createModalModuleMock();
+  modalMock.spies.alert.mockImplementation((...args) => modalAlertSpy(...args));
+  return modalMock.module;
+});
 vi.mock('@/voice/sessionBinding/sendVoiceSessionComposerText', () => ({
   sendVoiceSessionComposerText: (params: any) => sendVoiceSessionComposerTextSpy(params),
 }));
@@ -300,62 +323,70 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
   };
 });
 
-vi.mock('@/sync/domains/state/storage', () => {
-  const session: any = {
-    id: 's1',
-    seq: 1,
-    encryptionMode: 'plain',
-    presence: 'offline',
-    active: true,
-    accessLevel: 'edit',
-    canApprovePermissions: false,
-    metadata: {
-      machineId: 'machine-1',
-      host: 'happy-host',
-      flavor: 'codex',
-      version: '0.0.0',
-      path: '/tmp',
-      homeDir: '/tmp',
-      directSessionV1: {
-        v: 1,
-        providerId: 'codex',
-        machineId: 'machine-1',
-        remoteSessionId: 'vendor-session-1',
-        source: { kind: 'codexHome', home: 'user' },
-      },
-    },
-    agentState: {},
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+  const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+
+  const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
+    if (key === 'acknowledgedCliVersions') return {} as LocalSettings[K];
+    if (key === 'uiMultiPanePanelsEnabled') return true as LocalSettings[K];
+    if (key === 'editorFocusModeEnabled') return false as LocalSettings[K];
+    if (key === 'detailsPaneTabsBehavior') return 'preview' as LocalSettings[K];
+    if (key === 'rightPaneWidthPx') return 360 as LocalSettings[K];
+    if (key === 'rightPaneWidthBasisPx') return 1200 as LocalSettings[K];
+    if (key === 'detailsPaneWidthPx') return 520 as LocalSettings[K];
+    if (key === 'detailsPaneWidthBasisPx') return 1200 as LocalSettings[K];
+    return localSettingsDefaults[key];
   };
-  return {
-    storage: { getState: () => ({ sessions: { s1: session }, settings: settingsState.current, sessionListViewDataByServerId: {} }) },
-    useSession: () => session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
-    useSessionUsage: () => null,
-    useLocalSetting: (key: string) => {
-      if (key === 'acknowledgedCliVersions') return {};
-      if (key === 'uiMultiPanePanelsEnabled') return true;
-      if (key === 'editorFocusModeEnabled') return false;
-      if (key === 'detailsPaneTabsBehavior') return 'preview';
-      if (key === 'rightPaneWidthPx') return 360;
-      if (key === 'rightPaneWidthBasisPx') return 1200;
-      if (key === 'detailsPaneWidthPx') return 520;
-      if (key === 'detailsPaneWidthBasisPx') return 1200;
-      return {};
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
-    useSetting: (key: string) => settingByKeyState.current[key] ?? null,
-    useSettings: () => ({ experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
-    useAutomations: () => [],
-    useMachine: () => null,
+
+  const readSetting = <K extends keyof Settings>(key: K): Settings[K] => {
+    const override = settingByKeyState.current[key as string];
+    return (override ?? settingsDefaults[key]) as Settings[K];
   };
+
+  return createStorageModuleMock({
+    importOriginal,
+    overrides: {
+      storage: createStorageStoreMock(storageState as any),
+      useSession: () => storageState.sessions.s1,
+      useIsDataReady: () => true,
+      useRealtimeStatus: () => 'connected',
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
+      useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+      useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
+      useSessionUsage: () => null,
+      useLocalSetting: readLocalSetting,
+      useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
+      useSetting: readSetting,
+      useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {}, codexBackendMode: 'acp' }),
+      useAutomations: () => [],
+      useMachine: () => null,
+    },
+  });
 });
 
 describe('SessionView (direct sessions)', () => {
+  async function renderSessionView() {
+    const { SessionView } = await import('./SessionView');
+    return renderScreen(
+      <AppPaneProvider>
+        <SessionView id="s1" />
+      </AppPaneProvider>,
+    );
+  }
+
+  async function renderSessionViewAndSettle() {
+    const screen = await renderSessionView();
+    await act(async () => {
+      await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+    });
+    return screen;
+  }
+
+  function findAgentInput(screen: Awaited<ReturnType<typeof renderSessionView>>) {
+    return screen.findByTestId('session-agent-input') as any;
+  }
+
   beforeEach(() => {
     vi.useFakeTimers();
     chatListPropsSpy.mockReset();
@@ -378,6 +409,33 @@ describe('SessionView (direct sessions)', () => {
     resolveVoiceSessionComposerRoutingSpy.mockReturnValue(null);
     participantTargetsState.current = [];
     reviewCommentDraftsState.current = [];
+    storageState.sessions.s1 = {
+      id: 's1',
+      seq: 1,
+      encryptionMode: 'plain',
+      presence: 'offline',
+      active: true,
+      accessLevel: 'edit',
+      canApprovePermissions: false,
+      metadata: {
+        machineId: 'machine-1',
+        host: 'happy-host',
+        flavor: 'codex',
+        version: '0.0.0',
+        path: '/tmp',
+        homeDir: '/tmp',
+        directSessionV1: {
+          v: 1,
+          providerId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'vendor-session-1',
+          source: { kind: 'codexHome', home: 'user' },
+        },
+      },
+      agentState: {},
+    };
+    storageState.settings = settingsState.current;
+    storageState.sessionListViewDataByServerId = {};
     recipientStateState.current = {
       recipient: null,
       setManualRecipient: vi.fn(),
@@ -397,22 +455,14 @@ describe('SessionView (direct sessions)', () => {
   });
 
   afterEach(() => {
-    vi.runOnlyPendingTimers();
+    standardCleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.clearAllMocks();
   });
 
   it('passes direct takeover footer actions to the transcript when a linked direct session is not yet controlled', async () => {
-    const { SessionView } = await import('./SessionView');
-
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
+    const screen = await renderSessionView();
 
     const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
     expect(latestChatListProps?.directControlFooter).toEqual(expect.objectContaining({
@@ -432,7 +482,7 @@ describe('SessionView (direct sessions)', () => {
     expect(modalAlertSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
@@ -462,21 +512,9 @@ describe('SessionView (direct sessions)', () => {
       completedRequests: {},
     } as any;
 
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionViewAndSettle();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
-
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     expect(agentInput.props.userActionRequests).toEqual([
       expect.objectContaining({
         id: 'req_question_1',
@@ -487,7 +525,6 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('passes live engine control props directly to AgentInput instead of custom agent picker options', async () => {
-    const { SessionView } = await import('./SessionView');
     const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
     session.metadata = {
       ...session.metadata,
@@ -521,19 +558,9 @@ describe('SessionView (direct sessions)', () => {
       },
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
+    const screen = await renderSessionViewAndSettle();
 
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     expect(agentInput.props.agentType).toBe('codex');
     expect(agentInput.props.agentPickerOptions).toBeUndefined();
     expect(agentInput.props.agentPickerSelectedOptionId).toBeUndefined();
@@ -557,14 +584,9 @@ describe('SessionView (direct sessions)', () => {
       configId: 'thinking',
       value: 'high',
     }));
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('prefers the shared live authoring snapshot overrides for permission and model composer props', async () => {
-    const { SessionView } = await import('./SessionView');
     const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
     session.permissionMode = 'acceptEdits';
     session.permissionModeUpdatedAt = 5;
@@ -582,30 +604,15 @@ describe('SessionView (direct sessions)', () => {
       profileId: 'profile-metadata',
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
+    const screen = await renderSessionViewAndSettle();
 
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     expect(agentInput.props.permissionMode).toBe('default');
     expect(agentInput.props.modelMode).toBe('claude-sonnet-4-5');
     expect(agentInput.props.profileId).toBe('profile-metadata');
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('passes recipient controls through canonical extra action chips', async () => {
-    const { SessionView } = await import('./SessionView');
     participantTargetsState.current = [
       {
         key: 'member-1',
@@ -625,19 +632,9 @@ describe('SessionView (direct sessions)', () => {
       setExecutionRunDelivery: vi.fn(),
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
+    const screen = await renderSessionViewAndSettle();
 
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     const recipientChip = (agentInput.props.extraActionChips ?? []).find((chip: {
       key: string;
       controlId?: string;
@@ -660,10 +657,6 @@ describe('SessionView (direct sessions)', () => {
     expect(recipientChip?.collapsedOptionsPopover?.selectedOptionId).toBe('run-1');
     expect(typeof recipientChip?.collapsedOptionsPopover?.onSelect).toBe('function');
     expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).toContain('execution-run-delivery');
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('promotes review comment drafts into canonical extra control metadata', async () => {
@@ -680,21 +673,9 @@ describe('SessionView (direct sessions)', () => {
       },
     ];
 
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionViewAndSettle();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
-
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     const reviewCommentsChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'review-comments');
 
     expect(reviewCommentsChip).toEqual(expect.objectContaining({
@@ -702,28 +683,12 @@ describe('SessionView (direct sessions)', () => {
       controlId: 'reviewComments',
     }));
     expect(typeof reviewCommentsChip?.collapsedAction).toBe('function');
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('promotes project file link into canonical extra control metadata', async () => {
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionViewAndSettle();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
-
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     const linkFileChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'project-file-link');
 
     expect(linkFileChip).toEqual(expect.objectContaining({
@@ -731,14 +696,9 @@ describe('SessionView (direct sessions)', () => {
       controlId: 'linkedFiles',
     }));
     expect(typeof linkFileChip?.collapsedAction).toBe('function');
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('does not surface delivery controls when live participant routing data is absent', async () => {
-    const { SessionView } = await import('./SessionView');
     participantTargetsState.current = [];
     recipientStateState.current = {
       recipient: { kind: 'execution_run', runId: 'run-1' },
@@ -747,29 +707,14 @@ describe('SessionView (direct sessions)', () => {
       setExecutionRunDelivery: vi.fn(),
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
+    const screen = await renderSessionViewAndSettle();
 
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('participants-recipient');
     expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('execution-run-delivery');
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('surfaces delivery controls when live participant routing data resolves to an execution run', async () => {
-    const { SessionView } = await import('./SessionView');
     participantTargetsState.current = [
       {
         key: 'run-1',
@@ -784,19 +729,9 @@ describe('SessionView (direct sessions)', () => {
       setExecutionRunDelivery: vi.fn(),
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-    await act(async () => {
-      vi.runOnlyPendingTimers();
-    });
+    const screen = await renderSessionViewAndSettle();
 
-    const agentInput = tree.root.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     const deliveryChip = (agentInput.props.extraActionChips ?? []).find((chip: {
       key: string;
       controlId?: string;
@@ -820,45 +755,23 @@ describe('SessionView (direct sessions)', () => {
     ]);
     expect(deliveryChip?.collapsedOptionsPopover?.selectedOptionId).toBe('interrupt');
     expect(typeof deliveryChip?.collapsedOptionsPopover?.onSelect).toBe('function');
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('passes storage and provider badges to the session header for direct sessions', async () => {
-    const { SessionView } = await import('./SessionView');
-
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
+    const screen = await renderSessionView();
 
     expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
       badges: ['sessionsList.storageDirectTab', 'agentInput.agent.codex · happy-host'],
     }));
 
     await act(async () => {
-      vi.runOnlyPendingTimers();
-      tree.unmount();
+      await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+      await screen.unmount();
     });
   });
 
   it('polls direct session status and transcript refreshes using the active cadence while the session view is open', async () => {
-    const { SessionView } = await import('./SessionView');
-
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
+    const screen = await renderSessionView();
 
     const initialStatusCallCount = machineDirectSessionStatusGetSpy.mock.calls.length;
     expect(initialStatusCallCount).toBeGreaterThanOrEqual(1);
@@ -866,36 +779,21 @@ describe('SessionView (direct sessions)', () => {
     const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
 
     await act(async () => {
-      vi.advanceTimersByTime(249);
-    });
-    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(initialStatusCallCount);
-    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledTimes(initialRefreshCallCount);
-
-    await act(async () => {
-      vi.advanceTimersByTime(1);
+      await vi.advanceTimersToNextTimerAsync();
     });
     expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
     expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
   it('prompts for takeover on send and submits after taking over the direct session', async () => {
     showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-
-    const agentInput = tree.root.findByType('AgentInput');
+    const agentInput = screen.findByType('AgentInput');
     await act(async () => {
       agentInput.props.onChangeText('continue this session');
     });
@@ -916,24 +814,15 @@ describe('SessionView (direct sessions)', () => {
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'continue this session', undefined, undefined);
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
     showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null, forceStop: false });
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-
-    let agentInput = tree.root.findByType('AgentInput');
+    let agentInput = screen.findByType('AgentInput');
     await act(async () => {
       agentInput.props.onChangeText('draft stays here');
     });
@@ -946,11 +835,35 @@ describe('SessionView (direct sessions)', () => {
     expect(machineDirectSessionTakeoverPersistSpy).not.toHaveBeenCalled();
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
-    agentInput = tree.root.findByType('AgentInput');
+    agentInput = screen.findByType('AgentInput');
     expect(agentInput.props.value).toBe('draft stays here');
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
+    });
+  });
+
+  it('clears the composer immediately while a direct takeover send prompt is still pending', async () => {
+    showDirectSessionTakeoverDialogSpy.mockImplementationOnce(
+      () => new Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>(() => {}),
+    );
+    const screen = await renderSessionView();
+
+    let agentInput = screen.findByType('AgentInput');
+    await act(async () => {
+      agentInput.props.onChangeText('clear me immediately');
+    });
+
+    await act(async () => {
+      await agentInput.props.onSend();
+    });
+
+    agentInput = screen.findByType('AgentInput');
+    expect(agentInput.props.value).toBe('');
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await screen.unmount();
     });
   });
 
@@ -966,18 +879,9 @@ describe('SessionView (direct sessions)', () => {
       canForceStop: true,
       trustedPid: 123,
     });
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-
-    const agentInput = tree.root.findByType('AgentInput');
+    const agentInput = screen.findByType('AgentInput');
     await act(async () => {
       agentInput.props.onChangeText('persist this');
     });
@@ -994,7 +898,7 @@ describe('SessionView (direct sessions)', () => {
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'persist this', undefined, undefined);
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
@@ -1011,18 +915,9 @@ describe('SessionView (direct sessions)', () => {
         updatedAt: 1,
       },
     });
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-
-    const agentInput = tree.root.findByType('AgentInput');
+    const agentInput = screen.findByType('AgentInput');
     await act(async () => {
       agentInput.props.onChangeText('continue the voice conversation');
     });
@@ -1040,7 +935,7 @@ describe('SessionView (direct sessions)', () => {
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
@@ -1061,18 +956,9 @@ describe('SessionView (direct sessions)', () => {
         updatedAt: 1,
       },
     });
-    const { SessionView } = await import('./SessionView');
+    const screen = await renderSessionView();
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
-
-    const agentInput = tree.root.findByType('AgentInput');
+    const agentInput = screen.findByType('AgentInput');
     await act(async () => {
       agentInput.props.onChangeText('continue the voice conversation');
     });
@@ -1085,12 +971,11 @@ describe('SessionView (direct sessions)', () => {
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
   it('suppresses local and remote control footers for hidden voice conversation sessions', async () => {
-    const { SessionView } = await import('./SessionView');
     featureEnabledState.voice = true;
     settingsState.current = {
       voice: {
@@ -1112,14 +997,7 @@ describe('SessionView (direct sessions)', () => {
       controlledByUser: true,
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
+    const screen = await renderSessionView();
 
     expect(chatListPropsSpy).toHaveBeenCalled();
     const lastChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
@@ -1128,12 +1006,11 @@ describe('SessionView (direct sessions)', () => {
     expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 
   it('suppresses the voice surface for retired hidden voice conversation sessions', async () => {
-    const { SessionView } = await import('./SessionView');
     featureEnabledState.voice = true;
     settingsState.current = {
       voice: {
@@ -1151,19 +1028,12 @@ describe('SessionView (direct sessions)', () => {
       ...buildSystemSessionMetadataV1({ key: 'voice_conversation_retired', hidden: true }),
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>,
-      );
-    });
+    const screen = await renderSessionView();
 
     expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      tree.unmount();
+      await screen.unmount();
     });
   });
 });

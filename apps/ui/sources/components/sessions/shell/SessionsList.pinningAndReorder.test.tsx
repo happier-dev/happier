@@ -1,6 +1,9 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { findTestInstanceByTypeContainingText, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,6 +20,7 @@ let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const mockMachinesState = vi.hoisted(() => ({ current: [] as any[] }));
+const flatListMock = createCapturingFlatListMock({ renderItems: true });
 
 const groupKey = 'server:server_a:day:2026-02-17';
 
@@ -58,31 +62,29 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ListFooterComponent, ...rest }: any) => {
-            capturedRootFlatListProps = rest;
-            return React.createElement(
-                'FlatList',
-                null,
-                ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
-                (data ?? []).map((item: any, index: number) => {
-                    const key = keyExtractor ? keyExtractor(item, index) : String(index);
-                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                }),
-                ListFooterComponent ? React.createElement(ListFooterComponent) : null,
-            );
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                Platform: { OS: 'web', select: (value: any) => value.web ?? value.default },
+                                TurboModuleRegistry: { get: () => ({}) },
+                                FlatList: (props: any) => {
+                                    const element = flatListMock.module.FlatList(props);
+                                    capturedRootFlatListProps = flatListMock.state.props;
+                                    return element;
+                                },
+                            }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    usePathname: () => '',
-    useRouter: () => ({ push: routerPushSpy, replace: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    pathname: '',
+    router: {
+        push: routerPushSpy,
+        replace: vi.fn(),
+        back: vi.fn(),
+        setParams: vi.fn(),
+    },
+}).module);
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
@@ -132,22 +134,27 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
+            sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+        },
+    });
+});
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
@@ -194,24 +201,40 @@ vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: () => mockVisibleSessionListViewData,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'compactSessionView') return false;
-        if (key === 'compactSessionViewMinimal') return false;
-        if (key === 'sessionTagsEnabled') return true;
-        return null;
-    },
-    useHasUnreadMessages: () => false,
-    useSession: () => null,
-    useProfile: () => null,
-    useAllMachines: () => mockMachinesState.current,
-    useSettingMutable: (key: string) => {
-        if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-        if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
-        if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
-        return [null, vi.fn()];
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'compactSessionView') return false;
+                if (key === 'compactSessionViewMinimal') return false;
+                if (key === 'sessionTagsEnabled') return true;
+                return null;
+            },
+            useHasUnreadMessages: () => false,
+            useSession: () => null,
+            useProfile: () => ({
+                id: 'profile-1',
+                timestamp: 0,
+                firstName: null,
+                lastName: null,
+                username: null,
+                avatar: null,
+                linkedProviders: [],
+                connectedServices: [],
+                connectedServicesV2: [],
+            }),
+            useAllMachines: () => mockMachinesState.current,
+            useSettingMutable: (key: string) => {
+                if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
+                if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
+                if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                return [null, vi.fn()];
+            },
+        },
+    });
+});
 
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: vi.fn(),
@@ -239,11 +262,63 @@ vi.mock('./useSessionInlineDrag', () => ({
 }));
 
 vi.mock('./SessionItem', () => ({
-    SessionItem: (props: any) => React.createElement('SessionItem', props),
+    SessionItem: (props: any) => React.createElement('SessionItem', {
+        ...props,
+        testID: `session-list-session:${String(props.session?.id ?? 'unknown')}`,
+    }),
 }));
 
+function resetVisibleSessionListViewData(): void {
+    mockVisibleSessionListViewData = [
+        {
+            type: 'header',
+            title: 'Today',
+            headerKind: 'date',
+            groupKey,
+            serverId: 'server_a',
+            serverName: 'Server A',
+        },
+        {
+            type: 'session',
+            session: sessionA,
+            groupKey,
+            groupKind: 'date',
+            serverId: 'server_a',
+            serverName: 'Server A',
+        },
+        {
+            type: 'session',
+            session: sessionB,
+            groupKey,
+            groupKind: 'date',
+            serverId: 'server_a',
+            serverName: 'Server A',
+        },
+    ];
+}
+
+async function renderSessionsList() {
+    const { SessionsList } = await import('./SessionsList');
+    return renderScreen(<SessionsList />);
+}
+
+function findSessionItem(
+    screen: Awaited<ReturnType<typeof renderSessionsList>>,
+    sessionId: string,
+) {
+    return screen.findByTestId(`session-list-session:${sessionId}`);
+}
+
+function expectPresent<T>(value: T | null | undefined, label: string): T {
+    expect(value, label).toBeTruthy();
+    if (value == null) {
+        throw new Error(label);
+    }
+    return value;
+}
+
 describe('SessionsList pinning + per-group ordering', () => {
-    it('renders the archived sessions footer on web and routes to archived sessions', async () => {
+    beforeEach(() => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
@@ -251,21 +326,24 @@ describe('SessionsList pinning + per-group ordering', () => {
         setSessionListGroupOrderV1.mockClear();
         setSessionTagsV1.mockClear();
         routerPushSpy.mockReset();
+        mockAllowedServerIds = ['server_a'];
+        capturedRootFlatListProps = null;
+        readMachineTargetForSessionMock.mockReset();
+        mockMachinesState.current = [];
+        resetVisibleSessionListViewData();
+    });
 
-        const { SessionsList } = await import('./SessionsList');
+    afterEach(() => {
+        standardCleanup();
+    });
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
+    it('renders the archived sessions footer on web and routes to archived sessions', async () => {
+        const screen = await renderSessionsList();
 
-        const textNodes = (tree as any).root.findAllByType('Text');
-        const hasArchivedSessionsLabel = textNodes.some((node: any) => node.props.children === 'sessionInfo.archivedSessions');
-        expect(hasArchivedSessionsLabel).toBe(true);
-
-        const footerPressable = (tree as any).root.findAllByType('Pressable')
-            .find((node: any) => node.props.accessibilityRole === 'button' && typeof node.props.onPress === 'function');
-        expect(footerPressable).toBeTruthy();
+        const footerPressable = expectPresent(
+            findTestInstanceByTypeContainingText(screen.root, 'Pressable', 'sessionInfo.archivedSessions'),
+            'expected archived sessions footer button',
+        );
 
         await act(async () => {
             footerPressable.props.onPress();
@@ -275,22 +353,9 @@ describe('SessionsList pinning + per-group ordering', () => {
     });
 
     it('stops wheel event propagation on web so session list scrolling is not blocked by document scroll-lock listeners', async () => {
-        pinnedSessionKeysV1 = [];
-        sessionListGroupOrderV1 = {};
-        sessionTagsV1 = {};
-        setPinnedSessionKeysV1.mockClear();
-        setSessionListGroupOrderV1.mockClear();
-        setSessionTagsV1.mockClear();
-        capturedRootFlatListProps = null;
+        const screen = await renderSessionsList();
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        expect(tree).toBeTruthy();
+        expect(screen.root).toBeTruthy();
         expect(capturedRootFlatListProps).toBeTruthy();
         expect(typeof capturedRootFlatListProps?.onWheel).toBe('function');
 
@@ -300,44 +365,26 @@ describe('SessionsList pinning + per-group ordering', () => {
     });
 
     it('passes session tags from settings into session items when enabled', async () => {
-        pinnedSessionKeysV1 = [];
-        sessionListGroupOrderV1 = {};
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
-        setPinnedSessionKeysV1.mockClear();
-        setSessionListGroupOrderV1.mockClear();
-        setSessionTagsV1.mockClear();
+        const screen = await renderSessionsList();
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const row = items.find((i: any) => i.props.session?.id === 'sess_a');
+        const row = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected sess_a session row',
+        );
         expect(row.props.tags).toEqual(['important']);
         expect(row.props.allKnownTags).toContain('important');
         expect(row.props.tagsEnabled).toBe(true);
     });
 
     it('writes updated session tags back to settings as a value (not an updater function)', async () => {
-        pinnedSessionKeysV1 = [];
-        sessionListGroupOrderV1 = {};
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
-        setPinnedSessionKeysV1.mockClear();
-        setSessionListGroupOrderV1.mockClear();
-        setSessionTagsV1.mockClear();
+        const screen = await renderSessionsList();
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const row = items.find((i: any) => i.props.session?.id === 'sess_a');
+        const row = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected sess_a session row',
+        );
 
         expect(typeof row.props.onSetTags).toBe('function');
         row.props.onSetTags(['urgent']);
@@ -351,44 +398,34 @@ describe('SessionsList pinning + per-group ordering', () => {
     it('shows pinned server badges only when multiple servers are selected', async () => {
         pinnedSessionKeysV1 = ['server_a:sess_a'];
         sessionTagsV1 = {};
-        setPinnedSessionKeysV1.mockClear();
-        mockAllowedServerIds = ['server_a'];
+        const screen = await renderSessionsList();
 
-        const { SessionsList } = await import('./SessionsList');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const pinnedRow = items.find((i: any) => i.props.session?.id === 'sess_a');
+        const pinnedRow = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected pinned sess_a row',
+        );
         expect(pinnedRow.props.pinned).toBe(true);
         expect(pinnedRow.props.showServerBadge).toBe(false);
 
         mockAllowedServerIds = ['server_a', 'server_b'];
-        await act(async () => {
-            tree?.update(<SessionsList />);
-        });
+        const updatedScreen = await renderSessionsList();
 
-        const items2 = (tree as any).root.findAllByType('SessionItem');
-        const pinnedRow2 = items2.find((i: any) => i.props.session?.id === 'sess_a');
+        const pinnedRow2 = expectPresent(
+            findSessionItem(updatedScreen, 'sess_a'),
+            'expected updated pinned sess_a row',
+        );
         expect(pinnedRow2.props.showServerBadge).toBe(true);
     });
 
     it('wires pin toggling via pinnedSessionKeysV1', async () => {
-        pinnedSessionKeysV1 = [];
         setPinnedSessionKeysV1.mockClear();
 
-        const { SessionsList } = await import('./SessionsList');
+        const screen = await renderSessionsList();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const row = items.find((i: any) => i.props.session?.id === 'sess_a');
+        const row = expectPresent(
+            findSessionItem(screen, 'sess_a'),
+            'expected sess_a session row',
+        );
         expect(typeof row.props.onTogglePinned).toBe('function');
 
         await act(async () => {
@@ -400,10 +437,6 @@ describe('SessionsList pinning + per-group ordering', () => {
     });
 
     it('does not render project headers and forces path/machine subtitles into rows', async () => {
-        pinnedSessionKeysV1 = [];
-        setPinnedSessionKeysV1.mockClear();
-        mockAllowedServerIds = ['server_a'];
-
         const sess1 = {
             ...sessionA,
             id: 'sess_p1',
@@ -434,28 +467,21 @@ describe('SessionsList pinning + per-group ordering', () => {
             { type: 'session', session: sess2, groupKey: projectGroupKey, groupKind: 'project', variant: 'no-path', serverId: 'server_a', serverName: 'Server A' },
         ];
 
-        const { SessionsList } = await import('./SessionsList');
+        const screen = await renderSessionsList();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const textNodes = (tree as any).root.findAllByType('Text');
+        const textNodes = screen.root.findAllByType('Text');
         const textChildren = textNodes.map((n: any) => n.props.children);
         expect(textChildren).toContain('~/repoA');
 
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const row1 = items.find((i: any) => i.props.session?.id === 'sess_p1');
+        const row1 = expectPresent(
+            findSessionItem(screen, 'sess_p1'),
+            'expected sess_p1 session row',
+        );
         expect(row1.props.variant).toBe('no-path');
         expect(row1.props.subtitleOverride ?? null).toBe(null);
     });
 
     it('derives row subtitles from reachable machine targets when session metadata is stale after handoff', async () => {
-        pinnedSessionKeysV1 = [];
-        sessionTagsV1 = {};
-        mockAllowedServerIds = ['server_a'];
-        readMachineTargetForSessionMock.mockReset();
         mockMachinesState.current = [
             { id: 'machine-live-1', metadata: { displayName: 'Rebound workstation' } },
             { id: 'machine-live-2', metadata: { host: 'rebound-2.local' } },
@@ -500,16 +526,16 @@ describe('SessionsList pinning + per-group ordering', () => {
             { type: 'session', session: sess2, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
         ];
 
-        const { SessionsList } = await import('./SessionsList');
+        const screen = await renderSessionsList();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
-
-        const items = (tree as any).root.findAllByType('SessionItem');
-        const row1 = items.find((item: any) => item.props.session?.id === 'sess_live_1');
-        const row2 = items.find((item: any) => item.props.session?.id === 'sess_live_2');
+        const row1 = expectPresent(
+            findSessionItem(screen, 'sess_live_1'),
+            'expected sess_live_1 session row',
+        );
+        const row2 = expectPresent(
+            findSessionItem(screen, 'sess_live_2'),
+            'expected sess_live_2 session row',
+        );
 
         expect(row1.props.subtitleOverride).toBe('Rebound workstation · /home/u/live-a');
         expect(row2.props.subtitleOverride).toBe('rebound-2.local · /home/u/live-b');

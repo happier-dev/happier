@@ -1,10 +1,30 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 let authCredentials: any = { token: 't', secret: 's' };
+const sessionState = vi.hoisted(() => ({
+    session: {
+        id: 's1',
+        seq: 0,
+        presence: 'offline',
+        active: false,
+        accessLevel: 'edit',
+        metadata: {
+            machineId: 'm1',
+            flavor: 'codex',
+            codexSessionId: 'codex-session-1',
+            version: '0.0.0',
+            path: '/tmp',
+            homeDir: '/tmp',
+        },
+        agentState: {},
+    } as any,
+}));
 
 const pendingFireAndForget: Promise<unknown>[] = [];
 
@@ -18,53 +38,62 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-class MockAnimatedValue {
-    private value: number;
-    constructor(value: number) {
-        this.value = value;
+const reactNativeRuntime = vi.hoisted(() => {
+    class MockAnimatedValue {
+        private value: number;
+        constructor(value: number) {
+            this.value = value;
+        }
+        setValue(value: number) {
+            this.value = value;
+        }
+        interpolate(_config: unknown) {
+            return 0;
+        }
     }
-    setValue(value: number) {
-        this.value = value;
-    }
-    interpolate(_config: unknown) {
-        return 0;
-    }
-}
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    AccessibilityInfo: {
-        isReduceMotionEnabled: async () => false,
-        addEventListener: () => ({ remove: () => {} }),
-    },
-    Animated: {
-        View: 'Animated.View',
-        Value: MockAnimatedValue,
-        timing: (_value: unknown, _config: unknown) => ({ start: (cb?: () => void) => cb?.() }),
-    },
-    Easing: {
-        bezier: (..._args: any[]) => (t: number) => t,
-        linear: (t: number) => t,
-    },
-    Dimensions: {
-        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-    Platform: {
-        OS: 'ios',
-        select: (spec: Record<string, unknown>) =>
-            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-    },
-}));
+    return { MockAnimatedValue };
+});
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Text: 'Text',
+                                    Pressable: 'Pressable',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    AccessibilityInfo: {
+                                        isReduceMotionEnabled: async () => false,
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                    Animated: {
+                                        View: 'Animated.View',
+                                        Value: reactNativeRuntime.MockAnimatedValue,
+                                        timing: (_value: unknown, _config: unknown) => ({ start: (cb?: () => void) => cb?.() }),
+                                    },
+                                    Easing: {
+                                        bezier: (..._args: any[]) => (t: number) => t,
+                                        linear: (t: number) => t,
+                                    },
+                                    Dimensions: {
+                                        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+                                    },
+                                    useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: (spec: Record<string, unknown>) =>
+                                            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+                                    },
+                                }
+    );
+});
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -92,61 +121,31 @@ vi.mock('react-native-unistyles', () => ({
                 groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
             },
         },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles(
-                      {
-                          colors: {
-                              text: '#000',
-                              textSecondary: '#666',
-                              textLink: '#00f',
-                              surface: '#fff',
-                              surfaceHigh: '#f5f5f5',
-                              divider: '#ddd',
-                              accent: {
-                                  blue: '#007AFF',
-                                  green: '#34C759',
-                                  orange: '#FF9500',
-                                  yellow: '#FFCC00',
-                                  red: '#FF3B30',
-                                  indigo: '#5856D6',
-                                  purple: '#AF52DE',
-                              },
-                              input: { background: '#f5f5f5' },
-                              header: { tint: '#000' },
-                              modal: { border: '#ddd' },
-                              status: { error: '#f00' },
-                              radio: { active: '#007AFF' },
-                              shadow: { color: '#000', opacity: 0.2 },
-                              groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-                          },
-                      },
-                      {}
-                  )
-                : styles,
-        absoluteFillObject: {},
-    },
-}));
+    });
+});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
   useIsFocused: () => true,
 }));
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
-  usePathname: () => '/',
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn(), back: vi.fn() },
+        pathname: '/',
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
@@ -251,45 +250,34 @@ vi.mock('@/components/sessions/agentInput', () => ({
 }));
 
 const modalAlertSpy = vi.fn();
-vi.mock('@/modal', () => ({
-    Modal: { alert: (...args: any[]) => modalAlertSpy(...args), confirm: vi.fn(), prompt: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: (...args: any[]) => modalAlertSpy(...args),
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
-const session: any = {
-    id: 's1',
-    seq: 0,
-    presence: 'offline',
-    active: false,
-    accessLevel: 'edit',
-    metadata: { machineId: 'm1', flavor: 'codex', codexSessionId: 'codex-session-1', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
-    agentState: {},
-};
-
-vi.mock('@/sync/domains/state/storage', () => {
-    const storage = {
-        getState: () => ({
-            sessions: { s1: session },
-            settings: { sessionMessageSendMode: 'server_pending', sessionBusySteerSendPolicy: 'server_pending' },
-            sessionListViewDataByServerId: {},
-            updateSessionProjectScmSnapshotError: () => {},
-        }),
-        subscribe: () => () => {},
-    };
-      return {
-          storage,
-          useSession: () => session,
-          useIsDataReady: () => true,
-          useRealtimeStatus: () => ({ status: 'connected' }),
-          useSessionMessages: () => ({ messages: [], isLoaded: true }),
-          useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-          useSessionPendingMessages: () => ({ messages: [] }),
-          useSessionReviewCommentsDrafts: () => [],
-          useSessionUsage: () => null,
-          useSetting: () => null,
-        useSettings: () => ({ experiments: true, featureToggles: {} }),
-        useAutomations: () => [],
-        useMachine: () => null,
-        useLocalSetting: (key: string) => {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
+    useSession: () => sessionState.session,
+    useIsDataReady: () => true,
+    useRealtimeStatus: () => ({ status: 'connected' }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionPendingMessages: () => ({ messages: [] }),
+    useSessionReviewCommentsDrafts: () => [],
+    useSessionUsage: () => null,
+    useSetting: () => null,
+    useSettings: () => ({ experiments: true, featureToggles: {} }),
+    useAutomations: () => [],
+    useMachine: () => null,
+    useLocalSetting: (key: string) => {
             if (key === 'acknowledgedCliVersions') return {};
             if (key === 'uiMultiPanePanelsEnabled') return false;
             if (key === 'editorFocusModeEnabled') return false;
@@ -300,9 +288,9 @@ vi.mock('@/sync/domains/state/storage', () => {
             if (key === 'detailsPaneWidthBasisPx') return 1200;
             return null;
         },
-        useLocalSettingMutable: () => [null, vi.fn()],
-        useSettingMutable: () => [null, vi.fn()],
-    };
+    useLocalSettingMutable: () => [null, vi.fn()],
+    useSettingMutable: () => [null, vi.fn()],
+});
 });
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
@@ -415,9 +403,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(
-                    <AppPaneProvider>
+            tree = (await renderScreen(<AppPaneProvider>
                         <SessionView
                             id="s1"
                             initialAttachmentDrafts={[{
@@ -436,9 +422,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                                 sha256: 'h1',
                             }]}
                         />
-                    </AppPaneProvider>
-                );
-            });
+                    </AppPaneProvider>)).tree;
 
             pendingFireAndForget.length = 0;
 
@@ -512,13 +496,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(
-                    <AppPaneProvider>
+            tree = (await renderScreen(<AppPaneProvider>
                         <SessionView id="s1" />
-                    </AppPaneProvider>
-                );
-            });
+                    </AppPaneProvider>)).tree;
 
             // Ignore mount-time fire-and-forget work; we only care about the send flow.
             pendingFireAndForget.length = 0;

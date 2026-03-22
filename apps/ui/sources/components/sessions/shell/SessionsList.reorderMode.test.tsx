@@ -1,6 +1,7 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,28 +20,35 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
-            return React.createElement(
-                'FlatList',
-                { ...rest },
-                ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
-                (data ?? []).map((item: any, index: number) => {
-                    const key = keyExtractor ? keyExtractor(item, index) : String(index);
-                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-                }),
-            );
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                    },
+                                    FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
+                                            return React.createElement(
+                                                'FlatList',
+                                                { ...rest },
+                                                ListHeaderComponent ? React.createElement(ListHeaderComponent) : null,
+                                                (data ?? []).map((item: any, index: number) => {
+                                                    const key = keyExtractor ? keyExtractor(item, index) : String(index);
+                                                    return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                                                }),
+                                            );
+                                        },
+                                }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    usePathname: () => '',
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() },
+        pathname: '',
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
@@ -59,9 +67,10 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     formatPathRelativeToHome: (path: string) => path,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
@@ -71,7 +80,8 @@ let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
 const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: params ? {} : {} })));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
+    useAllMachines: () => [],
     useSetting: (key: string) => {
         if (key === 'compactSessionView') return false;
         if (key === 'compactSessionViewMinimal') return false;
@@ -126,9 +136,7 @@ describe('SessionsList (inline reorder)', () => {
         requestReviewSpy.mockClear();
         const { SessionsList } = await import('./SessionsList');
 
-        await act(async () => {
-            renderer.create(<SessionsList />);
-        });
+        await renderScreen(<SessionsList />);
 
         expect(requestReviewSpy).not.toHaveBeenCalled();
     });
@@ -142,9 +150,7 @@ describe('SessionsList (inline reorder)', () => {
         const { SessionsList } = await import('./SessionsList');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionsList />);
-        });
+        tree = (await renderScreen(<SessionsList />)).tree;
 
         const items = (tree as any).root.findAllByType('SessionItem');
         expect(items.length).toBe(2);

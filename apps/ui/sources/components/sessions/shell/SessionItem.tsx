@@ -62,6 +62,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         paddingHorizontal: 15,
         backgroundColor: theme.colors.surface,
+        borderLeftWidth: 2,
+        borderRightWidth: 2,
+        borderColor: theme.colors.surface,
+    },
+    sessionItemFirst: {
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+        borderTopLeftWidth: 2,
+    },
+    sessionItemLast: {
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+        borderBottomWidth: 2,
     },
     embeddedSeparator: {
         borderBottomWidth: 1,
@@ -88,8 +101,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         height: 48,
     },
     avatarContainerCompact: {
-        width: 35,
-        height: 35,
+        width: 30,
+        height: 30,
     },
     minimalIndicatorColumn: {
         width: 16,
@@ -633,8 +646,11 @@ export const SessionItem = React.memo(
         const itemContent = (
             <Pressable
                 testID={`session-list-item-${resolvedSession.id}`}
+                accessibilityState={{ selected }}
                 style={[
                     styles.sessionItem,
+                    isFirst ? styles.sessionItemFirst : null,
+                    isLast ? styles.sessionItemLast : null,
                     compact ? styles.sessionItemCompact : null,
                     isMinimal ? styles.sessionItemMinimal : null,
                     selected ? styles.sessionItemSelected : null,
@@ -801,6 +817,7 @@ export const SessionItem = React.memo(
                     ) : null}
                 </View>
                 <View
+                    testID="session-item-right-area"
                     style={styles.rightArea}
                     onPointerEnter={isWeb ? handleActionsHoverIn : undefined}
                     onPointerLeave={isWeb ? handleActionsHoverOut : undefined}
@@ -851,6 +868,7 @@ export const SessionItem = React.memo(
                                         popoverPortalWebTarget="body"
                                         trigger={({ toggle }) => (
                                             <Pressable
+                                                testID="session-item-tag-action"
                                                 style={styles.rowActionButton}
                                                 onPress={(e) => {
                                                     stopRowPressPropagation(e);
@@ -867,6 +885,7 @@ export const SessionItem = React.memo(
                                     />
                                 ) : (
                                     <Pressable
+                                        testID="session-item-tag-action"
                                         style={styles.rowActionButton}
                                         onPress={(e) => {
                                             stopRowPressPropagation(e);

@@ -1,68 +1,61 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+type SessionItemProps = React.ComponentProps<(typeof import('./SessionItem'))['SessionItem']>;
 
 const navigateSpy = vi.fn();
+const themeColors = vi.hoisted(() => ({
+    surface: '#fff',
+    surfaceSelected: '#eee',
+    divider: '#ddd',
+    text: '#111',
+    textSecondary: '#666',
+    textLink: '#07f',
+    input: { background: '#f0f0f0' },
+    groupped: { background: '#f7f7f7' },
+    status: { error: '#f00' },
+    button: { primary: { tint: '#fff' } },
+}));
 
+vi.mock('react-native-reanimated', () => ({}));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
-
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
     GestureDetector: (props: any) => React.createElement('GestureDetector', props, props.children),
 }));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({
-                    colors: {
-                        surface: '#fff',
-                        surfaceSelected: '#eee',
-                        divider: '#ddd',
-                        text: '#111',
-                        textSecondary: '#666',
-                        textLink: '#07f',
-                        input: { background: '#f0f0f0' },
-                        groupped: { background: '#f7f7f7' },
-                        status: { error: '#f00' },
-                        button: { primary: { tint: '#fff' } },
-                    },
-                })
-                : input,
-    },
-}));
-
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: themeColors,
+    });
+});
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
     },
 }));
-
 vi.mock('react-native', async () => {
-    const stub = await import('../../../dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                Platform: { OS: 'web' },
+                            }
+    );
 });
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
 }));
-
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
@@ -75,158 +68,147 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
         isPulsing: false,
     }),
 }));
-
 vi.mock('@/components/ui/avatar/Avatar', () => ({
-    Avatar: 'Avatar',
+    Avatar: (props: Record<string, unknown>) => React.createElement('Avatar', {
+        ...props,
+        testID: props.testID ?? 'session-item-avatar',
+    }),
 }));
-
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
-
 vi.mock('@/components/sessions/pendingBadge', () => ({
     formatPendingCountBadge: () => null,
 }));
-
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateSpy,
 }));
-
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
 }));
-
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
-
 vi.mock('@/utils/errors/errors', () => ({
     HappyError: class HappyError extends Error {},
 }));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionRename: vi.fn(async () => ({ success: true })),
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-    useSessionListMeaningfulActivityAt: () => null,
-}));
-
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
+            sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+            sessionRename: vi.fn(async () => ({ success: true })),
+        },
+    });
+});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useHasUnreadMessages: () => false,
+            useProfile: () => ({
+                id: 'u1',
+                timestamp: 0,
+                firstName: null,
+                lastName: null,
+                username: null,
+                avatar: null,
+                linkedProviders: [],
+                connectedServices: [],
+                connectedServicesV2: [],
+            }),
+            useSession: () => null,
+            useSessionListMeaningfulActivityAt: () => null,
+        },
+    });
+});
 vi.mock('@/utils/time/formatShortRelativeTime', () => ({
     formatShortRelativeTime: () => '1m',
 }));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key: string) => key,
 }));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
-
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
 }));
-
 vi.mock('./sessionTagIcons', () => ({
     TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
 }));
 
 describe('SessionItem navigation', () => {
+    function createSession(id: string) {
+        return {
+            id,
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+    }
+
+    async function renderSessionItem(props: SessionItemProps) {
+        const { SessionItem } = await import('./SessionItem');
+        return renderScreen(<SessionItem {...props} />);
+    }
+
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('passes serverId when navigating to a session', async () => {
         navigateSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
-
-        const session = {
-            id: 'sess_1',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    serverName="Server A"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
+        const screen = await renderSessionItem({
+            session: createSession('sess_1'),
+            serverId: 'server_a',
+            serverName: 'Server A',
+            showServerBadge: true,
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: false,
         });
 
-        expect(tree).not.toBeNull();
-        const pressable = (tree as any).root.findByType('Pressable');
-        await act(async () => {
-            pressable.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-list-item-sess_1');
 
         expect(navigateSpy).toHaveBeenCalledTimes(1);
         expect(navigateSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
+
+        await screen.unmount();
     });
 
     it('hides avatars in minimal compact mode', async () => {
-        const { SessionItem } = await import('./SessionItem');
-
-        const session = {
-            id: 'sess_min',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    serverName="Server A"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={true}
-                    compactMinimal={true}
-                />,
-            );
+        const screen = await renderSessionItem({
+            session: createSession('sess_min'),
+            serverId: 'server_a',
+            serverName: 'Server A',
+            showServerBadge: true,
+            selected: false,
+            isFirst: true,
+            isLast: true,
+            isSingle: true,
+            variant: 'default',
+            compact: true,
+            compactMinimal: true,
         });
 
-        const avatars = (tree as any).root.findAllByType('Avatar');
-        expect(avatars).toHaveLength(0);
+        expect(screen.findByTestId('session-item-avatar')).toBeNull();
+
+        await screen.unmount();
     });
 });

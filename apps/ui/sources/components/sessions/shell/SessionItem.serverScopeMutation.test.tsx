@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,11 +17,14 @@ vi.mock('react-native-gesture-handler', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'ios' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'ios',
+                                            },
+                                        }
+    );
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -68,23 +73,36 @@ vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: archiveSpy,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
     useSession: () => null,
     useSessionListMeaningfulActivityAt: () => null,
-}));
+});
+});
 
 const modalAlertSpy = vi.fn();
-vi.mock('@/modal', () => ({
-    Modal: { alert: modalAlertSpy },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('SessionItem server-scoped mutations', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('stops active sessions using server scope when serverId is provided', async () => {
         archiveSpy.mockClear();
         stopSpy.mockClear();
@@ -108,27 +126,25 @@ describe('SessionItem server-scoped mutations', () => {
             presence: 'online',
         } as any;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    serverName="Server A"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                serverName="Server A"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
 
-        const swipeable = (tree as any).root.findByType('Swipeable');
+        const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
+        const rightActions = swipeable.props.renderRightActions();
         await act(async () => {
-            swipeable.props.renderRightActions().props.onPress();
+            await rightActions.props.onPress();
         });
 
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);
@@ -164,27 +180,25 @@ describe('SessionItem server-scoped mutations', () => {
             presence: 'offline',
         } as any;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_b"
-                    serverName="Server B"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_b"
+                serverName="Server B"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
 
-        const swipeable = (tree as any).root.findByType('Swipeable');
+        const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
+        const rightActions = swipeable.props.renderRightActions();
         await act(async () => {
-            swipeable.props.renderRightActions().props.onPress();
+            await rightActions.props.onPress();
         });
 
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);

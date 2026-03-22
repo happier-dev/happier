@@ -36,7 +36,9 @@ import { buildReviewCommentsV1MetaPayload } from '@/sync/domains/input/reviewCom
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
-import { supportsSessionModeOverrides } from '@/sync/acp/sessionModeControl';
+import {
+    supportsSessionModeOverrides,
+} from '@/sync/acp/sessionModeControl';
 import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
@@ -514,6 +516,27 @@ function SessionViewLoaded({
         });
     }, [agentId, liveAuthoringContext]);
     const permissionMode = liveComposerState.permissionMode;
+    const sessionModeOptionIds = React.useMemo(() => {
+        const modeState =
+            (session.metadata as any)?.sessionModesV1
+            ?? (session.metadata as any)?.acpSessionModesV1
+            ?? null;
+        if (
+            modeState
+            && modeState.provider === liveComposerState.agentId
+            && Array.isArray(modeState.availableModes)
+        ) {
+            return modeState.availableModes
+                .map((mode: { id?: unknown }) => (typeof mode?.id === 'string' ? mode.id.trim() : ''))
+                .filter((id: string) => id.length > 0);
+        }
+
+        const sessionModes = getAgentCore(liveComposerState.agentId)?.sessionModes;
+        if (sessionModes?.kind !== 'staticAgentModes') return [];
+        return (sessionModes.staticOptions ?? [])
+            .map((mode) => (typeof mode?.id === 'string' ? mode.id.trim() : ''))
+            .filter((id) => id.length > 0);
+    }, [liveComposerState.agentId, session.metadata]);
     const enabledAgentIds = useEnabledAgentIds();
     const sessionActionDefaultBackend = React.useMemo(
         () => resolveSessionActionDefaultBackend({
@@ -728,14 +751,16 @@ function SessionViewLoaded({
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
         const normalized = typeof modeId === 'string' ? modeId.trim() : '';
-        // `default` is a UI sentinel meaning "clear override".
-        const publishModeId = normalized === 'default' ? '' : normalized;
+        const publishModeId =
+            normalized === 'default' && !sessionModeOptionIds.includes('default')
+                ? ''
+                : normalized;
         fireAndForget(sync.publishSessionAcpSessionModeOverrideToMetadata({
             sessionId,
             modeId: publishModeId,
             updatedAt: nowServerMs(),
         }), { tag: 'SessionView.updateAcpSessionModeOverride' });
-    }, [sessionId]);
+    }, [sessionId, sessionModeOptionIds]);
 
     const updateAcpConfigOptionOverride = React.useCallback((configId: string, valueId: string) => {
         fireAndForget(sync.publishSessionAcpConfigOptionOverrideToMetadata({
@@ -1363,13 +1388,13 @@ function SessionViewLoaded({
 
                         if (hasAttachments) {
                             fireAndForget((async () => {
+                                markComposerSent();
                                 try {
                                     const readyForSend = await directSessionTakeover.ensureReadyForSend();
                                     if (!readyForSend) {
+                                        setMessage(previousMessage);
                                         return;
                                     }
-
-                                    markComposerSent();
                                     setIsUploadingAttachments(true);
 
                                     if (!isSessionActive && isResumable) {
@@ -1525,12 +1550,12 @@ function SessionViewLoaded({
 
                         if (executionRunSend) {
                             fireAndForget((async () => {
+                                markComposerSent();
                                 const readyForSend = await directSessionTakeover.ensureReadyForSend();
                                 if (!readyForSend) {
+                                    setMessage(previousMessage);
                                     return;
                                 }
-
-                                markComposerSent();
 
                                 const result = await sessionExecutionRunSend(sessionId, executionRunSend);
                                 if (!result.ok) {
@@ -1546,12 +1571,12 @@ function SessionViewLoaded({
 
                         if (submitMode === 'server_pending') {
                             fireAndForget((async () => {
+                                markComposerSent();
                                 const readyForSend = await directSessionTakeover.ensureReadyForSend();
                                 if (!readyForSend) {
+                                    setMessage(previousMessage);
                                     return;
                                 }
-
-                                markComposerSent();
 
                                 try {
                                     await sync.enqueuePendingMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
@@ -1605,12 +1630,12 @@ function SessionViewLoaded({
 
                         if (!isSessionActive && isResumable) {
                             fireAndForget((async () => {
+                                markComposerSent();
                                 const readyForSend = await directSessionTakeover.ensureReadyForSend();
                                 if (!readyForSend) {
+                                    setMessage(previousMessage);
                                     return;
                                 }
-
-                                markComposerSent();
 
                                 try {
                                     const supportsPendingQueueV2 = typeof session.pendingVersion === 'number';
@@ -1644,12 +1669,12 @@ function SessionViewLoaded({
                         }
 
                         fireAndForget((async () => {
+                            markComposerSent();
                             const readyForSend = await directSessionTakeover.ensureReadyForSend();
                             if (!readyForSend) {
+                                setMessage(previousMessage);
                                 return;
                             }
-
-                            markComposerSent();
 
                             try {
                                 await sync.submitMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
@@ -1810,6 +1835,7 @@ function SessionViewLoaded({
                 isLandscape && deviceType === 'phone' && (
                     <Pressable
                         onPress={() => router.push('/')}
+                        testID="session-view-landscape-back-button"
                         style={{
                             position: 'absolute',
                             top: safeArea.top + 8,
