@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { checkDaemonState, cleanupStaleDaemonState } from './daemon.mjs';
+import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { resolveStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 
 test('checkDaemonState reads server-scoped daemon state for active server URL', async () => {
@@ -51,13 +51,12 @@ test('cleanupStaleDaemonState removes stale server-scoped lock and state', async
 
 test('checkDaemonState falls back to an older running daemon when the newest fallback state is stale', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-state-'));
-  const running = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], {
+  const running = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1e6)', {
     env: {
       ...process.env,
       HAPPIER_HOME_DIR: dir,
     },
     stdio: ['ignore', 'ignore', 'ignore'],
-    detached: true,
   });
 
   try {

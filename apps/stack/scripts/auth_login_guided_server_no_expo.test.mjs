@@ -1,37 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, writeFile, rm, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
-
-async function ensureMinimalMonorepoWithStubCli({ monoRoot, includeSourceCli = true } = {}) {
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-
-  if (!includeSourceCli) {
-    return;
-  }
-
-  await mkdir(join(monoRoot, 'apps', 'cli', 'bin'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli', 'dist'), { recursive: true });
-
-  // startLocalDaemonWithAuth() checks for dist/index.mjs existence even if we never get there.
-  await writeFile(join(monoRoot, 'apps', 'cli', 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
-
-  // Stub `happier` CLI: accept any args and exit 0 (keeps the test non-interactive).
-  await writeFile(
-    join(monoRoot, 'apps', 'cli', 'bin', 'happier.mjs'),
-    "process.exit(0);\n",
-    'utf-8'
-  );
-}
+import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
+import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
+import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 
 async function createHealthyServer({ rootBody = 'ok', rootContentType = 'text/plain' } = {}) {
   const server = createServer((req, res) => {
@@ -83,7 +60,13 @@ async function buildGuidedNoExpoFixture({
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-guided-no-expo-'));
   const storageDir = join(tmp, 'storage');
   const monoRoot = join(tmp, 'happier');
-  await ensureMinimalMonorepoWithStubCli({ monoRoot, includeSourceCli });
+  await ensureMinimalMonorepoLayout(monoRoot);
+  if (includeSourceCli) {
+    await writeStubHappierCliFiles(monoRoot, {
+      distIndexScript: 'export {};\n',
+      binHappierScript: 'process.exit(0);\n',
+    });
+  }
 
   const serverFixture = startServer ? await createHealthyServer({ rootBody, rootContentType }) : null;
   const server = serverFixture?.server ?? null;
@@ -115,43 +98,25 @@ async function buildGuidedNoExpoFixture({
     'utf-8'
   );
   if (runtimeSnapshot) {
-    const snapshotDir = join(storageDir, stackName, 'runtime', 'builds', 'snap-auth');
-    await mkdir(join(snapshotDir, 'ui'), { recursive: true });
-    await mkdir(join(snapshotDir, 'server'), { recursive: true });
-    await mkdir(join(snapshotDir, 'cli'), { recursive: true });
-    await mkdir(join(snapshotDir, 'cli', 'package-dist'), { recursive: true });
-    await writeFile(join(snapshotDir, 'ui', 'index.html'), '<!doctype html><html><body>runtime ui</body></html>\n', 'utf-8');
-    const serverBinaryPath = join(snapshotDir, 'server', 'happier-server');
-    const cliBinaryPath = join(snapshotDir, 'cli', 'happier');
-    await writeFile(serverBinaryPath, '#!/bin/sh\nexit 0\n', 'utf-8');
-    await writeFile(cliBinaryPath, runtimeCliScript, 'utf-8');
-    await writeFile(join(snapshotDir, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
-    await chmod(serverBinaryPath, 0o755);
-    await chmod(cliBinaryPath, 0o755);
-    await writeFile(
-      join(snapshotDir, 'manifest.json'),
-      JSON.stringify({
-        version: 1,
-        snapshotId: 'snap-auth',
-        sourceFingerprint: 'src-auth',
-        components: {
-          web: { artifactFingerprint: 'web-auth', entrypoint: 'ui/index.html' },
-          server: { artifactFingerprint: 'srv-auth', entrypoint: 'server/happier-server' },
-          daemon: { artifactFingerprint: 'cli-auth', entrypoint: 'cli/happier' },
-        },
-      }) + '\n',
-      'utf-8',
-    );
-    await writeFile(
-      join(storageDir, stackName, 'runtime', 'current.json'),
-      JSON.stringify({
-        version: 1,
-        snapshotId: 'snap-auth',
-        snapshotPath: snapshotDir,
-        sourceFingerprint: 'src-auth',
-      }) + '\n',
-      'utf-8',
-    );
+    await writeRuntimeSnapshotLayout({
+      stackDir: join(storageDir, stackName),
+      snapshotId: 'snap-auth',
+      sourceFingerprint: 'src-auth',
+      web: {
+        content: '<!doctype html><html><body>runtime ui</body></html>\n',
+        artifactFingerprint: 'web-auth',
+      },
+      server: {
+        content: '#!/bin/sh\nexit 0\n',
+        artifactFingerprint: 'srv-auth',
+      },
+      daemon: {
+        content: runtimeCliScript,
+        artifactFingerprint: 'cli-auth',
+        nodeEntrypoint: 'cli/package-dist/index.mjs',
+        nodeContent: 'export {};\n',
+      },
+    });
   }
 
   return {

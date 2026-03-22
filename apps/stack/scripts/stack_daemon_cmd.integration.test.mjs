@@ -1,28 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
+import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
-  });
-}
 
 function runHstack(args, { env }) {
   return runNode([join(rootDir, 'bin', 'hstack.mjs'), ...args], { cwd: rootDir, env });
@@ -69,11 +59,8 @@ async function writeServerScopedAuth({ cliHomeDir, serverUrl, env = {} }) {
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 }
 
-async function writeStubHappyCli({ cliDir }) {
-  await mkdir(join(cliDir, 'bin'), { recursive: true });
-  await mkdir(join(cliDir, 'dist'), { recursive: true });
-
-const distScript = `
+function buildStubHappyCliScript() {
+  return `
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -140,59 +127,24 @@ if (sub === 'status') {
 append('other:' + sub);
 process.exit(0);
 `;
-
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), "import '../dist/index.mjs';\n", 'utf-8');
-}
-
-async function ensureMinimalHappierMonorepo({ monoRoot }) {
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
 }
 
 async function createDaemonFixture(t, { prefix, stackName = 'exp-test', serverPort = 4101 } = {}) {
-  const tmp = await mkdtemp(join(tmpdir(), prefix));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
-  });
-
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-  const monoRoot = join(workspaceDir, 'happier');
-
-  await ensureMinimalHappierMonorepo({ monoRoot });
-  await writeStubHappyCli({ cliDir: join(monoRoot, 'apps', 'cli') });
-
-  const stackCliHome = join(storageDir, stackName, 'cli');
-  await mkdir(stackCliHome, { recursive: true });
-
-  async function writeStackEnv({ name = stackName, cliHomeDir = stackCliHome, port = serverPort, repoDir = monoRoot } = {}) {
-    const envPath = join(storageDir, name, 'env');
-    await mkdir(dirname(envPath), { recursive: true });
-    await writeFile(
-      envPath,
-      [
-        `HAPPIER_STACK_REPO_DIR=${repoDir}`,
-        `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
-        `HAPPIER_STACK_SERVER_PORT=${port}`,
-        '',
-      ].join('\n'),
-      'utf-8'
-    );
-  }
-
-  return {
-    storageDir,
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix,
     stackName,
     serverPort,
-    stackCliHome,
-    baseEnv: buildBaseEnv({ homeDir, storageDir, workspaceDir }),
-    writeStackEnv,
+    distIndexScript: buildStubHappyCliScript().trimStart(),
+    binHappierScript: "import '../dist/index.mjs';\n",
+  });
+
+  return {
+    storageDir: fixture.storageDir,
+    stackName: fixture.stackName,
+    serverPort,
+    stackCliHome: fixture.stackCliHome,
+    baseEnv: fixture.baseEnv,
+    writeStackEnv: fixture.writeStackEnv,
   };
 }
 
@@ -478,7 +430,7 @@ test('hstack stack daemon <name> start uses runtime server port when env port is
   await fixture.writeStackEnv({ port: '' });
 
   // Create a runtime state file that indicates the stack server is running on fixture.serverPort.
-  const serverStub = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const serverStub = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => {
     try {
       serverStub.kill('SIGTERM');

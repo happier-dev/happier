@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
+import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 
 async function startHealthServer({ port }) {
@@ -28,39 +29,24 @@ async function startHealthServer({ port }) {
 }
 
 async function writeRuntimeCliSnapshot({ fixture, snapshotId, script }) {
-  const snapshotDir = join(fixture.storageDir, fixture.stackName, 'runtime', 'builds', snapshotId);
-  await mkdir(join(snapshotDir, 'ui'), { recursive: true });
-  await mkdir(join(snapshotDir, 'server'), { recursive: true });
-  await mkdir(join(snapshotDir, 'cli'), { recursive: true });
-  await writeFile(join(snapshotDir, 'ui', 'index.html'), '<!doctype html><html><body>runtime ui</body></html>\n', 'utf-8');
-  await writeFile(join(snapshotDir, 'server', 'happier-server'), '#!/bin/sh\nexit 0\n', 'utf-8');
-  const cliPath = join(snapshotDir, 'cli', 'happier');
-  await writeFile(cliPath, script, 'utf-8');
-  await chmod(cliPath, 0o755);
-  await writeFile(
-    join(snapshotDir, 'manifest.json'),
-    JSON.stringify({
-      version: 1,
-      snapshotId,
-      sourceFingerprint: `src-${snapshotId}`,
-      components: {
-        web: { artifactFingerprint: `web-${snapshotId}`, entrypoint: 'ui/index.html' },
-        server: { artifactFingerprint: `srv-${snapshotId}`, entrypoint: 'server/happier-server' },
-        daemon: { artifactFingerprint: `cli-${snapshotId}`, entrypoint: 'cli/happier' },
-      },
-    }) + '\n',
-    'utf-8',
-  );
-  await writeFile(
-    join(fixture.storageDir, fixture.stackName, 'runtime', 'current.json'),
-    JSON.stringify({
-      version: 1,
-      snapshotId,
-      snapshotPath: snapshotDir,
-      sourceFingerprint: `src-${snapshotId}`,
-    }) + '\n',
-    'utf-8',
-  );
+  await writeRuntimeSnapshotLayout({
+    stackDir: join(fixture.storageDir, fixture.stackName),
+    snapshotId,
+    web: {
+      content: '<!doctype html><html><body>runtime ui</body></html>\n',
+      artifactFingerprint: `web-${snapshotId}`,
+    },
+    server: {
+      content: '#!/bin/sh\nexit 0\n',
+      artifactFingerprint: `srv-${snapshotId}`,
+    },
+    daemon: {
+      content: script,
+      artifactFingerprint: `cli-${snapshotId}`,
+      nodeEntrypoint: 'cli/package-dist/index.mjs',
+      nodeContent: 'export {};\n',
+    },
+  });
 }
 
 async function writeCredential(path, token) {

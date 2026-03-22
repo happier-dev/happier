@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
+import { buildLightMigrationBaseEnv, resolveDbProviderForLightFromEnv } from './auth.mjs';
 
 test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not defined', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -20,9 +21,11 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
   const workspaceDir = join(tmp, 'workspace');
+  const nvmDir = join(tmp, 'nvm');
   await mkdir(homeDir, { recursive: true });
   await mkdir(storageDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
+  await mkdir(nvmDir, { recursive: true });
 
   // Stub yarn to keep this test fast/deterministic. This is an external boundary.
   const binDir = join(tmp, 'bin');
@@ -88,9 +91,11 @@ test('hstack stack auth copy-from prefers source server-scoped credential over u
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
   const workspaceDir = join(tmp, 'workspace');
+  const nvmDir = join(tmp, 'nvm');
   await mkdir(homeDir, { recursive: true });
   await mkdir(storageDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
+  await mkdir(nvmDir, { recursive: true });
 
   const binDir = join(tmp, 'bin');
   await mkdir(binDir, { recursive: true });
@@ -165,9 +170,11 @@ test('hstack stack auth copy-from prefers source stable-scope credential when so
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
   const workspaceDir = join(tmp, 'workspace');
+  const nvmDir = join(tmp, 'nvm');
   await mkdir(homeDir, { recursive: true });
   await mkdir(storageDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
+  await mkdir(nvmDir, { recursive: true });
 
   const binDir = join(tmp, 'bin');
   await mkdir(binDir, { recursive: true });
@@ -265,9 +272,11 @@ test('hstack stack auth copy-from fails closed when source token subject is miss
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
   const workspaceDir = join(tmp, 'workspace');
+  const nvmDir = join(tmp, 'nvm');
   await mkdir(homeDir, { recursive: true });
   await mkdir(storageDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
+  await mkdir(nvmDir, { recursive: true });
 
   const binDir = join(tmp, 'bin');
   await mkdir(binDir, { recursive: true });
@@ -349,9 +358,11 @@ test('hstack stack auth copy-from accepts source auth when source server validat
   const homeDir = join(tmp, 'home');
   const storageDir = join(tmp, 'storage');
   const workspaceDir = join(tmp, 'workspace');
+  const nvmDir = join(tmp, 'nvm');
   await mkdir(homeDir, { recursive: true });
   await mkdir(storageDir, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
+  await mkdir(nvmDir, { recursive: true });
 
   const binDir = join(tmp, 'bin');
   await mkdir(binDir, { recursive: true });
@@ -606,4 +617,361 @@ test('hstack stack auth copy-from --no-secret does not overwrite target master s
 
   const targetSecret = await readFile(join(targetDirs.dataDir, 'handy-master-secret.txt'), 'utf-8');
   assert.equal(targetSecret.trim(), 'target-secret');
+});
+
+test('hstack stack auth copy-from reads source light sqlite db from the source stack base dir when target light env leaks into process.env', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(rootDir));
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-copy-from-source-light-sqlite-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const homeDir = join(tmp, 'home');
+  const storageDir = join(tmp, 'storage');
+  const workspaceDir = join(tmp, 'workspace');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(storageDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+
+  const sourceStack = 'dev-auth';
+  const targetStack = 'dev';
+  const sourceBaseDir = join(storageDir, sourceStack);
+  const targetBaseDir = join(storageDir, targetStack);
+  const sourceCliHome = join(sourceBaseDir, 'cli');
+  const targetCliHome = join(targetBaseDir, 'cli');
+  const sourceDataDir = join(sourceBaseDir, 'server-light');
+  const targetDataDir = join(targetBaseDir, 'server-light');
+  const serverDir = join(repoRoot, 'apps', 'server');
+  const nvmDir = join(tmp, 'nvm');
+
+  const writeStackEnv = async ({ name, baseDir, cliHomeDir, dataDir, includeLightDirs }) => {
+    await mkdir(baseDir, { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    const lines = [
+      `HAPPIER_STACK_STACK=${name}`,
+      `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+      `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
+    ];
+    if (includeLightDirs) {
+      lines.push(`HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`);
+      lines.push(`HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`);
+      lines.push(`HAPPIER_SERVER_LIGHT_DB_DIR=${join(dataDir, 'pglite')}`);
+    }
+    await writeFile(join(baseDir, 'env'), `${lines.join('\n')}\n`, 'utf-8');
+  };
+
+  await writeStackEnv({
+    name: sourceStack,
+    baseDir: sourceBaseDir,
+    cliHomeDir: sourceCliHome,
+    dataDir: sourceDataDir,
+    includeLightDirs: false,
+  });
+  await writeStackEnv({
+    name: targetStack,
+    baseDir: targetBaseDir,
+    cliHomeDir: targetCliHome,
+    dataDir: targetDataDir,
+    includeLightDirs: true,
+  });
+
+  const migrateSqlite = async (dataDir) => {
+    const { spawnSync } = await import('node:child_process');
+    const res = spawnSync('yarn', ['-s', 'migrate:sqlite:deploy'], {
+      cwd: serverDir,
+      env: {
+        ...process.env,
+        HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+        HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
+        HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
+        HAPPIER_DB_PROVIDER: 'sqlite',
+      },
+      encoding: 'utf-8',
+    });
+    assert.equal(res.status, 0, `expected sqlite migrations to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  };
+
+  const runSqliteClient = async ({ databaseUrl, code }) => {
+    const result = await runNodeCapture(
+      [
+        '--input-type=module',
+        '-e',
+        `
+const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
+const db = new PrismaClient();
+try {
+${code}
+} finally {
+  await db.$disconnect();
+}
+        `.trim(),
+      ],
+      {
+        cwd: serverDir,
+        env: {
+          ...process.env,
+          DATABASE_URL: databaseUrl,
+        },
+      }
+    );
+    return result.stdout.trim();
+  };
+
+  await migrateSqlite(sourceDataDir);
+  await migrateSqlite(targetDataDir);
+
+  const sourceDatabaseUrl = `file:${join(sourceDataDir, 'happier-server-light.sqlite')}`;
+  const targetDatabaseUrl = `file:${join(targetDataDir, 'happier-server-light.sqlite')}`;
+  const sourceAccountId = 'source-account-id';
+  const targetAccountId = 'target-account-id';
+
+  await runSqliteClient({
+    databaseUrl: sourceDatabaseUrl,
+    code: `
+await db.account.create({ data: { id: ${JSON.stringify(sourceAccountId)}, publicKey: ${JSON.stringify('source-public-key')} } });
+console.log('ok');
+    `,
+  });
+  await runSqliteClient({
+    databaseUrl: targetDatabaseUrl,
+    code: `
+await db.account.create({ data: { id: ${JSON.stringify(targetAccountId)}, publicKey: ${JSON.stringify('target-public-key')} } });
+console.log('ok');
+    `,
+  });
+
+  const b64 = (value) =>
+    Buffer.from(value, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const sourceToken = `${b64(JSON.stringify({ alg: 'none', typ: 'JWT' }))}.${b64(JSON.stringify({ sub: sourceAccountId }))}.sig`;
+  await writeFile(join(sourceCliHome, 'access.key'), JSON.stringify({ token: sourceToken }) + '\n', 'utf-8');
+
+  const env = {
+    ...process.env,
+    HAPPIER_SERVER_LIGHT_DATA_DIR: targetDataDir,
+    HAPPIER_SERVER_LIGHT_FILES_DIR: join(targetDataDir, 'files'),
+    HAPPIER_SERVER_LIGHT_DB_DIR: join(targetDataDir, 'pglite'),
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_STACK: targetStack,
+    HAPPIER_STACK_ENV_FILE: join(targetBaseDir, 'env'),
+  };
+
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok', '--force'], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(res.code, 0, `expected copy-from to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const targetIdsRaw = await runSqliteClient({
+    databaseUrl: targetDatabaseUrl,
+    code: `
+const rows = await db.account.findMany({ select: { id: true }, orderBy: { id: 'asc' } });
+console.log(JSON.stringify(rows.map((row) => row.id)));
+    `,
+  });
+  const targetIds = JSON.parse(targetIdsRaw);
+  assert.deepEqual(
+    targetIds,
+    [sourceAccountId, targetAccountId].sort(),
+    `expected target sqlite db to include the source account copied from the source stack\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+});
+
+test('hstack stack auth copy-from does not require source sqlite migrations when the source light db is already readable and process env leaks pglite provider flags', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(rootDir));
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-copy-from-source-sqlite-no-migrate-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const homeDir = join(tmp, 'home');
+  const storageDir = join(tmp, 'storage');
+  const workspaceDir = join(tmp, 'workspace');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(storageDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(join(tmp, 'nvm'), { recursive: true });
+
+  const sourceStack = 'dev-auth';
+  const targetStack = 'dev';
+  const sourceBaseDir = join(storageDir, sourceStack);
+  const targetBaseDir = join(storageDir, targetStack);
+  const sourceCliHome = join(sourceBaseDir, 'cli');
+  const targetCliHome = join(targetBaseDir, 'cli');
+  const sourceDataDir = join(sourceBaseDir, 'server-light');
+  const targetDataDir = join(targetBaseDir, 'server-light');
+  const serverDir = join(repoRoot, 'apps', 'server');
+
+  const writeStackEnv = async ({ name, baseDir, cliHomeDir, dataDir, dbProvider }) => {
+    await mkdir(baseDir, { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    const lines = [
+      `HAPPIER_STACK_STACK=${name}`,
+      `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+      `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
+    ];
+    if (dbProvider) {
+      lines.push(`HAPPIER_DB_PROVIDER=${dbProvider}`);
+    }
+    lines.push(
+      `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
+      `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,
+      `HAPPIER_SERVER_LIGHT_DB_DIR=${join(dataDir, 'pglite')}`,
+      '',
+    );
+    await writeFile(
+      join(baseDir, 'env'),
+      lines.join('\n'),
+      'utf-8'
+    );
+  };
+
+  await writeStackEnv({ name: sourceStack, baseDir: sourceBaseDir, cliHomeDir: sourceCliHome, dataDir: sourceDataDir });
+  await writeStackEnv({
+    name: targetStack,
+    baseDir: targetBaseDir,
+    cliHomeDir: targetCliHome,
+    dataDir: targetDataDir,
+    dbProvider: 'sqlite',
+  });
+
+  const migrateSqlite = async (dataDir) => {
+    const { spawnSync } = await import('node:child_process');
+    const res = spawnSync('yarn', ['-s', 'migrate:sqlite:deploy'], {
+      cwd: serverDir,
+      env: {
+        ...process.env,
+        HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+        HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
+        HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
+        HAPPIER_DB_PROVIDER: 'sqlite',
+      },
+      encoding: 'utf-8',
+    });
+    assert.equal(res.status, 0, `expected sqlite migrations to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  };
+
+  const runSqliteClient = async ({ databaseUrl, code }) => {
+    const result = await runNodeCapture(
+      [
+        '--input-type=module',
+        '-e',
+        `
+const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
+const db = new PrismaClient();
+try {
+${code}
+} finally {
+  await db.$disconnect();
+}
+        `.trim(),
+      ],
+      {
+        cwd: serverDir,
+        env: {
+          ...process.env,
+          DATABASE_URL: databaseUrl,
+        },
+      }
+    );
+    return result.stdout.trim();
+  };
+
+  await migrateSqlite(sourceDataDir);
+  await migrateSqlite(targetDataDir);
+
+  const sourceDbPath = join(sourceDataDir, 'happier-server-light.sqlite');
+  const sourceDatabaseUrl = `file:${sourceDbPath}`;
+  const targetDatabaseUrl = `file:${join(targetDataDir, 'happier-server-light.sqlite')}`;
+  const sourceAccountId = 'source-no-migrate-id';
+
+  await runSqliteClient({
+    databaseUrl: sourceDatabaseUrl,
+    code: `
+await db.account.create({ data: { id: ${JSON.stringify(sourceAccountId)}, publicKey: ${JSON.stringify('source-no-migrate-key')} } });
+console.log('ok');
+    `,
+  });
+
+  const b64 = (value) =>
+    Buffer.from(value, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const sourceToken = `${b64(JSON.stringify({ alg: 'none', typ: 'JWT' }))}.${b64(JSON.stringify({ sub: sourceAccountId }))}.sig`;
+  await writeFile(join(sourceCliHome, 'access.key'), JSON.stringify({ token: sourceToken }) + '\n', 'utf-8');
+
+  const sourceEnv = {
+    HAPPIER_STACK_STACK: sourceStack,
+    HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+    HAPPIER_STACK_REPO_DIR: repoRoot,
+    HAPPIER_SERVER_LIGHT_DATA_DIR: sourceDataDir,
+    HAPPIER_SERVER_LIGHT_FILES_DIR: join(sourceDataDir, 'files'),
+    HAPPIER_SERVER_LIGHT_DB_DIR: join(sourceDataDir, 'pglite'),
+  };
+  const leakedLightEnv = buildLightMigrationBaseEnv(
+    {
+      ...process.env,
+      HAPPIER_DB_PROVIDER: 'pglite',
+      HAPPY_DB_PROVIDER: 'pglite',
+    },
+    sourceEnv
+  );
+  assert.equal(
+    leakedLightEnv.HAPPIER_DB_PROVIDER,
+    undefined,
+    'expected leaked HAPPIER_DB_PROVIDER to be stripped before light migration resolution'
+  );
+  assert.equal(
+    leakedLightEnv.HAPPY_DB_PROVIDER,
+    undefined,
+    'expected leaked HAPPY_DB_PROVIDER to be stripped before light migration resolution'
+  );
+  assert.equal(
+    resolveDbProviderForLightFromEnv(leakedLightEnv),
+    'sqlite',
+    'expected leaked provider flags to stop influencing the source light migration path'
+  );
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_STACK: targetStack,
+    HAPPIER_STACK_ENV_FILE: join(targetBaseDir, 'env'),
+    HAPPIER_DB_PROVIDER: 'pglite',
+    HAPPY_DB_PROVIDER: 'pglite',
+  };
+
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok', '--force'], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(
+    res.code,
+    0,
+    `expected copy-from to succeed without source-side sqlite migration\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+
+  const targetIdsRaw = await runSqliteClient({
+    databaseUrl: targetDatabaseUrl,
+    code: `
+const rows = await db.account.findMany({ select: { id: true }, orderBy: { id: 'asc' } });
+console.log(JSON.stringify(rows.map((row) => row.id)));
+    `,
+  });
+  const targetIds = JSON.parse(targetIdsRaw);
+  assert.ok(
+    targetIds.includes(sourceAccountId),
+    `expected source account to be seeded into target db\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
 });

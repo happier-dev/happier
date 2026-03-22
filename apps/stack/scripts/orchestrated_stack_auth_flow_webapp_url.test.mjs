@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -129,13 +130,9 @@ test('startDaemonPostAuth uses the active runtime snapshot cli when runtime mode
     const storageDir = join(tmp, 'storage');
     const stackDir = join(storageDir, stackName);
     const envPath = join(stackDir, 'env');
-    const snapshotDir = join(stackDir, 'runtime', 'builds', 'snap-auth');
     const markerPath = join(tmp, 'daemon-input.json');
 
-    await mkdir(join(snapshotDir, 'ui'), { recursive: true });
-    await mkdir(join(snapshotDir, 'server'), { recursive: true });
-    await mkdir(join(snapshotDir, 'cli'), { recursive: true });
-
+    await mkdir(stackDir, { recursive: true });
     await writeFile(
       envPath,
       ['HAPPIER_STACK_STACK=dev-built', 'HAPPIER_STACK_RUNTIME_MODE=prefer', ''].join('\n'),
@@ -146,33 +143,25 @@ test('startDaemonPostAuth uses the active runtime snapshot cli when runtime mode
       JSON.stringify({ version: 1, stackName, ownerPid: process.pid, ports: { server: 4102 } }, null, 2),
       'utf-8'
     );
-    await writeFile(join(snapshotDir, 'ui', 'index.html'), '<!doctype html><html><body>runtime ui</body></html>\n', 'utf-8');
-    await writeFile(join(snapshotDir, 'server', 'happier-server'), '#!/bin/sh\nexit 0\n', 'utf-8');
-    await writeFile(join(snapshotDir, 'cli', 'happier'), '#!/bin/sh\nexit 0\n', 'utf-8');
-    await writeFile(
-      join(snapshotDir, 'manifest.json'),
-      JSON.stringify({
-        version: 1,
-        snapshotId: 'snap-auth',
-        sourceFingerprint: 'src-auth',
-        components: {
-          web: { artifactFingerprint: 'web-auth', entrypoint: 'ui/index.html' },
-          server: { artifactFingerprint: 'srv-auth', entrypoint: 'server/happier-server' },
-          daemon: { artifactFingerprint: 'cli-auth', entrypoint: 'cli/happier' },
-        },
-      }) + '\n',
-      'utf-8'
-    );
-    await writeFile(
-      join(stackDir, 'runtime', 'current.json'),
-      JSON.stringify({
-        version: 1,
-        snapshotId: 'snap-auth',
-        snapshotPath: snapshotDir,
-        sourceFingerprint: 'src-auth',
-      }) + '\n',
-      'utf-8'
-    );
+    const { snapshotDir } = await writeRuntimeSnapshotLayout({
+      stackDir,
+      snapshotId: 'snap-auth',
+      sourceFingerprint: 'src-auth',
+      web: {
+        content: '<!doctype html><html><body>runtime ui</body></html>\n',
+        artifactFingerprint: 'web-auth',
+      },
+      server: {
+        content: '#!/bin/sh\nexit 0\n',
+        artifactFingerprint: 'srv-auth',
+      },
+      daemon: {
+        content: '#!/bin/sh\nexit 0\n',
+        artifactFingerprint: 'cli-auth',
+        nodeEntrypoint: 'cli/package-dist/index.mjs',
+        nodeContent: 'export {};\n',
+      },
+    });
 
     const loaderPath = join(tmp, 'loader.mjs');
     const registerPath = join(tmp, 'register-loader.mjs');

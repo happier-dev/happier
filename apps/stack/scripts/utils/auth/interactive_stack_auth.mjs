@@ -11,6 +11,12 @@ export function needsAuthSeed({ cliHomeDir, accountCount }) {
   return !hasAccessKey || hasAccounts === false;
 }
 
+export function shouldSuppressInteractiveStackAuthSetup({ env = process.env } = {}) {
+  const isTuiManaged = (env?.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
+  if (isTuiManaged) return 'tui_managed';
+  return null;
+}
+
 export async function maybeRunInteractiveStackAuthSetup({
   rootDir,
   env = process.env,
@@ -22,6 +28,8 @@ export async function maybeRunInteractiveStackAuthSetup({
   beforeLogin = null,
 } = {}) {
   if (!isInteractive) return { ok: true, skipped: true, reason: 'non_interactive' };
+  const suppressedReason = shouldSuppressInteractiveStackAuthSetup({ env });
+  if (suppressedReason) return { ok: true, skipped: true, reason: suppressedReason };
   if (autoSeedEnabled) return { ok: true, skipped: true, reason: 'auto_seed_enabled' };
   if (!needsAuthSeed({ cliHomeDir, accountCount })) return { ok: true, skipped: true, reason: 'already_initialized' };
 
