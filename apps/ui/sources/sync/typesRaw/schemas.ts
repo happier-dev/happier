@@ -242,22 +242,24 @@ const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
 }), z.object({
     type: z.literal('codex'),
     data: z.discriminatedUnion('type', [
-        z.object({ type: z.literal('reasoning'), message: z.string() }),
-        z.object({ type: z.literal('message'), message: z.string() }),
+        z.object({ type: z.literal('reasoning'), message: z.string(), sidechainId: z.string().optional() }),
+        z.object({ type: z.literal('message'), message: z.string(), sidechainId: z.string().optional() }),
         // Usage/metrics (Codex MCP sometimes sends token_count through the codex channel)
-        z.object({ type: z.literal('token_count') }).passthrough(),
+        z.object({ type: z.literal('token_count'), sidechainId: z.string().optional() }).passthrough(),
         z.object({
             type: z.literal('tool-call'),
             callId: z.string(),
             input: z.any(),
             name: z.string(),
-            id: z.string()
+            id: z.string(),
+            sidechainId: z.string().optional(),
         }),
         z.object({
             type: z.literal('tool-call-result'),
             callId: z.string(),
             output: z.any(),
-            id: z.string()
+            id: z.string(),
+            sidechainId: z.string().optional(),
         })
     ])
 }), z.object({

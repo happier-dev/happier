@@ -52,16 +52,11 @@ describe('sessionWriteFile', () => {
 
         expect(res.success).toBe(true);
         expect(machineRPCSpy).toHaveBeenCalledTimes(1);
-        const payload = machineRPCSpy.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-        expect(payload).toBeDefined();
-        if (!payload) {
-            throw new Error('Expected machineRPC to be called with a payload');
-        }
-        expect(payload).toMatchObject({
+        expect(machineRPCSpy).toHaveBeenCalledWith('m1', 'writeFile', {
             path: '~/repo/src/a.ts',
             content: 'aGVsbG8=',
+            expectedHash: undefined,
         });
-        expect(Object.prototype.hasOwnProperty.call(payload, 'expectedHash')).toBe(false);
         expect(sessionRPCSpy).not.toHaveBeenCalled();
     });
 

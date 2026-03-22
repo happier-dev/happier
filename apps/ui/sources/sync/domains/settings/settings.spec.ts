@@ -401,6 +401,28 @@ describe('settings', () => {
             });
         });
 
+        it('normalizes legacy session_control_cli action surface overrides to cli', () => {
+            const parsed = settingsParse({
+                actionsSettingsV1: {
+                    v: 1,
+                    actions: {
+                        'review.start': { disabledSurfaces: ['session_control_cli'] },
+                    },
+                },
+            } as any);
+
+            expect((parsed as any).actionsSettingsV1).toEqual({
+                v: 1,
+                actions: {
+                    'review.start': {
+                        enabledPlacements: [],
+                        disabledSurfaces: ['cli'],
+                        disabledPlacements: [],
+                    },
+                },
+            });
+        });
+
         it('defaults files diff syntax highlighting and editor settings', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).filesDiffSyntaxHighlightingMode).toBe('simple');

@@ -215,6 +215,18 @@ export function normalizeRawMessage(
             return false;
         };
 
+        const resolveStructuredContentSidechain = (data: any): Readonly<{
+            sidechainId?: string;
+            isSidechain: boolean;
+        }> => {
+            const sidechainId = metaSidechainId ?? getOutputSidechainId(data);
+            const legacyIsSidechain = getOutputIsSidechain(data);
+            return {
+                ...(sidechainId ? { sidechainId } : {}),
+                isSidechain: Boolean(sidechainId) || legacyIsSidechain || metaIsSidechain,
+            };
+        };
+
         type OutputAssistantData = {
             type: 'assistant';
             uuid?: string | null;
@@ -433,6 +445,7 @@ export function normalizeRawMessage(
             };
         }
         if (raw.content.type === 'codex') {
+            const structuredSidechain = resolveStructuredContentSidechain(raw.content.data);
               if (raw.content.data.type === 'message') {
                   // Cast codex messages to agent text messages
                   return {
@@ -441,7 +454,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain: false,
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'text',
                         text: raw.content.data.message,
@@ -459,7 +473,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain: false,
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'text',
                         text: raw.content.data.message,
@@ -477,7 +492,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain: false,
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.callId,
@@ -498,7 +514,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain: false,
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -513,21 +530,7 @@ export function normalizeRawMessage(
         }
           // ACP (Agent Communication Protocol) - unified format for all agent providers
           if (raw.content.type === 'acp') {
-              const sidechainIdRaw =
-                  metaSidechainId
-                  ?? (typeof (raw.content.data as any).sidechainId === 'string'
-                      ? String((raw.content.data as any).sidechainId)
-                      : (typeof (raw.content.data as any).sidechain_id === 'string'
-                          ? String((raw.content.data as any).sidechain_id)
-                          : undefined));
-              const sidechainId = typeof sidechainIdRaw === 'string' && sidechainIdRaw.trim().length > 0 ? sidechainIdRaw.trim() : undefined;
-              const legacyIsSidechain =
-                  typeof (raw.content.data as any).isSidechain === 'boolean'
-                      ? Boolean((raw.content.data as any).isSidechain)
-                      : (typeof (raw.content.data as any).is_sidechain === 'boolean'
-                          ? Boolean((raw.content.data as any).is_sidechain)
-                          : false);
-              const isSidechain = Boolean(sidechainId) || legacyIsSidechain || metaIsSidechain;
+              const structuredSidechain = resolveStructuredContentSidechain(raw.content.data);
 
               if (raw.content.data.type === 'message') {
                   return {
@@ -536,8 +539,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'text',
                         text: raw.content.data.message,
@@ -554,8 +557,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'text',
                         text: raw.content.data.message,
@@ -583,8 +586,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.callId,
@@ -605,8 +608,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -627,8 +630,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -647,8 +650,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'thinking',
                         thinking: raw.content.data.text,
@@ -666,8 +669,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.id,
@@ -694,8 +697,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -720,8 +723,8 @@ export function normalizeRawMessage(
                       localId,
                       createdAt,
                       role: 'agent',
-                      isSidechain,
-                    ...(sidechainId ? { sidechainId } : {}),
+                      isSidechain: structuredSidechain.isSidechain,
+                    ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.permissionId,

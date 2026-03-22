@@ -132,17 +132,6 @@ describe('createSettingsDomain local settings analytics', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'uiFontScaleBucket',
-                scope: 'derived',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 'default',
-                next_value: 'xlarge',
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
                 setting_key: 'sidebarWidthPx',
                 scope: 'local_setting',
                 identity_scope: 'device_user',
@@ -162,5 +151,6 @@ describe('createSettingsDomain local settings analytics', () => {
                 next_value: 1,
             }),
         );
+        expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);
     });
 });

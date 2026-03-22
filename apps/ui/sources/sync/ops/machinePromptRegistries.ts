@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { downloadMachineTransferJsonPayload } from '@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload';
+import { downloadBulkJsonPayload } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 type MachinePromptRegistriesOpts = Readonly<{
@@ -106,17 +106,34 @@ export async function machinePromptRegistriesDownloadItem(
     opts?: MachinePromptRegistriesOpts,
 ): Promise<MachinePromptRegistryDownloadItemResponse> {
     const payload = PromptRegistryFetchItemRequestV1Schema.parse(input);
-    const result = await downloadMachineTransferJsonPayload({
-        machineId,
-        serverId: opts?.serverId ?? undefined,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        request: payload,
-        methods: {
-            init: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
-            chunk: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
-            finalize: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
-            abort: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_ABORT,
-        },
+    const result = await downloadBulkJsonPayload<PromptRegistryFetchedItemV1>({
+        init: async (request) =>
+            await machineRpcWithServerScope({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
+                payload: {
+                    ...payload,
+                    recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                },
+            }),
+        readChunk: async (request) =>
+            await machineRpcWithServerScope({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
+                payload: request,
+            }),
+        finalize: async (request) =>
+            await machineRpcWithServerScope({
+                machineId,
+                serverId: opts?.serverId,
+                timeoutMs: opts?.timeoutMs ?? undefined,
+                method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
+                payload: request,
+            }),
         parsePayload: (value) => {
             const parsed = PromptRegistryFetchedItemV1Schema.safeParse(value);
             return parsed.success ? parsed.data : null;

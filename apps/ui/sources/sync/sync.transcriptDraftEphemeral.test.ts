@@ -114,4 +114,90 @@ describe('sync transcript-draft ephemerals', () => {
     const drafts = storage.getState().sessionMessages.s1?.draftsByLocalId ?? {};
     expect(drafts['local-plain']?.text).toBe('Plain hello');
   });
+
+  it('seeds post-commit draft deltas from the committed transcript text', async () => {
+    (sync as any).encryption = {
+      getSessionEncryption: () => null,
+    };
+
+    storage.getState().applyMessages('s1', [
+      {
+        id: 'msg-1',
+        seq: 1,
+        localId: 'local-seeded',
+        createdAt: 100,
+        isSidechain: false,
+        role: 'agent',
+        content: [{ type: 'text', text: 'Hello', uuid: 'u-1', parentUUID: null }],
+      } as any,
+    ]);
+
+    (sync as any).handleEphemeralUpdate({
+      type: 'transcript-draft',
+      sessionId: 's1',
+      localId: 'local-seeded',
+      segmentKind: 'assistant',
+      sidechainId: null,
+      delta: {
+        t: 'plain',
+        v: {
+          role: 'agent',
+          content: { type: 'acp', provider: 'codex', data: { type: 'message', message: ' world' } },
+        },
+      },
+      createdAt: 200,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const drafts = storage.getState().sessionMessages.s1?.draftsByLocalId ?? {};
+    expect(drafts['local-seeded']?.text).toBe('Hello world');
+  });
+
+  it('ignores stale draft deltas that are older than the committed stream snapshot', async () => {
+    (sync as any).encryption = {
+      getSessionEncryption: () => null,
+    };
+
+    storage.getState().applyMessages('s1', [
+      {
+        id: 'msg-2',
+        seq: 2,
+        localId: 'local-stale',
+        createdAt: 300,
+        isSidechain: false,
+        role: 'agent',
+        meta: {
+          happierStreamSegmentV1: {
+            v: 1,
+            segmentKind: 'assistant',
+            segmentLocalId: 'local-stale',
+            updatedAtMs: 300,
+          },
+        },
+        content: [{ type: 'text', text: 'Hello world', uuid: 'u-2', parentUUID: null }],
+      } as any,
+    ]);
+
+    (sync as any).handleEphemeralUpdate({
+      type: 'transcript-draft',
+      sessionId: 's1',
+      localId: 'local-stale',
+      segmentKind: 'assistant',
+      sidechainId: null,
+      delta: {
+        t: 'plain',
+        v: {
+          role: 'agent',
+          content: { type: 'acp', provider: 'codex', data: { type: 'message', message: ' world' } },
+        },
+      },
+      createdAt: 250,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const drafts = storage.getState().sessionMessages.s1?.draftsByLocalId ?? {};
+    expect(drafts['local-stale']).toBeUndefined();
+  });
 });

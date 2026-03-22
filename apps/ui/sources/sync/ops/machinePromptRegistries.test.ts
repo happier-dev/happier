@@ -1,23 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-    createEncryptedTransferChunkEnvelope,
-    createTransferRecipientKeyPair,
-} from '@/sync/domains/files/transfers/transferChunkEncryption';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
+const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
+    throw new Error('legacy downloadMachineTransferJsonPayload helper should not be used');
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
+    downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload', () => ({
+    downloadMachineTransferJsonPayload: legacyDownloadMachineTransferJsonPayloadMock,
+}));
+
 describe('machine prompt registries ops (server-scoped routing)', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        downloadBulkJsonPayloadMock.mockReset();
+        legacyDownloadMachineTransferJsonPayloadMock.mockClear();
     });
 
-    it('downloads fetched registry item payloads through the machine-scoped transfer lifecycle', async () => {
+    it('downloads fetched registry item payloads through the canonical bulk transfer pipeline', async () => {
         const payload = {
             sourceId: 'skills_sh:featured',
             itemId: 'skills_sh:featured:item-1',
@@ -31,32 +41,27 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
                 updatedAtMs: 1,
             },
         };
-        machineRpcWithServerScopeMock
-            .mockImplementationOnce(async ({ payload: initPayload }: { payload: { recipientPublicKeyBase64: string } }) => ({
-                success: true,
-                downloadId: 'download-1',
-                chunkSizeBytes: 4096,
-                sizeBytes: Buffer.byteLength(JSON.stringify(payload)),
-                name: 'frontend-design.prompt-registry-item.json',
-                recipientPublicKeyBase64: initPayload.recipientPublicKeyBase64,
-            }))
-            .mockImplementationOnce(async () => {
-                const encryptedChunk = await createEncryptedTransferChunkEnvelope({
-                    transferId: 'download-1',
-                    sequence: 0,
-                    payload: new TextEncoder().encode(JSON.stringify(payload)),
-                    recipientPublicKeyBase64: machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.payload?.recipientPublicKeyBase64,
-                });
+        downloadBulkJsonPayloadMock.mockImplementationOnce(async (args: Readonly<{
+            init: (request: Readonly<{ recipientPublicKeyBase64: string }>) => Promise<unknown>;
+            readChunk: (request: Readonly<{ downloadId: string; index: number }>) => Promise<unknown>;
+            finalize: (request: Readonly<{ downloadId: string }>) => Promise<unknown>;
+            parsePayload: (value: unknown) => unknown | null;
+        }>) => {
+            await args.init({ recipientPublicKeyBase64: 'recipient-public-key' });
+            await args.readChunk({ downloadId: 'download-1', index: 0 });
+            await args.finalize({ downloadId: 'download-1' });
+            const parsedPayload = args.parsePayload(payload);
+            if (parsedPayload === null) {
                 return {
-                    success: true,
-                    payloadBase64: encryptedChunk.payloadBase64,
-                    encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
-                    isLast: true,
-                };
-            })
-            .mockResolvedValueOnce({
-                success: true,
-            });
+                    ok: false,
+                    error: 'Downloaded transfer payload returned an unsupported response',
+                } as const;
+            }
+            return {
+                ok: true,
+                payload: parsedPayload,
+            } as const;
+        });
 
         const { machinePromptRegistriesDownloadItem } = await import('./machinePromptRegistries');
 
@@ -74,6 +79,14 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             ok: true,
             item: payload,
         });
+        expect(downloadBulkJsonPayloadMock).toHaveBeenCalledTimes(1);
+        expect(downloadBulkJsonPayloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            init: expect.any(Function),
+            readChunk: expect.any(Function),
+            finalize: expect.any(Function),
+            parsePayload: expect.any(Function),
+        }));
+        expect(legacyDownloadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
@@ -82,7 +95,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
                 sourceId: 'skills_sh:featured',
                 itemId: 'skills_sh:featured:item-1',
                 configuredSources: [],
-                recipientPublicKeyBase64: expect.any(String),
+                recipientPublicKeyBase64: 'recipient-public-key',
             }),
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({

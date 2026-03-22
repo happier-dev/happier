@@ -20,6 +20,20 @@ function createBaseMockSettings(): Record<string, unknown> {
             userActionRequest: true,
             foregroundBehavior: 'banner',
         },
+        notificationChannelsV1: [
+            {
+                v: 1,
+                id: 'builtin:expo_push',
+                kind: 'expo_push',
+                enabled: true,
+                topics: {
+                    ready: true,
+                    permissionRequest: true,
+                    userActionRequest: true,
+                },
+                readyIncludeMessageText: true,
+            },
+        ],
         sessionHandoffDefaultsV1: {
             v: 1,
             workspaceTransferEnabled: true,
@@ -113,11 +127,14 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverUrl: 'http://127.0.0.1:3009' }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => mocks.storageState,
     },
-}));
+});
+});
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     loadPendingSettings: mocks.loadPendingSettings,

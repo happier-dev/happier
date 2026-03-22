@@ -3,11 +3,14 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 const getStateSpy = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => getStateSpy(),
     },
-}));
+});
+});
 
 describe('sessionMachineTarget', () => {
     it('reads machine target from session metadata when available', async () => {

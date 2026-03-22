@@ -35,6 +35,12 @@ function normalizeOpenCodeBackendMode(value: unknown): 'server' | 'acp' | null {
     return value === 'server' || value === 'acp' ? value : null;
 }
 
+function clearClaudeMachineLocalMetadata(metadata: MetadataRecord): void {
+    delete metadata.claudeTranscriptPath;
+    delete metadata.claudeLastCheckpointId;
+    delete metadata.claudeLastAssistantUuid;
+}
+
 function resolveCodexRuntimeSourceAffinity(
     targetDirectSource: DirectSessionsSource | Record<string, unknown>,
 ): Readonly<{
@@ -164,6 +170,10 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         flavor: input.providerId,
     }, input.providerId, input.targetRemoteSessionId);
     const runtimeDescriptor = buildHandoffAgentRuntimeDescriptor(input);
+
+    if (input.providerId === 'claude') {
+        clearClaudeMachineLocalMetadata(next);
+    }
 
     if (input.providerId === 'codex') {
         const importedRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'codex');

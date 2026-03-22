@@ -316,6 +316,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const presence = resolveSessionOnlineState(session);
 
                 // Preserve existing draft and permission mode if they exist, or load from saved data
+                const hasLoadedSession = state.sessions[session.id] !== undefined;
                 const existingDraft = state.sessions[session.id]?.draft;
                 const savedDraft = sessionDrafts[session.id];
                 const existingPermissionMode = state.sessions[session.id]?.permissionMode;
@@ -446,7 +447,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 mergedSessions[session.id] = {
                     ...session,
                     presence,
-                    draft: existingDraft || savedDraft || session.draft || null,
+                    draft: hasLoadedSession
+                        ? (existingDraft ?? null)
+                        : (savedDraft ?? session.draft ?? null),
                     optimisticThinkingAt: session.thinking === true ? null : existingOptimisticThinkingAt,
                     thinkingGraceUntil: mergedThinkingGraceUntil,
                     permissionMode: mergedPermissionMode,

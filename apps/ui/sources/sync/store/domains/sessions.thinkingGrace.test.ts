@@ -5,9 +5,74 @@ afterEach(() => {
     vi.clearAllMocks();
 });
 
+function mockSessionsDomainBoundaries() {
+    vi.doMock('../../domains/state/persistence', () => ({
+        loadSettings: () => ({
+            settings: { groupInactiveSessionsByProject: false },
+            version: null,
+        }),
+        loadLocalSettings: () => ({}),
+        loadPendingSettings: () => ({}),
+        loadPurchases: () => ({}),
+        loadProfile: () => ({ id: 'account_a' }),
+        loadSessionDrafts: () => ({}),
+        loadSessionLastViewed: () => ({}),
+        loadSessionModelModeUpdatedAts: () => ({}),
+        loadSessionModelModes: () => ({}),
+        loadSessionPermissionModeUpdatedAts: () => ({}),
+        loadSessionPermissionModes: () => ({}),
+        loadSessionActionDrafts: () => ({}),
+        loadSessionReviewCommentsDrafts: () => ({}),
+        saveSessionDrafts: vi.fn(),
+        saveSessionLastViewed: vi.fn(),
+        saveSessionModelModeUpdatedAts: vi.fn(),
+        saveSessionModelModes: vi.fn(),
+        saveSessionPermissionModeUpdatedAts: vi.fn(),
+        saveSessionPermissionModes: vi.fn(),
+        saveSessionActionDrafts: vi.fn(),
+        saveSessionReviewCommentsDrafts: vi.fn(),
+        saveSettings: vi.fn(),
+        saveLocalSettings: vi.fn(),
+        savePendingSettings: vi.fn(),
+        savePurchases: vi.fn(),
+        saveProfile: vi.fn(),
+    }));
+    vi.doMock('../../domains/state/warmCachePersistence', () => ({
+        resolveWarmCacheAccountScope: vi.fn(() => null),
+        saveSessionListWarmCacheEntries: vi.fn(),
+    }));
+    vi.doMock('../../domains/state/warmCacheAdapters', () => ({
+        buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
+    }));
+    vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
+        applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
+        buildSessionListViewDataWithServerScope: vi.fn(() => []),
+    }));
+    vi.doMock('../sessionListCache', () => ({
+        setActiveServerSessionListCache: vi.fn((current) => current),
+    }));
+    vi.doMock('../../domains/server/serverRuntime', () => ({
+        getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server_1' })),
+    }));
+    vi.doMock('../../runtime/orchestration/projectManager', () => ({
+        projectManager: {
+            updateSessions: vi.fn(),
+        },
+    }));
+    vi.doMock('@/sync/domains/models/modelOptions', () => ({
+        isModelSelectableForSession: vi.fn(() => true),
+    }));
+    vi.doMock('@/agents/catalog/catalog', () => ({
+        AGENT_IDS: [],
+        DEFAULT_AGENT_ID: 'openai',
+        resolveAgentIdFromFlavor: vi.fn(() => null),
+    }));
+}
+
 function createHarness(createSessionsDomain: any, createReducer: any) {
     let state: any = {
         sessions: {},
+        sessionListRenderables: {},
         sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
@@ -18,6 +83,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},
+        machineDisplayById: {},
         sessionMessages: {
             s1: {
                 messages: [],
@@ -26,6 +92,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
                 isLoaded: true,
             },
         },
+        profile: { id: 'account_a' },
         settings: { groupInactiveSessionsByProject: false },
     };
 
@@ -50,11 +117,7 @@ describe('sessions domain: thinking grace', () => {
     });
 
     it('keeps thinkingGraceUntil briefly after thinking turns off (prevents UI flicker)', async () => {
-        vi.doMock('../../runtime/orchestration/projectManager', () => ({
-            projectManager: {
-                updateSessions: vi.fn(),
-            },
-        }));
+        mockSessionsDomainBoundaries();
 
         const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
@@ -115,4 +178,3 @@ describe('sessions domain: thinking grace', () => {
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
     });
 });
-

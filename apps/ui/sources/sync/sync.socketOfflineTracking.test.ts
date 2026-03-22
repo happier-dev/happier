@@ -33,12 +33,18 @@ vi.mock('./api/session/apiChanges', () => ({
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
-  const actual = await vi.importActual<any>('react-native');
-  return {
-    ...actual,
-    Platform: { ...(actual?.Platform ?? {}), OS: 'web' },
-    AppState: { currentState: 'active', addEventListener: appStateAddListener as any },
-  };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            AppState: {
+                                currentState: 'active',
+                                addEventListener: appStateAddListener as any,
+                            },
+                        }
+    );
 });
 
 vi.mock('@/sync/api/session/apiSocket', () => {

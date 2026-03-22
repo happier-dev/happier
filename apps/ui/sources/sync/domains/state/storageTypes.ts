@@ -95,6 +95,18 @@ const MetadataObjectSchema = z.object({
             id: z.string(),
             name: z.string(),
             description: z.string().optional(),
+            modelOptions: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                description: z.string().optional(),
+                type: z.string(),
+                currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                options: z.array(z.object({
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                    name: z.string(),
+                    description: z.string().optional(),
+                })).optional(),
+            })).optional(),
         })),
     }).optional(),
     sessionModelsV1: z.object({
@@ -106,6 +118,18 @@ const MetadataObjectSchema = z.object({
             id: z.string(),
             name: z.string(),
             description: z.string().optional(),
+            modelOptions: z.array(z.object({
+                id: z.string(),
+                name: z.string(),
+                description: z.string().optional(),
+                type: z.string(),
+                currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                options: z.array(z.object({
+                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+                    name: z.string(),
+                    description: z.string().optional(),
+                })).optional(),
+            })).optional(),
         })),
     }).optional(),
     /**

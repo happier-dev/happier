@@ -1,5 +1,6 @@
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
+import { probeAuthenticatedServerFeaturesEndpoint } from '@/sync/api/capabilities/serverFeaturesClient';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 function trimBaseUrl(endpoint: string): string {
@@ -34,36 +35,10 @@ export function createSyncSocketReadinessProbe(params: Readonly<{
             };
         }
 
-        try {
-            const authResponse = await runtimeFetch(`${endpoint}/v1/features`, {
-                method: 'GET',
-                headers: {
-                    Accept: 'application/json',
-                    Authorization: `Bearer ${params.token}`,
-                },
-            });
-
-            if (authResponse.status === 401 || authResponse.status === 403) {
-                return {
-                    status: 'auth_failed',
-                    statusCode: authResponse.status,
-                    errorMessage: `Authenticated probe returned ${authResponse.status}`,
-                };
-            }
-
-            if (authResponse.status >= 500) {
-                return {
-                    status: 'retry_later',
-                    errorMessage: `Authenticated probe returned ${authResponse.status}`,
-                };
-            }
-
-            return { status: 'ready' };
-        } catch (error) {
-            return {
-                status: 'server_unreachable',
-                errorMessage: error instanceof Error ? error.message : String(error),
-            };
-        }
+        const authProbeResult = await probeAuthenticatedServerFeaturesEndpoint({
+            endpoint,
+            token: params.token,
+        });
+        return authProbeResult;
     };
 }

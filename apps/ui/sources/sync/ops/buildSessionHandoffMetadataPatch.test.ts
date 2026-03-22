@@ -302,6 +302,61 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
     });
 
+    it('clears stale Claude machine-local transcript metadata after handoff rebinding', () => {
+        const updated = buildSessionHandoffMetadataPatch({
+            metadata: {
+                flavor: 'claude',
+                path: '/repo/source',
+                host: 'source-host',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_session_old',
+                claudeTranscriptPath: '/Users/source/.claude/projects/proj-old/claude_session_old.jsonl',
+                claudeLastCheckpointId: 'checkpoint_old',
+                claudeLastAssistantUuid: 'assistant_old',
+                directSessionV1: {
+                    v: 1,
+                    providerId: 'claude',
+                    machineId: 'machine_source',
+                    remoteSessionId: 'claude_session_old',
+                    source: {
+                        kind: 'claudeConfig',
+                        configDir: '/Users/source/.claude',
+                        projectId: 'proj-old',
+                    },
+                    linkedAtMs: 1,
+                },
+            },
+            providerId: 'claude',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageBefore: 'direct',
+            sessionStorageAfter: 'direct',
+            targetPath: '/repo/target',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 1234,
+            targetRemoteSessionId: 'claude_session_new',
+            targetDirectSource: {
+                kind: 'claudeConfig',
+                configDir: '/Users/target/.claude',
+                projectId: 'proj-target',
+            },
+        });
+
+        expect(updated.claudeSessionId).toBe('claude_session_new');
+        expect(updated).not.toHaveProperty('claudeTranscriptPath');
+        expect(updated).not.toHaveProperty('claudeLastCheckpointId');
+        expect(updated).not.toHaveProperty('claudeLastAssistantUuid');
+        expect(updated.directSessionV1).toMatchObject({
+            machineId: 'machine_target',
+            remoteSessionId: 'claude_session_new',
+            source: {
+                kind: 'claudeConfig',
+                configDir: '/Users/target/.claude',
+                projectId: 'proj-target',
+            },
+        });
+    });
+
     it('prefers target OpenCode server affinity over stale legacy backend metadata when no runtime descriptor is imported', () => {
         const updated = buildSessionHandoffMetadataPatch({
             metadata: {

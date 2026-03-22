@@ -1,20 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-    createEncryptedTransferChunkEnvelope,
-    createTransferRecipientKeyPair,
-} from '@/sync/domains/files/transfers/transferChunkEncryption';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
+const uploadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
+const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
+    throw new Error('legacy downloadMachineTransferJsonPayload helper should not be used');
+}));
+const legacyUploadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
+    throw new Error('legacy uploadMachineTransferJsonPayload helper should not be used');
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
+    downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
+    uploadBulkJsonPayload: uploadBulkJsonPayloadMock,
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload', () => ({
+    downloadMachineTransferJsonPayload: legacyDownloadMachineTransferJsonPayloadMock,
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/uploadMachineTransferJsonPayload', () => ({
+    uploadMachineTransferJsonPayload: legacyUploadMachineTransferJsonPayloadMock,
+}));
+
 describe('machine prompt assets ops (server-scoped routing)', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        downloadBulkJsonPayloadMock.mockReset();
+        uploadBulkJsonPayloadMock.mockReset();
+        legacyDownloadMachineTransferJsonPayloadMock.mockClear();
+        legacyUploadMachineTransferJsonPayloadMock.mockClear();
     });
 
     it('routes prompt asset type listing through server-scoped machine rpc', async () => {
@@ -51,7 +72,7 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
         }));
     });
 
-    it('downloads prompt asset payloads through the machine-scoped transfer lifecycle', async () => {
+    it('downloads prompt asset payloads through the canonical bulk pipeline', async () => {
         const payload = {
             assetTypeId: 'agents.skill',
             scope: 'user',
@@ -68,32 +89,10 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
                 updatedAtMs: 1,
             },
         };
-        machineRpcWithServerScopeMock
-            .mockImplementationOnce(async ({ payload: initPayload }: { payload: { recipientPublicKeyBase64: string } }) => ({
-                success: true,
-                downloadId: 'download-1',
-                chunkSizeBytes: 4096,
-                sizeBytes: Buffer.byteLength(JSON.stringify(payload)),
-                name: 'skill-a.prompt-asset.json',
-                recipientPublicKeyBase64: initPayload.recipientPublicKeyBase64,
-            }))
-            .mockImplementationOnce(async () => {
-                const encryptedChunk = await createEncryptedTransferChunkEnvelope({
-                    transferId: 'download-1',
-                    sequence: 0,
-                    payload: new TextEncoder().encode(JSON.stringify(payload)),
-                    recipientPublicKeyBase64: machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.payload?.recipientPublicKeyBase64,
-                });
-                return {
-                    success: true,
-                    payloadBase64: encryptedChunk.payloadBase64,
-                    encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
-                    isLast: true,
-                };
-            })
-            .mockResolvedValueOnce({
-                success: true,
-            });
+        downloadBulkJsonPayloadMock.mockResolvedValueOnce({
+            ok: true as const,
+            payload,
+        });
         const { machinePromptAssetsDownload } = await import('./machinePromptAssets');
 
         const res = await machinePromptAssetsDownload(
@@ -103,32 +102,16 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
         );
 
         expect(res).toEqual({ ok: true, item: payload });
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
-            payload: expect.objectContaining({
-                assetTypeId: 'agents.skill',
-                scope: 'user',
-                externalRef: { name: 'skill-a' },
-                recipientPublicKeyBase64: expect.any(String),
-            }),
+        expect(downloadBulkJsonPayloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            init: expect.any(Function),
+            readChunk: expect.any(Function),
+            finalize: expect.any(Function),
+            parsePayload: expect.any(Function),
         }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
-            payload: { downloadId: 'download-1', index: 0 },
-        }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
-            payload: { downloadId: 'download-1' },
-        }));
+        expect(legacyDownloadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
     });
 
-    it('uploads prompt asset writes through the machine-scoped transfer lifecycle', async () => {
+    it('uploads prompt asset writes through the canonical bulk pipeline', async () => {
         const bundleBody = {
             v: 1 as const,
             entries: [],
@@ -140,7 +123,7 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
                 success: true,
                 uploadId: 'upload-1',
                 chunkSizeBytes: 4096,
-                recipientPublicKeyBase64: createTransferRecipientKeyPair().recipientPublicKeyBase64,
+                recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
             })
             .mockResolvedValueOnce({
                 success: true,
@@ -153,6 +136,14 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
                     digest: 'digest-a',
                 },
             });
+        uploadBulkJsonPayloadMock.mockResolvedValueOnce({
+            ok: true as const,
+            response: {
+                ok: true,
+                externalRef: { skillName: 'writer' },
+                digest: 'digest-a',
+            },
+        });
         const { machinePromptAssetsWrite } = await import('./machinePromptAssets');
 
         const res = await machinePromptAssetsWrite(
@@ -176,28 +167,23 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
             externalRef: { skillName: 'writer' },
             digest: 'digest-a',
         });
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
-            payload: { sizeBytes: expect.any(Number) },
+        expect(uploadBulkJsonPayloadMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: {
+                assetTypeId: 'agents.skill',
+                scope: 'user',
+                externalRef: null,
+                targetName: 'writer',
+                title: 'Writer',
+                bundleSchemaId: 'skills.skill_md_v1',
+                bundleBody,
+                previewOnly: false,
+                expectedDigest: null,
+            },
+            init: expect.any(Function),
+            sendChunk: expect.any(Function),
+            finalize: expect.any(Function),
+            parseResponse: expect.any(Function),
         }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,
-            payload: expect.objectContaining({
-                uploadId: 'upload-1',
-                index: 0,
-                payloadBase64: expect.any(String),
-                encryptedDataKeyEnvelopeBase64: expect.any(String),
-            }),
-        }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE,
-            payload: { uploadId: 'upload-1' },
-        }));
+        expect(legacyUploadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
     });
 });

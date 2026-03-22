@@ -80,6 +80,15 @@ function ensureExecutionRunMutationAllowed(sessionId: string): { ok: false; erro
     return createInactiveSessionRpcUnavailableResult();
 }
 
+function notifyExecutionRunMutationSuccess(
+    sessionId: string,
+    response: ExecutionRunSendResponse | ExecutionRunStopResponse | ExecutionRunActionResponse,
+): void {
+    if (response && typeof response === 'object' && (response as any).ok === true) {
+        notifyExecutionRunActivity(sessionId);
+    }
+}
+
 export async function sessionExecutionRunStart(
     sessionId: string,
     request: ExecutionRunStartRequest,
@@ -123,8 +132,6 @@ export async function sessionExecutionRunSend(
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionExecutionRunSendResult> {
     try {
-        const inactiveSessionResult = ensureExecutionRunMutationAllowed(sessionId);
-        if (inactiveSessionResult) return inactiveSessionResult;
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
         const payload: ExecutionRunSendRequest =
             request.delivery === undefined
@@ -141,6 +148,7 @@ export async function sessionExecutionRunSend(
         if (!response || typeof response !== 'object' || (response as any).ok !== true) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
+        notifyExecutionRunMutationSuccess(sessionId, response);
         return response;
     } catch (error) {
         return {
@@ -157,8 +165,6 @@ export async function sessionExecutionRunStop(
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionExecutionRunStopResult> {
     try {
-        const inactiveSessionResult = ensureExecutionRunMutationAllowed(sessionId);
-        if (inactiveSessionResult) return inactiveSessionResult;
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
         const response = await sessionRpcWithServerScope<ExecutionRunStopResponse, ExecutionRunStopRequest>({
             sessionId,
@@ -171,6 +177,7 @@ export async function sessionExecutionRunStop(
         if (!response || typeof response !== 'object' || (response as any).ok !== true) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
+        notifyExecutionRunMutationSuccess(sessionId, response);
         return response;
     } catch (error) {
         return {
@@ -252,8 +259,6 @@ export async function sessionExecutionRunAction(
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionExecutionRunActionResult> {
     try {
-        const inactiveSessionResult = ensureExecutionRunMutationAllowed(sessionId);
-        if (inactiveSessionResult) return inactiveSessionResult;
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
         const response = await sessionRpcWithServerScope<ExecutionRunActionResponse, ExecutionRunActionRequest>({
             sessionId,
@@ -266,6 +271,7 @@ export async function sessionExecutionRunAction(
         if (!response || typeof response !== 'object' || typeof (response as any).ok !== 'boolean') {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
+        notifyExecutionRunMutationSuccess(sessionId, response);
         return response;
     } catch (error) {
         return {

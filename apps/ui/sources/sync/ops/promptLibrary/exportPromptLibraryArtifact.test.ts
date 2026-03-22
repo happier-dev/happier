@@ -27,11 +27,14 @@ const storageState = vi.hoisted(() => ({
     updateArtifact: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => storageState,
     },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {

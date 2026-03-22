@@ -197,8 +197,9 @@ describe('sidechains (provider-agnostic)', () => {
 
     const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgent') as any;
     expect(toolMessage).toBeTruthy();
-    expect(toolMessage.children).toHaveLength(1);
-    expect(toolMessage.children[0]?.kind).toBe('agent-text');
+    expect(toolMessage.children).toHaveLength(2);
+    expect(toolMessage.children[0]?.kind).toBe('user-text');
+    expect(toolMessage.children[1]?.kind).toBe('agent-text');
   });
 
   it('attaches sidechain thread to SubAgentRun tool-call via tool-call id sidechainId', () => {

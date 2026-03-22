@@ -53,6 +53,43 @@ export type AcpConfigOptionControl = Readonly<{
     isPending: boolean;
 }>;
 
+export function isBooleanConfigOptionType(type: string): boolean {
+    return type === 'boolean' || type === 'bool' || type === 'toggle';
+}
+
+export function resolveBooleanConfigOptionToggleValues(option: AcpConfigOption): Readonly<{
+    offValue: AcpConfigOptionValueId;
+    onValue: AcpConfigOptionValueId;
+}> {
+    const optionValues = Array.isArray(option.options)
+        ? option.options
+            .map((entry) => normalizeValueId(entry.value))
+            .filter((value): value is AcpConfigOptionValueId => value !== null)
+        : [];
+
+    if (optionValues.length >= 2) {
+        return {
+            offValue: optionValues[0],
+            onValue: optionValues[1],
+        };
+    }
+
+    return {
+        offValue: 'false',
+        onValue: 'true',
+    };
+}
+
+export function resolveBooleanConfigOptionValue(option: AcpConfigOption, value: AcpConfigOptionValueId): boolean {
+    const { onValue } = resolveBooleanConfigOptionToggleValues(option);
+    return value === onValue;
+}
+
+export function resolveBooleanConfigOptionNextValue(option: AcpConfigOption, enabled: boolean): AcpConfigOptionValueId {
+    const { offValue, onValue } = resolveBooleanConfigOptionToggleValues(option);
+    return enabled ? onValue : offValue;
+}
+
 function buildAcpConfigOptionControls(params: Readonly<{
     providerId: string;
     provider: string | null;

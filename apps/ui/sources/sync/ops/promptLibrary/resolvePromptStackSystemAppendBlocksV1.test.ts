@@ -180,7 +180,7 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     expect(blocks).toEqual(['Hello']);
   });
 
-  it('returns voice blocks without mixing in coding or profile entries', async () => {
+  it('returns voice blocks without mixing in coding entries and appends matching profile entries', async () => {
     const artifactsById: Record<string, DecryptedArtifact> = {
       coding: createPromptDocArtifact({ id: 'coding', markdown: 'Hello from coding' }),
       voice: createPromptDocArtifact({ id: 'voice', markdown: 'Hello from voice' }),
@@ -227,6 +227,6 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
       artifactsById,
     });
 
-    expect(blocks).toEqual(['Hello from voice']);
+    expect(blocks).toEqual(['Hello from voice', 'Hello from profile']);
   });
 });

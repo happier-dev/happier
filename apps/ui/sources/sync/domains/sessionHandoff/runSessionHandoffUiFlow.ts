@@ -6,6 +6,7 @@ import { openSessionHandoffProgressModal } from '@/components/sessions/handoff/o
 import { openSessionHandoffFailureRecoveryModal } from '@/components/sessions/handoff/openSessionHandoffFailureRecoveryModal';
 
 import { executeSessionHandoffAction } from './executeSessionHandoffAction';
+import { subscribeSessionHandoffProgress } from './sessionHandoffProgressEvents';
 import { performSessionHandoffRecoveryAction } from '../../ops/sessionHandoffs';
 
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<unknown>;
@@ -45,13 +46,30 @@ export async function runSessionHandoffUiFlow(
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
         const modalId = openSessionHandoffProgressModal();
+        const unsubscribeProgress = subscribeSessionHandoffProgress((update) => {
+            if (update.sessionId !== args.sessionId || update.targetMachineId !== args.targetMachineId) {
+                return;
+            }
+            Modal.update(modalId, {
+                status: update.status,
+            });
+        });
+        let progressModalClosed = false;
+        const closeProgressModal = () => {
+            if (progressModalClosed) {
+                return;
+            }
+            unsubscribeProgress();
+            Modal.hide(modalId);
+            progressModalClosed = true;
+        };
         try {
             let result = await executeSessionHandoffAction(args as any);
-            Modal.hide(modalId);
             if (result.ok) {
                 return result;
             }
             if (result.recovery) {
+                closeProgressModal();
                 const recoveryPresentation = buildSessionHandoffRecoveryPresentation(result.error);
                 const action = await openSessionHandoffFailureRecoveryModal({
                     title: recoveryPresentation.title,
@@ -87,7 +105,6 @@ export async function runSessionHandoffUiFlow(
                 return { ok: false, handled: true };
             }
         } catch (error) {
-            Modal.hide(modalId);
             const shouldRetry = await Modal.confirm(
                 t('sessionHandoff.failure.title'),
                 normalizeErrorMessage(error instanceof Error ? error.message : error),
@@ -99,6 +116,8 @@ export async function runSessionHandoffUiFlow(
             if (!shouldRetry) {
                 return { ok: false, handled: true };
             }
+        } finally {
+            closeProgressModal();
         }
     }
 }

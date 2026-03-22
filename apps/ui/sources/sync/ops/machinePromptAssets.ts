@@ -18,14 +18,82 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { downloadMachineTransferJsonPayload } from '@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload';
-import { uploadMachineTransferJsonPayload } from '@/sync/domains/transfers/runtime/uploadMachineTransferJsonPayload';
+import { downloadBulkJsonPayload, uploadBulkJsonPayload } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 type MachinePromptAssetsOpts = Readonly<{
     serverId?: string | null;
     timeoutMs?: number | null;
 }>;
+
+type PromptAssetDownloadInitResponse =
+    | Readonly<{
+        success: true;
+        downloadId: string;
+        chunkSizeBytes: number;
+        sizeBytes: number;
+        name: string;
+    }>
+    | Readonly<{
+        success: false;
+        error: string;
+        errorCode?: string;
+    }>;
+
+type PromptAssetDownloadChunkResponse =
+    | Readonly<{
+        success: true;
+        payloadBase64?: string;
+        encryptedDataKeyEnvelopeBase64?: string;
+        contentBase64?: string;
+        isLast: boolean;
+    }>
+    | Readonly<{
+        success: false;
+        error: string;
+        errorCode?: string;
+    }>;
+
+type PromptAssetDownloadFinalizeResponse = Readonly<{
+    success: boolean;
+    error?: string;
+    errorCode?: string;
+}>;
+
+type PromptAssetUploadInitResponse =
+    | Readonly<{
+        success: true;
+        uploadId: string;
+        chunkSizeBytes: number;
+        recipientPublicKeyBase64: string;
+    }>
+    | Readonly<{
+        success: false;
+        error: string;
+        errorCode?: string;
+    }>;
+
+type PromptAssetUploadChunkResponse =
+    | Readonly<{
+        success: true;
+    }>
+    | Readonly<{
+        success: false;
+        error: string;
+        errorCode?: string;
+    }>;
+
+type PromptAssetUploadFinalizeResponse =
+    | Readonly<{
+        success: true;
+        response?: unknown;
+    }>
+    | Readonly<{
+        success: false;
+        error: string;
+        errorCode?: string;
+    }>;
 
 function throwUnsupportedResponse(method: string): never {
     throw new Error(`Unsupported response from machine RPC (${method})`);
@@ -95,17 +163,31 @@ export async function machinePromptAssetsDownload(
     opts?: MachinePromptAssetsOpts,
 ): Promise<MachinePromptAssetDownloadResponse> {
     const payload = PromptAssetReadRequestSchema.parse(input);
-    const result = await downloadMachineTransferJsonPayload({
-        machineId,
-        serverId: opts?.serverId ?? undefined,
-        timeoutMs: opts?.timeoutMs ?? undefined,
-        request: payload,
-        methods: {
-            init: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
-            chunk: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
-            finalize: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
-            abort: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_ABORT,
-        },
+    const result = await downloadBulkJsonPayload({
+        init: async (request): Promise<PromptAssetDownloadInitResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadInitResponse>(await machineRpcWithServerScope<PromptAssetDownloadInitResponse, PromptAssetReadRequest & Readonly<{ recipientPublicKeyBase64: string }>>({
+            machineId,
+            serverId: opts?.serverId,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            payload: {
+                ...payload,
+                recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+            },
+        })),
+        readChunk: async (request): Promise<PromptAssetDownloadChunkResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadChunkResponse>(await machineRpcWithServerScope<PromptAssetDownloadChunkResponse, Readonly<{ downloadId: string; index: number }>>({
+            machineId,
+            serverId: opts?.serverId,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
+            payload: request,
+        })),
+        finalize: async (request): Promise<PromptAssetDownloadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadFinalizeResponse>(await machineRpcWithServerScope<PromptAssetDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
+            machineId,
+            serverId: opts?.serverId,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
+            payload: request,
+        })),
         parsePayload: parsePromptAssetTransferPayload,
     });
 
@@ -125,17 +207,34 @@ export async function machinePromptAssetsWrite(
     opts?: MachinePromptAssetsOpts,
 ): Promise<PromptAssetMutationResponseV1> {
     const payload = PromptAssetWriteRequestSchema.parse(input);
-    const result = await uploadMachineTransferJsonPayload({
-        machineId,
-        serverId: opts?.serverId ?? undefined,
-        timeoutMs: opts?.timeoutMs ?? undefined,
+    const result = await uploadBulkJsonPayload<PromptAssetUploadFinalizeResponse, PromptAssetMutationResponseV1>({
         payload,
-        methods: {
-            init: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
-            chunk: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,
-            finalize: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE,
-            abort: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_ABORT,
-        },
+        init: async (request): Promise<PromptAssetUploadInitResponse> => await assertRpcResponseWithSuccess<PromptAssetUploadInitResponse>(await machineRpcWithServerScope<PromptAssetUploadInitResponse, Readonly<{ sizeBytes: number }>>({
+            machineId,
+            serverId: opts?.serverId,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
+            payload: request,
+        })),
+        sendChunk: async (request): Promise<PromptAssetUploadChunkResponse> => await assertRpcResponseWithSuccess<PromptAssetUploadChunkResponse>(await machineRpcWithServerScope<PromptAssetUploadChunkResponse, Readonly<{
+            uploadId: string;
+            index: number;
+            payloadBase64: string;
+            encryptedDataKeyEnvelopeBase64: string;
+        }>>({
+            machineId,
+            serverId: opts?.serverId,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,
+            payload: request,
+        })),
+        finalize: async (request): Promise<PromptAssetUploadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptAssetUploadFinalizeResponse>(await machineRpcWithServerScope<PromptAssetUploadFinalizeResponse, Readonly<{ uploadId: string }>>({
+            machineId,
+            serverId: opts?.serverId,
+            timeoutMs: opts?.timeoutMs ?? undefined,
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE,
+            payload: request,
+        })),
         parseResponse: (value) => {
             const parsed = PromptAssetMutationResponseV1Schema.safeParse(
                 (value as { response?: unknown } | null)?.response,

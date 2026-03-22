@@ -54,6 +54,7 @@ export function bootstrapActiveServerFromWebLocation(
                 serverUrl: desired,
                 source: 'url',
                 scope: opts.scope ?? 'device',
+                replaceEquivalentStoredUrl: true,
             });
         } catch {
             // ignore

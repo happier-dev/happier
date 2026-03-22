@@ -6,6 +6,8 @@ const executionRunGet = vi.fn(async () => null);
 const executionRunSend = vi.fn(async () => ({ ok: true }));
 const executionRunStop = vi.fn(async () => ({ ok: true }));
 const executionRunAction = vi.fn(async () => ({ ok: true }));
+const listAgentBackendsForVoiceTool = vi.fn(async () => ({ items: [] }));
+const listAgentModelsForVoiceTool = vi.fn(async () => ({ items: [] }));
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, updater: (metadata: any) => any) => {
   updater({ path: '/tmp/project', host: 'localhost' });
 });
@@ -89,8 +91,8 @@ vi.mock('@/voice/tools/actionImpl/reviewEnginesList', () => ({
 }));
 
 vi.mock('@/voice/tools/actionImpl/agentCatalogList', () => ({
-  listAgentBackendsForVoiceTool: vi.fn(),
-  listAgentModelsForVoiceTool: vi.fn(),
+  listAgentBackendsForVoiceTool,
+  listAgentModelsForVoiceTool,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -99,8 +101,10 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({
       settings: { actionsSettingsV1: { v: 1, actions: {} } },
       sessions: {
@@ -123,15 +127,81 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
           },
         },
+        s_codex: {
+          id: 's_codex',
+          metadata: {
+            path: '/tmp/project',
+            host: 'localhost',
+            flavor: 'codex',
+            sessionModesV1: {
+              v: 1,
+              provider: 'codex',
+              updatedAt: 1,
+              currentModeId: 'plan',
+              availableModes: [
+                { id: 'default', name: 'Default', description: 'Standard collaboration mode' },
+                { id: 'plan', name: 'Plan', description: 'Think first' },
+              ],
+            },
+          },
+        },
       },
     }),
   },
-  useSession: vi.fn(),
-}));
+    useSession: vi.fn(),
+});
+});
 
 describe('createDefaultActionExecutor plan mode integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('forwards limit to agents.backends.list voice-tool routing', async () => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'agents.backends.list',
+      { includeDisabled: true, limit: 2 },
+      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(listAgentBackendsForVoiceTool).toHaveBeenCalledWith({ includeDisabled: true, limit: 2 });
+  });
+
+  it('forwards limit to agents.models.list voice-tool routing', async () => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'agents.models.list',
+      { agentId: 'claude', machineId: 'm1', limit: 3 },
+      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith({ agentId: 'claude', machineId: 'm1', limit: 3 });
+  });
+
+  it('forwards backendTargetKey to agents.models.list voice-tool routing', async () => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'agents.models.list',
+      { backendTargetKey: 'acpBackend:review-bot', machineId: 'm1', limit: 2 },
+      { defaultSessionId: 's1', surface: 'voice_tool', placement: 'voice_panel' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith({
+      agentId: 'customAcp',
+      backendTargetKey: 'acpBackend:review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
   });
 
   it('does not publish a session-mode override when starting a planner subagent run', async () => {
@@ -226,6 +296,50 @@ describe('createDefaultActionExecutor plan mode integration', () => {
         expect.objectContaining({ value: 'build', label: 'Build' }),
         expect.objectContaining({ value: 'plan', label: 'Plan' }),
       ]),
+    );
+  });
+
+  it('publishes the real default mode id when session.mode.set targets a provider mode literally named default', async () => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const { normalizeRequestedSessionModeId, resolveSessionModeActionControl } = await import('./sessionModeActionSupport');
+
+    const control = resolveSessionModeActionControl({
+      metadata: {
+        path: '/tmp/project',
+        host: 'localhost',
+        flavor: 'codex',
+        sessionModesV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 1,
+          currentModeId: 'plan',
+          availableModes: [
+            { id: 'default', name: 'Default', description: 'Standard collaboration mode' },
+            { id: 'plan', name: 'Plan', description: 'Think first' },
+          ],
+        },
+      },
+    } as any);
+    expect(control?.options.map((option) => option.id)).toEqual(['default', 'plan']);
+    expect(normalizeRequestedSessionModeId(control, 'default')).toBe('default');
+
+    const executor = createDefaultActionExecutor();
+    const result = await executor.execute(
+      'session.mode.set',
+      { sessionId: 's_codex', modeId: 'default' },
+      { defaultSessionId: 's_codex', surface: 'voice_tool', placement: 'voice_panel' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_codex', expect.any(Function));
+    const updater = patchSessionMetadataWithRetry.mock.calls[0]?.[1];
+    const next = updater({
+      path: '/tmp/project',
+      host: 'localhost',
+      sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' },
+    });
+    expect(next.sessionModeOverrideV1).toEqual(
+      expect.objectContaining({ v: 1, modeId: 'default' }),
     );
   });
 });

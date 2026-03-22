@@ -96,4 +96,5 @@ describe('messages domain: applyTranscriptDraftDelta', () => {
         const sessionMessages = get().sessionMessages.s1;
         expect(sessionMessages.draftsByLocalId['local-1']).toBeUndefined();
     });
+
 });

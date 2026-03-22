@@ -16,13 +16,14 @@ import type {
 } from '../domains/state/storageTypes';
 import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
-import type { Message } from '../domains/messages/messageTypes';
+import type { AgentTextMessage, Message } from '../domains/messages/messageTypes';
 import type { Settings } from '../domains/settings/settings';
 import { settingsDefaults } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
 import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { buildTranscriptDraftMessages } from '../domains/messages/buildTranscriptDraftMessages';
+import { mergeTranscriptCommittedAndDraftMessages } from '../domains/messages/mergeTranscriptCommittedAndDraftMessages';
 import { resolveLastViewedSessionSeq } from '../domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
@@ -55,6 +56,10 @@ const emptyArray: unknown[] = [];
 const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
+
+function isAgentTextMessage(message: Message): message is AgentTextMessage {
+  return message.kind === 'agent-text';
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -95,6 +100,7 @@ export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isL
       const session = state.sessionMessages[sessionId];
       return {
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
+        committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
         draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
         messagesVersion: session?.messagesVersion ?? 0,
         isLoaded: session?.isLoaded ?? false,
@@ -111,12 +117,13 @@ export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isL
         updatedAtMs: number;
       }>,
       sidechainId: null,
-    });
-    if (draftMessages.length === 0) {
-      return snapshot.committedIds as string[];
-    }
-    return [...snapshot.committedIds, ...draftMessages.map((message) => message.id)];
-  }, [snapshot.committedIds, snapshot.draftsByLocalId, snapshot.messagesVersion]);
+    }).filter(isAgentTextMessage);
+    return mergeTranscriptCommittedAndDraftMessages({
+      committedIds: snapshot.committedIds as string[],
+      committedMessagesById: snapshot.committedMessagesById,
+      draftMessages,
+    }).ids;
+  }, [snapshot.committedIds, snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
 
   return React.useMemo(() => ({ ids, isLoaded: snapshot.isLoaded }), [ids, snapshot.isLoaded]);
 }
@@ -132,6 +139,7 @@ export function useSessionMessagesById(sessionId: string): Record<string, Messag
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
+        committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
         draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
         messagesVersion: session?.messagesVersion ?? 0,
@@ -148,15 +156,13 @@ export function useSessionMessagesById(sessionId: string): Record<string, Messag
         updatedAtMs: number;
       }>,
       sidechainId: null,
-    });
-    if (draftMessages.length === 0) {
-      return snapshot.committedMessagesById;
-    }
-    return Object.fromEntries([
-      ...Object.entries(snapshot.committedMessagesById),
-      ...draftMessages.map((message) => [message.id, message] as const),
-    ]);
-  }, [snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
+    }).filter(isAgentTextMessage);
+    return mergeTranscriptCommittedAndDraftMessages({
+      committedIds: snapshot.committedIds as string[],
+      committedMessagesById: snapshot.committedMessagesById,
+      draftMessages,
+    }).messagesById;
+  }, [snapshot.committedIds, snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
 }
 
 export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {

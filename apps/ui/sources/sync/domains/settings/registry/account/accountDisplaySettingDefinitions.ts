@@ -158,7 +158,7 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: null,
         description: 'Explicit active server selection target kind (server/group)',
         storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'presence', privacy: 'safe', identityScope: 'person' },
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
     sessionTagsEnabled: {
         schema: z.boolean(),

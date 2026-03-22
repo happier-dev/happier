@@ -1,6 +1,7 @@
 import {
     readServerEnabledBit,
     SessionHandoffCommitResponseSchema,
+    SessionHandoffPrepareTargetResultGetResponseSchema,
     SessionHandoffPrepareTargetResponseSchema,
     SessionHandoffStartResponseSchema,
     SessionHandoffStatusSchema,
@@ -34,6 +35,7 @@ import { waitForSessionHandoffTargetSessionActive } from '../domains/sessionHand
 import { readSessionHandoffSessionActivity } from '../domains/sessionHandoff/readSessionHandoffSessionActivity';
 import { stabilizeSessionHandoffTargetBinding } from '../domains/sessionHandoff/stabilizeSessionHandoffTargetBinding';
 import { runSessionHandoffRetryLoop } from '../domains/sessionHandoff/runSessionHandoffRetryLoop';
+import { publishSessionHandoffProgress } from '../domains/sessionHandoff/sessionHandoffProgressEvents';
 import {
     readCachedDirectPeerRoute,
     recordCachedDirectPeerRouteUnavailable,
@@ -68,6 +70,7 @@ export type StartSessionHandoffOptions = Readonly<{
 
 type HandoffRetryOptions = Readonly<{
     timeoutMs?: number;
+    pollTimeoutMs?: number;
     intervalMs?: number;
     now?: () => number;
     sleep?: (delayMs: number) => Promise<void>;
@@ -109,6 +112,7 @@ function normalizeId(raw: unknown): string {
 }
 
 const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 15_000;
+const DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS = 300_000;
 const DEFAULT_TARGET_PREPARE_RETRY_INTERVAL_MS = 500;
 const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 15_000;
 const DEFAULT_SOURCE_START_RETRY_INTERVAL_MS = 500;
@@ -127,6 +131,14 @@ function readSessionHandoffMachineRpcTimeoutMs(): number {
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return DEFAULT_SESSION_HANDOFF_MACHINE_RPC_TIMEOUT_MS;
     return Math.max(5_000, Math.min(300_000, parsed));
+}
+
+function readSessionHandoffTargetPreparePollTimeoutMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_HANDOFF_TARGET_PREPARE_POLL_TIMEOUT_MS ?? '').trim();
+    if (!raw) return DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS;
+    return Math.max(5_000, Math.min(600_000, parsed));
 }
 
 function readSessionHandoffPostCommitBindingStabilizationTimeoutMs(): number {
@@ -457,8 +469,138 @@ function shouldRetryTargetPrepare(result: Readonly<{ ok: false; errorCode: strin
     return result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE;
 }
 
+function hasPrepareTargetReadyPayload(
+    response: SessionHandoffPrepareTargetResponse,
+): response is SessionHandoffPrepareTargetResponse & Readonly<{
+    remoteSessionId: string;
+    directSource: NonNullable<SessionHandoffPrepareTargetResponse['directSource']>;
+    resume: NonNullable<SessionHandoffPrepareTargetResponse['resume']>;
+}> {
+    return typeof response.remoteSessionId === 'string'
+        && response.directSource !== undefined
+        && response.resume !== undefined;
+}
+
+async function pollPreparedTargetSessionHandoffResult(params: Readonly<{
+    handoffId: string;
+    targetMachineId: string;
+    serverId?: string | null;
+    timeoutMs: number;
+    intervalMs: number;
+    now: () => number;
+    sleep: (delayMs: number) => Promise<void>;
+    onStatus?: (status: SessionHandoffStatus) => void;
+}>): Promise<
+    | Readonly<{ ok: true; response: SessionHandoffPrepareTargetResponse }>
+    | Readonly<{ ok: false; errorCode: string; errorMessage: string; status?: SessionHandoffStatus }>
+> {
+    const startedAtMs = params.now();
+    const serverId = normalizeId(params.serverId) || null;
+
+    while ((params.now() - startedAtMs) <= params.timeoutMs) {
+        try {
+            const rawResult = await machineRpcWithServerScope<unknown, unknown>({
+                machineId: params.targetMachineId,
+                method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET,
+                payload: {
+                    handoffId: params.handoffId,
+                },
+                serverId,
+                timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+                preferScoped: true,
+            });
+            const resultError = readRawSessionHandoffError(rawResult);
+            if (!resultError) {
+                const parsedResult = SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(rawResult);
+                if (parsedResult.success) {
+                    params.onStatus?.(parsedResult.data.status);
+                    return { ok: true, response: parsedResult.data };
+                }
+                return unsupportedError('Unsupported target handoff prepare result response from daemon');
+            }
+            if (resultError.errorCode !== 'not_found') {
+                return {
+                    ok: false,
+                    errorCode: resultError.errorCode,
+                    errorMessage: resultError.errorMessage,
+                    ...(resultError.status ? { status: resultError.status } : {}),
+                };
+            }
+        } catch (error) {
+            if (!isTransientDaemonRpcAvailabilityError(error)) {
+                return {
+                    ok: false,
+                    errorCode: 'UNEXPECTED',
+                    errorMessage: error instanceof Error ? error.message : 'Failed to poll prepared target handoff result',
+                };
+            }
+        }
+
+        try {
+            const rawStatus = await machineRpcWithServerScope<unknown, unknown>({
+                machineId: params.targetMachineId,
+                method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET,
+                payload: {
+                    handoffId: params.handoffId,
+                },
+                serverId,
+                timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
+                preferScoped: true,
+            });
+            const statusError = readRawSessionHandoffError(rawStatus);
+            if (statusError) {
+                return {
+                    ok: false,
+                    errorCode: statusError.errorCode,
+                    errorMessage: statusError.errorMessage,
+                    ...(statusError.status ? { status: statusError.status } : {}),
+                };
+            }
+            const parsedStatus = SessionHandoffStatusSchema.safeParse((rawStatus as { status?: unknown }).status);
+            if (!parsedStatus.success) {
+                return unsupportedError('Unsupported target handoff status response from daemon');
+            }
+            params.onStatus?.(parsedStatus.data);
+            if (
+                parsedStatus.data.status === 'aborted'
+                || parsedStatus.data.status === 'awaiting_recovery'
+                || parsedStatus.data.status === 'failed'
+            ) {
+                return {
+                    ok: false,
+                    errorCode: parsedStatus.data.status,
+                    errorMessage: 'Target handoff preparation did not complete successfully',
+                    status: parsedStatus.data,
+                };
+            }
+        } catch (error) {
+            if (!isTransientDaemonRpcAvailabilityError(error)) {
+                return {
+                    ok: false,
+                    errorCode: 'UNEXPECTED',
+                    errorMessage: error instanceof Error ? error.message : 'Failed to poll target handoff status',
+                };
+            }
+        }
+
+        const elapsedMs = params.now() - startedAtMs;
+        if (elapsedMs >= params.timeoutMs) {
+            break;
+        }
+        await params.sleep(Math.min(params.intervalMs, Math.max(params.timeoutMs - elapsedMs, 0)));
+    }
+
+    return {
+        ok: false,
+        errorCode: 'target_prepare_timeout',
+        errorMessage: 'Timed out waiting for target handoff preparation to finish',
+    };
+}
+
 export async function prepareTargetSessionHandoffWithRetry(
-    params: Parameters<typeof prepareTargetSessionHandoff>[0],
+    params: Parameters<typeof prepareTargetSessionHandoff>[0] & Readonly<{
+        onStatus?: (status: SessionHandoffStatus) => void;
+    }>,
     retryOptions?: CompleteSessionHandoffOptions['targetPrepareRetry'],
 ): Promise<Awaited<ReturnType<typeof prepareTargetSessionHandoff>>> {
     const now = retryOptions?.now ?? Date.now;
@@ -467,7 +609,11 @@ export async function prepareTargetSessionHandoffWithRetry(
         typeof retryOptions?.timeoutMs === 'number' && retryOptions.timeoutMs >= 0
             ? retryOptions.timeoutMs
             : DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS;
-    return await runSessionHandoffRetryLoop({
+    const pollTimeoutMs =
+        typeof retryOptions?.pollTimeoutMs === 'number' && retryOptions.pollTimeoutMs >= 0
+            ? retryOptions.pollTimeoutMs
+            : readSessionHandoffTargetPreparePollTimeoutMs();
+    const prepareAttempt = await runSessionHandoffRetryLoop({
         fallbackTimeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
         retryTimeoutMs: timeoutMs,
         intervalMs:
@@ -479,6 +625,26 @@ export async function prepareTargetSessionHandoffWithRetry(
         runAttempt: async (machineRpcTimeoutMs) =>
             await prepareTargetSessionHandoffWithMachineRpcTimeout(params, machineRpcTimeoutMs),
         shouldRetry: (result) => !result.ok && shouldRetryTargetPrepare(result),
+    });
+    if (!prepareAttempt.ok) {
+        return prepareAttempt;
+    }
+    if (hasPrepareTargetReadyPayload(prepareAttempt.response)) {
+        params.onStatus?.(prepareAttempt.response.status);
+        return prepareAttempt;
+    }
+    return await pollPreparedTargetSessionHandoffResult({
+        handoffId: params.handoffId,
+        targetMachineId: params.targetMachineId,
+        serverId: params.serverId,
+        timeoutMs: pollTimeoutMs,
+        intervalMs:
+            typeof retryOptions?.intervalMs === 'number' && retryOptions.intervalMs >= 0
+                ? retryOptions.intervalMs
+                : DEFAULT_TARGET_PREPARE_RETRY_INTERVAL_MS,
+        now,
+        sleep,
+        onStatus: params.onStatus,
     });
 }
 
@@ -522,13 +688,14 @@ async function commitSessionHandoff(params: Readonly<{
 
 async function abortSessionHandoff(params: Readonly<{
     sourceMachineId: string;
+    targetMachineId?: string | null;
     handoffId: string;
     reason: string;
     serverId?: string | null;
 }>): Promise<void> {
-    try {
+    const abortOnMachine = async (machineId: string): Promise<void> => {
         await machineRpcWithServerScope<unknown, unknown>({
-            machineId: params.sourceMachineId,
+            machineId,
             method: RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT,
             payload: {
                 handoffId: params.handoffId,
@@ -537,8 +704,19 @@ async function abortSessionHandoff(params: Readonly<{
             serverId: normalizeId(params.serverId) || null,
             timeoutMs: readSessionHandoffMachineRpcTimeoutMs(),
         });
-    } catch {
-        // Best-effort abort.
+    };
+
+    const machineIds = [
+        normalizeId(params.targetMachineId),
+        normalizeId(params.sourceMachineId),
+    ].filter((machineId, index, values): machineId is string => Boolean(machineId) && values.indexOf(machineId) === index);
+
+    for (const machineId of machineIds) {
+        try {
+            await abortOnMachine(machineId);
+        } catch {
+            // Best-effort abort.
+        }
     }
 }
 
@@ -556,6 +734,7 @@ export async function startSessionHandoff(options: StartSessionHandoffOptions): 
 export async function completeSessionHandoff(options: CompleteSessionHandoffOptions): Promise<CompleteSessionHandoffResult> {
     const serverId = normalizeId(options.serverId) || null;
     const serverSnapshot = await getServerFeaturesSnapshot({
+        force: true,
         ...(serverId ? { serverId } : {}),
     });
     const transport = resolveMachineTransferAvailability({
@@ -584,6 +763,13 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         serverId: options.serverId,
     });
     let sourceRecovery: SessionHandoffRecoveryPlan | undefined;
+    const reportStatus = (status: SessionHandoffStatus) => {
+        publishSessionHandoffProgress({
+            sessionId: options.sessionId,
+            targetMachineId: options.targetMachineId,
+            status,
+        });
+    };
 
     const started = await startSessionHandoffOnSourceWithRetry({
         ...options,
@@ -602,6 +788,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         };
     }
     sourceRecovery = buildSourceRecovery(started.response.handoffId) ?? undefined;
+    reportStatus(started.response.status);
 
     const directPeerRouteInput = {
         serverId,
@@ -632,6 +819,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         ...(options.workspaceTransfer ? { workspaceTransfer: options.workspaceTransfer } : {}),
         allowServerRoutedFallback: transport.allowServerRoutedFallback,
         serverId: options.serverId,
+        onStatus: reportStatus,
     }, options.targetPrepareRetry);
     if (!prepared.ok) {
         if (
@@ -643,6 +831,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         }
         await abortSessionHandoff({
             sourceMachineId: started.sourceMachineId,
+            targetMachineId: options.targetMachineId,
             handoffId: started.response.handoffId,
             reason: prepared.errorCode,
             serverId: options.serverId,
@@ -655,24 +844,28 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     if (prepareTransportStrategy === 'direct_peer' && started.response.endpointCandidates.length > 0) {
         recordCachedDirectPeerRouteViable(directPeerRouteInput);
     }
+    if (!hasPrepareTargetReadyPayload(prepared.response)) {
+        return unsupportedError('Target handoff prepare did not return a ready session payload');
+    }
+    const preparedResponse = prepared.response;
 
-    const preparedAgentRuntimeDescriptor = isAgentRuntimeDescriptorV1(prepared.response.agentRuntimeDescriptorV1)
-        ? prepared.response.agentRuntimeDescriptorV1
+    const preparedAgentRuntimeDescriptor = isAgentRuntimeDescriptorV1(preparedResponse.agentRuntimeDescriptorV1)
+        ? preparedResponse.agentRuntimeDescriptorV1
         : undefined;
     const resumeResult = await resumeSession({
         sessionId: options.sessionId,
         machineId: options.targetMachineId,
-        directory: prepared.response.resume.directory,
-        backendTarget: { kind: 'builtInAgent', agentId: prepared.response.resume.agent },
-        resume: prepared.response.resume.resume,
+        directory: preparedResponse.resume.directory,
+        backendTarget: { kind: 'builtInAgent', agentId: preparedResponse.resume.agent },
+        resume: preparedResponse.resume.resume,
         attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
         preferRequestedMachineTarget: true,
         preferScopedMachineRpc: true,
         ...(preparedAgentRuntimeDescriptor ? { agentRuntimeDescriptorV1: preparedAgentRuntimeDescriptor } : {}),
-        ...(prepared.response.resume.environmentVariables ? { environmentVariables: prepared.response.resume.environmentVariables } : {}),
-        transcriptStorage: prepared.response.resume.transcriptStorage,
+        ...(preparedResponse.resume.environmentVariables ? { environmentVariables: preparedResponse.resume.environmentVariables } : {}),
+        transcriptStorage: preparedResponse.resume.transcriptStorage,
         ...buildCodexBackendTransportFields({
-            codexBackendMode: prepared.response.resume.codexBackendMode,
+            codexBackendMode: preparedResponse.resume.codexBackendMode,
             agentRuntimeDescriptorV1: preparedAgentRuntimeDescriptor,
         }),
         ...(normalizeId(options.serverId) ? { serverId: normalizeId(options.serverId) } : {}),
@@ -680,6 +873,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     if (resumeResult.type === 'error') {
         await abortSessionHandoff({
             sourceMachineId: started.sourceMachineId,
+            targetMachineId: options.targetMachineId,
             handoffId: started.response.handoffId,
             reason: resumeResult.errorCode,
             serverId: options.serverId,
@@ -691,7 +885,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             ...(sourceRecovery ? { recovery: sourceRecovery } : {}),
         };
     }
-    const providerId = prepared.response.resume.agent;
+    const providerId = preparedResponse.resume.agent;
     const targetSessionStorageMode = options.targetSessionStorageMode ?? options.sessionStorageMode;
     const completedAtMs = Date.now();
     const buildNextMetadata = (metadata: MetadataRecord) => buildSessionHandoffMetadataPatch({
@@ -701,12 +895,12 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         targetMachineId: options.targetMachineId,
         sessionStorageBefore: options.sessionStorageMode,
         sessionStorageAfter: targetSessionStorageMode,
-        targetPath: prepared.response.resume.directory,
+        targetPath: preparedResponse.resume.directory,
         transportStrategy: prepared.response.status.transportStrategy ?? transport.negotiatedTransportStrategy,
         completedAtMs,
-        targetRemoteSessionId: prepared.response.remoteSessionId,
-        targetDirectSource: prepared.response.directSource as unknown as Record<string, unknown>,
-        targetRuntimeDescriptor: prepared.response.agentRuntimeDescriptorV1,
+        targetRemoteSessionId: preparedResponse.remoteSessionId,
+        targetDirectSource: preparedResponse.directSource as unknown as Record<string, unknown>,
+        targetRuntimeDescriptor: preparedResponse.agentRuntimeDescriptorV1,
     });
     const currentSessionMetadata = (storage.getState().sessions?.[options.sessionId]?.metadata ?? options.sourceMetadata) as MetadataRecord;
     const restoreOptimisticBinding = applyOptimisticSessionHandoffBinding({
@@ -741,6 +935,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         restoreOptimisticBinding?.();
         await abortSessionHandoff({
             sourceMachineId: started.sourceMachineId,
+            targetMachineId: options.targetMachineId,
             handoffId: started.response.handoffId,
             reason: 'target_session_not_active',
             serverId: options.serverId,
@@ -756,6 +951,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         restoreOptimisticBinding?.();
         await abortSessionHandoff({
             sourceMachineId: started.sourceMachineId,
+            targetMachineId: options.targetMachineId,
             handoffId: started.response.handoffId,
             reason: 'target_session_not_active',
             serverId: options.serverId,
@@ -777,6 +973,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         serverId: options.serverId,
     });
     if (!committed.ok) return committed;
+    reportStatus(committed.response.status);
     reapplyOptimisticBinding();
     const stabilizedBinding = await stabilizeSessionHandoffTargetBinding({
         readSession: () => readSessionHandoffSessionActivity(options.sessionId),

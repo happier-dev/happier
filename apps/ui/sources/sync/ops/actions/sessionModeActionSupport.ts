@@ -1,12 +1,19 @@
 import type { ResolvedActionOption } from '@happier-dev/protocol';
 import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@happier-dev/agents';
 
-import { computeSessionModePickerControl, type SessionModePickerControl } from '@/sync/acp/sessionModeControl';
+import {
+  computeSessionModePickerControl,
+  resolveRequestedSessionModeIdForMetadata,
+  type SessionModePickerControl,
+} from '@/sync/acp/sessionModeControl';
 import { t } from '@/text';
 
-export function normalizeRequestedSessionModeId(modeId: unknown): string {
+export function normalizeRequestedSessionModeId(
+  control: SessionModePickerControl | null,
+  modeId: unknown,
+): string {
   const normalized = String(modeId ?? '').trim();
-  return normalized === 'default' ? '' : normalized;
+  return resolveRequestedSessionModeIdForMetadata(control, normalized);
 }
 
 export function resolveSessionModeActionControl(session: Readonly<{ metadata?: unknown }> | null | undefined): SessionModePickerControl | null {
@@ -26,7 +33,11 @@ export function isRequestedSessionModeSupported(
   modeId: unknown,
 ): boolean {
   if (!control) return false;
-  const normalizedModeId = normalizeRequestedSessionModeId(modeId);
+  const requestedModeId = String(modeId ?? '').trim();
+  const normalizedModeId = normalizeRequestedSessionModeId(control, requestedModeId);
+  if (requestedModeId === 'default') {
+    return normalizedModeId === '' || normalizedModeId === 'default';
+  }
   if (!normalizedModeId) return true;
   return control.options.some((option) => option.id === normalizedModeId);
 }

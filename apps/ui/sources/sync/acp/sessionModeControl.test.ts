@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '../domains/state/storageTypes';
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-  tLoose: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+        translateLoose: (key: string) => key,
+    });
+});
 
 function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
   return {
@@ -121,5 +124,43 @@ describe('sessionModeControl', () => {
     expect(res?.effectiveModeId).toBe('plan');
     expect(res?.isPending).toBe(true);
     expect(res?.options.map((option) => option.id)).toEqual(['default', 'plan']);
+  });
+
+  it('publishes the real default mode id when the provider exposes default as an actual option', async () => {
+    const { computeSessionModePickerControl, resolveRequestedSessionModeIdForMetadata } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      sessionModesV1: {
+        v: 1,
+        provider: 'codex',
+        updatedAt: 1,
+        currentModeId: 'plan',
+        availableModes: [
+          { id: 'default', name: 'Default' },
+          { id: 'plan', name: 'Plan' },
+        ],
+      },
+    });
+
+    const control = computeSessionModePickerControl({ agentId: 'codex', metadata });
+    expect(resolveRequestedSessionModeIdForMetadata(control, 'default')).toBe('default');
+  });
+
+  it('treats default as a clear sentinel when the provider does not expose a real default option', async () => {
+    const { computeSessionModePickerControl, resolveRequestedSessionModeIdForMetadata } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      sessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 1,
+        currentModeId: 'build',
+        availableModes: [
+          { id: 'build', name: 'Build' },
+          { id: 'plan', name: 'Plan' },
+        ],
+      },
+    });
+
+    const control = computeSessionModePickerControl({ agentId: 'opencode', metadata });
+    expect(resolveRequestedSessionModeIdForMetadata(control, 'default')).toBe('');
   });
 });

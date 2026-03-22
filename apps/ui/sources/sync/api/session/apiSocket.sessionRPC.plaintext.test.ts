@@ -4,9 +4,12 @@ const storageMock = vi.hoisted(() => ({
     getState: vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: storageMock,
-}));
+});
+});
 
 describe('apiSocket.sessionRPC plaintext sessions', () => {
     beforeEach(() => {

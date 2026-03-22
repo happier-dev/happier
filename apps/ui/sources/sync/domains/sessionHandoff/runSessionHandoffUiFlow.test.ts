@@ -2,23 +2,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const modalShowMock = vi.hoisted(() => vi.fn());
 const modalHideMock = vi.hoisted(() => vi.fn());
+const modalUpdateMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
 const executeSessionHandoffActionMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffProgressModalMock = vi.hoisted(() => vi.fn());
 const openSessionHandoffFailureRecoveryModalMock = vi.hoisted(() => vi.fn());
 const performSessionHandoffRecoveryActionMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    show: (...args: unknown[]) => modalShowMock(...args),
-    hide: (...args: unknown[]) => modalHideMock(...args),
-    confirm: (...args: unknown[]) => modalConfirmMock(...args),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (...args: unknown[]) => modalShowMock(...args),
+            hide: (...args: unknown[]) => modalHideMock(...args),
+            update: (...args: unknown[]) => modalUpdateMock(...args),
+            confirm: (...args: unknown[]) => modalConfirmMock(...args),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('./executeSessionHandoffAction', () => ({
   executeSessionHandoffAction: (...args: unknown[]) => executeSessionHandoffActionMock(...args),
@@ -41,6 +47,7 @@ describe('runSessionHandoffUiFlow', () => {
     vi.resetModules();
     modalShowMock.mockReset();
     modalHideMock.mockReset();
+    modalUpdateMock.mockReset();
     modalConfirmMock.mockReset();
     executeSessionHandoffActionMock.mockReset();
     openSessionHandoffProgressModalMock.mockReset();
@@ -64,6 +71,83 @@ describe('runSessionHandoffUiFlow', () => {
     expect(modalHideMock).toHaveBeenCalledWith('modal_1');
     expect(modalConfirmMock).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true, handoffId: 'handoff_1' });
+  });
+
+  it('updates the open progress modal when matching handoff status events are published while the flow is running', async () => {
+    const actionResolution: {
+      current: ((value: { ok: true; handoffId: string }) => void) | null;
+    } = { current: null };
+    executeSessionHandoffActionMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        actionResolution.current = resolve as typeof actionResolution.current;
+      }),
+    );
+
+    const { runSessionHandoffUiFlow } = await import('./runSessionHandoffUiFlow');
+    const { publishSessionHandoffProgress } = await import('./sessionHandoffProgressEvents');
+
+    const flowPromise = runSessionHandoffUiFlow({
+      execute: vi.fn() as any,
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      context: { defaultSessionId: 'sess_1', surface: 'ui_button', placement: 'session_info' } as any,
+    });
+
+    await vi.waitFor(() => {
+      expect(openSessionHandoffProgressModalMock).toHaveBeenCalledTimes(1);
+    });
+
+    publishSessionHandoffProgress({
+      sessionId: 'sess_1',
+      targetMachineId: 'machine_target',
+      status: {
+        handoffId: 'handoff_1',
+        status: 'pending',
+        phase: 'staging_target',
+        workspacePreflightSummary: {
+          addedPathsCount: 3,
+          changedPathsCount: 2,
+          removedPathsCount: 1,
+          totalBytes: 2048,
+        },
+        progress: {
+          updatedAtMs: 123,
+          checkpoint: 'transfer_blobs',
+          planned: {
+            totalFiles: 6,
+            totalBytes: 2048,
+          },
+          transferred: {
+            files: 3,
+            bytes: 1024,
+            blobs: 2,
+          },
+          current: {
+            relativePath: 'README.md',
+          },
+          resumable: true,
+        },
+        recoveryActions: [],
+      },
+    });
+
+    expect(modalUpdateMock).toHaveBeenCalledWith('modal_1', {
+      status: expect.objectContaining({
+        handoffId: 'handoff_1',
+        phase: 'staging_target',
+        workspacePreflightSummary: expect.objectContaining({
+          addedPathsCount: 3,
+          changedPathsCount: 2,
+          removedPathsCount: 1,
+        }),
+        progress: expect.objectContaining({
+          checkpoint: 'transfer_blobs',
+        }),
+      }),
+    });
+
+    actionResolution.current?.({ ok: true, handoffId: 'handoff_1' });
+    await expect(flowPromise).resolves.toEqual({ ok: true, handoffId: 'handoff_1' });
   });
 
   it('offers retry when the handoff fails and reruns the handoff when confirmed', async () => {
@@ -159,6 +243,9 @@ describe('runSessionHandoffUiFlow', () => {
       },
     });
     expect(modalHideMock).toHaveBeenCalledWith('modal_1');
+    expect(modalHideMock.mock.invocationCallOrder[0]).toBeLessThan(
+      openSessionHandoffFailureRecoveryModalMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
     expect(performSessionHandoffRecoveryActionMock).toHaveBeenCalledWith({
       recovery: {
         handoffId: 'handoff_3',

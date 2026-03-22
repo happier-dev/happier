@@ -4,6 +4,7 @@ import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc'
 
 const sessionRpcMock = vi.hoisted(() => vi.fn());
 const canUseSessionRpcMock = vi.hoisted(() => vi.fn(() => true));
+const notifyExecutionRunActivityMock = vi.hoisted(() => vi.fn());
 const expectRpcTimeout = expect.objectContaining({ timeoutMs: expect.any(Number) });
 
 vi.mock('../api/session/apiSocket', () => ({
@@ -14,6 +15,11 @@ vi.mock('../api/session/apiSocket', () => ({
 
 vi.mock('./sessionMachineTarget', () => ({
     canUseSessionRpc: (...args: Parameters<typeof canUseSessionRpcMock>) => canUseSessionRpcMock(...args),
+}));
+
+vi.mock('@/sync/runtime/executionRuns/executionRunActivityBus', () => ({
+    notifyExecutionRunActivity: (...args: Parameters<typeof notifyExecutionRunActivityMock>) =>
+        notifyExecutionRunActivityMock(...args),
 }));
 
 describe('sessionExecutionRuns', () => {
@@ -32,6 +38,7 @@ describe('sessionExecutionRuns', () => {
         sessionRpcMock.mockReset();
         canUseSessionRpcMock.mockReset();
         canUseSessionRpcMock.mockReturnValue(true);
+        notifyExecutionRunActivityMock.mockReset();
     });
 
     it('calls execution.run.action through session RPC', async () => {
@@ -54,6 +61,19 @@ describe('sessionExecutionRuns', () => {
             expectRpcTimeout,
         );
         expect(response.ok).toBe(true);
+    });
+
+    it('notifies execution-run activity after execution.run.action succeeds', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
+
+        const response = await sessionExecutionRuns.sessionExecutionRunAction('session-1', {
+            runId: 'run_1',
+            actionId: 'review.triage',
+            input: { findings: [{ id: 'f1', status: 'accept' }] },
+        });
+
+        expect(response).toEqual({ ok: true });
+        expect(notifyExecutionRunActivityMock).toHaveBeenCalledWith('session-1');
     });
 
     it('calls execution.run.start through session RPC', async () => {
@@ -155,6 +175,15 @@ describe('sessionExecutionRuns', () => {
         expect(response.ok).toBe(true);
     });
 
+    it('notifies execution-run activity after execution.run.send succeeds', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
+
+        const response = await sessionExecutionRuns.sessionExecutionRunSend('session-1', { runId: 'run_1', message: 'hello' });
+
+        expect(response).toEqual({ ok: true });
+        expect(notifyExecutionRunActivityMock).toHaveBeenCalledWith('session-1');
+    });
+
     it('returns ok:false error shapes from execution.run.send without treating them as unsupported', async () => {
         sessionRpcMock.mockResolvedValue({ ok: false, error: 'Not found', errorCode: 'execution_run_not_found' });
 
@@ -164,17 +193,19 @@ describe('sessionExecutionRuns', () => {
         expect((response as any).errorCode).toBe('execution_run_not_found');
     });
 
-    it('fails closed for execution.run.send when the session is inactive', async () => {
+    it('allows execution.run.send for inactive sessions through session RPC', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
         canUseSessionRpcMock.mockReturnValue(false);
 
         const response = await sessionExecutionRuns.sessionExecutionRunSend('session-inactive', { runId: 'run_1', message: 'hello' });
 
-        expect(sessionRpcMock).not.toHaveBeenCalled();
-        expect(response).toEqual({
-            ok: false,
-            error: 'Session RPC unavailable for inactive session',
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
+        expect(sessionRpcMock).toHaveBeenCalledWith(
+            'session-inactive',
+            SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
+            { runId: 'run_1', message: 'hello', delivery: 'steer_if_supported' },
+            expectRpcTimeout,
+        );
+        expect(response).toEqual({ ok: true });
     });
 
     it('calls execution.run.stop through session RPC', async () => {
@@ -191,6 +222,15 @@ describe('sessionExecutionRuns', () => {
         expect(response.ok).toBe(true);
     });
 
+    it('notifies execution-run activity after execution.run.stop succeeds', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
+
+        const response = await sessionExecutionRuns.sessionExecutionRunStop('session-1', { runId: 'run_1' });
+
+        expect(response).toEqual({ ok: true });
+        expect(notifyExecutionRunActivityMock).toHaveBeenCalledWith('session-1');
+    });
+
     it('returns ok:false error shapes from execution.run.stop without treating them as unsupported', async () => {
         sessionRpcMock.mockResolvedValue({ ok: false, error: 'Not running', errorCode: 'execution_run_not_allowed' });
 
@@ -200,17 +240,19 @@ describe('sessionExecutionRuns', () => {
         expect((response as any).errorCode).toBe('execution_run_not_allowed');
     });
 
-    it('fails closed for execution.run.stop when the session is inactive', async () => {
+    it('allows execution.run.stop for inactive sessions through session RPC', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
         canUseSessionRpcMock.mockReturnValue(false);
 
         const response = await sessionExecutionRuns.sessionExecutionRunStop('session-inactive', { runId: 'run_1' });
 
-        expect(sessionRpcMock).not.toHaveBeenCalled();
-        expect(response).toEqual({
-            ok: false,
-            error: 'Session RPC unavailable for inactive session',
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
+        expect(sessionRpcMock).toHaveBeenCalledWith(
+            'session-inactive',
+            SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+            { runId: 'run_1' },
+            expectRpcTimeout,
+        );
+        expect(response).toEqual({ ok: true });
     });
 
     it('calls execution.run.list through session RPC', async () => {
@@ -261,7 +303,8 @@ describe('sessionExecutionRuns', () => {
         expect((response as any).errorCode).toBe('execution_run_not_found');
     });
 
-    it('fails closed for execution.run.action when the session is inactive', async () => {
+    it('allows execution.run.action for inactive sessions through session RPC', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true });
         canUseSessionRpcMock.mockReturnValue(false);
 
         const response = await sessionExecutionRuns.sessionExecutionRunAction('session-inactive', {
@@ -270,12 +313,17 @@ describe('sessionExecutionRuns', () => {
             input: { findings: [{ id: 'f1', status: 'accept' }] },
         });
 
-        expect(sessionRpcMock).not.toHaveBeenCalled();
-        expect(response).toEqual({
-            ok: false,
-            error: 'Session RPC unavailable for inactive session',
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
+        expect(sessionRpcMock).toHaveBeenCalledWith(
+            'session-inactive',
+            SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
+            {
+                runId: 'run_1',
+                actionId: 'review.triage',
+                input: { findings: [{ id: 'f1', status: 'accept' }] },
+            },
+            expectRpcTimeout,
+        );
+        expect(response).toEqual({ ok: true });
     });
 
     it('detects terminal not-running send errors by error code', async () => {

@@ -72,14 +72,58 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverUrl: 'http://127.0.0.1:3009' }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => mocks.storageState,
     },
-}));
+});
+});
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     loadPendingSettings: () => ({}),
+    loadSettings: () => ({
+        settings: { ...mocks.storageState.settings },
+        version: mocks.storageState.settingsVersion,
+    }),
+    loadLocalSettings: () => ({}),
+    loadPurchases: () => ({}),
+    loadProfile: () => ({}),
+    loadThemePreference: () => 'adaptive',
+    loadSessionDrafts: () => ({}),
+    loadSessionReviewCommentsDrafts: () => ({}),
+    loadSessionActionDrafts: () => ({}),
+    loadNewSessionDraft: () => null,
+    loadSessionPermissionModes: () => ({}),
+    loadSessionPermissionModeUpdatedAts: () => ({}),
+    loadSessionLastViewed: () => ({}),
+    loadSessionModelModes: () => ({}),
+    loadSessionModelModeUpdatedAts: () => ({}),
+    loadSessionMaterializedMaxSeqById: () => ({}),
+    loadChangesCursor: () => null,
+    loadLastChangesCursorByAccountId: () => ({}),
+    loadDeviceAnalyticsId: () => null,
+    saveSettings: vi.fn(),
+    saveLocalSettings: vi.fn(),
+    savePurchases: vi.fn(),
+    saveProfile: vi.fn(),
+    saveSessionDrafts: vi.fn(),
+    saveSessionReviewCommentsDrafts: vi.fn(),
+    saveSessionActionDrafts: vi.fn(),
+    saveNewSessionDraft: vi.fn(),
+    clearNewSessionDraft: vi.fn(),
+    saveSessionPermissionModes: vi.fn(),
+    saveSessionPermissionModeUpdatedAts: vi.fn(),
+    saveSessionLastViewed: vi.fn(),
+    saveSessionModelModes: vi.fn(),
+    saveSessionModelModeUpdatedAts: vi.fn(),
+    saveSessionMaterializedMaxSeqById: vi.fn(),
+    saveChangesCursor: vi.fn(),
+    saveLastChangesCursorByAccountId: vi.fn(),
+    savePendingSettings: vi.fn(),
+    saveDeviceAnalyticsId: vi.fn(),
+    clearPersistence: vi.fn(),
 }));
 
 vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {

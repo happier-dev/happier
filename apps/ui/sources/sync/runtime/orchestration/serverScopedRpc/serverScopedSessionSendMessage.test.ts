@@ -7,11 +7,14 @@ const state = {
   settings: {},
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => state,
   },
-}));
+});
+});
 
 describe('sendSessionMessageWithServerScope', () => {
   it('uses scoped socket path when context is scoped and preserves displayText plus metadata overrides', async () => {

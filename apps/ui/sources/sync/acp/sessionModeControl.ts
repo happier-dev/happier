@@ -9,6 +9,7 @@ import {
     SESSION_MODES_STATE_KEY,
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
+import { resolveRequestedSessionModeId } from '@happier-dev/protocol';
 import { tLoose } from '@/text';
 
 import { parseAcpSessionModesState, parseAcpSessionModeOverrideState } from './schema';
@@ -34,6 +35,13 @@ export type SessionModePickerControl = Readonly<{
     effectiveModeName: string;
     isPending: boolean;
 }>;
+
+export function resolveRequestedSessionModeIdForMetadata(
+    control: SessionModePickerControl | null | undefined,
+    requestedModeId: string,
+): string {
+    return resolveRequestedSessionModeId(requestedModeId, control?.options ?? []);
+}
 
 function computeLegacyRequestedModeIdFromPermissionMode(metadata: Metadata | null | undefined): string | null {
     const raw = typeof (metadata as any)?.permissionMode === 'string' ? String((metadata as any).permissionMode) : '';

@@ -23,12 +23,17 @@ vi.mock('react-native-mmkv', () => {
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
-    const actual = await vi.importActual<any>('react-native');
-    return {
-        ...actual,
-        Platform: { ...(actual?.Platform ?? {}), OS: 'web' },
-        AppState: { addEventListener: appStateAddListener as any },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            AppState: {
+                                addEventListener: appStateAddListener as any,
+                            },
+                        }
+    );
 });
 
 vi.mock('@/log', () => ({
@@ -48,6 +53,8 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const initialStorageState = storage.getState();
 
@@ -125,6 +132,94 @@ describe('sync.sendMessage optimistic thinking', () => {
             createdAt: Date.now(),
         });
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('prefers session runtime RPC for active sessions so steering-capable agents receive the user message directly', async () => {
+        const sessionId = 's_active_runtime_rpc';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm1',
+            seq: 1,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(sessionId, 'steer this');
+
+        expect(sessionRpcSpy).toHaveBeenCalledWith(
+            sessionId,
+            SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+            expect.objectContaining({
+                text: 'steer this',
+                localId: expect.any(String),
+                meta: expect.objectContaining({
+                    sentFrom: expect.any(String),
+                    permissionMode: 'default',
+                }),
+            }),
+            { timeoutMs: 7_500 },
+        );
+        expect(emitWithAck).not.toHaveBeenCalled();
+
+        const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pending.map((message) => message.text)).toEqual(['steer this']);
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+
+        sessionRpcSpy.mockRestore();
+    });
+
+    it('falls back to the socket commit path when active-session runtime RPC is unavailable', async () => {
+        const sessionId = 's_active_runtime_rpc_fallback';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcError = Object.assign(new Error('RPC method not available'), {
+            rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(sessionRpcError);
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm-fallback',
+            seq: 7,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(sessionId, 'fallback please');
+
+        expect(sessionRpcSpy).toHaveBeenCalledTimes(1);
+        expect(emitWithAck).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: sessionId,
+                localId: expect.any(String),
+            }),
+            expect.anything(),
+        );
+
+        sessionRpcSpy.mockRestore();
     });
 
     it('sendPendingMessageNow preserves the pending localId in the outbound payload and does not remove the queued row', async () => {

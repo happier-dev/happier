@@ -27,6 +27,13 @@ type SocketStub = {
     timeout: ReturnType<typeof vi.fn>;
 };
 
+async function settleAsyncWork() {
+    await Promise.resolve();
+    if (typeof vi.isFakeTimers === 'function' && vi.isFakeTimers()) {
+        await vi.advanceTimersByTimeAsync(0);
+    }
+}
+
 function createSocketStub(): SocketStub {
     const listeners = new Map<string, Set<EventHandler>>();
     const anyListeners = new Set<(event: string, data: unknown) => void>();
@@ -118,13 +125,14 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await Promise.resolve();
+        await settleAsyncWork();
         expect(onReconnected).not.toHaveBeenCalled();
 
         socket.simulateTransportDisconnect();
-        await Promise.resolve();
+        await settleAsyncWork();
 
-        await vi.advanceTimersByTimeAsync(250);
+        await vi.advanceTimersToNextTimerAsync();
+        await settleAsyncWork();
 
         expect(onReconnected).toHaveBeenCalledTimes(1);
         vi.useRealTimers();
@@ -146,13 +154,13 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await Promise.resolve();
+        await settleAsyncWork();
 
         apiSocket.disconnect();
-        await Promise.resolve();
+        await settleAsyncWork();
 
         apiSocket.connect();
-        await Promise.resolve();
+        await settleAsyncWork();
 
         expect(onReconnected).not.toHaveBeenCalled();
     });
@@ -170,9 +178,9 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await Promise.resolve();
+        await settleAsyncWork();
         apiSocket.updateToken('token-2');
-        await Promise.resolve();
+        await settleAsyncWork();
 
         expect(ioSpy).toHaveBeenCalledTimes(2);
         const secondOpts = ioSpy.mock.calls[1]?.[1] as { auth?: { token?: string } } | undefined;
@@ -195,7 +203,7 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await Promise.resolve();
+        await settleAsyncWork();
         expect(stateListener).toHaveBeenCalled();
         const phases = stateListener.mock.calls.map((call) => call[0]?.phase);
         expect(phases).toContain('idle');
@@ -219,11 +227,11 @@ describe('apiSocket reconnect semantics', () => {
             } as never,
         );
 
-        await Promise.resolve();
+        await settleAsyncWork();
         statusListener.mockClear();
 
         apiSocket.connect();
-        await Promise.resolve();
+        await settleAsyncWork();
 
         expect(statusListener).not.toHaveBeenCalledWith('connecting');
     });

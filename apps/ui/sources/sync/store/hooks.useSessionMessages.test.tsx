@@ -1,84 +1,55 @@
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { renderHook, standardCleanup } from '@/dev/testkit';
 
 import { useSessionMessages } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-async function flushEffects(turns = 2): Promise<void> {
-  for (let i = 0; i < turns; i += 1) {
-    await Promise.resolve();
-  }
-}
+afterEach(() => {
+    standardCleanup();
+});
 
 describe('useSessionMessages', () => {
-  it('returns a referentially stable messages array when store state is unchanged', async () => {
-    const previousState = storage.getState();
-    try {
-      const messagesById = {
-        'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
-        'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
-      };
+    it('returns a referentially stable messages array when store state is unchanged', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
+            };
 
-      storage.setState((state) => ({
-        ...state,
-        sessionMessages: {
-          ...state.sessionMessages,
-          's-1': {
-            messageIdsOldestFirst: ['m-1', 'm-2'],
-            messagesById,
-            messagesMap: messagesById,
-            draftsByLocalId: {},
-            reducerState: {} as any,
-            latestThinkingMessageId: null,
-            latestThinkingMessageActivityAtMs: null,
-            messagesVersion: 1,
-            isLoaded: true,
-          },
-        },
-      }));
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        draftsByLocalId: {},
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
 
-      const seen: any[] = [];
-      let bump: (() => void) | null = null;
+            const hook = await renderHook(() => useSessionMessages('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
 
-      function Test() {
-        const [tick, setTick] = React.useState(0);
-        const { messages } = useSessionMessages('s-1');
-        React.useEffect(() => {
-          seen.push(messages);
-        }, [tick, messages]);
-        bump = () => setTick((t) => t + 1);
-        return null;
-      }
+            const first = hook.getCurrent().messages;
+            expect(Array.isArray(first)).toBe(true);
+            expect(first).toHaveLength(2);
 
-      let tree: renderer.ReactTestRenderer | null = null;
-      await act(async () => {
-        tree = renderer.create(React.createElement(Test));
-        await flushEffects(4);
-      });
+            const second = (await hook.rerender()).messages;
+            expect(second).toBe(first);
 
-      expect(seen.length).toBe(1);
-      const first = seen[0];
-      expect(Array.isArray(first)).toBe(true);
-      expect(first.length).toBe(2);
-
-      await act(async () => {
-        bump?.();
-        await flushEffects(4);
-      });
-
-      expect(seen.length).toBe(2);
-      const second = seen[1];
-      expect(second).toBe(first);
-
-      await act(async () => {
-        tree?.unmount();
-        await flushEffects(2);
-      });
-    } finally {
-      storage.setState(previousState);
-    }
-  });
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
 });

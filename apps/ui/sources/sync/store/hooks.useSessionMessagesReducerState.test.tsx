@@ -1,17 +1,14 @@
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 import { useSessionMessagesReducerState } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-async function flushEffects(turns = 2): Promise<void> {
-    for (let i = 0; i < turns; i += 1) {
-        await Promise.resolve();
-    }
-}
+afterEach(() => {
+    standardCleanup();
+});
 
 describe('useSessionMessagesReducerState', () => {
     it('re-renders when reducerState mutates but reference stays stable', async () => {
@@ -39,23 +36,11 @@ describe('useSessionMessagesReducerState', () => {
                 },
             }));
 
-            const seen: number[] = [];
-
-            function Test() {
-                const state = useSessionMessagesReducerState('s-1') as any;
-                React.useEffect(() => {
-                    seen.push(state?.value ?? -1);
-                });
-                return null;
-            }
-
-            let tree: renderer.ReactTestRenderer | null = null;
-            await act(async () => {
-                tree = renderer.create(React.createElement(Test));
-                await flushEffects(4);
+            const hook = await renderHook(() => useSessionMessagesReducerState('s-1') as any, {
+                flushOptions: { cycles: 1, turns: 4 },
             });
 
-            expect(seen).toEqual([0]);
+            expect(hook.getCurrent()?.value).toBe(0);
 
             await act(async () => {
                 reducerState.value = 1;
@@ -70,15 +55,12 @@ describe('useSessionMessagesReducerState', () => {
                         },
                     },
                 }));
-                await flushEffects(4);
+                await flushHookEffects({ cycles: 1, turns: 4 });
             });
 
-            expect(seen).toEqual([0, 1]);
+            expect(hook.getCurrent()?.value).toBe(1);
 
-            await act(async () => {
-                tree?.unmount();
-                await flushEffects(2);
-            });
+            await hook.unmount();
         } finally {
             storage.setState(previousState);
         }

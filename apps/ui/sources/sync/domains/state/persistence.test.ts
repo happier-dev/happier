@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { settingsDefaults } from '../settings/settings';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -24,17 +25,23 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-    tLoose: (key: string) => key,
-    getPreferredLanguage: () => 'en',
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+        translateLoose: (key: string) => key,
+        getPreferredLanguage: () => 'en',
+    });
+});
+
+import '../settings/settings';
 
 import {
     clearPersistence,
     loadNewSessionDraft,
     loadPendingSettings,
     savePendingSettings,
+    loadSettings,
     loadSessionModelModes,
     saveSessionModelModes,
     loadSessionMaterializedMaxSeqById,
@@ -55,6 +62,10 @@ describe('persistence', () => {
     });
 
     describe('session model modes', () => {
+        it('loads default settings without touching the settings store bootstrap path', () => {
+            expect(loadSettings()).toBeTruthy();
+        });
+
         it('returns an empty object when nothing is persisted', () => {
             expect(loadSessionModelModes()).toEqual({});
         });

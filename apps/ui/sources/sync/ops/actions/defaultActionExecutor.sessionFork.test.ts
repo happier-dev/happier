@@ -127,11 +127,14 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 const storageGetStateMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: storageGetStateMock,
   },
-}));
+});
+});
 
 describe('createDefaultActionExecutor (session.fork)', () => {
   beforeEach(() => {

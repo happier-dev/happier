@@ -17,10 +17,10 @@ describe('sessionEphemeralTasks', () => {
     afterEach(() => {
         sessionRpcWithServerScopeMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReset();
-        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
     });
 
     it('calls ephemeral.task.run through the preferred session owner scope when no explicit serverId is provided', async () => {
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
         sessionRpcWithServerScopeMock.mockResolvedValue({ ok: true, result: { title: 't', body: '', message: 't' } });
 
         const { sessionEphemeralTaskRun } = await import('./sessionEphemeralTasks');

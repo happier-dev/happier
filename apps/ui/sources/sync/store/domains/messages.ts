@@ -2,6 +2,7 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
+import { readStreamSegmentMetaV1 } from '../../reducer/helpers/streamSegmentMeta';
 import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
@@ -77,6 +78,35 @@ type MessagesDomainDependencies = {
     sessions: Record<string, Session>;
     sessionPending: Record<string, SessionPending>;
 };
+
+function resolveCommittedTranscriptDraftBase(params: Readonly<{
+    sessionMessages: SessionMessages;
+    localId: string;
+    segmentKind: 'assistant' | 'thinking';
+}>): Readonly<{ text: string; updatedAtMs: number | null }> {
+    const committedMessageId = params.sessionMessages.reducerState.localIds.get(params.localId) ?? null;
+    const isThinking = params.segmentKind === 'thinking';
+    const directMatch = committedMessageId ? params.sessionMessages.messagesById[committedMessageId] : null;
+    if (directMatch?.kind === 'agent-text' && Boolean(directMatch.isThinking) === isThinking && typeof directMatch.text === 'string') {
+        return {
+            text: directMatch.text,
+            updatedAtMs: readStreamSegmentMetaV1(directMatch.meta)?.updatedAtMs ?? null,
+        };
+    }
+
+    for (const message of Object.values(params.sessionMessages.messagesById)) {
+        if (message?.kind !== 'agent-text') continue;
+        if (message.localId !== params.localId) continue;
+        if (Boolean(message.isThinking) !== isThinking) continue;
+        if (typeof message.text !== 'string') continue;
+        return {
+            text: message.text,
+            updatedAtMs: readStreamSegmentMetaV1(message.meta)?.updatedAtMs ?? null,
+        };
+    }
+
+    return { text: '', updatedAtMs: null };
+}
 
 function mergeSortedMessageIdsOldestFirst(params: Readonly<{
     existingSortedIds: readonly string[];
@@ -627,7 +657,21 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 const existingSession = coerceSessionMessages(state.sessionMessages[sessionId]);
                 const draftsByLocalId = existingSession.draftsByLocalId;
                 const prev = draftsByLocalId[localId];
-                const prevText = prev && typeof prev.text === 'string' ? prev.text : '';
+                const committedBase = resolveCommittedTranscriptDraftBase({
+                    sessionMessages: existingSession,
+                    localId,
+                    segmentKind,
+                });
+                if (committedBase.updatedAtMs !== null && committedBase.updatedAtMs >= createdAtMs) {
+                    return state;
+                }
+                const prevText =
+                    prev
+                    && prev.segmentKind === segmentKind
+                    && prev.sidechainId === sidechainId
+                    && typeof prev.text === 'string'
+                        ? prev.text
+                        : committedBase.text;
                 draftsByLocalId[localId] = {
                     text: prevText + deltaText,
                     segmentKind,

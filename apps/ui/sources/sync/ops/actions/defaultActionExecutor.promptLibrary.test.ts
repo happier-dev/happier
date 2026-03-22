@@ -26,7 +26,9 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => {
     };
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => ({
             settings: {
@@ -36,7 +38,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             sessions: {},
         }),
     },
-}));
+});
+});
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunAction: vi.fn(),

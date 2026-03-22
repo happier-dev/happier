@@ -23,11 +23,14 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
     resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdMock(sessionId),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: getStateMock,
     },
-}));
+});
+});
 
 describe('sessionScm', () => {
     afterEach(() => {
@@ -84,7 +87,10 @@ describe('sessionScm', () => {
             RPC_METHODS.SCM_STATUS_SNAPSHOT,
             {
                 cwd: '~/repo',
-            }
+            },
+            {
+                timeoutMs: 30000,
+            },
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
@@ -122,12 +128,15 @@ describe('sessionScm', () => {
                     kind: 'prefer',
                     backendId: 'sapling',
                 },
-            }
+            },
+            {
+                timeoutMs: 30000,
+            },
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 
-    it('falls back to session RPC when machine RPC reports method not available', async () => {
+    it('falls back to session RPC when machine RPC reports method not found', async () => {
         getStateMock.mockReturnValue({
             settings: {
                 scmGitRepoPreferredBackend: 'git',
@@ -144,8 +153,8 @@ describe('sessionScm', () => {
             },
         });
         machineRpcMock.mockRejectedValue(
-            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE), {
-                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
             }),
         );
         sessionRpcMock.mockResolvedValue({
@@ -167,7 +176,7 @@ describe('sessionScm', () => {
         });
     });
 
-    it('does not fall back to session RPC for inactive sessions', async () => {
+    it('does not fall back to session RPC for inactive sessions when machine RPC reports method not found', async () => {
         getStateMock.mockReturnValue({
             settings: {
                 scmGitRepoPreferredBackend: 'git',
@@ -184,8 +193,8 @@ describe('sessionScm', () => {
             },
         });
         machineRpcMock.mockRejectedValue(
-            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE), {
-                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
             }),
         );
         sessionRpcMock.mockResolvedValue({
@@ -197,7 +206,7 @@ describe('sessionScm', () => {
         const response = await sessionScmStatusSnapshot('session-1', {});
 
         expect(response.success).toBe(false);
-        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         expect(machineRpcMock).toHaveBeenCalledTimes(1);
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
@@ -239,6 +248,9 @@ describe('sessionScm', () => {
             'machine-1',
             RPC_METHODS.SCM_STATUS_SNAPSHOT,
             { cwd: '~/repo' },
+            {
+                timeoutMs: 30000,
+            },
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });

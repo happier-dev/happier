@@ -24,7 +24,7 @@ export type SessionMachineRpcFailure = Readonly<{
 }>;
 
 type SessionMachineRpcMachineRoute = Readonly<{
-    kind: 'direct_peer';
+    kind: 'machine_rpc_direct';
     machineTarget: SessionMachineRpcTarget;
 }>;
 
@@ -168,7 +168,7 @@ export function createSessionMachineRpcFallbackCaller<TFailure extends SessionMa
             callParams: SessionMachineRpcCallParams<TRequest>,
         ): Promise<TResponse> => {
             try {
-                if (lockedRoute?.kind === 'direct_peer') {
+                if (lockedRoute?.kind === 'machine_rpc_direct') {
                     try {
                         const response = await callMachineRoute<TResponse, TRequest>(lockedRoute, callParams);
                         params.onDirectRouteViable?.(lockedRoute.machineTarget);
@@ -200,12 +200,12 @@ export function createSessionMachineRpcFallbackCaller<TFailure extends SessionMa
                 if (machineTarget && (params.shouldAttemptDirectRoute?.(machineTarget) ?? true)) {
                     try {
                         const response = await callMachineRoute<TResponse, TRequest>({
-                            kind: 'direct_peer',
+                            kind: 'machine_rpc_direct',
                             machineTarget,
                         }, callParams);
                         if (params.reuseResolvedRoute === true) {
                             lockedRoute = {
-                                kind: 'direct_peer',
+                                kind: 'machine_rpc_direct',
                                 machineTarget,
                             };
                         }

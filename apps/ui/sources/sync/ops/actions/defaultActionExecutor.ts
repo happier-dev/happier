@@ -62,6 +62,8 @@ export function createDefaultActionExecutor(opts?: Readonly<{
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string) => void | Promise<void>;
 }>): ReturnType<typeof createActionExecutor> {
+  type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number }>;
+  type AgentsModelsListArgs = Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
   const resolveSessionMachineId = (sessionId: string, metadata: { machineId?: unknown } | null | undefined): string => {
     const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? '';
     if (reachableMachineId) {
@@ -210,8 +212,14 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     reviewEnginesList: async ({ sessionId, includeDisabled }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled }),
-    agentsBackendsList: async ({ includeDisabled }) => await listAgentBackendsForVoiceTool({ includeDisabled }),
-    agentsModelsList: async ({ agentId, machineId }) => await listAgentModelsForVoiceTool({ agentId, machineId }),
+    agentsBackendsList: async (args) => {
+      const { includeDisabled, limit } = args as AgentsBackendsListArgs;
+      return await listAgentBackendsForVoiceTool({ includeDisabled, limit });
+    },
+    agentsModelsList: async (args) => {
+      const { agentId, machineId, limit, backendTargetKey } = args as AgentsModelsListArgs;
+      return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
+    },
 
     sessionSendMessage: async ({ sessionId, message, serverId }) =>
       await sendSessionMessageWithServerScope({ sessionId, message, serverId }),
@@ -265,7 +273,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     sessionModeSet: async ({ sessionId, modeId }) => {
       const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
       const control = resolveSessionModeActionControl(session);
-      const normalizedModeId = normalizeRequestedSessionModeId(modeId);
+      const normalizedModeId = normalizeRequestedSessionModeId(control, modeId);
       if (!isRequestedSessionModeSupported(control, normalizedModeId)) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }

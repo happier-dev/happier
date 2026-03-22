@@ -776,5 +776,9 @@ export function createSaplingSessionRpcHarness(workspace: string) {
 
 export function initSaplingRepo(cwd: string): void {
     runSapling(cwd, ['init']);
+    // The git-backed fallback path still creates real git commits, so tests need a
+    // deterministic local identity even when Sapling itself is unavailable.
+    runGitCommand(cwd, ['config', 'user.email', 'test@example.com']);
+    runGitCommand(cwd, ['config', 'user.name', 'Test User']);
     runSapling(cwd, ['config', '--local', 'ui.username', 'Test User <test@example.com>']);
 }

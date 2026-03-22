@@ -11,11 +11,14 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: getStateMock,
     },
-}));
+});
+});
 
 describe('machineScm', () => {
     afterEach(() => {

@@ -147,6 +147,8 @@ import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngin
 import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/overrides/acpSessionModeOverridePublish';
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { serverFetch } from './http/client';
@@ -199,6 +201,25 @@ function createDefaultMessageTransport(): SyncMessageTransport {
             apiSocket.emitWithAck<T>(event, payload, opts),
         send: (event: string, payload: unknown) => apiSocket.send(event, payload),
     };
+}
+
+function isFallbackSafeSessionUserMessageRpcError(error: unknown): boolean {
+    if (readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+        return true;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+    if (
+        errorMessage === 'Method not found'
+        || errorMessage === 'RPC method not available'
+        || errorMessage === 'Socket not connected'
+        || errorMessage === 'Socket connect timeout'
+    ) {
+        return true;
+    }
+
+    const normalized = errorMessage.toLowerCase();
+    return normalized.includes('connect_error') || normalized.includes('session encryption not found');
 }
 
 function readOptionalSessionMetadataString(value: unknown): string | null {
@@ -793,6 +814,36 @@ class Sync {
         const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
         try {
+            const publishNextPromptPermissionModeIfNeeded = async (): Promise<void> => {
+                const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
+                if (settingsApplyTiming !== 'next_prompt') {
+                    return;
+                }
+
+                const latestSession = storage.getState().sessions[sessionId] ?? null;
+                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAt =
+                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
+                        ? metadataUpdatedAtRaw
+                        : 0;
+
+                if (!(typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt)) {
+                    return;
+                }
+
+                const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
+                try {
+                    await this.publishSessionPermissionModeToMetadata({
+                        sessionId,
+                        permissionMode: modeToPublish,
+                        permissionModeUpdatedAt: localUpdatedAt,
+                    });
+                } catch {
+                    // Best-effort only: sending messages must not fail due to metadata publish failures.
+                }
+            };
+
             // Read permission mode from session state
             const permissionMode = session.permissionMode || 'default';
             
@@ -853,6 +904,32 @@ class Sync {
             const ready = await this.waitForAgentReady(sessionId);
             if (!ready) {
                 log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
+            }
+
+            if (session.active === true) {
+                try {
+                    await apiSocket.sessionRPC<{ ok: true }, {
+                        text: string;
+                        localId: string;
+                        meta: Record<string, unknown>;
+                    }>(
+                        sessionId,
+                        SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+                        {
+                            text,
+                            localId,
+                            meta: content.meta ?? {},
+                        },
+                        { timeoutMs: 7_500 },
+                    );
+                    await publishNextPromptPermissionModeIfNeeded();
+                    return;
+                } catch (error) {
+                    if (!isFallbackSafeSessionUserMessageRpcError(error)) {
+                        storage.getState().removePendingMessage(sessionId, localId);
+                        throw error;
+                    }
+                }
             }
 
             const payload = {
@@ -918,29 +995,7 @@ class Sync {
             // immediately when the user toggles the picker. Instead, once the user actually sends a message,
             // we publish the newer local selection as the session-wide permission mode so it propagates
             // across devices.
-            const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
-            if (settingsApplyTiming === 'next_prompt') {
-                const latestSession = storage.getState().sessions[sessionId] ?? null;
-                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
-                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
-                const metadataUpdatedAt =
-                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
-                        ? metadataUpdatedAtRaw
-                        : 0;
-
-                if (typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt) {
-                    const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
-                    try {
-                        await this.publishSessionPermissionModeToMetadata({
-                            sessionId,
-                            permissionMode: modeToPublish,
-                            permissionModeUpdatedAt: localUpdatedAt,
-                        });
-                    } catch {
-                        // Best-effort only: sending messages must not fail due to metadata publish failures.
-                    }
-                }
-            }
+            await publishNextPromptPermissionModeIfNeeded();
 
             // Server ACK means the user message is committed (or idempotently confirmed).
             // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).

@@ -56,12 +56,15 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => ({ sessions: {}, sessionMessages: {}, machines: {}, settings: {} }),
         setState: () => {},
     },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {

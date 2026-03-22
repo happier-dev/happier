@@ -429,6 +429,61 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         expect(get().sessionListViewData).toBe(initial);
     });
 
+    it('does not resurrect a cleared draft when applySessions merges a loaded session update', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        domain.updateSessionDraft('s1', 'local draft');
+        expect(get().sessions.s1?.draft).toBe('local draft');
+
+        domain.updateSessionDraft('s1', null);
+        expect(get().sessions.s1?.draft).toBeNull();
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 2,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 2,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+                draft: 'server stale draft',
+            } as any,
+        ]);
+
+        expect(get().sessions.s1?.draft).toBeNull();
+    });
+
     it('does not rebuild sessionListViewData when marking optimistic thinking', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },

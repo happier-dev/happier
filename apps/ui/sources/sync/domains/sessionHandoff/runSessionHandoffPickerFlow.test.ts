@@ -9,11 +9,14 @@ vi.mock('@/components/sessions/handoff/openSessionHandoffPicker', () => ({
     openSessionHandoffPicker: (...args: unknown[]) => openSessionHandoffPickerMock(...args),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: (...args: unknown[]) => modalConfirmMock(...args),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: (...args: unknown[]) => modalConfirmMock(...args),
+        },
+    }).module;
+});
 
 vi.mock('./readSessionHandoffSessionActivity', () => ({
     readSessionHandoffSessionActivity: (...args: unknown[]) => readSessionHandoffSessionActivityMock(...args),
@@ -23,9 +26,10 @@ vi.mock('./runSessionHandoffUiFlow', () => ({
     runSessionHandoffUiFlow: (...args: unknown[]) => runSessionHandoffUiFlowMock(...args),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('runSessionHandoffPickerFlow', () => {
     beforeEach(() => {
