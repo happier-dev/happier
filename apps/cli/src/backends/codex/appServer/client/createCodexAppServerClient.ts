@@ -38,10 +38,30 @@ type PendingRequest = Readonly<{
     reject: (error: Error) => void;
 }>;
 
+const STARTUP_RPC_METHODS = new Set(['thread/start', 'thread/resume']);
+
+function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {
+    const raw = Number.parseInt(String(rawValue ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : fallbackMs;
+    return Math.max(250, Math.min(maxMs, configured));
+}
+
 function readRpcTimeoutMs(env?: NodeJS.ProcessEnv): number {
-    const raw = Number.parseInt(String(env?.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 5_000;
-    return Math.max(250, Math.min(60_000, configured));
+    return clampRpcTimeoutMs(env?.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS, 5_000, 60_000);
+}
+
+function readStartupRpcTimeoutMs(env?: NodeJS.ProcessEnv, baseTimeoutMs?: number): number {
+    const base = baseTimeoutMs ?? readRpcTimeoutMs(env);
+    const configured = clampRpcTimeoutMs(env?.HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS, 20_000, 120_000);
+    return Math.max(base, configured);
+}
+
+function readRequestTimeoutMs(method: string, env?: NodeJS.ProcessEnv): number {
+    const baseTimeoutMs = readRpcTimeoutMs(env);
+    if (STARTUP_RPC_METHODS.has(method)) {
+        return readStartupRpcTimeoutMs(env, baseTimeoutMs);
+    }
+    return baseTimeoutMs;
 }
 
 function failWaiters(state: MessageQueueState, error: Error): void {
@@ -77,7 +97,6 @@ export async function createCodexAppServerClient(params: Readonly<{
     configOverrides?: ReadonlyArray<string>;
 }>): Promise<DisposableCodexAppServerClient> {
     const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
-    const timeoutMs = readRpcTimeoutMs(processEnv);
     const baseInvocation = await resolveCodexCliInvocation({
         args: ['app-server', '--listen', 'stdio://'],
         processEnv,
@@ -261,6 +280,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     });
 
     const request = async (method: string, requestParams?: unknown): Promise<unknown> => {
+        const timeoutMs = readRequestTimeoutMs(method, processEnv);
         const id = ++nextId;
         const requestKey = toMessageKey(id);
         if (!requestKey) {
