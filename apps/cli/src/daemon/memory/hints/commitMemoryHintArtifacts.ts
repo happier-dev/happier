@@ -1,8 +1,8 @@
 import type { SessionSummaryShardV1, SessionSynopsisV1 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import { encryptSessionPayload, type SessionEncryptionContext } from '@/sessionControl/sessionEncryptionContext';
-import { commitSessionEncryptedMessage } from '@/sessionControl/sessionsHttp';
+import { encryptSessionPayload, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
+import { commitSessionEncryptedMessage } from '@/session/transport/http/sessionsHttp';
 
 import { buildSummaryShardLocalId, buildSynopsisLocalId } from '@/session/memoryArtifacts/buildMemoryArtifactLocalId';
 

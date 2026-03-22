@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-
-import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env.testkit';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import type { Credentials } from '@/persistence';
 
 describe('memoryWorker', () => {
@@ -11,7 +10,7 @@ describe('memoryWorker', () => {
   let homeDir: string | undefined;
 
   beforeEach(async () => {
-    homeDir = await mkdtemp(join(tmpdir(), 'happier-memory-worker-'));
+    homeDir = await createTempDir('happier-memory-worker-');
     applyEnvValues({
       HAPPIER_HOME_DIR: homeDir,
       HAPPIER_SERVER_URL: 'https://api.example.test',
@@ -23,7 +22,7 @@ describe('memoryWorker', () => {
   afterEach(async () => {
     restoreEnvValues(envBackup);
     vi.resetModules();
-    if (homeDir) await rm(homeDir, { recursive: true, force: true });
+    if (homeDir) await removeTempDir(homeDir);
   });
 
   it('creates the tier-1 sqlite DB when enabled', async () => {
@@ -278,7 +277,7 @@ describe('memoryWorker', () => {
       const fetchSessionById = vi.fn(async () => ({}));
       const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
 
-      vi.doMock('@/sessionControl/sessionsHttp', () => ({
+      vi.doMock('@/session/transport/http/sessionsHttp', () => ({
         fetchSessionsPage,
         fetchSessionById,
       }));

@@ -11,13 +11,13 @@ import { openSummaryShardIndexDb, type SummaryShardIndexDbHandle } from './summa
 import { openDeepIndexDb, type DeepIndexDbHandle } from './deepIndex/deepIndexDb';
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 import { ingestSummaryShardsFromDecryptedTranscriptRows } from './ingestSummaryShardsFromDecryptedTranscriptRows';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { resolveSessionEncryptionContextFromCredentials, type SessionEncryptionContext } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { resolveSessionEncryptionContextFromCredentials, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 import { logger } from '@/ui/logger';
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
-import { fetchSessionsPage } from '@/sessionControl/sessionsHttp';
+import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
 import { syncMemoryHintsForSessionsOnce } from './syncMemoryHintsForSessionsOnce';
 import { runMemoryHintsExecutionRun } from './hints/runMemoryHintsExecutionRun';
 import { commitMemoryHintArtifacts } from './hints/commitMemoryHintArtifacts';

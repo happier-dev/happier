@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { decryptSessionPayload, type SessionEncryptionContext } from '@/sessionControl/sessionEncryptionContext';
+import { decryptSessionPayload, type SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 
 describe('commitMemoryHintArtifacts', () => {
   it('builds encrypted structured transcript messages with deterministic localIds', async () => {
