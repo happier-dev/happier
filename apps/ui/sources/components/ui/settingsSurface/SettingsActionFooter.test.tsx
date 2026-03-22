@@ -1,6 +1,6 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,30 +25,25 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
+    ItemGroup: (props: any) => React.createElement('ItemGroup', { ...props, testID: 'settings-action-footer-item-group' }, props.children),
 }));
 
 vi.mock('@/components/ui/forms/SplitActionButtons', () => ({
-    SplitActionButtons: (props: any) => React.createElement('SplitActionButtons', props),
+    SplitActionButtons: (props: any) => React.createElement('SplitActionButtons', { ...props, testID: 'settings-action-footer-buttons' }),
 }));
 
 describe('SettingsActionFooter', () => {
     it('renders split actions without wrapping them in an item group', async () => {
         const { SettingsActionFooter } = await import('./SettingsActionFooter');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SettingsActionFooter, {
-                    primaryLabel: 'Save',
-                    onPrimaryPress: vi.fn(),
-                    secondaryLabel: 'Cancel',
-                    onSecondaryPress: vi.fn(),
-                }),
-            );
-        });
+        const screen = await renderScreen(React.createElement(SettingsActionFooter, {
+            primaryLabel: 'Save',
+            onPrimaryPress: vi.fn(),
+            secondaryLabel: 'Cancel',
+            onSecondaryPress: vi.fn(),
+        }));
 
-        expect(tree.root.findAllByType('SplitActionButtons')).toHaveLength(1);
-        expect(tree.root.findAllByType('ItemGroup')).toHaveLength(0);
+        expect(screen.findByTestId('settings-action-footer-buttons')).toBeTruthy();
+        expect(screen.findByTestId('settings-action-footer-item-group')).toBeNull();
     });
 });

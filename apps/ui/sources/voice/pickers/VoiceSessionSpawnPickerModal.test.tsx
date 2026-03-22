@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -111,23 +112,20 @@ describe('VoiceSessionSpawnPickerModal', () => {
     pathSelectorPropsRef.current = null;
   });
 
-  it('passes machine browse config to PathSelector after choosing a machine', async () => {
-    const { VoiceSessionSpawnPickerModal } = await import('./VoiceSessionSpawnPickerModal');
+    it('passes machine browse config to PathSelector after choosing a machine', async () => {
+        const { VoiceSessionSpawnPickerModal } = await import('./VoiceSessionSpawnPickerModal');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <VoiceSessionSpawnPickerModal
-          onClose={() => {}}
-          onResolve={() => {}}
-        />,
-      );
-    });
+        const screen = await renderScreen(
+            <VoiceSessionSpawnPickerModal
+                onClose={() => {}}
+                onResolve={() => {}}
+            />,
+        );
 
-    const machineSelector = tree.root.findByType('MachineSelector');
-    await act(async () => {
-      machineSelector.props.onSelect({ id: 'machine-1', metadata: { homeDir: '/Users/test' } });
-    });
+        const machineSelector = screen.findByType('MachineSelector' as any);
+        await act(async () => {
+            machineSelector.props.onSelect({ id: 'machine-1', metadata: { homeDir: '/Users/test' } });
+        });
 
     expect(pathSelectorPropsRef.current).toMatchObject({
       machineBrowse: {

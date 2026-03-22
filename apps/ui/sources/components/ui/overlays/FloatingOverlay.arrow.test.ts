@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 import { FloatingOverlay } from './FloatingOverlay';
 
 (
@@ -71,15 +71,12 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
 }));
 
 async function renderOverlay(props: Omit<React.ComponentProps<typeof FloatingOverlay>, 'children'>) {
-    let tree: renderer.ReactTestRenderer | undefined;
-    await act(async () => {
-        const overlayProps: React.ComponentProps<typeof FloatingOverlay> = {
+    return renderScreen(
+        React.createElement(FloatingOverlay, {
             ...props,
             children: React.createElement(Child),
-        };
-        tree = renderer.create(React.createElement(FloatingOverlay, overlayProps));
-    });
-    return tree!;
+        }),
+    );
 }
 
 function Child() {
@@ -88,24 +85,21 @@ function Child() {
 
 describe('FloatingOverlay', () => {
     it('renders an arrow when configured', async () => {
-        const tree = await renderOverlay({
+        const screen = await renderOverlay({
             maxHeight: 200,
             arrow: { placement: 'bottom' },
         });
 
-        const arrows = tree.root.findAllByProps({ testID: 'floating-overlay-arrow' });
-        const hostArrows = arrows.filter((node) => typeof node.type === 'string');
-        expect(hostArrows).toHaveLength(1);
+        expect(screen.findByTestId('floating-overlay-arrow')).toBeTruthy();
     });
 
     it('renders edge indicators when enabled without edge fades', async () => {
-        const tree = await renderOverlay({
+        const screen = await renderOverlay({
             maxHeight: 200,
             edgeIndicators: true,
             edgeFades: false,
         });
 
-        const indicators = tree.root.findAll((node) => (node.type as unknown) === 'ScrollEdgeIndicators');
-        expect(indicators).toHaveLength(1);
+        expect(screen.findByType('ScrollEdgeIndicators')).toBeTruthy();
     });
 });
