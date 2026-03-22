@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { captureStderr, captureStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+
 const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_PLATFORM',
   'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
@@ -13,53 +16,16 @@ const SCOPED_ENV_KEYS = [
   'PATH',
 ] as const;
 
-type ScopedEnvKey = (typeof SCOPED_ENV_KEYS)[number];
-
-function captureScopedEnv(): Record<ScopedEnvKey, string | undefined> {
-  return Object.fromEntries(
-    SCOPED_ENV_KEYS.map((key) => [key, process.env[key]]),
-  ) as Record<ScopedEnvKey, string | undefined>;
-}
-
-function restoreScopedEnv(snapshot: Record<ScopedEnvKey, string | undefined>): void {
-  for (const key of SCOPED_ENV_KEYS) {
-    const value = snapshot[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-}
-
-function captureStdIo(): { stdout: string[]; stderr: string[] } {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  vi.spyOn(process.stdout, 'write').mockImplementation(
-    ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
-      stdout.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
-      if (typeof encoding === 'function') encoding(null);
-      else if (typeof callback === 'function') callback(null);
-      return true;
-    }) as typeof process.stdout.write,
-  );
-  vi.spyOn(process.stderr, 'write').mockImplementation(
-    ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
-      stderr.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
-      if (typeof encoding === 'function') encoding(null);
-      else if (typeof callback === 'function') callback(null);
-      return true;
-    }) as typeof process.stderr.write,
-  );
-  return { stdout, stderr };
-}
-
 async function loadCliModule(): Promise<typeof import('./cli.js')> {
   return import('./cli.js');
 }
 
 describe('runDaemonServiceCliCommand', () => {
-  const envBaseline = captureScopedEnv();
+  let envScope = createEnvKeyScope(SCOPED_ENV_KEYS);
 
   afterEach(() => {
-    restoreScopedEnv(envBaseline);
+    envScope.restore();
+    envScope = createEnvKeyScope(SCOPED_ENV_KEYS);
     vi.restoreAllMocks();
     vi.unmock('node:child_process');
     vi.unmock('node:os');
@@ -68,55 +34,74 @@ describe('runDaemonServiceCliCommand', () => {
 
   it('treats -h as help (not as a subcommand)', async () => {
     const { runDaemonServiceCliCommand } = await loadCliModule();
-    process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'darwin';
-    process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = '/tmp';
-    process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = '/tmp/happier';
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
+      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
+      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
+    });
 
-    const { stdout, stderr } = captureStdIo();
+    const stdout = captureStdout();
+    const stderr = captureStderr();
+    try {
+      await runDaemonServiceCliCommand({ argv: ['-h'] });
 
-    await runDaemonServiceCliCommand({ argv: ['-h'] });
-
-    expect(stdout.join('')).toContain('Usage:');
-    expect(stderr.join('')).not.toContain('Unknown daemon service subcommand');
+      expect(stdout.text()).toContain('Usage:');
+      expect(stderr.text()).not.toContain('Unknown daemon service subcommand');
+    } finally {
+      stderr.restore();
+      stdout.restore();
+    }
   });
 
   it('supports help JSON output', async () => {
     const { runDaemonServiceCliCommand } = await loadCliModule();
-    process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'darwin';
-    process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = '/tmp';
-    process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = '/tmp/happier';
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
+      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
+      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
+    });
 
-    const { stdout } = captureStdIo();
-    await runDaemonServiceCliCommand({ argv: ['--help', '--json'] });
-
-    const payload = JSON.parse(stdout.join('').trim()) as {
+    const output = captureStdoutJsonOutput<{
       ok: boolean;
       commands: string[];
       flags: string[];
-    };
-    expect(payload.ok).toBe(true);
-    expect(payload.commands).toContain('install');
-    expect(payload.flags).toContain('--json');
+    }>();
+    try {
+      await runDaemonServiceCliCommand({ argv: ['--help', '--json'] });
+
+      const payload = output.json();
+      expect(payload.ok).toBe(true);
+      expect(payload.commands).toContain('install');
+      expect(payload.flags).toContain('--json');
+    } finally {
+      output.restore();
+    }
   });
 
   it('treats --mode system as a flag (not as a subcommand) and reports systemd system paths (linux)', async () => {
     const { runDaemonServiceCliCommand } = await loadCliModule();
-    process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'linux';
-    process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = '/tmp';
-    process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = '/tmp/happier';
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
+      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
+    });
 
-    const { stdout } = captureStdIo();
-    await runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system', '--system-user', 'happier'] });
-
-    const payload = JSON.parse(stdout.join('').trim()) as {
+    const output = captureStdoutJsonOutput<{
       ok: boolean;
       platform: string;
       paths: { unitPath?: string; unitName?: string };
-    };
-    expect(payload.ok).toBe(true);
-    expect(payload.platform).toBe('linux');
-    expect(payload.paths.unitPath).toContain('/etc/systemd/system/');
-    expect(payload.paths.unitName).toContain('happier-daemon.');
+    }>();
+    try {
+      await runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system', '--system-user', 'happier'] });
+
+      const payload = output.json();
+      expect(payload.ok).toBe(true);
+      expect(payload.platform).toBe('linux');
+      expect(payload.paths.unitPath).toContain('/etc/systemd/system/');
+      expect(payload.paths.unitName).toContain('happier-daemon.');
+    } finally {
+      output.restore();
+    }
   });
 
   it('rejects invalid --mode values', async () => {
@@ -150,45 +135,53 @@ describe('runDaemonServiceCliCommand', () => {
     });
 
     const { runDaemonServiceCliCommand } = await loadCliModule();
-    process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'linux';
-    process.env.HAPPIER_DAEMON_SERVICE_INSTANCE_ID = 'company';
-    process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH = '/usr/local/bin/happier';
-    process.env.HAPPIER_DAEMON_SERVICE_ENTRY_PATH = '';
-    process.env.PATH = '/usr/bin';
+    envScope.patch({
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'company',
+      HAPPIER_DAEMON_SERVICE_NODE_PATH: '/usr/local/bin/happier',
+      HAPPIER_DAEMON_SERVICE_ENTRY_PATH: '',
+      PATH: '/usr/bin',
+    });
 
     const processWithGetuid = process as typeof process & { getuid: () => number };
     vi.spyOn(processWithGetuid, 'getuid').mockReturnValue(0);
-    const installIo = captureStdIo();
-    await runDaemonServiceCliCommand({
-      argv: ['install', '--dry-run', '--json', '--mode', 'system', '--system-user', 'happier'],
-    });
-
-    const installPayload = JSON.parse(installIo.stdout.join('').trim()) as {
+    const installOutput = captureStdoutJsonOutput<{
       ok: boolean;
       plan: { files: Array<{ path: string; content: string }> };
-    };
+    }>();
+    try {
+      await runDaemonServiceCliCommand({
+        argv: ['install', '--dry-run', '--json', '--mode', 'system', '--system-user', 'happier'],
+      });
 
-    expect(installPayload.ok).toBe(true);
-    expect(installPayload.plan.files[0]?.path).toBe('/etc/systemd/system/happier-daemon.company.service');
-    expect(installPayload.plan.files[0]?.content).toContain('User=happier');
-    expect(installPayload.plan.files[0]?.content).toContain('WorkingDirectory=/home/happier');
-    expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/happier/.happier');
-    expect(installPayload.plan.files[0]?.content).toContain('Environment=PATH=');
-    expect(installPayload.plan.files[0]?.content).toContain('/home/happier/.local/bin');
-    expect(installPayload.plan.files[0]?.content).toContain('/home/happier/bin');
-    expect(installPayload.plan.files[0]?.content).not.toContain('/root/.local/bin');
-    expect(installPayload.plan.files[0]?.content).not.toContain('/root/.happier');
+      const installPayload = installOutput.json();
+      expect(installPayload.ok).toBe(true);
+      expect(installPayload.plan.files[0]?.path).toBe('/etc/systemd/system/happier-daemon.company.service');
+      expect(installPayload.plan.files[0]?.content).toContain('User=happier');
+      expect(installPayload.plan.files[0]?.content).toContain('WorkingDirectory=/home/happier');
+      expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/happier/.happier');
+      expect(installPayload.plan.files[0]?.content).toContain('Environment=PATH=');
+      expect(installPayload.plan.files[0]?.content).toContain('/home/happier/.local/bin');
+      expect(installPayload.plan.files[0]?.content).toContain('/home/happier/bin');
+      expect(installPayload.plan.files[0]?.content).not.toContain('/root/.local/bin');
+      expect(installPayload.plan.files[0]?.content).not.toContain('/root/.happier');
+    } finally {
+      installOutput.restore();
+    }
 
-    const pathsIo = captureStdIo();
-    await runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system', '--system-user', 'happier'] });
-
-    const pathsPayload = JSON.parse(pathsIo.stdout.join('').trim()) as {
+    const pathsOutput = captureStdoutJsonOutput<{
       ok: boolean;
       paths: { stdoutPath?: string; stderrPath?: string };
-    };
+    }>();
+    try {
+      await runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system', '--system-user', 'happier'] });
 
-    expect(pathsPayload.ok).toBe(true);
-    expect(pathsPayload.paths.stdoutPath).toBe('/home/happier/.happier/logs/daemon-service.company.out.log');
-    expect(pathsPayload.paths.stderrPath).toBe('/home/happier/.happier/logs/daemon-service.company.err.log');
+      const pathsPayload = pathsOutput.json();
+      expect(pathsPayload.ok).toBe(true);
+      expect(pathsPayload.paths.stdoutPath).toBe('/home/happier/.happier/logs/daemon-service.company.out.log');
+      expect(pathsPayload.paths.stderrPath).toBe('/home/happier/.happier/logs/daemon-service.company.err.log');
+    } finally {
+      pathsOutput.restore();
+    }
   });
 });
