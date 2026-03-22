@@ -17,6 +17,14 @@ const readMachineTargetForSessionSpy = vi.fn();
 const canUseSessionRpcSpy = vi.fn();
 const shouldFallbackToSessionRpcSpy = vi.fn();
 
+vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
+    // Keep tests deterministic: other suites can mark routes unavailable in the shared in-memory cache.
+    // For these ops tests we always want the direct route to be attempted when a machine target exists.
+    readCachedMachineRpcDirectRoute: () => ({ status: 'unknown' }),
+    recordCachedMachineRpcDirectRouteUnavailable: () => {},
+    recordCachedMachineRpcDirectRouteViable: () => {},
+}));
+
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         machineRPC: (machineId: string, method: string, payload: unknown) =>
@@ -89,12 +97,19 @@ describe('sessionWriteFile', () => {
         machineRPCSpy.mockRejectedValueOnce(
             createRpcCallError({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
         );
+        sessionRpcWithServerScopeSpy.mockResolvedValueOnce({
+            success: false,
+            error: 'Method not found',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+        });
 
         const res = await sessionWriteFile('s1', 'src/a.ts', 'hello');
         expect(res.success).toBe(false);
         if (res.success) throw new Error('Expected sessionWriteFile to fail');
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
+        expect(machineRPCSpy).toHaveBeenCalled();
+        expect(sessionRpcWithServerScopeSpy).toHaveBeenCalled();
     });
 
     it('returns a stable failure response when the RPC returns an unsupported shape', async () => {

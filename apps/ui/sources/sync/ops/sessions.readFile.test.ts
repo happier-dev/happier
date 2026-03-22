@@ -15,6 +15,14 @@ const readMachineTargetForSessionSpy = vi.fn();
 const canUseSessionRpcSpy = vi.fn();
 const shouldFallbackToSessionRpcSpy = vi.fn();
 
+vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
+    // Keep tests deterministic: other suites can mark routes unavailable in the shared in-memory cache.
+    // For these ops tests we always want the direct route to be attempted when a machine target exists.
+    readCachedMachineRpcDirectRoute: () => ({ status: 'unknown' }),
+    recordCachedMachineRpcDirectRouteUnavailable: () => {},
+    recordCachedMachineRpcDirectRouteViable: () => {},
+}));
+
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         machineRPC: (machineId: string, method: string, payload: unknown) =>

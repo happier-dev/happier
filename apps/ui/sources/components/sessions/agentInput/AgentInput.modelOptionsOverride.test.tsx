@@ -25,7 +25,7 @@ const storageSettings: Settings = {
 };
 
 function findIconNode(
-    tree: Awaited<ReturnType<typeof renderScreen>>['tree'] | { root: any },
+    tree: Awaited<ReturnType<typeof renderScreen>>['tree'] | { root: any } | { findAll: (predicate: (node: any) => boolean) => any[] },
     type: 'Ionicons' | 'Octicons',
     name: string,
 ): any {

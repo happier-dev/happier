@@ -172,7 +172,13 @@ describe('NewSessionEngineOptionDetail', () => {
     });
 
     it('publishes the selected mode synchronously so a following model click preserves it', async () => {
-        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+        type SelectionChange = {
+            modelId: string;
+            sessionModeId: string;
+            configOverrides: Readonly<Record<string, string>>;
+        };
+        let latestSelection: SelectionChange | null = null;
+        let latestSessionModeId: string | null = null;
         const screen = await renderScreen(<NewSessionEngineOptionDetail
             backendTarget={backendTarget}
             selectedMachineId="machine-1"
@@ -182,12 +188,13 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedSessionModeId="default"
             selectedConfigOverrides={{}}
             onSelectionChange={(selection) => {
-                latestSelection = selection;
+                latestSelection = selection as SelectionChange;
+                latestSessionModeId = (selection as SelectionChange).sessionModeId;
             }}
         />);
 
         await screen.pressByTestIdAsync('agent-input-session-mode-option:review');
-        expect(latestSelection?.sessionModeId).toBe('review');
+        expect(latestSessionModeId).toBe('review');
 
         await screen.pressByTestIdAsync('model-picker-overlay-option:preset-fast');
         expect(latestSelection).toEqual({

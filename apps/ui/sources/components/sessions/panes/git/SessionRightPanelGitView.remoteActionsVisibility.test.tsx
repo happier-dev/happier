@@ -220,7 +220,9 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
         const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
         const updateTab = screen.findByTestId('session-right-panel-git-update-tab');
-        expect(updateTab).toBeTruthy();
+        if (!updateTab) {
+            throw new Error('Expected git update tab to render');
+        }
         const actions = (updateTab.props as any).actions as Array<{ key: string }>;
         expect(actions.map((a) => a.key)).toEqual(['fetch', 'publish']);
         expect((updateTab.props as any).hint).toBeNull();

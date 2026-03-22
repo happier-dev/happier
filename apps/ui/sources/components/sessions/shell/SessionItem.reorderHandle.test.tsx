@@ -142,8 +142,9 @@ describe('SessionItem reorder handle', () => {
 
         // On web, actions are only rendered on hover. Trigger hover first.
         const row = screen.findByTestId('session-list-item-sess_1');
+        expect(row).toBeTruthy();
         await act(async () => {
-            triggerHoverEnter(row);
+            triggerHoverEnter(row!);
         });
 
         const handles = screen.findAllByTestId('session-item-reorder-handle');
@@ -228,8 +229,9 @@ describe('SessionItem reorder handle', () => {
         );
 
         const row = screen.findByTestId('session-list-item-sess_2');
+        expect(row).toBeTruthy();
         await act(async () => {
-            triggerHoverEnter(row);
+            triggerHoverEnter(row!);
         });
 
         const handles = screen.findAllByTestId('session-item-reorder-handle');
