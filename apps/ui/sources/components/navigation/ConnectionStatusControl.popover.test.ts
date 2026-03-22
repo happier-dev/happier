@@ -1,4 +1,3 @@
-import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
@@ -216,13 +215,6 @@ async function importConnectionStatusControl() {
     return module.ConnectionStatusControl;
 }
 
-function findTrigger(screen: renderer.ReactTestRenderer) {
-    return screen.find((node) => (
-        node.props?.accessibilityRole === 'button'
-        && typeof node.props?.onPress === 'function'
-    ));
-}
-
 afterEach(() => {
     capture.reset();
     authMocks.refreshFromActiveServer.mockClear();
@@ -246,7 +238,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
         expect(capture.popoverProps?.open).toBe(false);
 
-        const trigger = findTrigger(screen.tree);
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
         await act(async () => {
             await pressTestInstanceAsync(trigger);
         });
@@ -286,7 +278,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         tree = screen.tree;
 
-        const trigger = findTrigger(screen.tree);
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
         await act(async () => {
             await pressTestInstanceAsync(trigger);
         });
@@ -326,7 +318,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
-            const trigger = findTrigger(screen.tree);
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
                 await pressTestInstanceAsync(trigger);
             });
@@ -368,7 +360,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
-            const trigger = findTrigger(screen.tree);
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
                 await pressTestInstanceAsync(trigger);
             });
@@ -405,7 +397,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
-            const trigger = findTrigger(screen.tree);
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
                 await pressTestInstanceAsync(trigger);
             });
@@ -461,10 +453,9 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
-            const trigger = findTrigger(screen.tree);
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
-                trigger.props.onPress();
-                await flushHookEffects({ cycles: 1, turns: 1 });
+                await pressTestInstanceAsync(trigger);
             });
 
             const switchAction = capture.actionSections
@@ -477,7 +468,6 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             await act(async () => {
                 switchAction?.onPress?.();
-                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             expect(modalMocks.confirm).toHaveBeenCalledTimes(1);
@@ -533,10 +523,9 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
-            const trigger = findTrigger(screen.tree);
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
-                trigger.props.onPress();
-                await flushHookEffects({ cycles: 1, turns: 1 });
+                await pressTestInstanceAsync(trigger);
             });
 
             const groupAction = capture.actionSections
@@ -549,7 +538,6 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             await act(async () => {
                 groupAction?.onPress?.();
-                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             expect(modalMocks.confirm).toHaveBeenCalledTimes(1);
@@ -589,7 +577,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
             tree = screen.tree;
 
-            const trigger = findTrigger(screen.tree);
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
             await act(async () => {
                 await pressTestInstanceAsync(trigger);
             });

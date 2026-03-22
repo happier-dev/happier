@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -198,8 +197,7 @@ const agentInputModulePromise = import('./AgentInput');
 describe('AgentInput (abort button visibility)', () => {
     it('does not render the stop button when showAbortButton is false (even if onAbort exists)', async () => {
         const { AgentInput } = await agentInputModulePromise;
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -208,18 +206,14 @@ describe('AgentInput (abort button visibility)', () => {
                     showAbortButton={false}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
-        expect(stopIcons).toHaveLength(0);
-
-        act(() => tree!.unmount());
+        expect(screen.findByTestId('agent-input-abort')).toBeNull();
     });
 
     it('renders the stop button when showAbortButton is true and onAbort exists', async () => {
         const { AgentInput } = await agentInputModulePromise;
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -228,14 +222,8 @@ describe('AgentInput (abort button visibility)', () => {
                     showAbortButton={true}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
-        expect(stopIcons).toHaveLength(1);
-
-        const abortButtons = tree!.root.findAll((n: any) => n?.props?.testID === 'agent-input-abort');
-        expect(abortButtons.length).toBeGreaterThanOrEqual(1);
-
-        act(() => tree!.unmount());
+        expect(screen.findByTestId('agent-input-abort')).toBeTruthy();
     });
 });

@@ -40,6 +40,10 @@ function getTextContent(node: any): string {
     return Array.isArray(value) ? value.join('') : String(value ?? '');
 }
 
+function getNodeByTestID(tree: renderer.ReactTestRenderer, testID: string) {
+    return tree.root.findByProps({ testID });
+}
+
 describe('WebAlertModal', () => {
     it('renders confirm buttons as accessible Pressables on web', async () => {
         const { WebAlertModal } = await import('./WebAlertModal');
@@ -61,10 +65,10 @@ describe('WebAlertModal', () => {
                     onConfirm={onConfirm}
                 />)).tree;
 
-        const pressables = tree!.root.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(2);
-        expect(pressables[0]?.props?.testID).toBe('web-modal-cancel');
-        expect(pressables[1]?.props?.testID).toBe('web-modal-confirm');
+        const pressables = [
+            getNodeByTestID(tree!, 'web-modal-cancel'),
+            getNodeByTestID(tree!, 'web-modal-confirm'),
+        ];
 
         for (const pressable of pressables) {
             const text = getTextContent(pressable);

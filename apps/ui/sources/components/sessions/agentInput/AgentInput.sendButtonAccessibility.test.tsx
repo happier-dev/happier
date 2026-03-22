@@ -1,19 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function findSendPressable(tree: renderer.ReactTestRenderer) {
-    const sendTestIds = ['session-composer-send', 'new-session-composer-send'] as const;
-    const matches = tree.root.findAllByType('Pressable' as any).filter((node) =>
-        sendTestIds.includes(node.props?.testID) && typeof node.props?.onPress === 'function'
-    );
-    expect(matches.length).toBe(1);
-    return matches[0]!;
-}
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -206,8 +194,7 @@ describe('AgentInput (send button accessibility)', () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -217,43 +204,46 @@ describe('AgentInput (send button accessibility)', () => {
                     isMicActive={false}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('session-composer-send not found');
+
         const images = send.findAllByType('Image' as any);
         expect(images.length).toBe(0);
 
         const octicons = send.findAllByType('Octicons' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(true);
 
-        act(() => tree!.unmount());
+        await screen.unmount();
         featureEnabledState.voice = true;
     });
 
     it('sets an accessible label for session creation context (no sessionId)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value="hello"
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('new-session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('new-session-composer-send not found');
         expect(send.props.accessibilityRole).toBe('button');
         expect(send.props.accessibilityLabel).toBe('newSession.title');
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('prefers an explicit submit accessibility label override when provided', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value="hello"
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -261,38 +251,40 @@ describe('AgentInput (send button accessibility)', () => {
                     submitAccessibilityLabel="automations.create.createButtonTitle"
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('new-session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('new-session-composer-send not found');
         expect(send.props.accessibilityRole).toBe('button');
         expect(send.props.accessibilityLabel).toBe('automations.create.createButtonTitle');
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('sets an accessibility hint when send is disabled because input is empty (no sessionId, no mic)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('new-session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('new-session-composer-send not found');
         expect(send.props.accessibilityHint).toBe('session.inputPlaceholder');
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('does not set the empty-input accessibility hint when there is sendable auxiliary content', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onSend = vi.fn();
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -301,17 +293,17 @@ describe('AgentInput (send button accessibility)', () => {
                     hasSendableAttachments={true}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('session-composer-send not found');
         expect(send.props.accessibilityHint).toBeUndefined();
 
-        act(() => {
-            send.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-composer-send');
         expect(onSend).toHaveBeenCalledTimes(1);
 
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('uses the latest onSend callback after rerendering', async () => {
@@ -319,8 +311,7 @@ describe('AgentInput (send button accessibility)', () => {
         const firstOnSend = vi.fn();
         const secondOnSend = vi.fn();
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value="hello"
                     placeholder="Type"
@@ -328,57 +319,52 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={firstOnSend}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        act(() => {
-            tree!.update(
-                <AgentInput
-                    sessionId="session-1"
-                    value="hello"
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={secondOnSend}
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+        await screen.update(
+            <AgentInput
+                sessionId="session-1"
+                value="hello"
+                placeholder="Type"
+                onChangeText={() => {}}
+                onSend={secondOnSend}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+            />,
+        );
 
-        const send = findSendPressable(tree!);
-        act(() => {
-            send.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-composer-send');
 
         expect(firstOnSend).not.toHaveBeenCalled();
         expect(secondOnSend).toHaveBeenCalledTimes(1);
 
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('uses the session creation label when value is empty (no sessionId, no mic)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('new-session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('new-session-composer-send not found');
         expect(send.props.accessibilityRole).toBe('button');
         expect(send.props.accessibilityLabel).toBe('newSession.title');
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('sets an accessible label for message sending context (sessionId present)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value="hello"
                     placeholder="Type"
@@ -386,19 +372,20 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('session-composer-send not found');
         expect(send.props.accessibilityRole).toBe('button');
         expect(send.props.accessibilityLabel).toBe('common.send');
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('keeps the voice icon visible while mic is enabled and inactive (no text)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -408,23 +395,24 @@ describe('AgentInput (send button accessibility)', () => {
                     isMicActive={false}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('session-composer-send not found');
         const images = send.findAllByType('Image' as any);
         expect(images.length).toBe(1);
 
         const octicons = send.findAllByType('Octicons' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
 
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('shows a stop control while mic is enabled and active (no text)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -434,9 +422,11 @@ describe('AgentInput (send button accessibility)', () => {
                     isMicActive={true}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />)).tree;
+                />);
 
-        const send = findSendPressable(tree!);
+        const send = screen.findByTestId('session-composer-send');
+        expect(send).toBeTruthy();
+        if (!send) throw new Error('session-composer-send not found');
         const images = send.findAllByType('Image' as any);
         expect(images.length).toBe(0);
 
@@ -446,14 +436,13 @@ describe('AgentInput (send button accessibility)', () => {
         const octicons = send.findAllByType('Octicons' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
 
-        act(() => tree!.unmount());
+        await screen.unmount();
     });
 
     it('does not leave raw string children under non-Text host views on web', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -466,27 +455,9 @@ describe('AgentInput (send button accessibility)', () => {
                     onPermissionModeChange={() => {}}
                     agentType="codex"
                     onAgentClick={() => {}}
-                />)).tree;
+                />);
 
-        const invalidStrings: Array<{ parentType: string | null; value: string }> = [];
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string') {
-                if (parentType !== 'Text') invalidStrings.push({ parentType, value: node });
-                return;
-            }
-            if (Array.isArray(node)) {
-                for (const child of node) walk(child, parentType);
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : parentType;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
-
-        walk(tree!.toJSON(), null);
-
-        expect(invalidStrings).toEqual([]);
-        act(() => tree!.unmount());
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
+        await screen.unmount();
     });
 });

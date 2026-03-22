@@ -11,6 +11,7 @@ const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 
 const sessionSwitchSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
+const chatListPropsSpy = vi.hoisted(() => vi.fn());
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
@@ -135,7 +136,10 @@ vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
   ChatHeaderView: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
-  ChatList: (props: any) => React.createElement('ChatList', { ...props, testID: 'transcript-chat-list' }),
+  ChatList: (props: any) => {
+    chatListPropsSpy(props);
+    return React.createElement('ChatList', { ...props, testID: 'transcript-chat-list' });
+  },
 }));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
   EmptyMessages: () => React.createElement('EmptyMessages'),
@@ -288,8 +292,13 @@ describe('SessionView (control switch timeout)', () => {
     );
   }
 
-  function getChatList(screen: Awaited<ReturnType<typeof renderSessionView>>) {
-    return screen.root.findByProps({ testID: 'transcript-chat-list' });
+  function getChatListProps() {
+    const calls = chatListPropsSpy.mock.calls;
+    const chatListProps = calls[calls.length - 1]?.[0];
+    if (!chatListProps) {
+      throw new Error('Expected ChatList props to be captured');
+    }
+    return chatListProps;
   }
 
   beforeEach(() => {
@@ -297,6 +306,7 @@ describe('SessionView (control switch timeout)', () => {
     resetSession();
     sessionSwitchSpy.mockResolvedValue(true);
     modalAlertSpy.mockClear();
+    chatListPropsSpy.mockClear();
     vi.useFakeTimers();
     process.env.EXPO_PUBLIC_HAPPIER_CONTROL_SWITCH_UI_TIMEOUT_MS = '1000';
   });
@@ -311,19 +321,19 @@ describe('SessionView (control switch timeout)', () => {
   it('keeps local-control UI hidden and clears remote switching state after a timeout when controlledByUser never updates', async () => {
     sessionSwitchSpy.mockImplementationOnce(() => new Promise(() => {}));
     const screen = await renderSessionView();
-    const chatList = getChatList(screen);
-    expect(chatList.props.controlSwitchTo).toBeNull();
-    expect(typeof chatList.props.onRequestSwitchToRemote).toBe('function');
+    const chatList = getChatListProps();
+    expect(chatList.controlSwitchTo).toBeNull();
+    expect(typeof chatList.onRequestSwitchToRemote).toBe('function');
 
     act(() => {
-      chatList.props.onRequestSwitchToRemote();
+      chatList.onRequestSwitchToRemote();
     });
 
-    expect(getChatList(screen).props.controlSwitchTo).toBe('remote');
+    expect(getChatListProps().controlSwitchTo).toBe('remote');
 
     await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_000 });
 
-    expect(getChatList(screen).props.controlSwitchTo).toBeNull();
+    expect(getChatListProps().controlSwitchTo).toBeNull();
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
 
     await screen.unmount();
@@ -344,8 +354,8 @@ describe('SessionView (control switch timeout)', () => {
     });
 
     const screen = await renderSessionView();
-    const chatList = getChatList(screen);
-    expect(typeof chatList.props.onRequestSwitchToLocal).toBe('function');
+    const chatList = getChatListProps();
+    expect(typeof chatList.onRequestSwitchToLocal).toBe('function');
 
     await screen.unmount();
   });
@@ -360,9 +370,9 @@ describe('SessionView (control switch timeout)', () => {
     );
 
     const screen = await renderSessionView();
-    const chatList = getChatList(screen);
+    const chatList = getChatListProps();
     act(() => {
-      chatList.props.onRequestSwitchToRemote();
+      chatList.onRequestSwitchToRemote();
     });
 
     await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_000 });

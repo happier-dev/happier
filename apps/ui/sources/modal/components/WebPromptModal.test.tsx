@@ -6,8 +6,13 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const baseModalSpy = vi.fn();
+
 vi.mock('./BaseModal', () => ({
-    BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
+    BaseModal: (props: any) => {
+        baseModalSpy(props);
+        return React.createElement('BaseModal', props, props.children);
+    },
 }));
 
 vi.mock('react-native', async () => {
@@ -59,6 +64,7 @@ describe('WebPromptModal', () => {
     it('renders cancel/confirm actions as accessible Pressables on web', async () => {
         const { WebPromptModal } = await import('./WebPromptModal');
 
+        baseModalSpy.mockClear();
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
@@ -91,6 +97,7 @@ describe('WebPromptModal', () => {
     it('keeps the typed value when pointer confirm races with modal close', async () => {
         const { WebPromptModal } = await import('./WebPromptModal');
 
+        baseModalSpy.mockClear();
         const onClose = vi.fn();
         const onConfirm = vi.fn();
 
@@ -116,11 +123,12 @@ describe('WebPromptModal', () => {
         });
 
         const confirmButton = getNodeByTestID(tree!, 'web-prompt-confirm');
-        const baseModal = tree!.root.findByType('BaseModal' as any);
+        expect(baseModalSpy).toHaveBeenCalled();
+        const [baseModalProps] = baseModalSpy.mock.calls.at(-1)!;
 
         act(() => {
             confirmButton.props.onPressIn?.();
-            baseModal.props.onClose();
+            baseModalProps.onClose();
             confirmButton.props.onPress();
         });
 

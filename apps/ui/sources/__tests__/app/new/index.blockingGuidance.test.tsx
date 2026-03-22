@@ -1,6 +1,5 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -163,11 +162,10 @@ describe('/new (blocking guidance)', () => {
 
         const Screen = (await import('@/app/(app)/new')).default;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Screen))).tree;
+        const screen = await renderScreen(React.createElement(Screen));
 
-        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
-        expect(() => tree!.root.findByType('NewSessionWizard')).toThrow();
+        expect(() => screen.findByType('SessionGettingStartedGuidance')).not.toThrow();
+        expect(() => screen.findByType('NewSessionWizard')).toThrow();
     });
 
     it('keeps the wizard path when temp data seeds a worktree draft intent', async () => {
@@ -185,10 +183,9 @@ describe('/new (blocking guidance)', () => {
 
         const Screen = (await import('@/app/(app)/new')).default;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Screen))).tree;
+        const screen = await renderScreen(React.createElement(Screen));
 
-        expect(() => tree!.root.findByType('NewSessionWizard')).not.toThrow();
-        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).toThrow();
+        expect(() => screen.findByType('NewSessionWizard')).not.toThrow();
+        expect(() => screen.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 });

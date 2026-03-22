@@ -83,7 +83,8 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
-    ConstrainedScreenContent: (props: any) => React.createElement('ConstrainedScreenContent', props, props.children),
+    ConstrainedScreenContent: (props: any) =>
+        React.createElement('ConstrainedScreenContent', { ...props, testID: 'runs-constrained-screen-content' }, props.children),
 }));
 
 vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
@@ -168,18 +169,14 @@ describe('Runs screen', () => {
         await renderRunsScreen();
 
         const headerRightScreen = await renderHeaderRight();
-        const labels = headerRightScreen.root
-            .findAllByType('Pressable' as any)
-            .map((button: any) => button.props.accessibilityLabel);
-
-        expect(labels).toContain('runs.a11y.refresh');
-        expect(labels).toContain('runs.a11y.toggleFinished');
+        expect(headerRightScreen.findByProps({ accessibilityLabel: 'runs.a11y.refresh' })).toBeTruthy();
+        expect(headerRightScreen.findByProps({ accessibilityLabel: 'runs.a11y.toggleFinished' })).toBeTruthy();
     });
 
     it('renders runs inside the constrained route content wrapper', async () => {
         const screen = await renderRunsScreen();
 
-        expect(screen.root.findAllByType('ConstrainedScreenContent' as any)).toHaveLength(1);
+        expect(screen.findByTestId('runs-constrained-screen-content')).toBeTruthy();
     });
 
     it('lists daemon execution runs for machines in the server-scoped machine cache', async () => {

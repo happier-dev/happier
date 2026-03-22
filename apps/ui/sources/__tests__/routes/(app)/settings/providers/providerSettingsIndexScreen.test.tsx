@@ -1,10 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -85,20 +83,17 @@ afterEach(() => {
 describe('ProviderSettingsIndexScreen', () => {
     it('renders built-in providers without custom ACP and includes ACP backend sections', async () => {
         const Screen = (await import('@/app/(app)/settings/providers')).default;
-        const screen = await renderScreen(React.createElement(Screen));
-        const items = screen.root.findAllByType('Item' as any);
-        const titles = items.map((item: any) => item.props.title);
-        expect(titles).toEqual(expect.arrayContaining(['agent.codex', 'agent.kiro']));
-        expect(titles).not.toContain('agent.customAcp');
+        const screen = await renderSettingsView(React.createElement(Screen));
 
-        const acpSections = screen.root.findAllByType('AcpCatalogSettingsSections' as any);
+        expect(screen.findRowByTitle('agent.codex')).toBeTruthy();
+        expect(screen.findRowByTitle('agent.kiro')).toBeTruthy();
+        expect(screen.findRowByTitle('agent.customAcp')).toBeFalsy();
+
+        const acpSections = screen.findAllByType('AcpCatalogSettingsSections' as any);
         expect(acpSections).toHaveLength(1);
 
-        const codexItem = items.find((item: any) => item.props.title === 'agent.codex');
-        expect(codexItem).toBeTruthy();
-
         await act(async () => {
-            codexItem!.props.onPress();
+            screen.pressRowByTitle('agent.codex');
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/codex');
