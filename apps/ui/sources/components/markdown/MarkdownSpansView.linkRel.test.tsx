@@ -1,17 +1,27 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', () => ({
-  Link: (props: any) => React.createElement('Link', props, props.children),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
 function mockPlatform(os: 'web' | 'ios') {
-  vi.doMock('react-native', () => ({
-    Platform: { OS: os },
-  }));
+  vi.doMock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: os,
+            },
+        }
+    );
+});
 }
 
 vi.mock('../ui/text/Text', () => ({
@@ -26,14 +36,10 @@ describe('MarkdownSpansView (link rel hardening)', () => {
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MarkdownSpansView
+    tree = (await renderScreen(<MarkdownSpansView
           linkStyle={{ color: 'red' }}
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
-        />
-      );
-    });
+        />)).tree;
 
     const link = tree.root.findByType('Link' as any);
     expect(link.props.target).toBe('_blank');
@@ -52,13 +58,9 @@ describe('MarkdownSpansView (link rel hardening)', () => {
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <MarkdownSpansView
+    tree = (await renderScreen(<MarkdownSpansView
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
-        />
-      );
-    });
+        />)).tree;
 
     const link = tree.root.findByType('Link' as any);
     expect(link.props.asChild).toBe(true);

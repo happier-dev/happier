@@ -11,13 +11,16 @@ vi.mock('@/hooks/server/useServerRetentionPolicy', () => ({
     useServerRetentionPolicy,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: { count?: number }) => {
-        if (key === 'server.retention.title') return 'Retention policy';
-        if (key === 'server.retention.sessionNotice') return `This server deletes inactive sessions after ${params?.count ?? 0} days of inactivity.`;
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: { count?: number }) => {
+            if (key === 'server.retention.title') return 'Retention policy';
+            if (key === 'server.retention.sessionNotice') return `This server deletes inactive sessions after ${params?.count ?? 0} days of inactivity.`;
+            return key;
+        },
+    });
+});
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
     resolveServerIdForSessionIdFromLocalCache,
@@ -31,18 +34,26 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
+async function renderSessionRetentionNotice(sessionId: string) {
+    const { SessionRetentionNotice } = await import('./SessionRetentionNotice');
+    let tree: renderer.ReactTestRenderer | undefined;
+
+    await act(async () => {
+        tree = renderer.create(React.createElement(SessionRetentionNotice, { sessionId }));
+    });
+
+    return tree!;
+}
+
 describe('SessionRetentionNotice', () => {
     it('renders nothing when the session server cannot be resolved', async () => {
         resolveServerIdForSessionIdFromLocalCache.mockReturnValue(null);
         useServerRetentionPolicy.mockReturnValue(null);
 
-        const { SessionRetentionNotice } = await import('./SessionRetentionNotice');
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRetentionNotice, { sessionId: 'session-a' }));
-        });
+        const tree = await renderSessionRetentionNotice('session-a');
 
-        expect(tree!.root.findAllByType('ItemGroup' as any)).toHaveLength(0);
+        expect(tree.root.findAllByType('ItemGroup')).toHaveLength(0);
+        expect(tree.root.findAllByType('Item')).toHaveLength(0);
     });
 
     it('renders a session retention notice when the server deletes inactive sessions', async () => {
@@ -68,14 +79,13 @@ describe('SessionRetentionNotice', () => {
             automationRunEvents: { mode: 'keep_forever' },
         });
 
-        const { SessionRetentionNotice } = await import('./SessionRetentionNotice');
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionRetentionNotice, { sessionId: 'session-a' }));
-        });
+        const tree = await renderSessionRetentionNotice('session-a');
 
-        expect(tree!.root.findAllByType('ItemGroup' as any)).toHaveLength(1);
-        expect(tree!.root.findAllByType('Item' as any)).toHaveLength(1);
-        expect(tree!.root.findByType('Item' as any).props.testID).toBe('session-retention-notice');
+        const retentionGroup = tree.root.findByType('ItemGroup');
+        const retentionNotice = tree.root.findByProps({ testID: 'session-retention-notice' });
+
+        expect(retentionGroup.props.title).toBe('Retention policy');
+        expect(retentionNotice.props.title).toBe('server.retention.sessions');
+        expect(retentionNotice.props.subtitle).toBe('This server deletes inactive sessions after 30 days of inactivity.');
     });
 });

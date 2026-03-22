@@ -10,6 +10,10 @@ function wrapPrimitiveForView(value: string | number) {
     );
 }
 
+function normalizeChildrenForView(children: React.ReactNode): React.ReactNode {
+    return React.Children.map(children, (child) => normalizeNodeForView(child));
+}
+
 function getReactComponentName(type: unknown): string {
     if (!type) return '';
     if (typeof type === 'function') {
@@ -47,7 +51,7 @@ export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {
     if (typeof node === 'string' || typeof node === 'number') return wrapPrimitiveForView(node);
     if (Array.isArray(node)) return node.map((child) => normalizeNodeForView(child));
     if (React.isValidElement(node) && node.type === React.Fragment) {
-        return <>{React.Children.map((node as any).props?.children, normalizeNodeForView)}</>;
+        return <>{normalizeChildrenForView((node as any).props?.children)}</>;
     }
     if (React.isValidElement(node) && isTextLikeIconElement(node)) {
         return (
@@ -55,6 +59,9 @@ export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {
                 {node}
             </Text>
         );
+    }
+    if (React.isValidElement(node) && 'children' in ((node.props ?? {}) as Record<string, unknown>)) {
+        return React.cloneElement(node, undefined, normalizeChildrenForView((node.props as any).children));
     }
     return node;
 }

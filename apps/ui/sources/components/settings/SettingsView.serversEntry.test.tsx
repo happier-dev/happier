@@ -1,38 +1,39 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
-const navigateWithBlurOnWebSpy = vi.fn((action: () => void) => action());
-const deferOnWebSpy = vi.fn((action: () => void) => action());
-const linkingCanOpenURLSpy = vi.fn(async () => false);
-const linkingOpenURLSpy = vi.fn(async () => {});
-const requestReviewSpy = vi.fn();
-const canRequestReviewSpy = vi.fn(async () => true);
-
-async function flushMicrotasks(iterations: number = 5): Promise<void> {
-    for (let i = 0; i < iterations; i += 1) {
-        await Promise.resolve();
-    }
-}
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-    Linking: { canOpenURL: linkingCanOpenURLSpy, openURL: linkingOpenURLSpy },
-    Text: 'Text',
-    ActivityIndicator: 'ActivityIndicator',
+const shared = vi.hoisted(() => ({
+    routerPushSpy: vi.fn(),
+    routerBackSpy: vi.fn(),
+    routerReplaceSpy: vi.fn(),
+    navigateWithBlurOnWebSpy: vi.fn((action: () => void) => action()),
+    deferOnWebSpy: vi.fn((action: () => void) => action()),
+    linkingCanOpenURLSpy: vi.fn(async () => false),
+    linkingOpenURLSpy: vi.fn(async () => {}),
+    requestReviewSpy: vi.fn(),
+    canRequestReviewSpy: vi.fn(async () => true),
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        ActivityIndicator: 'ActivityIndicator',
+                        Dimensions: {
+                            get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                        },
+                        useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                        Linking: { canOpenURL: shared.linkingCanOpenURLSpy, openURL: shared.linkingOpenURLSpy },
+                    }
+    );
+});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -43,16 +44,24 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        router: {
+            push: shared.routerPushSpy,
+            back: shared.routerBackSpy,
+            replace: shared.routerReplaceSpy,
+            setParams: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
-    navigateWithBlurOnWeb: (action: () => void) => navigateWithBlurOnWebSpy(action),
+    navigateWithBlurOnWeb: (action: () => void) => shared.navigateWithBlurOnWebSpy(action),
 }));
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
-    deferOnWeb: (action: () => void) => deferOnWebSpy(action),
+    deferOnWeb: (action: () => void) => shared.deferOnWebSpy(action),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -94,24 +103,32 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: null }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useEntitlement: () => false,
-    useLocalSettingMutable: () => [false, vi.fn()],
-    useSetting: (key: string) => {
-        if (key === 'serverSelectionGroups') return [];
-        if (key === 'serverSelectionActiveTargetKind') return null;
-        if (key === 'serverSelectionActiveTargetId') return null;
-        if (key === 'experiments') return false;
-        if (key === 'featureToggles') return {};
-        if (key === 'useProfiles') return false;
-        if (key === 'sessionUseTmux') return false;
-        return null;
-    },
-    useAllMachines: () => [],
-    useMachineListByServerId: () => ({}),
-    useMachineListStatusByServerId: () => ({}),
-    useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useEntitlement: () => false,
+            // Boundary mock: this suite only reads a boolean local setting toggle.
+            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+            useSetting: (key: string) => {
+                if (key === 'serverSelectionGroups') return [];
+                if (key === 'serverSelectionActiveTargetKind') return null;
+                if (key === 'serverSelectionActiveTargetId') return null;
+                if (key === 'experiments') return false;
+                if (key === 'featureToggles') return {};
+                if (key === 'useProfiles') return false;
+                if (key === 'sessionUseTmux') return false;
+                return null;
+            },
+            useAllMachines: () => [],
+            useMachineListByServerId: () => ({}),
+            useMachineListStatusByServerId: () => ({}),
+            // Boundary mock: SettingsView only consumes these profile fields in this suite.
+            useProfile: (() => ({ id: 'prof_1', firstName: '', connectedServices: [] })) as any,
+        },
+    });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -126,13 +143,10 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
@@ -154,19 +168,24 @@ vi.mock('@/sync/api/account/apiVendorTokens', () => ({
     disconnectVendorToken: vi.fn(async () => {}),
 }));
 
-vi.mock('@/sync/domains/profiles/profile', () => ({
-    getDisplayName: () => 'Test User',
-    getAvatarUrl: () => null,
-    getBio: () => '',
-}));
+vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
+    return {
+        ...actual,
+        getDisplayName: () => 'Test User',
+        getAvatarUrl: () => null,
+        getBio: () => '',
+    };
+});
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',
@@ -203,125 +222,98 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 }));
 
 vi.mock('@/utils/system/requestReview', () => ({
-    requestReview: requestReviewSpy,
-    canRequestReview: canRequestReviewSpy,
+    requestReview: shared.requestReviewSpy,
+    canRequestReview: shared.canRequestReviewSpy,
 }));
 
 afterEach(() => {
-    routerPushSpy.mockClear();
-    navigateWithBlurOnWebSpy.mockClear();
-    deferOnWebSpy.mockClear();
-    linkingCanOpenURLSpy.mockClear();
-    linkingOpenURLSpy.mockClear();
-    requestReviewSpy.mockClear();
-    canRequestReviewSpy.mockReset();
-    canRequestReviewSpy.mockResolvedValue(true);
+    standardCleanup();
+    shared.routerPushSpy.mockClear();
+    shared.routerBackSpy.mockClear();
+    shared.routerReplaceSpy.mockClear();
+    shared.navigateWithBlurOnWebSpy.mockClear();
+    shared.deferOnWebSpy.mockClear();
+    shared.linkingCanOpenURLSpy.mockClear();
+    shared.linkingOpenURLSpy.mockClear();
+    shared.requestReviewSpy.mockClear();
+    shared.canRequestReviewSpy.mockReset();
+    shared.canRequestReviewSpy.mockResolvedValue(true);
 });
 
 describe('SettingsView', () => {
     it('includes a first-class Servers entry that routes to /server', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const serversItem = items.find((item: any) => item?.props?.title === 'settings.servers');
-        expect(serversItem).toBeTruthy();
+        expect(screen.findRowByTitle('settings.servers')).toBeTruthy();
 
         await act(async () => {
-            serversItem!.props.onPress();
+            screen.pressRowByTitle('settings.servers');
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/server');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/server');
     });
 
     it('includes a System Status entry that routes to /(app)/settings/system-status', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const systemStatusItem = items.find((item: any) => item?.props?.title === 'settings.systemStatus');
-        expect(systemStatusItem).toBeTruthy();
+        expect(screen.findRowByTitle('settings.systemStatus')).toBeTruthy();
 
         await act(async () => {
-            systemStatusItem!.props.onPress();
+            screen.pressRowByTitle('settings.systemStatus');
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
     });
 
     it('blurs the active element before routing to Features on web', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const featuresItem = items.find((item: any) => item?.props?.title === 'settings.featuresTitle');
-        expect(featuresItem).toBeTruthy();
+        expect(screen.findRowByTitle('settings.featuresTitle')).toBeTruthy();
 
         await act(async () => {
-            featuresItem!.props.onPress();
+            screen.pressRowByTitle('settings.featuresTitle');
         });
 
-        expect(deferOnWebSpy).toHaveBeenCalledTimes(1);
-        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+        expect(shared.deferOnWebSpy).toHaveBeenCalledTimes(1);
+        expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const reportIssueItem = items.find((item: any) => item?.props?.title === 'settings.reportIssue');
-        expect(reportIssueItem).toBeTruthy();
+        expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
 
         await act(async () => {
-            await reportIssueItem!.props.onPress();
+            await screen.pressRowByTitle('settings.reportIssue');
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
-        expect(linkingOpenURLSpy).not.toHaveBeenCalled();
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+        expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
     });
 
     it('opens EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL when set and supported instead of routing to the composer', async () => {
         const previousUrl = process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
         process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'https://example.test/report-issue';
-        linkingCanOpenURLSpy.mockResolvedValue(true);
+        shared.linkingCanOpenURLSpy.mockResolvedValue(true);
 
         try {
             const { SettingsView } = await import('./SettingsView');
+            const screen = await renderSettingsView(React.createElement(SettingsView));
 
-            let tree!: ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(React.createElement(SettingsView));
-            });
-
-            const items = tree.root.findAllByType('Item' as any);
-            const reportIssueItem = items.find((item: any) => item?.props?.title === 'settings.reportIssue');
-            expect(reportIssueItem).toBeTruthy();
+            expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
 
             await act(async () => {
-                await reportIssueItem!.props.onPress();
+                await screen.pressRowByTitle('settings.reportIssue');
             });
 
-            expect(linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(linkingOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(routerPushSpy).not.toHaveBeenCalledWith('/(app)/settings/report-issue');
+            expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            expect(shared.linkingOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/(app)/settings/report-issue');
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
@@ -331,27 +323,21 @@ describe('SettingsView', () => {
     it('falls back to routing when EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL is set but cannot be opened', async () => {
         const previousUrl = process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
         process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'https://example.test/report-issue';
-        linkingCanOpenURLSpy.mockResolvedValue(false);
+        shared.linkingCanOpenURLSpy.mockResolvedValue(false);
 
         try {
             const { SettingsView } = await import('./SettingsView');
+            const screen = await renderSettingsView(React.createElement(SettingsView));
 
-            let tree!: ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(React.createElement(SettingsView));
-            });
-
-            const items = tree.root.findAllByType('Item' as any);
-            const reportIssueItem = items.find((item: any) => item?.props?.title === 'settings.reportIssue');
-            expect(reportIssueItem).toBeTruthy();
+            expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
 
             await act(async () => {
-                await reportIssueItem!.props.onPress();
+                await screen.pressRowByTitle('settings.reportIssue');
             });
 
-            expect(linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(linkingOpenURLSpy).not.toHaveBeenCalled();
-            expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+            expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
+            expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
@@ -360,57 +346,42 @@ describe('SettingsView', () => {
 
     it('renders the GitHub repository as subtitle, not right-side detail', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const githubItem = screen.findRowByTitle('settings.github');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const githubItem = items.find((item: any) => item?.props?.title === 'settings.github');
         expect(githubItem).toBeTruthy();
-        expect(githubItem?.props?.subtitle).toBe('happier-dev/happier');
-        expect(githubItem?.props?.detail).toBeUndefined();
+        expect(githubItem?.props.subtitle).toBe('happier-dev/happier');
+        expect(githubItem?.props.detail).toBeUndefined();
     });
 
     it('shows Rate us right below What’s New and triggers store review only when pressed', async () => {
-        canRequestReviewSpy.mockResolvedValue(true);
+        shared.canRequestReviewSpy.mockResolvedValue(true);
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-            await flushMicrotasks();
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
+        const aboutGroup = screen.findGroup('settings.about');
+        expect(aboutGroup).toBeTruthy();
+        const items = aboutGroup!.findAllByType('Item' as any);
         const whatsNewIndex = items.findIndex((item: any) => item?.props?.title === 'settings.whatsNew');
         const rateUsIndex = items.findIndex((item: any) => item?.props?.title === 'settings.rateUs');
-        const rateUsItem = items.find((item: any) => item?.props?.title === 'settings.rateUs');
-        expect(rateUsItem).toBeTruthy();
+
+        expect(screen.findRowByTitle('settings.rateUs')).toBeTruthy();
         expect(whatsNewIndex).toBeGreaterThanOrEqual(0);
         expect(rateUsIndex).toBe(whatsNewIndex + 1);
-        expect(requestReviewSpy).not.toHaveBeenCalled();
+        expect(shared.requestReviewSpy).not.toHaveBeenCalled();
 
         await act(async () => {
-            await rateUsItem!.props.onPress();
+            await screen.pressRowByTitle('settings.rateUs');
         });
 
-        expect(requestReviewSpy).toHaveBeenCalledTimes(1);
+        expect(shared.requestReviewSpy).toHaveBeenCalledTimes(1);
     });
 
     it('hides Rate us when store-review action is unavailable', async () => {
-        canRequestReviewSpy.mockResolvedValue(false);
+        shared.canRequestReviewSpy.mockResolvedValue(false);
         const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-            await flushMicrotasks();
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const rateUsItem = items.find((item: any) => item?.props?.title === 'settings.rateUs');
-        expect(rateUsItem).toBeUndefined();
+        expect(screen.findRowByTitle('settings.rateUs')).toBeNull();
     });
 });

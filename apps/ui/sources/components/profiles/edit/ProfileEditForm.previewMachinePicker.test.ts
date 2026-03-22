@@ -1,6 +1,7 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { ProfileEditForm } from './ProfileEditForm';
 
@@ -21,70 +22,74 @@ const capture = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'ios',
-        select: (spec: { ios?: unknown; default?: unknown }) => (spec && 'ios' in spec ? spec.ios : spec?.default),
-    },
-    View: 'View',
-    Text: 'Text',
-    TextInput: 'TextInput',
-    Pressable: 'Pressable',
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Linking: {},
-    useWindowDimensions: () => ({ height: 800, width: 400 }),
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: capture.routerPush }),
-    useLocalSearchParams: () => ({}),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                textSecondary: '#666',
-                button: { secondary: { tint: '#000' }, primary: { background: '#00f' } },
-                surface: '#fff',
-                text: '#000',
-                status: { connected: '#0f0', disconnected: '#f00' },
-                input: { placeholder: '#999' },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+                select: (spec: { ios?: unknown; default?: unknown }) => (spec && 'ios' in spec ? spec.ios : spec?.default),
             },
+            View: 'View',
+            Text: 'Text',
+            TextInput: 'TextInput',
+            Pressable: 'Pressable',
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            useWindowDimensions: () => ({ height: 800, width: 400 }),
         },
-        rt: { themeName: 'light' },
-    }),
-    StyleSheet: { create: () => ({}) },
-}));
+    );
+});
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: capture.routerPush },
+        params: {},
+    });
+    return expoRouterMock.module;
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (...args: unknown[]) => capture.modalShow(...args),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (...args: unknown[]) => capture.modalShow(...args),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => ({}),
-    useSettings: () => ({}),
-    useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
-    useMachine: () => null,
-    useSettingMutable: (key: string) => {
-        if (key === 'favoriteMachines') return [[], vi.fn()] as const;
-        if (key === 'secrets') return [[], vi.fn()] as const;
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
-        return [[], vi.fn()] as const;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSetting: () => ({}),
+        useSettings: () => ({}),
+        useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
+        useMachine: () => null,
+        useSettingMutable: (key: string) => {
+            if (key === 'favoriteMachines') return [[], vi.fn()] as const;
+            if (key === 'secrets') return [[], vi.fn()] as const;
+            if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
+            return [[], vi.fn()] as const;
+        },
+    });
+});
 
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: () => null,
@@ -104,6 +109,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
 }));
 
@@ -120,9 +126,9 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: { title?: string; onPress?: () => void }) => {
-        if (props?.title === 'profiles.previewMachine.itemTitle' && typeof props.onPress === 'function') {
-            capture.previewMachinePress = props.onPress;
+    Item: ({ title, onPress }: { title?: string; onPress?: () => void }) => {
+        if (title === 'profiles.previewMachine.itemTitle' && typeof onPress === 'function') {
+            capture.previewMachinePress = onPress;
         }
         return null;
     },
@@ -189,16 +195,12 @@ describe('ProfileEditForm (native preview machine picker)', () => {
     it('opens a picker screen instead of a modal overlay on native', async () => {
         capture.reset();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ProfileEditForm, {
-                    profile: buildProfile(),
-                    machineId: null,
-                    onSave: () => true,
-                    onCancel: vi.fn(),
-                }),
-            );
-        });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: buildProfile(),
+            machineId: null,
+            onSave: () => true,
+            onCancel: vi.fn(),
+        }));
 
         expect(capture.previewMachinePress).toBeTruthy();
 

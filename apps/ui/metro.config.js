@@ -8,8 +8,6 @@ const config = getSentryExpoConfig(__dirname, {
   isCSSEnabled: true,
 });
 
-const repoRoot = path.resolve(__dirname, '../..');
-
 // Add support for .wasm files (required by Skia for all platforms)
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
 config.resolver.assetExts.push('wasm');
@@ -37,7 +35,7 @@ config.resolver.blockList = Array.isArray(existingBlockList)
     : [testRouteBlockList, projectArtifactsBlockList];
 
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
-config.watchFolders = [repoRoot, ...existingWatchFolders].filter(
+config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
 

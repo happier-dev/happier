@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,9 +46,7 @@ describe('useLazyDirectoryTree', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         expect(api.nodes.map((node: any) => node.path)).toEqual(['src']);
 
@@ -108,9 +108,7 @@ describe('useLazyDirectoryTree', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         await act(async () => {
             await api.toggleDirectory('/');
@@ -170,9 +168,7 @@ describe('useLazyDirectoryTree', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         await act(async () => {
             await api.toggleDirectory('/');
@@ -238,9 +234,7 @@ describe('useLazyDirectoryTree', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         await act(async () => {
             await api.toggleDirectory('/');

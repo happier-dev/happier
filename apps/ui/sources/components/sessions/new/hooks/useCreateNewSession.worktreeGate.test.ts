@@ -1,10 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
+import { settingsDefaults as testSettingsDefaults } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { renderScreen } from '@/dev/testkit';
+
 
 const materializeNewSessionCheckoutMock = vi.hoisted(() => vi.fn(async (params?: unknown) => {
     const request = (params ?? {}) as {
@@ -166,16 +168,20 @@ vi.mock('@/utils/system/sentry', () => ({
     captureExceptionIfEnabled: captureExceptionIfEnabledMock,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -199,17 +205,24 @@ vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => vi.fn(),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const [
+        { createStorageModuleStub, createStorageStoreMock },
+        { settingsDefaults },
+    ] = await Promise.all([
+        import('@/dev/testkit/mocks/storage'),
+        import('@/sync/domains/settings/settings'),
+    ]);
+    return createStorageModuleStub({
+        storage: createStorageStoreMock({
             settings: settingsDefaults,
             sessions: storedSessionsState.sessions,
             updateSessionDraft: updateSessionDraftMock,
             updateSessionPermissionMode: updateSessionPermissionModeMock,
             updateSessionModelMode: updateSessionModelModeMock,
         }),
-    },
-}));
+    });
+});
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     clearNewSessionDraft: clearNewSessionDraftMock,
@@ -267,10 +280,7 @@ async function renderHook<T>(useValue: () => T): Promise<T> {
         return null;
     }
 
-    await act(async () => {
-        renderer.create(React.createElement(Test));
-        await Promise.resolve();
-    });
+    await renderScreen(React.createElement(Test));
 
     if (!current) throw new Error('Hook did not render');
     return current;
@@ -348,7 +358,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             setIsCreating: vi.fn(),
             setIsResumeSupportChecking: vi.fn(),
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: {},
             },
@@ -431,7 +441,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: {},
             },
@@ -513,7 +523,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -579,7 +589,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -640,7 +650,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -715,7 +725,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -785,7 +795,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -853,7 +863,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -922,7 +932,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -998,7 +1008,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -1056,7 +1066,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -1124,7 +1134,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 baseRef: 'main',
             },
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -1199,7 +1209,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             setIsCreating,
             setIsResumeSupportChecking: vi.fn(),
             settings: {
-                ...settingsDefaults,
+                ...testSettingsDefaults,
                 experiments: true,
                 featureToggles: { 'sessions.direct': true },
             },
@@ -1294,7 +1304,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             selectedMachine: { id: 'machine-1', metadata: {} },
             setIsCreating: vi.fn(),
             setIsResumeSupportChecking: vi.fn(),
-            settings: settingsDefaults,
+            settings: testSettingsDefaults,
             useProfiles: false,
             selectedProfileId: null,
             profileMap: new Map(),
@@ -1411,7 +1421,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             selectedMachine: { id: 'machine-1', metadata: {} },
             setIsCreating: vi.fn(),
             setIsResumeSupportChecking: vi.fn(),
-            settings: settingsDefaults,
+            settings: testSettingsDefaults,
             useProfiles: false,
             selectedProfileId: null,
             profileMap: new Map(),

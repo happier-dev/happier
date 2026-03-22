@@ -32,6 +32,7 @@ import { resolveAppUrlScheme } from "@/utils/url/appScheme";
 import { readConfiguredServerUrlEnv } from "@/sync/domains/server/readConfiguredServerUrlEnv";
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
+const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
 
 function readWelcomeServerCheckTimeoutMs(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_TIMEOUT_MS ?? '').trim();
@@ -39,6 +40,14 @@ function readWelcomeServerCheckTimeoutMs(): number {
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
     return Math.max(1_000, Math.min(30_000, parsed));
+}
+
+function readWelcomeServerCheckRetryDelayMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS ?? '').trim();
+    if (!raw) return DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
+    return Math.max(1, Math.min(10_000, parsed));
 }
 
 export default function Home() {
@@ -108,6 +117,19 @@ function NotAuthenticated() {
 
     React.useEffect(() => {
         let mounted = true;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        const scheduleInitialServerCheckRetry = (): boolean => {
+            if (serverCheckNonce > 0) return false;
+            if (mounted) {
+                setServerAvailability('loading');
+            }
+            retryTimer = setTimeout(() => {
+                if (mounted) {
+                    setServerCheckNonce((v) => v + 1);
+                }
+            }, readWelcomeServerCheckRetryDelayMs());
+            return true;
+        };
         fireAndForget((async () => {
             try {
                 if (mounted) setServerAvailability('loading');
@@ -117,6 +139,7 @@ function NotAuthenticated() {
                     force: serverCheckNonce > 0,
                 });
                 if (featuresSnapshot.status === 'error') {
+                    if (scheduleInitialServerCheckRetry()) return;
                     if (mounted) setServerAvailability('unavailable');
                     return;
                 }
@@ -239,6 +262,7 @@ function NotAuthenticated() {
                     }
                 }
             } catch {
+                if (scheduleInitialServerCheckRetry()) return;
                 if (mounted) {
                     setServerAvailability('unavailable');
                 }
@@ -246,6 +270,9 @@ function NotAuthenticated() {
         })(), { tag: "HomeScreen.loadSignupModeAndAutoRedirect" });
         return () => {
             mounted = false;
+            if (retryTimer) {
+                clearTimeout(retryTimer);
+            }
         };
     }, [serverCheckNonce]);
 

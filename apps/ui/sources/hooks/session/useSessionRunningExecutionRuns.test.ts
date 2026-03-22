@@ -164,6 +164,36 @@ describe('useSessionRunningExecutionRuns', () => {
         harness.unmount();
     });
 
+    it('rechecks after activity arrives during an in-flight poll', async () => {
+        let resolveFirstPoll: ((value: { runs: readonly any[] }) => void) | null = null;
+        sessionExecutionRunListSpy
+            .mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        resolveFirstPoll = resolve;
+                    }),
+            )
+            .mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] });
+
+        const harness = await renderHarness({ sessionId: 's1', enabled: true });
+        expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            notifyExecutionRunActivity('s1');
+            await flushAsync();
+        });
+
+        await act(async () => {
+            resolveFirstPoll?.({ runs: [] });
+            await flushAsync();
+            await flushAsync();
+        });
+
+        expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(2);
+        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
+        harness.unmount();
+    });
+
     it('clears running runs state immediately when sessionId changes', async () => {
         sessionExecutionRunListSpy
             .mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] })

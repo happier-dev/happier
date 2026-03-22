@@ -6,11 +6,14 @@ import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 const createSessionActionDraftSpy = vi.fn();
 let mockedState: any = null;
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => mockedState,
   },
-}));
+});
+});
 
 function commandTitles(cmds: readonly Command[]): string[] {
   return cmds.map((c) => c.title);

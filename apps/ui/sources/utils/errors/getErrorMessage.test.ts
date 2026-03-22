@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { getErrorMessage } from './getErrorMessage';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('getErrorMessage', () => {
     it('returns message for Error', () => {

@@ -3,10 +3,12 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useHydrateSessionForRoute } from './useHydrateSessionForRoute';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const ensureSessionVisibleForMessageRouteSpy = vi.hoisted(() => vi.fn<(sessionId: string) => Promise<void>>());
+const ensureSessionVisibleForMessageRouteSpy = vi.hoisted(() => vi.fn<(sessionId: string) => Promise<boolean>>());
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -46,18 +48,16 @@ describe('useHydrateSessionForRoute', () => {
   });
 
   it('marks the route ready after hydration succeeds', async () => {
-    const deferred = createDeferred<void>();
+    const deferred = createDeferred<boolean>();
     ensureSessionVisibleForMessageRouteSpy.mockReturnValueOnce(deferred.promise);
     const states: boolean[] = [];
 
-    await act(async () => {
-      renderer.create(<Harness sessionId="session-1" tag="route.hydrate" onReadyChange={(ready) => states.push(ready)} />);
-    });
+    await renderScreen(<Harness sessionId="session-1" tag="route.hydrate" onReadyChange={(ready) => states.push(ready)} />);
 
     expect(states.at(-1)).toBe(false);
 
     await act(async () => {
-      deferred.resolve();
+      deferred.resolve(true);
       await deferred.promise;
       await Promise.resolve();
     });
@@ -66,16 +66,14 @@ describe('useHydrateSessionForRoute', () => {
   });
 
   it('retries hydration after a failure and eventually succeeds', async () => {
-    const deferred1 = createDeferred<void>();
-    const deferred2 = createDeferred<void>();
+    const deferred1 = createDeferred<boolean>();
+    const deferred2 = createDeferred<boolean>();
     ensureSessionVisibleForMessageRouteSpy
       .mockReturnValueOnce(deferred1.promise)
       .mockReturnValueOnce(deferred2.promise);
     const states: boolean[] = [];
 
-    await act(async () => {
-      renderer.create(<Harness sessionId="session-1" tag="route.hydrate" onReadyChange={(ready) => states.push(ready)} />);
-    });
+    await renderScreen(<Harness sessionId="session-1" tag="route.hydrate" onReadyChange={(ready) => states.push(ready)} />);
 
     expect(states.at(-1)).toBe(false);
 
@@ -99,7 +97,7 @@ describe('useHydrateSessionForRoute', () => {
 
     // Second attempt succeeds
     await act(async () => {
-      deferred2.resolve();
+      deferred2.resolve(true);
       await deferred2.promise;
       await Promise.resolve();
     });
@@ -109,14 +107,12 @@ describe('useHydrateSessionForRoute', () => {
   });
 
   it('stops retrying when component unmounts', async () => {
-    const deferred = createDeferred<void>();
+    const deferred = createDeferred<boolean>();
     ensureSessionVisibleForMessageRouteSpy.mockReturnValue(deferred.promise);
     const states: boolean[] = [];
 
     let instance: renderer.ReactTestRenderer;
-    await act(async () => {
-      instance = renderer.create(<Harness sessionId="session-1" tag="route.hydrate" onReadyChange={(ready) => states.push(ready)} />);
-    });
+    instance = (await renderScreen(<Harness sessionId="session-1" tag="route.hydrate" onReadyChange={(ready) => states.push(ready)} />)).tree;
 
     expect(states.at(-1)).toBe(false);
 

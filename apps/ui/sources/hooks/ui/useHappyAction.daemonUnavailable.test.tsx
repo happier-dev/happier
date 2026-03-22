@@ -2,20 +2,28 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const modalAlertSpy = vi.hoisted(() => vi.fn((..._args: unknown[]) => {}));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('useHappyAction (daemon unavailable)', () => {
     it('shows a daemon-unavailable alert with Retry when action throws RPC method-not-available', async () => {
@@ -36,9 +44,7 @@ describe('useHappyAction (daemon unavailable)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
         if (!doAction) throw new Error('expected doAction to be set');
 
         await act(async () => {
@@ -82,9 +88,7 @@ describe('useHappyAction (daemon unavailable)', () => {
         }
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
         if (!doAction) throw new Error('expected doAction to be set');
 
         await act(async () => {
@@ -122,9 +126,7 @@ describe('useHappyAction (daemon unavailable)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
         if (!doAction) throw new Error('expected doAction to be set');
 
         await act(async () => {
@@ -163,9 +165,7 @@ describe('useHappyAction (daemon unavailable)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
         if (!doAction) throw new Error('expected doAction to be set');
 
         act(() => {

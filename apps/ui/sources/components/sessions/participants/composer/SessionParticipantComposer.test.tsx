@@ -1,8 +1,10 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,15 +16,17 @@ const sessionExecutionRunSendSpy = vi.fn<
 >(async () => ({ ok: true }));
 const isExecutionRunNotRunningSendErrorSpy = vi.fn(() => false);
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+    });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: unknown) => styles,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: (props: unknown) => {
@@ -39,11 +43,14 @@ vi.mock('@/components/autocomplete/suggestions', () => ({
     getSuggestions: vi.fn(async () => []),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: (...args: unknown[]) => modalAlertSpy(...args),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: (...args: unknown[]) => modalAlertSpy(...args),
+        },
+    }).module;
+});
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunSend: (...args: Parameters<typeof sessionExecutionRunSendSpy>) => sessionExecutionRunSendSpy(...args),
@@ -60,9 +67,12 @@ vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => void promise,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('SessionParticipantComposer', () => {
     beforeEach(() => {
@@ -76,17 +86,12 @@ describe('SessionParticipantComposer', () => {
     it('routes execution-run sends through sessionExecutionRunSend', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionParticipantComposer
-                    sessionId="s1"
-                    canSendMessages
-                    recipient={{ kind: 'execution_run', runId: 'run_1' }}
-                    executionRunDelivery="interrupt"
-                />,
-            );
-        });
+        const tree: renderer.ReactTestRenderer | null = (await renderScreen(<SessionParticipantComposer
+            sessionId="s1"
+            canSendMessages
+            recipient={{ kind: 'execution_run', runId: 'run_1' }}
+            executionRunDelivery="interrupt"
+        />)).tree;
 
         let agentInputProps = agentInputSpy.mock.lastCall?.[0] as {
             onChangeText: (text: string) => void;
@@ -101,7 +106,7 @@ describe('SessionParticipantComposer', () => {
         };
         await act(async () => {
             agentInputProps.onSend();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(tree).toBeTruthy();
@@ -116,21 +121,16 @@ describe('SessionParticipantComposer', () => {
     it('routes agent-team sends through sync.sendMessage with participant meta', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionParticipantComposer
-                    sessionId="s1"
-                    canSendMessages
-                    recipient={{
-                        kind: 'agent_team_member',
-                        teamId: 'qa-team',
-                        memberId: 'alpha@qa-team',
-                        memberLabel: 'alpha',
-                    }}
-                />,
-            );
-        });
+        const tree: renderer.ReactTestRenderer | null = (await renderScreen(<SessionParticipantComposer
+            sessionId="s1"
+            canSendMessages
+            recipient={{
+                kind: 'agent_team_member',
+                teamId: 'qa-team',
+                memberId: 'alpha@qa-team',
+                memberLabel: 'alpha',
+            }}
+        />)).tree;
 
         let agentInputProps = agentInputSpy.mock.lastCall?.[0] as {
             onChangeText: (text: string) => void;
@@ -145,7 +145,7 @@ describe('SessionParticipantComposer', () => {
         };
         await act(async () => {
             agentInputProps.onSend();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(tree).toBeTruthy();
@@ -176,16 +176,12 @@ describe('SessionParticipantComposer', () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
         const onExecutionRunUnavailable = vi.fn();
 
-        await act(async () => {
-            renderer.create(
-                <SessionParticipantComposer
-                    sessionId="s1"
-                    canSendMessages
-                    recipient={{ kind: 'execution_run', runId: 'run_1' }}
-                    onExecutionRunUnavailable={onExecutionRunUnavailable}
-                />,
-            );
-        });
+        await renderScreen(<SessionParticipantComposer
+            sessionId="s1"
+            canSendMessages
+            recipient={{ kind: 'execution_run', runId: 'run_1' }}
+            onExecutionRunUnavailable={onExecutionRunUnavailable}
+        />);
 
         let agentInputProps = agentInputSpy.mock.lastCall?.[0] as {
             onChangeText: (text: string) => void;
@@ -200,7 +196,7 @@ describe('SessionParticipantComposer', () => {
         };
         await act(async () => {
             agentInputProps.onSend();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(onExecutionRunUnavailable).toHaveBeenCalledTimes(1);
@@ -214,16 +210,12 @@ describe('SessionParticipantComposer', () => {
             render: () => null,
         }] satisfies readonly AgentInputExtraActionChip[];
 
-        await act(async () => {
-            renderer.create(
-                <SessionParticipantComposer
-                    sessionId="s1"
-                    canSendMessages
-                    recipient={{ kind: 'execution_run', runId: 'run_1' }}
-                    extraActionChips={extraActionChips}
-                />,
-            );
-        });
+        await renderScreen(<SessionParticipantComposer
+            sessionId="s1"
+            canSendMessages
+            recipient={{ kind: 'execution_run', runId: 'run_1' }}
+            extraActionChips={extraActionChips}
+        />);
 
         expect(agentInputSpy).toHaveBeenCalledWith(expect.objectContaining({
             extraActionChips,

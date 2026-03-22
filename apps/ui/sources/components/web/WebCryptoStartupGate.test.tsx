@@ -1,9 +1,9 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 import * as SplashScreen from 'expo-splash-screen';
 
 import { WebCryptoStartupGate } from './WebCryptoStartupGate';
+import { renderScreen } from '@/dev/testkit';
 
 vi.mock('expo-splash-screen', () => ({
     hideAsync: vi.fn(async () => {}),
@@ -76,44 +76,37 @@ afterEach(() => {
 });
 
 describe('WebCryptoStartupGate', () => {
-    it('renders an unsupported screen when SubtleCrypto is unavailable', () => {
+    it('renders an unsupported screen when SubtleCrypto is unavailable', async () => {
         // Use a minimal window-like shape; cast is intentional for test-only DOM fixtures.
         setGlobalWindow({ location: { origin: 'http://192.168.1.50:8081' } } as any);
         setGlobalDocument({});
         setGlobalCrypto({});
 
-        let r!: renderer.ReactTestRenderer;
-        expect(() => {
-            act(() => {
-                r = renderer.create(
-                    <WebCryptoStartupGate>
-                        {React.createElement('View', { testID: 'gate-ok' })}
-                    </WebCryptoStartupGate>
-                );
-            });
-        }).not.toThrow();
+        const screen = await renderScreen(
+            <WebCryptoStartupGate>
+                {React.createElement('View', { testID: 'gate-ok' })}
+            </WebCryptoStartupGate>,
+        );
 
-        expect(() => r.root.findByProps({ testID: 'webcrypto-unsupported' })).not.toThrow();
-        expect(() => r.root.findByProps({ testID: 'gate-ok' })).toThrow();
+        expect(screen.findByTestId('webcrypto-unsupported')).toBeTruthy();
+        expect(screen.findByTestId('gate-ok')).toBeNull();
     });
 
-    it('hides the splash screen when SubtleCrypto is unavailable', () => {
+    it('hides the splash screen when SubtleCrypto is unavailable', async () => {
         setGlobalWindow({ location: { origin: 'http://192.168.1.50:8081' } } as any);
         setGlobalDocument({});
         setGlobalCrypto({});
 
-        act(() => {
-            renderer.create(
-                <WebCryptoStartupGate>
-                    {React.createElement('View', { testID: 'gate-ok' })}
-                </WebCryptoStartupGate>
-            );
-        });
+        await renderScreen(
+            <WebCryptoStartupGate>
+                {React.createElement('View', { testID: 'gate-ok' })}
+            </WebCryptoStartupGate>,
+        );
 
         expect(vi.mocked(SplashScreen.hideAsync)).toHaveBeenCalled();
     });
 
-    it('renders children when SubtleCrypto is available', () => {
+    it('renders children when SubtleCrypto is available', async () => {
         setGlobalWindow({ location: { origin: 'https://example.test' } } as any);
         setGlobalDocument({});
         setGlobalCrypto({
@@ -125,18 +118,13 @@ describe('WebCryptoStartupGate', () => {
             }
         });
 
-        let r!: renderer.ReactTestRenderer;
-        expect(() => {
-            act(() => {
-                r = renderer.create(
-                    <WebCryptoStartupGate>
-                        {React.createElement('View', { testID: 'gate-ok' })}
-                    </WebCryptoStartupGate>
-                );
-            });
-        }).not.toThrow();
+        const screen = await renderScreen(
+            <WebCryptoStartupGate>
+                {React.createElement('View', { testID: 'gate-ok' })}
+            </WebCryptoStartupGate>,
+        );
 
-        expect(() => r.root.findByProps({ testID: 'gate-ok' })).not.toThrow();
-        expect(() => r.root.findByProps({ testID: 'webcrypto-unsupported' })).toThrow();
+        expect(screen.findByTestId('gate-ok')).toBeTruthy();
+        expect(screen.findByTestId('webcrypto-unsupported')).toBeNull();
     });
 });

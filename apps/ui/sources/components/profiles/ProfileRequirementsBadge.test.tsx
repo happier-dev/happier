@@ -2,51 +2,32 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
-vi.mock('react-native', () => ({
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-}));
+const actEnvironment = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+
+actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                status: {
-                    connecting: '#999',
-                    connected: '#0a0',
-                    disconnected: '#a00',
-                },
-                surface: '#fff',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (styles: any) => (typeof styles === 'function' ? styles({
-            colors: {
-                status: {
-                    connecting: '#999',
-                    connected: '#0a0',
-                    disconnected: '#a00',
-                },
-                surface: '#fff',
-            },
-        }) : styles),
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/hooks/session/useProfileEnvRequirements', () => ({
     useProfileEnvRequirements: () => ({ isReady: false, isLoading: false }),
@@ -56,9 +37,30 @@ vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
     hasRequiredSecret: () => true,
 }));
 
+type TextMockProps = {
+    children?: React.ReactNode;
+} & Record<string, unknown>;
+
 vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+    Text: ({ children, ...props }: TextMockProps) => React.createElement('Text', props as never, children),
 }));
+
+const profile: AIBackendProfile = {
+    id: 'p1',
+    name: 'Profile',
+    environmentVariables: [],
+    defaultPermissionModeByTargetKey: {},
+    defaultPermissionModeByAgent: {},
+    defaultPersistenceModeByTargetKey: {},
+    defaultPersistenceModeByAgent: {},
+    compatibilityByTargetKey: {},
+    compatibility: {},
+    envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
+    isBuiltIn: false,
+    createdAt: 0,
+    updatedAt: 0,
+    version: '1.0.0',
+};
 
 describe('ProfileRequirementsBadge', () => {
     it('does not emit raw text nodes under View when icons render as text on web', async () => {
@@ -68,7 +70,7 @@ describe('ProfileRequirementsBadge', () => {
         await act(async () => {
             tree = renderer.create(
                 <ProfileRequirementsBadge
-                    profile={{ id: 'p1' } as any}
+                    profile={profile}
                     machineId={null}
                 />,
             );

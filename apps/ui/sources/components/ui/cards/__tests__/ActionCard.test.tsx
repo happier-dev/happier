@@ -1,36 +1,28 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        Platform: { ...(actual.Platform ?? {}), OS: 'web' },
-        View: 'View',
-        Text: 'Text',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                            View: 'View',
+                            Text: 'Text',
+                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            text: '#000',
-            textSecondary: '#666',
-            surface: '#fff',
-            surfaceHigh: '#f5f5f5',
-            divider: '#e0e0e0',
-            button: { primary: { background: '#000', tint: '#fff' } },
-            shadow: { color: '#000', opacity: 0.2 },
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
@@ -50,11 +42,7 @@ describe('ActionCard', () => {
         const { ActionCard } = await import('../ActionCard');
         const onPress = vi.fn();
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ActionCard title="Install CLI" primaryAction={{ label: 'Install', onPress }} />,
-            );
-        });
+        tree = (await renderScreen(<ActionCard title="Install CLI" primaryAction={{ label: 'Install', onPress }} />)).tree;
         const buttons = tree.root.findAllByType('RoundButton' as any);
         expect(buttons).toHaveLength(1);
         expect(buttons[0].props.title).toBe('Install');
@@ -63,15 +51,11 @@ describe('ActionCard', () => {
     it('renders secondary button when provided', async () => {
         const { ActionCard } = await import('../ActionCard');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ActionCard
+        tree = (await renderScreen(<ActionCard
                     title="Install"
                     primaryAction={{ label: 'Install', onPress: () => {} }}
                     secondaryAction={{ label: 'Skip', onPress: () => {} }}
-                />,
-            );
-        });
+                />)).tree;
         const buttons = tree.root.findAllByType('RoundButton' as any);
         expect(buttons).toHaveLength(2);
         expect(buttons[1].props.title).toBe('Skip');
@@ -81,11 +65,7 @@ describe('ActionCard', () => {
     it('does not render secondary button when omitted', async () => {
         const { ActionCard } = await import('../ActionCard');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ActionCard title="Install" primaryAction={{ label: 'Go', onPress: () => {} }} />,
-            );
-        });
+        tree = (await renderScreen(<ActionCard title="Install" primaryAction={{ label: 'Go', onPress: () => {} }} />)).tree;
         const buttons = tree.root.findAllByType('RoundButton' as any);
         expect(buttons).toHaveLength(1);
     });
@@ -93,16 +73,12 @@ describe('ActionCard', () => {
     it('disables buttons when loading', async () => {
         const { ActionCard } = await import('../ActionCard');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ActionCard
+        tree = (await renderScreen(<ActionCard
                     title="Install"
                     primaryAction={{ label: 'Go', onPress: () => {} }}
                     secondaryAction={{ label: 'Skip', onPress: () => {} }}
                     loading
-                />,
-            );
-        });
+                />)).tree;
         const buttons = tree.root.findAllByType('RoundButton' as any);
         expect(buttons[0].props.disabled).toBe(true);
         expect(buttons[1].props.disabled).toBe(true);
@@ -111,11 +87,7 @@ describe('ActionCard', () => {
     it('description is optional', async () => {
         const { ActionCard } = await import('../ActionCard');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ActionCard title="No Desc" primaryAction={{ label: 'Go', onPress: () => {} }} />,
-            );
-        });
+        tree = (await renderScreen(<ActionCard title="No Desc" primaryAction={{ label: 'Go', onPress: () => {} }} />)).tree;
         const texts = tree.root.findAllByType('Text' as any);
         const textContents = texts.map((t) => t.children.join(''));
         expect(textContents).toContain('No Desc');

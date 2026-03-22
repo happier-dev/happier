@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,24 +11,28 @@ vi.mock('./BaseModal', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        AppState: rn.AppState,
-        View: (props: any) => React.createElement('View', props, props.children),
-        Text: (props: any) => React.createElement('Text', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        Platform: { ...rn.Platform, OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: (props: any) => React.createElement('View', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (v: any) => v.web ?? v.default ?? null,
+            },
+        }
+    );
 });
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 function getTextContent(node: any): string {
     const child = node?.findByType?.('Text' as any);
@@ -42,9 +48,7 @@ describe('WebAlertModal', () => {
         const onConfirm = vi.fn();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <WebAlertModal
+        tree = (await renderScreen(<WebAlertModal
                     config={{
                         id: 'test-confirm',
                         type: 'confirm',
@@ -55,9 +59,7 @@ describe('WebAlertModal', () => {
                     }}
                     onClose={onClose}
                     onConfirm={onConfirm}
-                />
-            );
-        });
+                />)).tree;
 
         const pressables = tree!.root.findAllByType('Pressable' as any);
         expect(pressables).toHaveLength(2);

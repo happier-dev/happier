@@ -36,6 +36,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
     const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const generationRef = React.useRef(0);
     const inFlightRef = React.useRef(false);
+    const pendingRepollRef = React.useRef(false);
     const hadRunningRunRef = React.useRef(false);
     const pendingEmptyConfirmRef = React.useRef(false);
     const idleErrorRetriesRef = React.useRef(0);
@@ -109,6 +110,10 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
             setRunningRuns([]);
         } finally {
             inFlightRef.current = false;
+            if (pendingRepollRef.current && generationRef.current === gen) {
+                pendingRepollRef.current = false;
+                void pollOnce(gen);
+            }
         }
     }, [clearTimer, params.enabled, params.sessionId]);
 
@@ -119,6 +124,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
         // Clear state immediately when sessionId changes to prevent stale state from previous session
         setRunningRuns([]);
         clearTimer();
+        pendingRepollRef.current = false;
         hadRunningRunRef.current = false;
         pendingEmptyConfirmRef.current = false;
         idleErrorRetriesRef.current = 0;
@@ -133,6 +139,7 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
         return () => {
             generationRef.current += 1;
             clearTimer();
+            pendingRepollRef.current = false;
         };
     }, [clearTimer, params.enabled, params.sessionId, pollOnce]);
 
@@ -143,6 +150,10 @@ export function useSessionRunningExecutionRuns(params: Readonly<{
             if (!params.enabled) return;
             clearTimer();
             pendingEmptyConfirmRef.current = false;
+            if (inFlightRef.current) {
+                pendingRepollRef.current = true;
+                return;
+            }
             void pollOnce(generationRef.current);
         });
     }, [clearTimer, params.enabled, params.sessionId, pollOnce]);

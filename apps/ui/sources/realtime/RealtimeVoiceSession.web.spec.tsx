@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -49,8 +51,10 @@ vi.mock('@elevenlabs/react', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({
       settings: {
         voice: {
@@ -67,12 +71,16 @@ vi.mock('@/sync/domains/state/storage', () => ({
       clearRealtimeModeDebounce,
     }),
   },
-}));
+});
+});
 
 vi.mock('@/constants/Languages', () => ({
   getElevenLabsCodeFromPreference,
 }));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 vi.mock('./realtimeClientTools', () => ({
   realtimeClientTools: {},
 }));
@@ -165,9 +173,7 @@ describe('RealtimeVoiceSession.web', () => {
 
   async function mountSessionComponent() {
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession.web');
-    await act(async () => {
-      root = renderer.create(React.createElement(RealtimeVoiceSession));
-    });
+    root = (await renderScreen(React.createElement(RealtimeVoiceSession))).tree;
     const { getVoiceSession } = await import('./RealtimeSession');
     return getVoiceSession();
   }

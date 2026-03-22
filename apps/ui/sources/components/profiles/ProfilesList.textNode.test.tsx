@@ -2,33 +2,27 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const actEnvironment = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Platform: { OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-    useWindowDimensions: () => ({ width: 1024, height: 768 }),
-}));
+actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: 1024, height: 768 }),
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        rt: { themeName: 'light' },
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                button: { primary: { background: '#00f' }, secondary: { tint: '#333' } },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -41,19 +35,18 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement(
-        'Item',
-        props,
-        [
-            props.leftElement == null
-                ? null
-                : React.createElement('Text', { key: 'left' }, props.leftElement),
+    Item: (
+        props: Record<string, unknown> & {
+            leftElement?: React.ReactNode;
+            rightElement?: React.ReactNode;
+            subtitle?: React.ReactNode;
+        },
+    ) =>
+        React.createElement('Item', props, [
+            props.leftElement == null ? null : React.createElement('Text', { key: 'left' }, props.leftElement),
             React.createElement(React.Fragment, { key: 'right' }, props.rightElement),
-            props.subtitle == null
-                ? null
-                : React.createElement('Text', { key: 'subtitle' }, props.subtitle),
-        ],
-    ),
+            props.subtitle == null ? null : React.createElement('Text', { key: 'subtitle' }, props.subtitle),
+        ]),
 }));
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
@@ -96,9 +89,10 @@ vi.mock('@/components/profiles/profileDisplay', () => ({
     getProfileDisplayName: () => 'Profile',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -108,16 +102,24 @@ vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
     hasRequiredSecret: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => ({}),
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useSetting: createUseSettingMock(),
+    });
+});
 
 vi.mock('@/agents/catalog/enabled', () => ({
     getEnabledAgentIds: () => ['codex'],
 }));
 
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+    getResolvedBackendCatalogEntries: () => [],
+}));
+
 vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+    Text: ({ children, ...props }: { children?: React.ReactNode; [key: string]: unknown }) =>
+        React.createElement('Text', props, children),
 }));
 
 describe('ProfilesList', () => {
@@ -125,7 +127,7 @@ describe('ProfilesList', () => {
         const { ProfilesList } = await import('./ProfilesList');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
+        act(() => {
             tree = renderer.create(
                 <ProfilesList
                     customProfiles={[]}

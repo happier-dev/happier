@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useInboxHasContent } from './useInboxHasContent';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,7 +51,7 @@ describe('useInboxHasContent', () => {
         storage.setState({ friends: {}, feedItems: [], isDataReady: true } as any);
     });
 
-    it('returns true when there are feed items', () => {
+    it('returns true when there are feed items', async () => {
         storage.setState({
             friends: {},
             feedItems: [{ id: 'f1' } as any],
@@ -61,14 +63,12 @@ describe('useInboxHasContent', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(latest).toBe(true);
     });
 
-    it('returns true when there are pending outgoing friend requests', () => {
+    it('returns true when there are pending outgoing friend requests', async () => {
         storage.setState({
             friends: {
                 u1: { id: 'u1', status: 'requested' },
@@ -82,28 +82,24 @@ describe('useInboxHasContent', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(latest).toBe(true);
     });
 
-    it('returns false when there is no actionable content', () => {
+    it('returns false when there is no actionable content', async () => {
         let latest: boolean | null = null;
         function Test() {
             latest = useInboxHasContent();
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(latest).toBe(false);
     });
 
-    it('returns true when changelog has unread entries', () => {
+    it('returns true when changelog has unread entries', async () => {
         mockHasUnread = true;
 
         let latest: boolean | null = null;
@@ -112,14 +108,12 @@ describe('useInboxHasContent', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(latest).toBe(true);
     });
 
-    it('returns true when there are open approval requests', () => {
+    it('returns true when there are open approval requests', async () => {
         storage.setState({
             friends: {},
             feedItems: [],
@@ -145,14 +139,12 @@ describe('useInboxHasContent', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(latest).toBe(true);
     });
 
-    it('returns true when there are online sessions with pending permission requests', () => {
+    it('returns true when there are online sessions with pending permission requests', async () => {
         storage.setState({
             friends: {},
             feedItems: [],
@@ -180,9 +172,7 @@ describe('useInboxHasContent', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Test));
-        });
+        tree = (await renderScreen(React.createElement(Test))).tree;
 
         expect(latest).toBe(true);
     });

@@ -180,6 +180,9 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                 }}
                 itemTrigger={{
                     title: t('memorySearchSettings.machine.changeTitle'),
+                    itemProps: {
+                        testID: 'memory-search-machine-trigger',
+                    },
                 }}
             />
             <Text style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>
@@ -187,6 +190,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                 <TextInput
+                    testID="memory-search-query"
                     value={query}
                     onChangeText={setQuery}
                     placeholder={t('memorySearchSettings.screen.searchPlaceholder')}

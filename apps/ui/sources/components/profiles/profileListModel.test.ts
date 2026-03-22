@@ -3,9 +3,10 @@ import type { ProfileCompatibilitySummary } from '@/sync/domains/profiles/profil
 import { getProfileBackendSubtitle, getProfileSubtitle, type ProfileListStrings } from '@/components/profiles/profileListModel';
 import type { AgentId } from '@/agents/catalog/catalog';
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('profileListModel', () => {
     const strings: ProfileListStrings = {

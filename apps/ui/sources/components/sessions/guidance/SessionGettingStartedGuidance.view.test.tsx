@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,17 +23,25 @@ vi.mock('expo-updates', () => ({
   releaseChannel: null,
 }));
 
-vi.mock('react-native', () => ({
-  View: (props: any) => React.createElement('View', props, props.children),
-  Text: (props: any) => React.createElement('Text', props, props.children),
-  Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-  ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-  Platform: { OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-  AppState: {
-    currentState: 'active',
-    addEventListener: () => ({ remove: () => {} }),
-  },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: (props: any) => React.createElement('View', props, props.children),
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (v: any) => v.web ?? v.default ?? null,
+            },
+            AppState: {
+                currentState: 'active',
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: (props: any) => (
@@ -44,23 +53,10 @@ vi.mock('expo-image', () => ({
   Image: (props: any) => React.createElement('Image', props, null),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (styles: any) => {
-      const theme = {
-        colors: {
-          text: '#000',
-          textSecondary: '#666',
-          divider: '#ddd',
-          surfaceHighest: '#fff',
-          status: { connected: '#0a0' },
-        },
-      };
-      return typeof styles === 'function' ? styles(theme) : styles;
-    },
-  },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         text: '#000',
         textSecondary: '#666',
@@ -69,8 +65,8 @@ vi.mock('react-native-unistyles', () => ({
         status: { connected: '#0a0' },
       },
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
   Typography: {
@@ -79,19 +75,26 @@ vi.mock('@/constants/Typography', () => ({
   },
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => {
     if (key === 'components.emptyMainScreen.installCommand') return '$ npm i -g @happier-dev/cli';
     if (key === 'components.emptySessionsTablet.startNewSessionButton') return 'Start New Session';
     if (key === 'components.emptyMainScreen.openCamera') return 'Open Camera';
     if (key === 'connect.enterUrlManually') return 'Enter URL manually';
     return key;
-  },
-}));
+  } });
+});
 
-vi.mock('@/modal', () => ({
-  Modal: { prompt: vi.fn(), alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
   useConnectTerminal: () => ({
@@ -112,9 +115,47 @@ vi.mock('@/config', () => ({
 describe('SessionGettingStartedGuidanceView', () => {
   it('includes server profile setup when serverUrl is not cloud', async () => {
     const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
+    const screen = await renderScreen(
+      <SessionGettingStartedGuidanceView
+        variant="primaryPane"
+        model={{
+          kind: 'connect_machine',
+          targetLabel: 'Company',
+          serverUrl: 'https://api.company.example',
+          serverName: 'company',
+          showServerSetup: true,
+        }}
+      />,
+    );
+
+    const content = screen.getTextContent();
+    expect(content).toContain('happier server add');
+    expect(content).toContain('https://api.company.example');
+    expect(content).not.toContain('$ npm i -g @happier-dev/cli');
+    expect(content).toContain('curl -fsSL https://happier.dev/install | bash');
+    expect(content).not.toContain('npm i -g @happier-dev/cli');
+    expect(content).toContain('happier daemon install');
+    expect(content).not.toContain('daemon service install');
+    expect(content).toContain('happier codex');
+    expect(content).toContain('happier opencode');
+
+    expect(screen.findByTestId('session-getting-started-copy-all')).toBeNull();
+    expect(screen.findByTestId('session-getting-started-scroll')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-logo')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-kind-connect_machine')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-step-create_session')).not.toBeNull();
+
+    clipboardMocks.setStringAsync.mockClear();
+    await screen.pressByTestIdAsync('session-getting-started-copy-auth_login');
+    expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('happier auth login');
+  });
+
+  it('does not emit raw text nodes under View when copy icons render as text on web', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    mockEnv.iconsRenderAsText = true;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(
         <SessionGettingStartedGuidanceView
           variant="primaryPane"
           model={{
@@ -126,76 +167,12 @@ describe('SessionGettingStartedGuidanceView', () => {
           }}
         />,
       );
-    });
 
-    const textNodes = tree.root.findAllByType('Text' as any).map((n: any) => String(n.props.children ?? ''));
-    expect(textNodes.some((t: string) => t.includes('happier server add'))).toBe(true);
-    expect(textNodes.some((t: string) => t.includes('https://api.company.example'))).toBe(true);
-    expect(textNodes.some((t: string) => t.trimStart().startsWith('$'))).toBe(false);
-    expect(textNodes.some((t: string) => t.includes('curl -fsSL https://happier.dev/install | bash'))).toBe(true);
-    expect(textNodes.some((t: string) => t.includes('npm i -g @happier-dev/cli'))).toBe(false);
-    expect(textNodes.some((t: string) => t.includes('happier daemon install'))).toBe(true);
-    expect(textNodes.some((t: string) => t.includes('daemon service install'))).toBe(false);
-    expect(textNodes.some((t: string) => t.includes('happier codex'))).toBe(true);
-    expect(textNodes.some((t: string) => t.includes('happier opencode'))).toBe(true);
-
-    expect(() => tree.root.findByProps({ testID: 'session-getting-started-copy-all' } as any)).toThrow();
-    expect(() => tree.root.findByProps({ testID: 'session-getting-started-scroll' } as any)).not.toThrow();
-    expect(() => tree.root.findByProps({ testID: 'session-getting-started-logo' } as any)).not.toThrow();
-    expect(() => tree.root.findByProps({ testID: 'session-getting-started-kind-connect_machine' } as any)).not.toThrow();
-    expect(() => tree.root.findByProps({ testID: 'session-getting-started-step-create_session' } as any)).not.toThrow();
-
-    clipboardMocks.setStringAsync.mockClear();
-    const copyLogin = tree.root.findByProps({ testID: 'session-getting-started-copy-auth_login' } as any);
-    await act(async () => {
-      await copyLogin.props.onPress?.();
-    });
-    expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('happier auth login');
-  });
-
-  it('does not emit raw text nodes under View when copy icons render as text on web', async () => {
-    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
-    mockEnv.iconsRenderAsText = true;
-
-    let tree!: renderer.ReactTestRenderer;
-    try {
-      await act(async () => {
-        tree = renderer.create(
-          <SessionGettingStartedGuidanceView
-            variant="primaryPane"
-            model={{
-              kind: 'connect_machine',
-              targetLabel: 'Company',
-              serverUrl: 'https://api.company.example',
-              serverName: 'company',
-              showServerSetup: true,
-            }}
-          />,
-        );
-      });
-
-      const badNodes: Array<{ parent: string | null; value: string }> = [];
-      const walk = (node: any, parentType: string | null) => {
-        if (node == null) return;
-        if (typeof node === 'string') {
-          if (parentType !== 'Text' && node.trim().length > 0) badNodes.push({ parent: parentType, value: node });
-          return;
-        }
-        if (Array.isArray(node)) {
-          for (const child of node) walk(child, parentType);
-          return;
-        }
-        const nextParent = typeof node.type === 'string' ? node.type : parentType;
-        const children = Array.isArray(node.children) ? node.children : [];
-        for (const child of children) walk(child, nextParent);
-      };
-
-      walk(tree.toJSON(), null);
-      expect(badNodes).toEqual([]);
+      expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     } finally {
       mockEnv.iconsRenderAsText = false;
       act(() => {
-        tree?.unmount();
+        screen?.tree.unmount();
       });
     }
   });

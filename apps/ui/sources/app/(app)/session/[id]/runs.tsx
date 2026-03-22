@@ -8,10 +8,11 @@ import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
+import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 import { t } from '@/text';
 import { ExecutionRunList } from '@/components/sessions/runs/ExecutionRunList';
+import { resolveExecutionRunLauncherIntents } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { Text } from '@/components/ui/text/Text';
 import { getErrorMessage } from '@/utils/errors/getErrorMessage';
@@ -39,118 +40,13 @@ function readExecutionRunsErrorMessage(result: Readonly<{ error?: string; errorC
 
 export default function SessionRunsScreen() {
   const { theme } = useUnistyles();
-  const router = useRouter();
   const params = useLocalSearchParams();
   const sessionId = normalizeSessionId((params as any)?.id);
   const hydrateReady = useHydrateSessionForRoute(sessionId ?? '', 'SessionRunsScreen.hydrate');
-  const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId ?? '');
-  const session = useSession(sessionId ?? '');
-
-  const [state, setState] = React.useState<LoadState>({ status: 'loading' });
-  const headerTint = theme.colors.header?.tint ?? theme.colors.text;
-  const { canLaunchExecutionRuns } = useSessionExecutionRunLaunchability(sessionId ?? '', session);
-
-  const load = React.useCallback(async () => {
-    if (!sessionId) {
-      setState({ status: 'error', error: 'missing_session_id' });
-      return;
-    }
-
-    setState({ status: 'loading' });
-      const first = await sessionExecutionRunList(sessionId, {});
-      if ((first as any)?.ok === false) {
-      if (!isRpcMethodNotAvailableError({
-        message: typeof (first as any).error === 'string' ? (first as any).error : undefined,
-        rpcErrorCode: typeof (first as any).errorCode === 'string' ? (first as any).errorCode : undefined,
-      })) {
-        setState({ status: 'error', error: readExecutionRunsErrorMessage(first as any) });
-        return;
-      }
-      const retry = await sessionExecutionRunList(sessionId, {});
-      if ((retry as any)?.ok === false) {
-        setState({ status: 'error', error: readExecutionRunsErrorMessage(retry as any) });
-        return;
-      }
-      setState({ status: 'loaded', runs: (retry as any).runs ?? [] });
-      return;
-    }
-    setState({ status: 'loaded', runs: (first as any).runs ?? [] });
-  }, [sessionId]);
-
-  React.useEffect(() => {
-    if (!hydrateReady) return;
-    void load();
-  }, [hydrateReady, load]);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      if (!hydrateReady) return;
-      void load();
-    }, [hydrateReady, load]),
-  );
-
-  const headerRight = React.useCallback(() => {
-    return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        {canLaunchExecutionRuns ? (
-          <>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t('executionRuns.newRun.intents.review')}
-              onPress={() => {
-                if (!sessionId) return;
-                router.push(`/session/${sessionId}/runs/new?intent=review` as any);
-              }}
-              hitSlop={10}
-              style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
-            >
-              <Ionicons name="search-outline" size={20} color={headerTint} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t('executionRuns.newRun.intents.delegate')}
-              onPress={() => {
-                if (!sessionId) return;
-                router.push(`/session/${sessionId}/runs/new?intent=delegate` as any);
-              }}
-              hitSlop={10}
-              style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
-            >
-              <Ionicons name="person-add-outline" size={20} color={headerTint} />
-            </Pressable>
-          </>
-        ) : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('common.refresh')}
-          onPress={() => void load()}
-          hitSlop={10}
-          style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
-        >
-          <Ionicons name="refresh" size={20} color={headerTint} />
-        </Pressable>
-      </View>
-    );
-  }, [canLaunchExecutionRuns, headerTint, load, router, sessionId]);
-
-  const screenOptions = React.useMemo(() => ({
-    headerShown: true,
-    headerTitle: t('runs.title'),
-    headerRight,
-  }), [headerRight]);
-
-  if (!sessionId) {
-    return (
-      <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16 }}>
-        <Text style={{ color: theme.colors.text }}>{t('errors.sessionDeleted')}</Text>
-      </View>
-    );
-  }
-
   if (!hydrateReady) {
     return (
       <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
-        <Stack.Screen options={screenOptions} />
+        <Stack.Screen options={{ headerShown: true, headerTitle: t('runs.title') }} />
         <ConstrainedScreenContent
           style={{
             flex: 1,
@@ -165,6 +61,123 @@ export default function SessionRunsScreen() {
       </View>
     );
   }
+
+  if (!sessionId) {
+    return (
+      <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16 }}>
+        <Text style={{ color: theme.colors.text }}>{t('errors.sessionDeleted')}</Text>
+      </View>
+    );
+  }
+
+  return <SessionRunsScreenContent sessionId={sessionId} />;
+}
+
+function SessionRunsScreenContent(props: Readonly<{ sessionId: string }>) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const session = useSession(props.sessionId);
+
+  const [state, setState] = React.useState<LoadState>({ status: 'loading' });
+  const loadGenerationRef = React.useRef(0);
+  const headerTint = theme.colors.header?.tint ?? theme.colors.text;
+  const { canLaunchExecutionRuns, executionRunsBackends } = useSessionExecutionRunLaunchability(props.sessionId, session);
+  const launchIntents = React.useMemo(
+    () => resolveExecutionRunLauncherIntents(executionRunsBackends as ExecutionRunBackendCapabilityMap),
+    [executionRunsBackends],
+  );
+  const canShowLaunchButtons = canLaunchExecutionRuns && launchIntents.length > 0;
+
+  const load = React.useCallback(async () => {
+    const loadGeneration = ++loadGenerationRef.current;
+    const commitState = (nextState: LoadState) => {
+      if (loadGenerationRef.current !== loadGeneration) return;
+      setState(nextState);
+    };
+
+    if (!props.sessionId) {
+      commitState({ status: 'error', error: 'missing_session_id' });
+      return;
+    }
+
+    commitState({ status: 'loading' });
+    const first = await sessionExecutionRunList(props.sessionId, {});
+    if ((first as any)?.ok === false) {
+      if (!isRpcMethodNotAvailableError({
+        message: typeof (first as any).error === 'string' ? (first as any).error : undefined,
+        rpcErrorCode: typeof (first as any).errorCode === 'string' ? (first as any).errorCode : undefined,
+      })) {
+        commitState({ status: 'error', error: readExecutionRunsErrorMessage(first as any) });
+        return;
+      }
+      const retry = await sessionExecutionRunList(props.sessionId, {});
+      if ((retry as any)?.ok === false) {
+        commitState({ status: 'error', error: readExecutionRunsErrorMessage(retry as any) });
+        return;
+      }
+      commitState({ status: 'loaded', runs: (retry as any).runs ?? [] });
+      return;
+    }
+    commitState({ status: 'loaded', runs: (first as any).runs ?? [] });
+  }, [props.sessionId]);
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void load();
+    }, [load]),
+  );
+
+  const headerRight = React.useCallback(() => {
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        {canShowLaunchButtons ? (
+          <>
+            {launchIntents.map((nextIntent) => {
+              const iconName = nextIntent === 'review'
+                ? 'search-outline'
+                : nextIntent === 'plan'
+                    ? 'list-outline'
+                    : 'person-add-outline';
+              return (
+                <Pressable
+                  key={nextIntent}
+                  accessibilityRole="button"
+                  accessibilityLabel={t(`executionRuns.newRun.intents.${nextIntent}`)}
+                  onPress={() => {
+                    if (!props.sessionId) return;
+                    router.push(`/session/${props.sessionId}/runs/new?intent=${nextIntent}` as any);
+                  }}
+                  hitSlop={10}
+                  style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
+                >
+                  <Ionicons name={iconName as any} size={20} color={headerTint} />
+                </Pressable>
+              );
+            })}
+          </>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('common.refresh')}
+          onPress={() => void load()}
+          hitSlop={10}
+          style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
+        >
+          <Ionicons name="refresh" size={20} color={headerTint} />
+        </Pressable>
+      </View>
+    );
+  }, [canShowLaunchButtons, headerTint, launchIntents, load, props.sessionId, router]);
+
+  const screenOptions = React.useMemo(() => ({
+    headerShown: true,
+    headerTitle: t('runs.title'),
+    headerRight,
+  }), [headerRight]);
 
   return (
     <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
@@ -186,8 +199,7 @@ export default function SessionRunsScreen() {
           <ExecutionRunList
             runs={state.runs}
             onPressRun={(run) => {
-              if (!sessionId) return;
-              router.push(`/session/${sessionId}/runs/${run.runId}` as any);
+              router.push(`/session/${props.sessionId}/runs/${run.runId}` as any);
             }}
           />
         )}

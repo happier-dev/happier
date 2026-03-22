@@ -1,34 +1,37 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import type { BadgeGridItem } from '../BadgeGrid';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        Platform: { ...(actual.Platform ?? {}), OS: 'web' },
-        View: 'View',
-        Text: 'Text',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+            },
+            View: 'View',
+            Text: 'Text',
+        },
+    );
 });
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            text: '#000',
-            textSecondary: '#666',
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-    };
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+    Text: (
+        { children, ...props }: { children?: React.ReactNode } & Record<string, unknown>,
+    ) => React.createElement('Text', props, children),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -43,61 +46,44 @@ const SAMPLE_ITEMS = [
     { id: 'voice', label: 'Voice', status: 'warning' as const },
 ];
 
+async function renderBadgeGrid(items: ReadonlyArray<BadgeGridItem>) {
+    const { BadgeGrid } = await import('../BadgeGrid');
+    return renderScreen(<BadgeGrid items={items} />);
+}
+
 describe('BadgeGrid', () => {
     it('renders the correct number of badges', async () => {
-        const { BadgeGrid } = await import('../BadgeGrid');
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<BadgeGrid items={SAMPLE_ITEMS} />);
-        });
-        const texts = tree.root.findAllByType('Text' as any);
-        // Each badge renders at least a label Text
-        const labels = texts.filter((t) => SAMPLE_ITEMS.some((i) => i.label === t.children.join('')));
-        expect(labels).toHaveLength(5);
+        const screen = await renderBadgeGrid(SAMPLE_ITEMS);
+        expect(screen.findAllByType('Ionicons')).toHaveLength(5);
+        const content = screen.getTextContent();
+        expect(content).toContain('Resume');
+        expect(content).toContain('Sessions');
+        expect(content).toContain('Models');
+        expect(content).toContain('Local Control');
+        expect(content).toContain('Voice');
     });
 
     it('renders correct icon for each status', async () => {
-        const { BadgeGrid } = await import('../BadgeGrid');
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <BadgeGrid
-                    items={[
-                        { id: 'pos', label: 'Pos', status: 'positive' },
-                        { id: 'neg', label: 'Neg', status: 'negative' },
-                        { id: 'neu', label: 'Neu', status: 'neutral' },
-                        { id: 'warn', label: 'Warn', status: 'warning' },
-                    ]}
-                />,
-            );
-        });
-        const json = tree.toJSON();
-        expect(json).toBeTruthy();
-        // All 4 statuses rendered without error
-        const texts = tree.root.findAllByType('Text' as any);
-        expect(texts.length).toBeGreaterThanOrEqual(4);
+        const screen = await renderBadgeGrid([
+            { id: 'pos', label: 'Pos', status: 'positive' },
+            { id: 'neg', label: 'Neg', status: 'negative' },
+            { id: 'neu', label: 'Neu', status: 'neutral' },
+            { id: 'warn', label: 'Warn', status: 'warning' },
+        ]);
+        expect(screen.findAllByProps({ name: 'checkmark-circle' })).toHaveLength(1);
+        expect(screen.findAllByProps({ name: 'close-circle' })).toHaveLength(1);
+        expect(screen.findAllByProps({ name: 'ellipse' })).toHaveLength(1);
+        expect(screen.findAllByProps({ name: 'warning' })).toHaveLength(1);
     });
 
     it('renders detail text when provided', async () => {
-        const { BadgeGrid } = await import('../BadgeGrid');
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <BadgeGrid items={[{ id: 'a', label: 'Alpha', status: 'positive', detail: 'v2.1' }]} />,
-            );
-        });
-        const texts = tree.root.findAllByType('Text' as any);
-        const textContents = texts.map((t) => t.children.join(''));
-        expect(textContents).toContain('v2.1');
+        const screen = await renderBadgeGrid([{ id: 'a', label: 'Alpha', status: 'positive', detail: 'v2.1' }]);
+        expect(screen.getTextContent()).toContain('v2.1');
     });
 
     it('renders empty when items is empty', async () => {
-        const { BadgeGrid } = await import('../BadgeGrid');
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<BadgeGrid items={[]} />);
-        });
-        const texts = tree.root.findAllByType('Text' as any);
-        expect(texts).toHaveLength(0);
+        const screen = await renderBadgeGrid([]);
+        expect(screen.findAllByType('Ionicons')).toHaveLength(0);
+        expect(screen.getTextContent()).toBe('');
     });
 });

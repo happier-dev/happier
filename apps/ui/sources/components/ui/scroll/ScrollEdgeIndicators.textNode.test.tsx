@@ -4,13 +4,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Platform: {
+                OS: 'web',
+                select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
+            },
+        }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',

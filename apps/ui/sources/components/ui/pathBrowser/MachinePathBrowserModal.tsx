@@ -144,6 +144,39 @@ function buildInitialSelectionCandidates(path: string | null): string[] {
     return buildInitialExpandedPaths(path).slice().reverse();
 }
 
+function getPathBrowserDisplayName(path: string): string {
+    const trimmed = String(path ?? '').trim();
+    if (!trimmed) return '';
+    const segments = trimmed.split(/[\\/]+/).filter(Boolean);
+    return segments.at(-1) ?? trimmed;
+}
+
+function buildInitialPathPreviewEntries(params: Readonly<{
+    directoryPath: string;
+    initialExpandedPaths: readonly string[];
+}>): Array<{
+    name: string;
+    path: string;
+    type: 'directory';
+    source: 'preview';
+}> | null {
+    const rootPath = params.initialExpandedPaths[0] ?? null;
+    if (!rootPath) return null;
+    const previewPath = params.directoryPath === ''
+        ? rootPath
+        : params.directoryPath === rootPath
+            ? params.initialExpandedPaths[1] ?? null
+            : null;
+    if (!previewPath) return null;
+
+    return [{
+        name: getPathBrowserDisplayName(previewPath),
+        path: previewPath,
+        type: 'directory' as const,
+        source: 'preview' as const,
+    }];
+}
+
 function toRootEntries(machineId: string, serverId?: string | null) {
     return (getCachedMachineFileBrowserRoots({ machineId, serverId }) ?? []).map((root) => ({
         name: root.label,
@@ -179,6 +212,13 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
     }, [windowHeight, windowWidth]);
 
     const getCachedEntries = React.useCallback((directoryPath: string) => {
+        const previewEntries = buildInitialPathPreviewEntries({
+            directoryPath,
+            initialExpandedPaths,
+        });
+        if (previewEntries) {
+            return previewEntries;
+        }
         if (directoryPath === '') {
             return toRootEntries(props.machineId, props.serverId);
         }
@@ -194,7 +234,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             sizeBytes: entry.sizeBytes,
             modifiedMs: entry.modifiedMs,
         })) ?? null;
-    }, [props.machineId, props.serverId]);
+    }, [initialExpandedPaths, props.machineId, props.serverId]);
 
     const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => {
         if (directoryPath === '') {
@@ -218,6 +258,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                     name: root.label,
                     path: root.path,
                     type: 'directory' as const,
+                    source: 'remote' as const,
                 })),
             };
         }
@@ -236,6 +277,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                 type: entry.type,
                 sizeBytes: entry.sizeBytes,
                 modifiedMs: entry.modifiedMs,
+                source: 'remote' as const,
             })),
             truncated: result.truncated,
         };
@@ -251,6 +293,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                     name: root.label,
                     path: root.path,
                     type: 'directory' as const,
+                    source: 'remote' as const,
                 })),
             };
         }
@@ -269,6 +312,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                 type: entry.type,
                 sizeBytes: entry.sizeBytes,
                 modifiedMs: entry.modifiedMs,
+                source: 'remote' as const,
             })),
             truncated: result.truncated,
         };
@@ -316,11 +360,11 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
                 .map((node) => [node.path, node] as const),
         );
         const visibleCandidates = initialSelectionCandidates.filter((candidate) => nodesByPath.has(candidate));
-        if (visibleCandidates.length === 0) {
+        const resolvedVisibleCandidates = visibleCandidates.filter((candidate) => nodesByPath.get(candidate)?.source !== 'preview');
+        if (resolvedVisibleCandidates.length === 0) {
             return;
         }
-
-        const deepestVisibleCandidate = visibleCandidates[0] ?? null;
+        const deepestVisibleCandidate = resolvedVisibleCandidates[0] ?? null;
         if (!deepestVisibleCandidate) return;
 
         if (deepestVisibleCandidate === initialSelectionCandidates[0]) {

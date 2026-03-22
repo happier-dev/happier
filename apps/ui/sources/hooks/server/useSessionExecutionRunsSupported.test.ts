@@ -1,6 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,7 +18,7 @@ vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
   useExecutionRunsBackendsForSession: () => backendsState.backends,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
   useSessionMessages: () => ({ messages: messagesState.messages, isLoaded: true }),
 }));
 
@@ -46,10 +47,7 @@ async function renderHarness(sessionId = 'session-1'): Promise<{
   }
 
   let root: renderer.ReactTestRenderer | null = null;
-  await act(async () => {
-    root = renderer.create(React.createElement(Harness, { sessionId }));
-    await flushAsync();
-  });
+  root = (await renderScreen(React.createElement(Harness, { sessionId }))).tree;
 
   return {
     getValue: () => current,

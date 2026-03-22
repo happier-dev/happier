@@ -32,6 +32,7 @@ export function flattenLazyDirectoryTree(input: {
             isLoadingChildren,
             sizeBytes: entry.sizeBytes,
             modifiedMs: entry.modifiedMs,
+            source: entry.source,
         });
 
         if (entry.type === 'directory' && isExpanded) {

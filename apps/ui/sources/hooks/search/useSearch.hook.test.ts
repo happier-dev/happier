@@ -1,6 +1,9 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,18 +26,16 @@ describe('useSearch (hook)', () => {
             return React.createElement('View');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test, { query: 'abc' }));
-        });
+        await renderScreen(React.createElement(Test, { query: 'abc' }));
 
         // Debounce delay
         await act(async () => {
-            vi.advanceTimersByTime(300);
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 300 });
         });
 
         // Retry delay (first attempt fails -> waits 750ms -> second attempt fails)
         await act(async () => {
-            vi.advanceTimersByTime(750);
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 750 });
         });
 
         expect(searchFn).toHaveBeenCalledTimes(2);
@@ -51,13 +52,10 @@ describe('useSearch (hook)', () => {
             return React.createElement('View');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test, { query: 'a' }));
-        });
+        await renderScreen(React.createElement(Test, { query: 'a' }));
 
         await act(async () => {
-            vi.advanceTimersByTime(300);
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 300 });
         });
 
         expect(searchFn).toHaveBeenCalledTimes(1);
@@ -77,13 +75,10 @@ describe('useSearch (hook)', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Test, { query: 'alpha' }));
-        });
+        tree = (await renderScreen(React.createElement(Test, { query: 'alpha' }))).tree;
 
         await act(async () => {
-            vi.advanceTimersByTime(300);
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 300 });
         });
         expect(searchFn).toHaveBeenCalledTimes(1);
         expect(latest?.results).toEqual(['alpha']);

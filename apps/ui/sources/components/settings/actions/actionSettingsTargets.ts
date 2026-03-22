@@ -18,7 +18,7 @@ export type ActionSettingsTargetId =
     | 'mcp'
     | 'voice_tool'
     | 'voice_action_block'
-    | 'session_control_cli'
+    | 'cli'
     | 'contextual_ui';
 
 type ActionSettingsSurface = keyof ActionSurfaces;
@@ -165,11 +165,11 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         category: 'integrations',
     },
     {
-        id: 'session_control_cli',
+        id: 'cli',
         kind: 'surface',
-        surface: 'session_control_cli',
-        titleKey: 'settingsActions.targets.session_control_cli.title',
-        subtitleKey: 'settingsActions.targets.session_control_cli.subtitle',
+        surface: 'cli',
+        titleKey: 'settingsActions.targets.cli.title',
+        subtitleKey: 'settingsActions.targets.cli.subtitle',
         icon: 'terminal-outline',
         category: 'integrations',
     },

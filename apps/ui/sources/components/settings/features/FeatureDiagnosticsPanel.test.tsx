@@ -1,7 +1,9 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,11 +53,9 @@ describe('FeatureDiagnosticsPanel', () => {
         });
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(FeatureDiagnosticsPanel, { featureIds }));
-        });
+        tree = (await renderScreen(React.createElement(FeatureDiagnosticsPanel, { featureIds }))).tree;
 
-        const items = tree.root.findAllByType('Item' as any);
+        const items = tree.findAllByType('Item' as any);
         expect(items).toHaveLength(featureIds.length);
         expect(items.map((item) => item.props.title)).toEqual(featureIds);
     });

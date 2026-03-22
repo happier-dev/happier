@@ -1,18 +1,28 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: 'ScrollView',
-    Pressable: 'Pressable',
-    TextInput: 'TextInput',
-    Text: 'Text',
-    Platform: { OS: 'web', select: (opt: any) => opt?.default },
-    useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            ScrollView: 'ScrollView',
+                            Pressable: 'Pressable',
+                            TextInput: 'TextInput',
+                            Text: 'Text',
+                            Platform: {
+                                OS: 'web',
+                                select: (opt: any) => opt?.default,
+                            },
+                            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -90,17 +100,21 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: () => [],
-}));
+});
+});
 
 vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
     resolvePreferredMachineId: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('SubAgentGuidanceRuleEditorModal', () => {
     it('disables Save when description is empty', async () => {
@@ -110,16 +124,12 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SubAgentGuidanceRuleEditorModal, {
+        tree = (await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'create',
                     entry: { id: 'guidance_1', description: '', enabled: true },
                     onResolve,
                     onClose,
-                }),
-            );
-        });
+                }))).tree;
 
         const buttons = tree!.root.findAllByType('RoundButton' as any);
         const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
@@ -141,9 +151,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SubAgentGuidanceRuleEditorModal, {
+        tree = (await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'create',
                     entry: {
                         id: 'guidance_2',
@@ -153,9 +161,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                     },
                     onResolve,
                     onClose,
-                }),
-            );
-        });
+                }))).tree;
 
         const buttons = tree!.root.findAllByType('RoundButton' as any);
         const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
@@ -187,9 +193,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SubAgentGuidanceRuleEditorModal, {
+        tree = (await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'edit',
                     entry: {
                         id: 'guidance_3',
@@ -199,9 +203,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                     },
                     onResolve,
                     onClose,
-                }),
-            );
-        });
+                }))).tree;
 
         const dropdowns = tree!.root.findAllByType('DropdownMenu' as any);
         expect(dropdowns).toHaveLength(3);

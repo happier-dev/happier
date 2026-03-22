@@ -1,21 +1,30 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import {
+    changeTextTestInstance,
+    findTestInstanceByTypeContainingText,
+    findTestInstanceByTypeWithProps,
+    pressTestInstanceAsync,
+    renderScreen,
+} from '@/dev/testkit';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { SecretsList } from './SecretsList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -27,61 +36,65 @@ vi.mock('react-native-unistyles', () => ({
                 groupped: { sectionTitle: '#333' },
             },
         },
-    }),
-    StyleSheet: { create: <T,>(factory: T) => factory },
-}));
-
-vi.mock('react-native', () => {
-    const ReactModule = require('react') as typeof React;
-
-    const Pressable = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        ReactModule.createElement('Pressable', props, props.children);
-    const Text = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        ReactModule.createElement('Text', props, props.children);
-    const View = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        ReactModule.createElement('View', props, props.children);
-
-    const TextInput = ReactModule.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
-        if (ref && typeof ref === 'object') {
-            ref.current = { focus: () => {} };
-        }
-        return ReactModule.createElement('TextInput', props);
     });
+});
 
-    return {
-        Platform: {
-            OS: 'ios',
-            select: <T,>(obj: { ios?: T; default?: T }) => obj.ios ?? obj.default,
-        },
-        AppState: { addEventListener: () => ({ remove: () => {} }) },
-        Pressable,
-        Text,
-        View,
-        TextInput,
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+                select: <T,>(obj: { ios?: T; default?: T }) => obj.ios ?? obj.default,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Pressable', props, props.children),
+            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('Text', props, props.children),
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                React.createElement('View', props, props.children),
+            TextInput: React.forwardRef<{ focus: () => void }, Record<string, unknown>>((props, ref) => {
+                if (ref && typeof ref === 'object') {
+                    ref.current = { focus: () => {} };
+                }
+                return React.createElement('TextInput', props);
+            }),
+        }
+    );
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-}));
+vi.mock('@/components/ui/lists/ItemGroup', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/lists/ItemGroup')>();
+    return {
+        ...actual,
+        ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: () => null,
 }));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) => React.createElement('Item', props),
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: vi.fn(),
+            prompt: vi.fn(),
+            confirm: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { show: vi.fn(), prompt: vi.fn(), confirm: vi.fn(), alert: vi.fn() },
-}));
-
-function renderSecretsList(params?: {
+async function renderSecretsList(params?: {
     secrets?: SavedSecret[];
     allowAdd?: boolean;
     includeNoneRow?: boolean;
@@ -91,44 +104,24 @@ function renderSecretsList(params?: {
     const onAfterAddSelectId = vi.fn<(id: string) => void>();
     const onSelectId = vi.fn<(id: string) => void>();
 
-    let tree: renderer.ReactTestRenderer | undefined;
-    act(() => {
-        tree = renderer.create(
-            React.createElement(SecretsList, {
-                secrets: params?.secrets ?? [],
-                onChangeSecrets,
-                onAfterAddSelectId,
-                onSelectId,
-                defaultId: params?.defaultId,
-                includeNoneRow: params?.includeNoneRow,
-                allowAdd: params?.allowAdd,
-            }),
-        );
-    });
+    const screen = await renderScreen(
+        React.createElement(SecretsList, {
+            secrets: params?.secrets ?? [],
+            onChangeSecrets,
+            onAfterAddSelectId,
+            onSelectId,
+            defaultId: params?.defaultId,
+            includeNoneRow: params?.includeNoneRow,
+            allowAdd: params?.allowAdd,
+        }),
+    );
 
-    return { tree: tree!, onChangeSecrets, onAfterAddSelectId, onSelectId };
-}
-
-function findItems(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('Item');
-}
-
-function findItemByTitle(tree: renderer.ReactTestRenderer, title: string): ReactTestInstance | undefined {
-    return findItems(tree).find((node) => node.props.title === title);
-}
-
-function findTextInputs(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('TextInput');
-}
-
-function findSaveButton(tree: renderer.ReactTestRenderer): ReactTestInstance | undefined {
-    return tree.root.findAllByType('Pressable').find((node) => node.props.accessibilityLabel === 'common.save');
-}
-
-function getFirstSecretTitles(tree: renderer.ReactTestRenderer): string[] {
-    return findItems(tree)
-        .map((node) => node.props.title)
-        .filter((title): title is string => typeof title === 'string' && title !== 'common.add');
+    return {
+        screen,
+        onChangeSecrets,
+        onAfterAddSelectId,
+        onSelectId,
+    };
 }
 
 describe('SecretsList', () => {
@@ -142,32 +135,35 @@ describe('SecretsList', () => {
         vi.unstubAllGlobals();
     });
 
-    it('adds a secret via the inline expander without modal prompts', () => {
-        const { tree, onChangeSecrets, onAfterAddSelectId } = renderSecretsList();
+    it('adds a secret via the inline expander without modal prompts', async () => {
+        const { screen, onChangeSecrets, onAfterAddSelectId } = await renderSecretsList();
 
-        const addItem = findItemByTitle(tree, 'common.add');
+        const addItem = findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.add');
         expect(addItem).toBeTruthy();
 
-        act(() => {
-            addItem?.props.onPress?.();
-        });
+        await pressTestInstanceAsync(addItem, 'common.add row');
 
-        const [nameInput, valueInput] = findTextInputs(tree);
+        const nameInput = findTestInstanceByTypeWithProps(screen, 'TextInput', {
+            placeholder: 'secrets.placeholders.nameExample',
+        });
+        const valueInput = findTestInstanceByTypeWithProps(screen, 'TextInput', {
+            placeholder: 'secrets.placeholders.valueExample',
+        });
         expect(nameInput).toBeTruthy();
         expect(valueInput).toBeTruthy();
 
         act(() => {
-            nameInput?.props.onChangeText?.('My Key');
-            valueInput?.props.onChangeText?.('sk-test');
+            changeTextTestInstance(nameInput, 'My Key', 'secret name input');
+            changeTextTestInstance(valueInput, 'sk-test', 'secret value input');
         });
 
-        const saveButton = findSaveButton(tree);
+        const saveButton = findTestInstanceByTypeWithProps(screen, 'Pressable', {
+            accessibilityLabel: 'common.save',
+        });
         expect(saveButton).toBeTruthy();
         expect(saveButton?.props.disabled).toBe(false);
 
-        act(() => {
-            saveButton?.props.onPress?.();
-        });
+        await pressTestInstanceAsync(saveButton, 'common.save button');
 
         expect(onChangeSecrets).toHaveBeenCalledTimes(1);
         const nextSecrets = onChangeSecrets.mock.calls[0]?.[0] ?? [];
@@ -182,42 +178,47 @@ describe('SecretsList', () => {
         expect(onAfterAddSelectId).toHaveBeenCalledWith('uuid-1');
     });
 
-    it('keeps save disabled until both name and value are provided', () => {
-        const { tree } = renderSecretsList();
+    it('keeps save disabled until both name and value are provided', async () => {
+        const { screen } = await renderSecretsList();
 
-        const addItem = findItemByTitle(tree, 'common.add');
+        const addItem = findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.add');
         expect(addItem).toBeTruthy();
 
-        act(() => {
-            addItem?.props.onPress?.();
-        });
+        await pressTestInstanceAsync(addItem, 'common.add row');
 
-        const [nameInput, valueInput] = findTextInputs(tree);
-        const saveButton = findSaveButton(tree);
+        const nameInput = findTestInstanceByTypeWithProps(screen, 'TextInput', {
+            placeholder: 'secrets.placeholders.nameExample',
+        });
+        const valueInput = findTestInstanceByTypeWithProps(screen, 'TextInput', {
+            placeholder: 'secrets.placeholders.valueExample',
+        });
+        const saveButton = findTestInstanceByTypeWithProps(screen, 'Pressable', {
+            accessibilityLabel: 'common.save',
+        });
 
         expect(saveButton?.props.disabled).toBe(true);
 
         act(() => {
-            nameInput?.props.onChangeText?.('ONLY_NAME');
+            changeTextTestInstance(nameInput, 'ONLY_NAME', 'secret name input');
         });
-        expect(findSaveButton(tree)?.props.disabled).toBe(true);
+        expect(findTestInstanceByTypeWithProps(screen, 'Pressable', { accessibilityLabel: 'common.save' })?.props.disabled).toBe(true);
 
         act(() => {
-            valueInput?.props.onChangeText?.('has-value');
+            changeTextTestInstance(valueInput, 'has-value', 'secret value input');
         });
-        expect(findSaveButton(tree)?.props.disabled).toBe(false);
+        expect(findTestInstanceByTypeWithProps(screen, 'Pressable', { accessibilityLabel: 'common.save' })?.props.disabled).toBe(false);
     });
 
-    it('does not expose add control when adding is disabled', () => {
-        const { tree } = renderSecretsList({ allowAdd: false });
-        expect(findItemByTitle(tree, 'common.add')).toBeUndefined();
+    it('does not expose add control when adding is disabled', async () => {
+        const { screen } = await renderSecretsList({ allowAdd: false });
+        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.add')).toBeUndefined();
     });
 
-    it('moves default secret to the first rendered position', () => {
+    it('moves default secret to the first rendered position', async () => {
         const secrets: SavedSecret[] = [
             {
                 id: 'secret-a',
-                name: 'A',
+                name: 'Primary',
                 kind: 'apiKey',
                 encryptedValue: { _isSecretValue: true, value: 'a' },
                 createdAt: 1,
@@ -225,7 +226,7 @@ describe('SecretsList', () => {
             },
             {
                 id: 'secret-b',
-                name: 'B',
+                name: 'Secondary',
                 kind: 'apiKey',
                 encryptedValue: { _isSecretValue: true, value: 'b' },
                 createdAt: 2,
@@ -233,19 +234,19 @@ describe('SecretsList', () => {
             },
         ];
 
-        const { tree } = renderSecretsList({ secrets, defaultId: 'secret-b', allowAdd: false });
-        const titles = getFirstSecretTitles(tree);
-        expect(titles[0]).toBe('B');
+        const { screen } = await renderSecretsList({ secrets, defaultId: 'secret-b', allowAdd: false });
+        const textContent = screen.getTextContent();
+        expect(textContent.indexOf('Secondary')).toBeGreaterThanOrEqual(0);
+        expect(textContent.indexOf('Primary')).toBeGreaterThanOrEqual(0);
+        expect(textContent.indexOf('Secondary')).toBeLessThan(textContent.indexOf('Primary'));
     });
 
-    it('selects none row when include-none entry is pressed', () => {
-        const { tree, onSelectId } = renderSecretsList({ includeNoneRow: true, allowAdd: false });
-        const noneItem = findItemByTitle(tree, 'secrets.noneTitle');
+    it('selects none row when include-none entry is pressed', async () => {
+        const { screen, onSelectId } = await renderSecretsList({ includeNoneRow: true, allowAdd: false });
+        const noneItem = findTestInstanceByTypeContainingText(screen, 'Pressable', 'secrets.noneTitle');
         expect(noneItem).toBeTruthy();
 
-        act(() => {
-            noneItem?.props.onPress?.();
-        });
+        await pressTestInstanceAsync(noneItem, 'secrets.none row');
 
         expect(onSelectId).toHaveBeenCalledWith('');
     });

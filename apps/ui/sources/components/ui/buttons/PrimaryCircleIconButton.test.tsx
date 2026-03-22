@@ -1,21 +1,25 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 button: { primary: { background: '#000', tint: '#fff', disabled: '#666' } },
@@ -25,22 +29,8 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#fff',
             },
         },
-    }),
-    StyleSheet: {
-        create: (factory: any) => {
-            const theme = {
-                colors: {
-                    button: { primary: { background: '#000', tint: '#fff', disabled: '#666' } },
-                    surfaceHigh: '#111',
-                    surface: '#111',
-                    divider: '#222',
-                    text: '#fff',
-                },
-            };
-            return typeof factory === 'function' ? factory(theme) : factory;
-        },
-    },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
@@ -50,18 +40,14 @@ describe('PrimaryCircleIconButton', () => {
     it('forwards testID to the Pressable', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <PrimaryCircleIconButton
+        tree = (await renderScreen(<PrimaryCircleIconButton
                     testID="circle-button"
                     active
                     accessibilityLabel="Send"
                     onPress={() => {}}
                 >
                     <span />
-                </PrimaryCircleIconButton>,
-            );
-        });
+                </PrimaryCircleIconButton>)).tree;
         const pressable = tree.root.findByType('Pressable' as any);
         expect(pressable.props.testID).toBe('circle-button');
     });
@@ -69,18 +55,14 @@ describe('PrimaryCircleIconButton', () => {
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <PrimaryCircleIconButton
+        tree = (await renderScreen(<PrimaryCircleIconButton
                     testID="circle-button"
                     active
                     accessibilityLabel="Send"
                     onPress={() => {}}
                 >
                     <>{'.'}</>
-                </PrimaryCircleIconButton>,
-            );
-        });
+                </PrimaryCircleIconButton>)).tree;
 
         const badNodes: Array<{ parent: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {

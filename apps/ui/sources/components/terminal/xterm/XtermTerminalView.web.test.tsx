@@ -57,8 +57,9 @@ vi.mock('@xterm/addon-webgl', () => ({
 
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#000000',
@@ -66,8 +67,8 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#ffffff',
             },
         },
-    }),
-}));
+    });
+});
 
 describe('XtermTerminalView.web', () => {
     let container: HTMLDivElement;

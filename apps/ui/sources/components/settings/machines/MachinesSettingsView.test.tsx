@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (
     globalThis as typeof globalThis & {
@@ -28,29 +30,40 @@ const viewModelState = vi.hoisted(() => ({
     value: null as unknown as MachinesSettingsViewModel,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'web',
-        select: (options: Record<string, unknown>) => options?.web ?? options?.default,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Pressable: 'Pressable',
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: Record<string, unknown>) => options?.web ?? options?.default,
+                                    },
+                                }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 accent: { blue: 'blue', orange: 'orange' },
@@ -58,8 +71,8 @@ vi.mock('react-native-unistyles', () => ({
                 status: { connected: 'green', disconnected: 'red' },
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),
@@ -146,11 +159,9 @@ describe('MachinesSettingsView', () => {
     it('renders existing machines in a separate section from setup actions', async () => {
         const { MachinesSettingsView } = await import('./MachinesSettingsView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(MachinesSettingsView));
-        });
+        tree = (await renderScreen(React.createElement(MachinesSettingsView))).tree;
 
-        const groups = tree.root.findAllByType('Group' as any);
+        const groups = tree.findAllByType('Group' as any);
         expect(groups).toHaveLength(2);
         expect(groups[0]?.props.title).toBe('settings.machines');
 
@@ -164,7 +175,7 @@ describe('MachinesSettingsView', () => {
         expect(addMachineItem).toBeTruthy();
 
         await act(async () => {
-            addMachineItem!.props.onPress();
+            await pressTestInstanceAsync(addMachineItem!);
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines/add');
@@ -182,11 +193,9 @@ describe('MachinesSettingsView', () => {
 
         const { MachinesSettingsView } = await import('./MachinesSettingsView');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(MachinesSettingsView));
-        });
+        tree = (await renderScreen(React.createElement(MachinesSettingsView))).tree;
 
-        const groups = tree.root.findAllByType('Group' as any);
+        const groups = tree.findAllByType('Group' as any);
         const firstGroupItems = groups[0]!.findAllByType('Item' as any);
 
         expect(firstGroupItems.map((node: any) => node.props.title)).toContain('newSession.noMachinesFound');

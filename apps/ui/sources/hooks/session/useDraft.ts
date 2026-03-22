@@ -28,17 +28,20 @@ export function useDraft(
     const forkInitialPrompt = readForkInitialPromptV1(session?.metadata as any);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
 
-    useEffect(() => {
-        latestValue.current = value;
-    }, [value]);
+    latestValue.current = value;
+
+    const saveDraftForSession = useCallback((targetSessionId: string, draft: string) => {
+        storage.getState().updateSessionDraft(targetSessionId, draft);
+        if (lastSessionId.current === targetSessionId) {
+            lastSavedValue.current = draft;
+        }
+    }, []);
 
     // Save draft to storage
     const saveDraft = useCallback((draft: string) => {
         if (!sessionId) return;
-        
-        storage.getState().updateSessionDraft(sessionId, draft);
-        lastSavedValue.current = draft;
-    }, [sessionId]);
+        saveDraftForSession(sessionId, draft);
+    }, [saveDraftForSession, sessionId]);
 
     const clearForkInitialPrompt = useCallback((tag: string) => {
         if (!sessionId || !forkInitialPromptText) return;
@@ -62,6 +65,9 @@ export function useDraft(
         const currentValue = latestValue.current;
 
         if (didSessionChange) {
+            if (previousSessionId && currentValue !== lastSavedValue.current) {
+                saveDraftForSession(previousSessionId, currentValue);
+            }
             autosaveSkip.current = { sessionId, value: currentValue };
             if (storedDraft && storedDraft.trim()) {
                 onChange(storedDraft);
@@ -106,7 +112,7 @@ export function useDraft(
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [clearForkInitialPrompt, forkInitialPromptText, isFocused, onChange, saveDraft, sessionId, storedDraft]);
+    }, [clearForkInitialPrompt, forkInitialPromptText, isFocused, onChange, saveDraft, saveDraftForSession, sessionId, storedDraft]);
 
     // Auto-save with smart debouncing
     useEffect(() => {
@@ -168,20 +174,28 @@ export function useDraft(
         };
     }, [sessionId, value, saveDraft]);
 
-    // Save on unmount
+    // Save on unmount only; session changes are handled explicitly above so they do not race with clearDraft().
     useEffect(() => {
         return () => {
-            if (sessionId && value !== lastSavedValue.current) {
-                saveDraft(value);
+            const currentSessionId = lastSessionId.current;
+            const currentValue = latestValue.current;
+            if (currentSessionId && currentValue !== lastSavedValue.current) {
+                saveDraftForSession(currentSessionId, currentValue);
             }
         };
-    }, [sessionId, value, saveDraft]);
+    }, [saveDraftForSession]);
 
     // Clear draft (used after message is sent)
     const clearDraft = useCallback(() => {
         if (!sessionId) return;
-        
+
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+
         storage.getState().updateSessionDraft(sessionId, null);
+        latestValue.current = '';
         lastSavedValue.current = '';
     }, [sessionId]);
 

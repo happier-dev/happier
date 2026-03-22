@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -58,9 +60,7 @@ describe('useChangelog (feature gate)', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            tree = renderer.create(React.createElement(Probe));
-        });
+        tree = (await renderScreen(React.createElement(Probe))).tree;
 
         expect(latest).toEqual({ hasUnread: false, latestVersion: 0 });
     });

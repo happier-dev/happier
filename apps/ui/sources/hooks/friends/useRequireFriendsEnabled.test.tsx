@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,10 +71,8 @@ describe('useRequireFriendsEnabled', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
 
-        await act(async () => {
-            tree = renderer.create(<Test />);
+        tree = (await renderScreen(<Test />)).tree;
             await flushHookEffects(1);
-        });
 
         expect(replace).not.toHaveBeenCalled();
         expect(seen).toContain(false);
@@ -125,10 +125,8 @@ describe('useRequireFriendsEnabled', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
 
-        await act(async () => {
-            tree = renderer.create(<Test />);
+        tree = (await renderScreen(<Test />)).tree;
             await flushHookEffects();
-        });
 
         expect(replace).toHaveBeenCalledWith('/');
 

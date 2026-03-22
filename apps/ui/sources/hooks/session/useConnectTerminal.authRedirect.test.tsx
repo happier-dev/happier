@@ -1,14 +1,19 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret, openTerminalProvisioningV2Payload } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplaceSpy = vi.fn();
 const setPendingTerminalConnectSpy = vi.fn((_pending: { publicKeyB64Url: string; serverUrl: string }) => {});
 const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
+const modalAlertAsyncSpy = vi.fn(async (...args: unknown[]) => {
+    modalAlertSpy(...args);
+});
 const modalConfirmSpy = vi.fn(async () => true);
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string }) => true);
 const authApproveSpy = vi.fn();
@@ -18,17 +23,28 @@ let contentPrivateKey = new Uint8Array([7, 7, 7]);
 let contentPublicKey = new Uint8Array([9, 9, 9]);
 let activeServerUrl = 'https://api.happier.dev';
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-    Dimensions: {
-        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+        }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    router: { replace: routerReplaceSpy },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { replace: routerReplaceSpy },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('expo-camera', () => ({
     CameraView: {
@@ -50,17 +66,21 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        alertAsync: modalAlertSpy,
-        confirm: modalConfirmSpy,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            alertAsync: modalAlertAsyncSpy,
+            confirm: modalConfirmSpy,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
@@ -136,9 +156,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = true;
         await act(async () => {
@@ -172,9 +190,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = true;
         await act(async () => {
@@ -211,9 +227,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = true;
         await act(async () => {
@@ -248,9 +262,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = false;
         await act(async () => {
@@ -295,9 +307,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = false;
         await act(async () => {
@@ -335,9 +345,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         let result = false;
         await act(async () => {
@@ -381,9 +389,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         const { terminalPublicKey } = createTerminalKeyPair();
         let result = false;
@@ -420,9 +426,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         const { terminalPublicKey } = createTerminalKeyPair();
         let result = true;
@@ -456,9 +460,7 @@ describe('useConnectTerminal approval outcome messaging', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         const { terminalPublicKey } = createTerminalKeyPair();
         let result = true;

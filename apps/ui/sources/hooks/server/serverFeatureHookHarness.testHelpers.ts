@@ -1,38 +1,27 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
+import {
+    flushHookEffects as flushTestkitHookEffects,
+    renderHook,
+} from '@/dev/testkit';
 
 export async function flushHookEffects(turns = 2) {
-    // Some hooks schedule work via `useEffect` chains that require multiple turns (for example
-    // fetching + parsing + state updates). Yield a few times to keep tests stable.
-    for (let cycle = 0; cycle < 4; cycle += 1) {
-        for (let index = 0; index < turns; index += 1) {
-            await Promise.resolve();
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
+    await flushTestkitHookEffects({ turns });
 }
 
 export async function renderHookAndCollectValues<T>(useValue: () => T): Promise<T[]> {
     const seen: T[] = [];
-    let tree: renderer.ReactTestRenderer | null = null;
 
-    function Test() {
+    const harness = await renderHook(() => {
         const value = useValue();
         React.useEffect(() => {
             seen.push(value);
         }, [value]);
-        return null;
-    }
-
-    await act(async () => {
-        tree = renderer.create(React.createElement(Test));
-        await flushHookEffects();
+        return value;
     });
-
-    await act(async () => {
-        tree?.unmount();
-        await flushHookEffects(1);
-    });
+    await flushHookEffects();
+    await harness.unmount();
+    await flushTestkitHookEffects({ cycles: 1, turns: 1 });
 
     return seen;
 }

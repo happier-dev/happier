@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,10 +22,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => {
-    return {
-        useMachine: vi.fn(() => ({ id: 'm1', metadata: {} })),
-    };
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useMachine: vi.fn(() => ({ id: 'm1', metadata: {} })),
+});
 });
 
 vi.mock('@/utils/sessions/machineUtils', () => {
@@ -132,9 +135,7 @@ describe('useCLIDetection (hook)', () => {
             }
 
             let root: any = null;
-            act(() => {
-                root = renderer.create(React.createElement(Test));
-            });
+            root = (await renderScreen(React.createElement(Test))).tree;
             expect(latest?.timestamp).toBe(1000);
 
             vi.setSystemTime(2000);
@@ -328,9 +329,7 @@ describe('useCLIDetection (hook)', () => {
         }
 
         let root: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            root = renderer.create(React.createElement(Test, { agentIds: ['codex'] }));
-        });
+        root = (await renderScreen(React.createElement(Test, { agentIds: ['codex'] }))).tree;
 
         act(() => {
             root?.update(React.createElement(Test, { agentIds: ['kiro'] }));

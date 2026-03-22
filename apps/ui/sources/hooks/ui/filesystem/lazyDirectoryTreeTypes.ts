@@ -4,6 +4,7 @@ export type LazyDirectoryTreeEntry = Readonly<{
     type: 'file' | 'directory';
     sizeBytes?: number;
     modifiedMs?: number;
+    source?: 'preview' | 'remote';
 }>;
 
 export type LazyDirectoryTreeLoadResult =
@@ -19,6 +20,7 @@ export type LazyDirectoryTreeNode = Readonly<{
     isLoadingChildren: boolean;
     sizeBytes?: number;
     modifiedMs?: number;
+    source?: 'preview' | 'remote';
     parentDirectoryPath?: string;
     errorMessage?: string;
     infoKind?: 'truncated';

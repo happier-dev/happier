@@ -1,6 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import renderer, { act, ReactTestInstance } from 'react-test-renderer';
+import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,7 +39,7 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
     useSession: () => null,
     useSetting: () => undefined,
 }));
@@ -60,25 +61,37 @@ vi.mock('@/sync/ops', () => ({
     sessionAbort: (...args: any[]) => sessionAbort(...args),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: (...args: any[]) => modalConfirm(...args),
-        alert: (...args: any[]) => modalAlert(...args),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: (...args: any[]) => modalConfirm(...args),
+            alert: (...args: any[]) => modalAlert(...args),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Text: 'Text',
+                            Pressable: 'Pressable',
+                            ScrollView: 'ScrollView',
+                            ActivityIndicator: 'ActivityIndicator',
+                            Platform: {
+                                OS: 'web',
+                                select: (value: any) => value?.web ?? value?.default,
+                            },
+                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -94,11 +107,8 @@ vi.mock('react-native-unistyles', () => ({
                 userMessageText: '#000',
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) => (typeof input === 'function' ? input({ colors: {} }) : input),
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -182,13 +192,11 @@ describe('PendingMessagesTranscriptBlock discard fallback', () => {
         discardPendingMessage.mockResolvedValueOnce(undefined);
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-                tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+        tree = (await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                     sessionId: 's1',
                     pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                     discardedMessages: [],
-                }));
-            });
+                }))).tree;
 
         await hoverPendingMessageRow(tree!, 'p1');
 

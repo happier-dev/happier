@@ -7,7 +7,7 @@ import {
     normalizeFromAcpItems,
     normalizeWriteAliases,
 } from './filePaths';
-import { normalizeDiffAliases, normalizePatchFromUnifiedDiff } from './patch';
+import { normalizeDiffAliases, normalizePatchChangeArray, normalizePatchFromUnifiedDiff } from './patch';
 import { normalizeTodoInputForRendering } from './todos';
 
 export function normalizeToolInputForRendering(params: {
@@ -28,7 +28,10 @@ export function normalizeToolInputForRendering(params: {
         const inputRecord2 = asRecord(nextInput) ?? inputRecord;
 
         if (canonicalLower === 'patch') {
-            nextInput = normalizePatchFromUnifiedDiff(inputRecord2) ?? inputRecord2;
+            nextInput =
+                normalizePatchChangeArray(inputRecord2) ??
+                normalizePatchFromUnifiedDiff(inputRecord2) ??
+                inputRecord2;
         }
 
         if (canonicalLower === 'edit') {
@@ -50,4 +53,3 @@ export function normalizeToolInputForRendering(params: {
 
     return nextInput;
 }
-

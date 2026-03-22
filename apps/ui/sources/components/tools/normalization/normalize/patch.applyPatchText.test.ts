@@ -54,4 +54,39 @@ describe('normalizeToolInputForRendering (Patch apply_patch patchText)', () => {
             }),
         );
     });
+
+    it('normalizes Codex patch permission change arrays into canonical changes maps', () => {
+        const normalized = normalizeToolInputForRendering({
+            toolName: 'CodexPatch',
+            canonicalToolName: 'Patch',
+            input: {
+                changes: [
+                    {
+                        path: '/tmp/happier-codex-qa-1774030477/NOTES.md',
+                        kind: { type: 'update', move_path: null },
+                        diff: [
+                            '@@ -2 +2,2 @@',
+                            '-old line',
+                            '+old line',
+                            '+new line',
+                        ].join('\n'),
+                    },
+                ],
+            },
+        }) as any;
+
+        expect(normalized).toEqual(
+            expect.objectContaining({
+                changes: {
+                    '/tmp/happier-codex-qa-1774030477/NOTES.md': {
+                        type: 'update',
+                        modify: {
+                            old_content: 'old line',
+                            new_content: 'old line\nnew line',
+                        },
+                    },
+                },
+            }),
+        );
+    });
 });

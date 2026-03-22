@@ -1,26 +1,36 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-    Linking: { canOpenURL: vi.fn(async () => false), openURL: vi.fn(async () => {}) },
-    Text: 'Text',
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Pressable: 'Pressable',
+                            Dimensions: {
+                                get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                            },
+                            useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                            },
+                            Linking: {
+                                canOpenURL: vi.fn(async () => false),
+                                openURL: vi.fn(async () => {}),
+                            },
+                            Text: 'Text',
+                            ActivityIndicator: 'ActivityIndicator',
+                        }
+    );
+});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
@@ -31,9 +41,13 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -74,7 +88,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: null }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useEntitlement: () => false,
     useLocalSettingMutable: () => [false, vi.fn()],
     useSetting: (key: string) => {
@@ -91,7 +107,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useMachineListByServerId: () => ({}),
     useMachineListStatusByServerId: () => ({}),
     useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -106,13 +123,16 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
@@ -144,9 +164,10 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',
@@ -196,11 +217,9 @@ describe('SettingsView ACP catalog entry', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-        const items = tree.root.findAllByType('Item' as any);
+        const items = tree.findAllByType('Item' as any);
         const acpItem = items.find((item: any) => item?.props?.title === 'settings.acpCatalog');
         expect(acpItem).toBeFalsy();
         expect(routerPushSpy).not.toHaveBeenCalled();

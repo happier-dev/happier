@@ -1,19 +1,37 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'web',
+            select: (options: any) => options.web ?? options.default,
+        },
+        Alert: {
+            alert: vi.fn(),
+            prompt: vi.fn(),
+        },
+    });
+});
 
 vi.mock('./components/WebAlertModal', () => ({
-    WebAlertModal: () => null,
+    WebAlertModal: (props: any) => React.createElement('WebAlertModal', props),
 }));
 
 vi.mock('./components/WebPromptModal', () => ({
-    WebPromptModal: () => null,
+    WebPromptModal: (props: any) => React.createElement('WebPromptModal', props),
 }));
 
 vi.mock('./components/CustomModal', () => {
@@ -41,12 +59,8 @@ function DummyModalWithLabel(props: { onClose: () => void; label: string }) {
     return React.createElement('DummyModalWithLabel', { label: props.label });
 }
 
-function renderProvider(modules: { ModalProvider: React.ComponentType<{ children: React.ReactNode }> }) {
-    let tree: ReturnType<typeof renderer.create> | undefined;
-    act(() => {
-        tree = renderer.create(React.createElement(modules.ModalProvider, { children: React.createElement('App') }));
-    });
-    return tree;
+async function renderProvider(modules: { ModalProvider: React.ComponentType<{ children: React.ReactNode }> }) {
+    return renderScreen(React.createElement(modules.ModalProvider, { children: React.createElement('App') }));
 }
 
 function showCustomModal(Modal: { show: (config: { component: React.ComponentType<{ onClose: () => void }> }) => string }, component: React.ComponentType<{ onClose: () => void }>) {
@@ -64,33 +78,33 @@ describe('ModalProvider', () => {
     it('keeps earlier custom modals mounted when stacking', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
-        const tree = renderProvider({ ModalProvider });
+        const screen = await renderProvider({ ModalProvider });
         showCustomModal(Modal, DummyModalA);
         showCustomModal(Modal, DummyModalB);
 
-        expect(tree?.root.findAllByType(DummyModalA).length).toBe(1);
-        expect(tree?.root.findAllByType(DummyModalB).length).toBe(1);
+        expect(screen.findAllByType(DummyModalA).length).toBe(1);
+        expect(screen.findAllByType(DummyModalB).length).toBe(1);
     });
 
     it('only enables the backdrop on the top-most modal', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
-        const tree = renderProvider({ ModalProvider });
+        const screen = await renderProvider({ ModalProvider });
         showCustomModal(Modal, DummyModalA);
         showCustomModal(Modal, DummyModalB);
 
-        const backdrops = tree?.root.findAllByType('Backdrop' as any) ?? [];
+        const backdrops = screen.findAllByType('Backdrop' as any);
         expect(backdrops.filter((b: any) => Boolean(b.props.showBackdrop)).length).toBe(1);
     });
 
     it('assigns a higher zIndexBase to the top-most modal so its backdrop layers above earlier modals', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
-        const tree = renderProvider({ ModalProvider });
+        const screen = await renderProvider({ ModalProvider });
         showCustomModal(Modal, DummyModalA);
         showCustomModal(Modal, DummyModalB);
 
-        const backdrops = tree?.root.findAllByType('Backdrop' as any) ?? [];
+        const backdrops = screen.findAllByType('Backdrop' as any);
         const top = backdrops.find((b: any) => Boolean(b.props.showBackdrop));
         const bottom = backdrops.find((b: any) => !Boolean(b.props.showBackdrop));
 
@@ -104,19 +118,19 @@ describe('ModalProvider', () => {
     it('keeps earlier modal mounted and transfers top backdrop when the top modal closes', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
-        const tree = renderProvider({ ModalProvider });
+        const screen = await renderProvider({ ModalProvider });
 
         showCustomModal(Modal, DummyModalA);
         showCustomModal(Modal, DummyModalB);
 
         act(() => {
-            const topModal = tree?.root.findByType(DummyModalB);
+            const topModal = screen.findByType(DummyModalB);
             topModal?.props.onClose();
         });
 
-        expect(tree?.root.findAllByType(DummyModalA).length).toBe(1);
-        expect(tree?.root.findAllByType(DummyModalB).length).toBe(0);
-        const backdrops = tree?.root.findAllByType('Backdrop' as any) ?? [];
+        expect(screen.findAllByType(DummyModalA).length).toBe(1);
+        expect(screen.findAllByType(DummyModalB).length).toBe(0);
+        const backdrops = screen.findAllByType('Backdrop' as any);
         expect(backdrops).toHaveLength(1);
         expect(Boolean(backdrops[0]?.props.showBackdrop)).toBe(true);
     });
@@ -124,7 +138,7 @@ describe('ModalProvider', () => {
     it('unmounts all custom modals when hideAll is invoked', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
-        const tree = renderProvider({ ModalProvider });
+        const screen = await renderProvider({ ModalProvider });
 
         showCustomModal(Modal, DummyModalA);
         showCustomModal(Modal, DummyModalB);
@@ -133,15 +147,15 @@ describe('ModalProvider', () => {
             Modal.hideAll();
         });
 
-        expect(tree?.root.findAllByType(DummyModalA).length).toBe(0);
-        expect(tree?.root.findAllByType(DummyModalB).length).toBe(0);
-        expect(tree?.root.findAllByType('Backdrop' as any).length).toBe(0);
+        expect(screen.findAllByType(DummyModalA).length).toBe(0);
+        expect(screen.findAllByType(DummyModalB).length).toBe(0);
+        expect(screen.findAllByType('Backdrop' as any).length).toBe(0);
     });
 
     it('updates props for an open custom modal without remounting it', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
-        const tree = renderProvider({ ModalProvider });
+        const screen = await renderProvider({ ModalProvider });
 
         let modalId = '';
         act(() => {
@@ -151,12 +165,64 @@ describe('ModalProvider', () => {
             });
         });
 
-        expect(tree?.root.findByType('DummyModalWithLabel' as any).props.label).toBe('before');
+        expect(screen.findByType('DummyModalWithLabel' as any).props.label).toBe('before');
 
         act(() => {
             Modal.update(modalId, { label: 'after' });
         });
 
-        expect(tree?.root.findByType('DummyModalWithLabel' as any).props.label).toBe('after');
+        expect(screen.findByType('DummyModalWithLabel' as any).props.label).toBe('after');
+    });
+
+    it('resolves confirm as false when a web confirm modal closes without an explicit choice', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const screen = await renderProvider({ ModalProvider });
+
+        const pending = Symbol('pending');
+        let promise!: Promise<boolean>;
+        await act(async () => {
+            promise = Modal.confirm('Confirm title', 'Confirm body');
+        });
+
+        act(() => {
+            screen.findByType('WebAlertModal' as any).props.onClose();
+        });
+
+        const result = await Promise.race([
+            promise,
+            new Promise<typeof pending>((resolve) => {
+                setTimeout(() => resolve(pending), 0);
+            }),
+        ]);
+
+        expect(result).toBe(false);
+        expect(screen.findAllByType('WebAlertModal' as any)).toHaveLength(0);
+    });
+
+    it('resolves prompt as null when a web prompt modal closes without confirmation', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const screen = await renderProvider({ ModalProvider });
+
+        const pending = Symbol('pending');
+        let promise!: Promise<string | null>;
+        await act(async () => {
+            promise = Modal.prompt('Prompt title', 'Prompt body');
+        });
+
+        act(() => {
+            screen.findByType('WebPromptModal' as any).props.onClose();
+        });
+
+        const result = await Promise.race([
+            promise,
+            new Promise<typeof pending>((resolve) => {
+                setTimeout(() => resolve(pending), 0);
+            }),
+        ]);
+
+        expect(result).toBeNull();
+        expect(screen.findAllByType('WebPromptModal' as any)).toHaveLength(0);
     });
 });

@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -10,15 +12,21 @@ const appendRealtimeVoiceTranscriptEvent = vi.fn();
 const getBindingByControlSessionId = vi.fn((_controlSessionId: string) => null as any);
 const ensureVoiceBinding = vi.fn(async (_params: any) => null);
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: (...args: any[]) => modalAlert(...args),
-    confirm: vi.fn(async () => false),
-    prompt: vi.fn(async () => null),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: (...args: any[]) => modalAlert(...args),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/utils/platform/microphonePermissions', () => ({
   requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
@@ -77,9 +85,12 @@ const state: any = {
   clearRealtimeModeDebounce: vi.fn(),
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: { getState: () => state },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: { getState: () => state },
+});
+});
 vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
   resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
     getBindingByControlSessionId(params.controlSessionId),
@@ -158,9 +169,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<RealtimeVoiceSession />);
-    });
+    tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
     await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
 
@@ -184,9 +193,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     const { startRealtimeSession } = await import('./RealtimeSession');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<RealtimeVoiceSession />);
-    });
+    tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
     await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
 
@@ -211,9 +218,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     const { startRealtimeSession } = await import('./RealtimeSession');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<RealtimeVoiceSession />);
-    });
+    tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
     await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
 
@@ -233,9 +238,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<RealtimeVoiceSession />);
-    });
+    tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
     expect(lastConversationOptions).toBeTruthy();
 
@@ -263,9 +266,7 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     const { startRealtimeSession } = await import('./RealtimeSession');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<RealtimeVoiceSession />);
-    });
+    tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
     await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
 

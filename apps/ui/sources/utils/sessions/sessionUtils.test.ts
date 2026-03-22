@@ -16,13 +16,16 @@ const mockStorageState: MockStorageState = {
     getProjectForSession: () => null,
 };
 
-vi.mock('@/text', () => {
-    return {
-        t: (key: string) => key,
-    };
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => mockStorageState,
         setState: (updater: ((state: typeof mockStorageState) => typeof mockStorageState) | typeof mockStorageState) => {
@@ -30,7 +33,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             mockStorageState.sessionMessages = next.sessionMessages;
         },
     },
-}));
+});
+});
 
 beforeEach(() => {
     vi.resetModules();

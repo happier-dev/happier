@@ -4,33 +4,31 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                surface: '#000',
-                surfaceHigh: '#111',
-                divider: '#222',
-                text: '#fff',
-                textSecondary: '#aaa',
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: (props: any) => React.createElement('View', props, props.children),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (value: any) => value?.default ?? null,
             },
-        }),
-    },
-    useUnistyles: () => ({
+        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#fff',
                 textSecondary: '#aaa',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => React.createElement('Ionicons', props),
@@ -44,9 +42,12 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 vi.mock('@/utils/ui/clipboard', () => ({
     setClipboardStringSafe: vi.fn(),

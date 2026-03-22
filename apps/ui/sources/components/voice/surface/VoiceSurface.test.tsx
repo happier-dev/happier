@@ -4,25 +4,31 @@ import renderer, { act } from 'react-test-renderer';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-  const actual = await vi.importActual<any>('react-native');
-  return {
-    ...actual,
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'web', select: (spec: any) => spec?.web ?? spec?.default },
-  };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+            Platform: {
+                OS: 'web',
+                select: (spec: any) => spec?.web ?? spec?.default,
+            },
+        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: any) => styles, hairlineWidth: 1 },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         status: {
           connecting: '#00f',
@@ -37,8 +43,8 @@ vi.mock('react-native-unistyles', () => ({
         textSecondary: '#555',
       },
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
   StatusDot: (props: any) => React.createElement('StatusDot', props),
@@ -57,19 +63,24 @@ vi.mock('@/voice/local/localVoiceEngine', () => ({
   toggleLocalVoiceTurn: (sessionId: string) => toggleLocalVoiceTurnSpy(sessionId),
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 const routerPushSpy = vi.fn();
 const pathnameState: { current: string } = { current: '/' };
-vi.mock('expo-router', () => ({
-  useRouter: () => ({
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: {
     push: (...args: any[]) => routerPushSpy(...args),
     navigate: (...args: any[]) => routerPushSpy(...args),
-  }),
-  usePathname: () => pathnameState.current,
-}));
+  },
+        pathname: () => pathnameState.current,
+    });
+    return expoRouterMock.module;
+});
 
 const hydrateSpy = vi.fn(async () => {});
 const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
@@ -85,12 +96,15 @@ const voiceSettingState: { current: any } = {
 };
 const storageState: { current: any } = { current: { sessions: {}, sessionListViewDataByServerId: {} } };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: () => voiceSettingState.current,
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useSetting: () => voiceSettingState.current,
+    storage: {
     getState: () => storageState.current,
   },
-}));
+});
+});
 
 const allSessionsState: { current: any[] } = { current: [] };
 vi.mock('@/sync/store/hooks', () => ({
@@ -141,19 +155,11 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const startButton = tree.root
-      .findAllByType('Pressable' as any)
-      .find((n: any) => n.props?.accessibilityLabel === 'voiceAssistant.label');
-    expect(startButton).toBeTruthy();
-    expect(startButton!.props.disabled).toBe(true);
-
-    const texts = tree.root.findAllByType('Text' as any).map((node: any) => String(node.props.children));
-    expect(texts).toContain('settingsVoice.local.conversation.resumability.disabledVoiceAgent');
+    const startButton = screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' });
+    expect(startButton.props.disabled).toBe(true);
+    expect(screen.getTextContent()).toContain('settingsVoice.local.conversation.resumability.disabledVoiceAgent');
   });
 
   it('hydrates the global agent activity feed from the carrier transcript when persistence is enabled', async () => {
@@ -184,9 +190,7 @@ describe('VoiceSurface', () => {
     const { VoiceSurface } = await import('./VoiceSurface');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    tree = (await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }))).tree;
 
     expect(hydrateSpy).toHaveBeenCalledTimes(1);
 
@@ -209,13 +213,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    // Expect at least one Pressable (start/stop)
-    expect(tree.root.findAllByType('Pressable' as any).length).toBeGreaterThan(0);
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' }).props.disabled).toBe(false);
   });
 
   it('opens the hidden voice conversation session from the header icon when a binding exists', async () => {
@@ -248,15 +248,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const openConversation = tree.root.findByProps({ accessibilityLabel: 'common.open' });
-    await act(async () => {
-      openConversation.props.onPress?.();
-    });
+    await pressTestInstanceAsync(screen.findByProps({ accessibilityLabel: 'common.open' }), 'common.open');
 
     expect(routerPushSpy).toHaveBeenCalledWith('/session/carrier-s1');
   });
@@ -281,12 +275,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    expect(tree.root.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
 
     await act(async () => {
       voiceSessionBindingStore.getState().bind({
@@ -299,7 +290,7 @@ describe('VoiceSurface', () => {
       });
     });
 
-    expect(tree.root.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(1);
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(1);
   });
 
   it('shows a human-readable target label instead of a raw target session id in the sidebar', async () => {
@@ -337,14 +328,10 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const renderedTree = JSON.stringify(tree.toJSON());
-    expect(renderedTree).toContain('Ready and waiting');
-    expect(renderedTree).not.toContain('s_target');
+    expect(screen.getTextContent()).toContain('Ready and waiting');
+    expect(screen.getTextContent()).not.toContain('s_target');
   });
 
   it('shows the voice conversation icon from a persisted hidden voice session even without an active binding', async () => {
@@ -401,22 +388,17 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const openConversation = tree.root.findByProps({ accessibilityLabel: 'common.open' });
-    const icon = tree.root
+    const openConversation = screen.findByProps({ accessibilityLabel: 'common.open' });
+    const icon = screen.root
       .findAllByType('Ionicons' as any)
       .find((node: any) => node.props?.name === 'chatbubble-ellipses-outline');
 
     expect(openConversation).toBeTruthy();
     expect(icon).toBeTruthy();
 
-    await act(async () => {
-      openConversation.props.onPress?.();
-    });
+    await pressTestInstanceAsync(openConversation, 'common.open');
 
     expect(ensureVoiceBindingSpy).not.toHaveBeenCalled();
     expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session');
@@ -454,12 +436,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 'voice-carrier' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 'voice-carrier' }));
 
-    expect(tree.toJSON()).toBeNull();
+    expect(screen.tree.toJSON()).toBeNull();
   });
 
   it('does not render the session voice surface inside a retired hidden voice conversation session', async () => {
@@ -494,12 +473,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 'voice-carrier-retired' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 'voice-carrier-retired' }));
 
-    expect(tree.toJSON()).toBeNull();
+    expect(screen.tree.toJSON()).toBeNull();
   });
 
   it('ignores persisted hidden voice sessions that do not have binding metadata', async () => {
@@ -533,12 +509,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    expect(tree.root.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
+    expect(screen.findAllByProps({ accessibilityLabel: 'common.open' })).toHaveLength(0);
     expect(ensureVoiceBindingSpy).not.toHaveBeenCalled();
     expect(routerPushSpy).not.toHaveBeenCalled();
   });
@@ -566,23 +539,18 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const bargeIn = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.bargeIn' });
+    const bargeIn = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.bargeIn' });
     expect(bargeIn).toBeTruthy();
     expect(typeof bargeIn.props.onPress).toBe('function');
 
-    const micIcon = tree.root
+    const micIcon = screen.root
       .findAllByType('Ionicons' as any)
       .find((n: any) => n.props?.name === 'mic-off-outline');
     expect(micIcon).toBeTruthy();
 
-    await act(async () => {
-      bargeIn.props.onPress?.();
-    });
+    await pressTestInstanceAsync(bargeIn, 'voiceSurface.a11y.bargeIn');
     expect(toggleLocalVoiceTurnSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
   });
 
@@ -611,17 +579,12 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const cancelTurn = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.cancelTurn' });
+    const cancelTurn = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.cancelTurn' });
     expect(cancelTurn).toBeTruthy();
 
-    await act(async () => {
-      cancelTurn.props.onPress?.();
-    });
+    await pressTestInstanceAsync(cancelTurn, 'voiceSurface.a11y.cancelTurn');
 
     expect(interruptSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
     interruptSpy.mockRestore();
@@ -655,19 +618,11 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const pressable = tree.root
-      .findAllByType('Pressable' as any)
-      .find((n: any) => n.props?.accessibilityLabel === 'voiceAssistant.label' && typeof n.props?.onPress === 'function');
-    expect(pressable).toBeTruthy();
+    const pressable = screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' });
 
-    await act(async () => {
-      pressable!.props.onPress?.();
-    });
+    await pressTestInstanceAsync(pressable, 'voiceAssistant.label');
 
     expect(toggleSpy).toHaveBeenCalledWith('s1');
     expect(toggleSpy).not.toHaveBeenCalledWith('');
@@ -702,19 +657,11 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const pressable = tree.root
-      .findAllByType('Pressable' as any)
-      .find((n: any) => n.props?.accessibilityLabel === 'voiceAssistant.label' && typeof n.props?.onPress === 'function');
-    expect(pressable).toBeTruthy();
+    const pressable = screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' });
 
-    await act(async () => {
-      pressable!.props.onPress?.();
-    });
+    await pressTestInstanceAsync(pressable, 'voiceAssistant.label');
 
     expect(toggleSpy).toHaveBeenCalledWith('');
     toggleSpy.mockRestore();
@@ -778,15 +725,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const openConversation = tree.root.findByProps({ accessibilityLabel: 'common.open' });
-    await act(async () => {
-      openConversation.props.onPress?.();
-    });
+    await pressTestInstanceAsync(screen.findByProps({ accessibilityLabel: 'common.open' }), 'common.open');
 
     expect(ensureVoiceBindingSpy).toHaveBeenCalledWith({
       adapterId: 'local_conversation',
@@ -818,16 +759,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const stopButton = tree.root
-      .findAllByType('Pressable' as any)
-      .find((n: any) => n.props?.accessibilityLabel === 'voiceAssistant.tapToEnd' && typeof n.props?.onPress === 'function');
-    expect(stopButton).toBeTruthy();
-    expect(stopButton!.props.disabled).toBe(false);
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' }).props.disabled).toBe(false);
   });
 
   it('renders a teleport button for local voice agent sessions when enabled', async () => {
@@ -856,17 +790,12 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
 
-    const teleport = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.teleport' });
+    const teleport = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.teleport' });
     expect(teleport).toBeTruthy();
 
-    await act(async () => {
-      teleport.props.onPress();
-    });
+    await pressTestInstanceAsync(teleport, 'voiceSurface.a11y.teleport');
 
     expect(teleportSpy).toHaveBeenCalledWith({ sessionId: 's1' });
   });
@@ -899,15 +828,12 @@ describe('VoiceSurface', () => {
 
       const { VoiceSurface } = await import('./VoiceSurface');
 
-      let tree!: renderer.ReactTestRenderer;
-      await act(async () => {
-        tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-      });
+      const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
       expect(updates).toBe(0);
 
       await act(async () => {
-        tree.unmount();
+        screen.tree.unmount();
       });
     } finally {
       unsub();
@@ -932,17 +858,14 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
 
     await act(async () => {
       voiceSettingState.current = { providerId: 'off', ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' } };
-      tree.update(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+      screen.tree.update(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
     });
 
-    expect(tree.toJSON()).toBeNull();
+    expect(screen.tree.toJSON()).toBeNull();
   });
 
   it('auto-selects surface placement when ui.surfaceLocation is auto', async () => {
@@ -963,17 +886,11 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let sidebar!: renderer.ReactTestRenderer;
-    await act(async () => {
-      sidebar = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
-    expect(sidebar.toJSON()).not.toBeNull();
+    const sidebar = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+    expect(sidebar.tree.toJSON()).not.toBeNull();
 
-    let session!: renderer.ReactTestRenderer;
-    await act(async () => {
-      session = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
-    });
-    expect(session.toJSON()).toBeNull();
+    const session = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+    expect(session.tree.toJSON()).toBeNull();
   });
 
   it('does not render the session voice surface when auto placement prefers the sidebar even if teleport is available from an existing global voice-agent conversation', async () => {
@@ -1012,12 +929,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
 
-    expect(tree.toJSON()).toBeNull();
+    expect(screen.tree.toJSON()).toBeNull();
   });
 
   it('allows global-start providers to start from the sidebar even when no session is focused', async () => {
@@ -1039,16 +953,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const toggleButton = tree.root
-      .findAllByType('Pressable' as any)
-      .find((node: any) => node.props?.accessibilityLabel === 'voiceAssistant.label');
-    expect(toggleButton).toBeTruthy();
-    expect(toggleButton?.props.disabled).toBe(false);
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' }).props.disabled).toBe(false);
   });
 
   it('requires a focused session to start session-scoped providers from the sidebar', async () => {
@@ -1070,16 +977,9 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const toggleButton = tree.root
-      .findAllByType('Pressable' as any)
-      .find((node: any) => node.props?.accessibilityLabel === 'voiceAssistant.label');
-    expect(toggleButton).toBeTruthy();
-    expect(toggleButton?.props.disabled).toBe(true);
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' }).props.disabled).toBe(true);
   });
 
   it('shows correct sidebar activity count and allows clearing when events exist', async () => {
@@ -1113,21 +1013,16 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
     // Ensure count is not hard-coded to 0 for sidebar feed.
-    const texts = tree.root.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
+    const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
     expect(texts).toContain('2');
 
-    const clear = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.clearActivity' });
+    const clear = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.clearActivity' });
     expect(clear.props.disabled).toBe(false);
 
-    await act(async () => {
-      clear.props.onPress();
-    });
+    await pressTestInstanceAsync(clear, 'voiceSurface.a11y.clearActivity');
 
     const state = useVoiceActivityStore.getState();
     expect(state.eventsBySessionId.s1).toEqual([]);
@@ -1171,17 +1066,12 @@ describe('VoiceSurface', () => {
 
     const { VoiceSurface } = await import('./VoiceSurface');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    });
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const toggle = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
-    await act(async () => {
-      toggle.props.onPress();
-    });
+    const toggle = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
+    await pressTestInstanceAsync(toggle, 'voiceSurface.a11y.toggleActivity');
 
-    const eventTexts = tree.root
+    const eventTexts = screen.root
       .findAllByType('Text' as any)
       .filter((n) => n.props.numberOfLines === 3)
       .map((n) => String(n.props.children ?? ''));

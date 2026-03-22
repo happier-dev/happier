@@ -27,7 +27,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 12,
         overflow: 'hidden',
         borderWidth: 2,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.surface,
     },
     tab: {
         flex: 1,

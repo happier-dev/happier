@@ -1,51 +1,29 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                            },
+                        }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) =>
-            typeof factory === 'function'
-                ? factory({
-                    colors: {
-                        text: '#fff',
-                        textSecondary: '#aaa',
-                        textDestructive: '#f44',
-                        surfacePressed: '#111',
-                        surfacePressedOverlay: '#222',
-                        surfaceSelected: '#333',
-                        surfaceHigh: '#444',
-                        surfaceHighest: '#555',
-                        divider: '#666',
-                        accent: { blue: '#08f' },
-                        input: { placeholder: '#888' },
-                        groupped: {
-                            background: '#111',
-                            chevron: '#888',
-                            sectionTitle: '#777',
-                        },
-                    },
-                    dark: false,
-                    modal: { border: '#000' },
-                    shadow: { color: '#000', opacity: 0.2 },
-                })
-                : factory,
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#fff',
@@ -67,24 +45,26 @@ vi.mock('react-native-unistyles', () => ({
             },
             dark: false,
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('model dropdown item node normalization', () => {
     it('does not leave raw text nodes under item-row view slots when icon components resolve to primitive text', async () => {
@@ -103,9 +83,7 @@ describe('model dropdown item node normalization', () => {
         });
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <SelectableMenuResults
+        tree = (await renderScreen(<SelectableMenuResults
                     categories={[
                         {
                             id: 'models',
@@ -126,9 +104,7 @@ describe('model dropdown item node normalization', () => {
                     rowVariant="slim"
                     emptyLabel="Empty"
                     rowKind="item"
-                />,
-            );
-        });
+                />)).tree;
 
         const json = (tree! as any).toJSON();
         const seen: { dotCount: number; badDotCount: number; badParents: Array<string | null> } = {

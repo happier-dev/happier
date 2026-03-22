@@ -1,48 +1,21 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+let lastXtermProps: Readonly<{ onInput: (data: string) => void }> | null = null;
 
-let lastXtermProps: any = null;
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    Platform: { OS: 'ios' },
-    PixelRatio: { getFontScale: () => 1 },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        absoluteFillObject: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
-        create: (fn: any) =>
-            fn({
-                colors: {
-                    surface: '#000',
-                    surfaceHigh: '#111',
-                    divider: '#222',
-                    text: '#fff',
-                    textSecondary: '#888',
-                    surfaceSelected: '#333',
-                },
-            }),
-    },
-    useUnistyles: () => ({
-        theme: {
-            dark: true,
-            colors: {
-                surface: '#000',
-                surfaceHigh: '#111',
-                divider: '#222',
-                text: '#fff',
-                textSecondary: '#888',
-                surfaceSelected: '#333',
-            },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: {
+            OS: 'ios',
         },
-    }),
-}));
+    });
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit');
+    return await createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -78,10 +51,13 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
     useLocalSetting: () => 1,
     useLocalSettingMutable: () => [null, vi.fn()],
-}));
+});
+});
 
 const onInputSpy = vi.fn();
 
@@ -101,7 +77,7 @@ vi.mock('./useSessionEmbeddedTerminalPty', () => ({
 }));
 
 vi.mock('@/components/terminal/xterm/webview/XtermWebViewSurface.native', () => ({
-    XtermWebViewSurface: React.forwardRef((props: any, _ref: any) => {
+    XtermWebViewSurface: React.forwardRef<unknown, Readonly<{ onInput: (data: string) => void; children?: React.ReactNode }>>((props, _ref) => {
         lastXtermProps = props;
         return React.createElement('XtermWebViewSurface', props, props.children);
     }),
@@ -114,18 +90,18 @@ describe('SessionEmbeddedTerminalPane (native)', () => {
         lastXtermProps = null;
         onInputSpy.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(SessionEmbeddedTerminalPane, {
-                    sessionId: 's1',
-                    scopeId: 'scope1',
-                    currentDockLocation: 'sidebar',
-                    testIdPrefix: 't',
-                } as any),
-            );
-        });
+        const { renderScreen } = await import('@/dev/testkit');
+        await renderScreen(
+            React.createElement(SessionEmbeddedTerminalPane, {
+                sessionId: 's1',
+                scopeId: 'scope1',
+                currentDockLocation: 'sidebar',
+                testIdPrefix: 't',
+            } as const),
+        );
 
-        expect(lastXtermProps).toBeTruthy();
-        expect(lastXtermProps.onInput).toBe(onInputSpy);
+        expect(lastXtermProps).not.toBeNull();
+        const xtermProps = lastXtermProps as unknown as Readonly<{ onInput: (data: string) => void }>;
+        expect(xtermProps.onInput).toBe(onInputSpy);
     });
 });

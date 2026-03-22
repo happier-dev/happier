@@ -1,51 +1,51 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { ProfileEditForm } from './ProfileEditForm';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: vi.fn() },
+        params: {},
+    });
+    return expoRouterMock.module;
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                textSecondary: '#666',
-                button: { secondary: { tint: '#000' }, primary: { background: '#00f' } },
-                surface: '#fff',
-                text: '#000',
-                status: { connected: '#0f0', disconnected: '#f00' },
-                input: { placeholder: '#999' },
-            },
-        },
-        rt: { themeName: 'light' },
-    }),
-    StyleSheet: { create: () => ({}) },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: vi.fn(),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
@@ -69,13 +69,16 @@ const settingsState = {
     },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: () => ({}),
     useAllMachines: () => [],
     useMachine: () => null,
     useSettings: () => settingsState,
     useSettingMutable: () => [{}, vi.fn()] as const,
-}));
+});
+});
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
@@ -188,17 +191,13 @@ describe('ProfileEditForm machine-login persistence', () => {
         const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
         const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ProfileEditForm, {
+        await renderScreen(React.createElement(ProfileEditForm, {
                     profile: buildProfile(),
                     machineId: null,
                     onSave,
                     onCancel: vi.fn(),
                     saveRef,
-                }),
-            );
-        });
+                }));
 
         const result = saveRef.current?.();
         expect(result).toBe(true);

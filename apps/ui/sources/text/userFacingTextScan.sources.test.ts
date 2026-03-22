@@ -16,7 +16,7 @@ function isIgnoredHit(text: string): boolean {
 
 describe('tools/i18n/userFacingTextScan (app sources)', () => {
     it('has no user-facing hardcoded strings in sources/', () => {
-        const hits = scanUserFacingStrings({ sourcesRootDir: path.resolve('apps/ui/sources') })
+        const hits = scanUserFacingStrings({ sourcesRootDir: path.resolve('sources') })
             .filter((hit) => !isIgnoredHit(hit.text));
 
         if (hits.length > 0) {

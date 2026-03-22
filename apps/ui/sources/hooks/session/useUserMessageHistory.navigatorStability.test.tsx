@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { storage } from '@/sync/domains/state/storageStore';
 
 import { useUserMessageHistory } from './useUserMessageHistory';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,10 +58,7 @@ describe('useUserMessageHistory', () => {
       }
 
       let tree: renderer.ReactTestRenderer | null = null;
-      await act(async () => {
-        tree = renderer.create(React.createElement(Test));
-        await flushEffects(4);
-      });
+      tree = (await renderScreen(React.createElement(Test))).tree;
 
       expect(seen.length).toBe(1);
       const first = seen[0];

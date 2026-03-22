@@ -4722,7 +4722,7 @@ export const es: TranslationStructure = {
                 title: 'MCP',
                 subtitle: 'Available through the MCP action catalog.',
             },
-            session_control_cli: {
+            cli: {
                 title: 'Session control CLI',
                 subtitle: 'Available through the session control CLI surface.',
             },

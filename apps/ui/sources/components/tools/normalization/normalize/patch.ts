@@ -2,8 +2,57 @@ import { hasNonEmptyRecord } from './_shared';
 
 type PatchChangeRecord = Record<string, unknown>;
 
+function firstNonEmptyString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 function stripDiffPrefix(path: string): string {
     return path.replace(/^(a\/|b\/)/, '');
+}
+
+function parsePatchHunk(diff: string): { oldText: string; newText: string } | null {
+    const lines = diff.replace(/\r\n/g, '\n').split('\n');
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
+    let sawHunkLine = false;
+
+    for (const line of lines) {
+        if (line.startsWith('@@')) {
+            sawHunkLine = true;
+            continue;
+        }
+        if (!sawHunkLine && (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ '))) {
+            continue;
+        }
+        if (!sawHunkLine && !line.startsWith('+') && !line.startsWith('-') && !line.startsWith(' ') && line.length > 0) {
+            continue;
+        }
+        if (line === '\\ No newline at end of file') continue;
+        if (line.startsWith('+')) {
+            newLines.push(line.slice(1));
+            continue;
+        }
+        if (line.startsWith('-')) {
+            oldLines.push(line.slice(1));
+            continue;
+        }
+        if (line.startsWith(' ')) {
+            const value = line.slice(1);
+            oldLines.push(value);
+            newLines.push(value);
+            continue;
+        }
+        if (line === '') {
+            oldLines.push('');
+            newLines.push('');
+        }
+    }
+
+    if (oldLines.length === 0 && newLines.length === 0) return null;
+    return {
+        oldText: oldLines.join('\n'),
+        newText: newLines.join('\n'),
+    };
 }
 
 function parseApplyPatchTextChanges(patchText: string): Record<string, unknown> | null {
@@ -123,6 +172,58 @@ export function normalizeDiffAliases(input: Record<string, unknown>): Record<str
     const diff = typeof input.diff === 'string' ? input.diff : typeof input.patch === 'string' ? input.patch : null;
     if (!diff || diff.trim().length === 0) return null;
     return { ...input, unified_diff: diff };
+}
+
+export function normalizePatchChangeArray(input: Record<string, unknown>): Record<string, unknown> | null {
+    if (!Array.isArray(input.changes) || input.changes.length === 0) return null;
+
+    const normalizedChanges: Record<string, unknown> = {};
+
+    for (const entry of input.changes) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+        const record = entry as Record<string, unknown>;
+        const path = firstNonEmptyString(record.path);
+        if (!path) continue;
+
+        const rawKind = record.kind;
+        const kind =
+            rawKind && typeof rawKind === 'object' && !Array.isArray(rawKind)
+                ? (rawKind as Record<string, unknown>)
+                : null;
+        const type = firstNonEmptyString(kind?.type)?.toLowerCase() ?? 'update';
+        const targetPath = firstNonEmptyString(kind?.move_path) ?? path;
+        const diff = typeof record.diff === 'string' ? record.diff : '';
+
+        if (type === 'add') {
+            normalizedChanges[targetPath] = {
+                type: 'add',
+                add: { content: diff },
+            };
+            continue;
+        }
+
+        if (type === 'delete' || type === 'remove') {
+            normalizedChanges[targetPath] = {
+                type: 'delete',
+                delete: { content: diff },
+            };
+            continue;
+        }
+
+        const parsedHunk = parsePatchHunk(diff);
+        normalizedChanges[targetPath] = parsedHunk
+            ? {
+                type: 'update',
+                modify: {
+                    old_content: parsedHunk.oldText,
+                    new_content: parsedHunk.newText,
+                },
+            }
+            : { type: 'update' };
+    }
+
+    if (Object.keys(normalizedChanges).length === 0) return null;
+    return { ...input, changes: normalizedChanges };
 }
 
 export function normalizePatchFromUnifiedDiff(input: Record<string, unknown>): Record<string, unknown> | null {

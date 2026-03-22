@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderSettingsView } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,21 +12,30 @@ let guidanceMaxCharsState: number | null = null;
 let providerSubagentSectionsState: any[] = [];
 const routerPushSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                            },
+                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => executionRunsEnabledState,
@@ -58,7 +68,9 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSettingMutable: (key: string) => {
         if (key === 'executionRunsGuidanceEnabled') return [guidanceEnabledState, vi.fn()];
         if (key === 'executionRunsGuidanceMaxChars') return [guidanceMaxCharsState, vi.fn()];
@@ -87,7 +99,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             updatedAt: 1,
         }],
     }),
-}));
+});
+});
 
 vi.mock('@/sync/domains/settings/executionRunsGuidance', () => ({
     buildExecutionRunsGuidanceBlock: () => ({ text: '' }),
@@ -112,12 +125,17 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     ],
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
-        if (params && typeof params.value === 'string') return `${key}:${params.value}`;
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key, params) => {
+            if (params && typeof params.value === 'string') {
+                return `${key}: ${params.value}`;
+            }
+            return key;
+        },
+    });
+});
 
 vi.mock('./guidance/showSubAgentGuidanceRuleEditorModal', () => ({
     showSubAgentGuidanceRuleEditorModal: vi.fn(async () => null),
@@ -149,13 +167,8 @@ describe('SubAgentSettingsView', () => {
     it('renders an execution-runs-disabled state when execution runs are not enabled', async () => {
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SubAgentSettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const enableItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.disabled.enableExecutionRuns.title');
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const enableItem = screen.findRowByTitle('subAgentGuidance.settings.disabled.enableExecutionRuns.title');
         expect(enableItem).toBeTruthy();
     });
 
@@ -163,18 +176,11 @@ describe('SubAgentSettingsView', () => {
         executionRunsEnabledState = true;
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SubAgentSettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const statusItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.overview.happierStatusTitle');
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const statusItem = screen.findRowByTitle('subAgentGuidance.settings.overview.happierStatusTitle');
         expect(statusItem).toBeTruthy();
 
-        await act(async () => {
-            statusItem!.props.onPress();
-        });
+        screen.pressRowByTitle('subAgentGuidance.settings.overview.happierStatusTitle');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
     });
@@ -183,18 +189,11 @@ describe('SubAgentSettingsView', () => {
         executionRunsEnabledState = true;
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SubAgentSettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const sessionItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.related.sessionTitle');
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const sessionItem = screen.findRowByTitle('subAgentGuidance.settings.related.sessionTitle');
         expect(sessionItem).toBeTruthy();
 
-        await act(async () => {
-            sessionItem!.props.onPress();
-        });
+        screen.pressRowByTitle('subAgentGuidance.settings.related.sessionTitle');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session');
     });
@@ -203,18 +202,11 @@ describe('SubAgentSettingsView', () => {
         executionRunsEnabledState = true;
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SubAgentSettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const backendsItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.related.backendsTitle');
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const backendsItem = screen.findRowByTitle('subAgentGuidance.settings.related.backendsTitle');
         expect(backendsItem).toBeTruthy();
 
-        await act(async () => {
-            backendsItem!.props.onPress();
-        });
+        screen.pressRowByTitle('subAgentGuidance.settings.related.backendsTitle');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers');
     });
@@ -232,15 +224,10 @@ describe('SubAgentSettingsView', () => {
 
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SubAgentSettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const ruleItem = items.find((item: any) => item?.props?.title === 'Use the custom backend');
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const ruleItem = screen.findRowByTitle('Use the custom backend');
         expect(ruleItem).toBeTruthy();
-        expect(ruleItem!.props.subtitle).toContain('Custom Review Bot');
+        expect(ruleItem!.props.subtitle).toContain('subAgentGuidance.settings.rules.meta.target: Custom Review Bot');
     });
 
     it('renders provider-contributed subagent settings sections and routes to their target screen', async () => {
@@ -262,18 +249,11 @@ describe('SubAgentSettingsView', () => {
 
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SubAgentSettingsView));
-        });
-
-        const items = tree.root.findAllByType('Item' as any);
-        const providerItem = items.find((item: any) => item?.props?.title === 'Agent Teams');
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const providerItem = screen.findRowByTitle('Agent Teams');
         expect(providerItem).toBeTruthy();
 
-        await act(async () => {
-            providerItem!.props.onPress();
-        });
+        screen.pressRowByTitle('Agent Teams');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/claude');
     });

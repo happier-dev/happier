@@ -68,12 +68,12 @@ describe('metro.config.js (kokoro)', () => {
     expect(String(res?.filePath)).toBe(resolve(process.cwd(), 'index.ts'));
   });
 
-  it('includes the monorepo root in watchFolders so workspace entry files remain hashable', () => {
+  it('does not inject the monorepo root into watchFolders when the workspace entry file already lives under projectRoot', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const config = require('../../metro.config.js');
     const repoRoot = resolve(process.cwd(), '../..');
 
     expect(config.projectRoot).toBe(resolve(process.cwd()));
-    expect(config.watchFolders).toContain(repoRoot);
+    expect(config.watchFolders).not.toContain(repoRoot);
   });
 });

@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 import React from 'react';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import type { EnvPreviewSecretsPolicy, PreviewEnvValue } from '@/sync/ops';
+import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { EnvironmentVariablesList } from './EnvironmentVariablesList';
 
 (
@@ -11,25 +14,23 @@ import { EnvironmentVariablesList } from './EnvironmentVariablesList';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'web',
-        select: (options: { web?: unknown; default?: unknown }) => options.web ?? options.default,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Pressable: 'Pressable',
+        TextInput: 'TextInput',
+    });
+});
 
 type EnvironmentVariablesHookResult = {
     variables: Record<string, string | null>;
@@ -52,6 +53,7 @@ const useEnvironmentVariablesMock = vi.fn(
         isLoading: false,
     }),
 );
+const environmentVariableCardProps: Array<Record<string, unknown>> = [];
 
 vi.mock('@/hooks/server/useEnvironmentVariables', () => ({
     useEnvironmentVariables: (
@@ -65,44 +67,20 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { sectionTitle: '#000' },
-                input: { background: '#fff', text: '#000', placeholder: '#999' },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000' },
-                },
-                surface: '#fff',
-                shadow: { color: '#000', opacity: 0.1 },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (factory: (theme: unknown) => unknown) =>
-            factory({
-                colors: {
-                    groupped: { sectionTitle: '#000' },
-                    input: { background: '#fff', text: '#000', placeholder: '#999' },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000' },
-                    },
-                    surface: '#fff',
-                    shadow: { color: '#000', opacity: 0.1 },
-                },
-            }),
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
 }));
 
 vi.mock('./EnvironmentVariableCard', () => ({
-    EnvironmentVariableCard: (props: Record<string, unknown>) => React.createElement('EnvironmentVariableCard', props),
+    EnvironmentVariableCard: (props: Record<string, unknown>) => {
+        environmentVariableCardProps.push(props);
+        return React.createElement('EnvironmentVariableCard', props);
+    },
 }));
 
 type UseEnvironmentVariablesArgs = [
@@ -111,40 +89,27 @@ type UseEnvironmentVariablesArgs = [
     { extraEnv?: Record<string, string>; sensitiveKeys?: string[] } | undefined,
 ];
 
-function renderList(params: {
+async function renderList(params: {
     environmentVariables: Array<{ name: string; value: string; isSecret?: boolean }>;
     profileDocs?: ProfileDocumentation | null;
     onChange?: ReturnType<typeof vi.fn<(next: Array<{ name: string; value: string; isSecret?: boolean }>) => void>>;
 }) {
-    const onChange = params.onChange ?? vi.fn<(next: Array<{ name: string; value: string; isSecret?: boolean }>) => void>();
-    let tree: renderer.ReactTestRenderer | undefined;
-    act(() => {
-        tree = renderer.create(
-            React.createElement(EnvironmentVariablesList, {
-                environmentVariables: params.environmentVariables,
-                machineId: 'machine-1',
-                profileDocs: params.profileDocs ?? null,
-                onChange,
-                sourceRequirementsByName: {},
-                onUpdateSourceRequirement: () => {},
-                getDefaultSecretNameForSourceVar: () => null,
-                onPickDefaultSecretForSourceVar: () => {},
-            }),
-        );
-    });
-    return { tree: tree!, onChange };
-}
-
-function findItems(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('Item');
-}
-
-function findTextInputs(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('TextInput');
-}
-
-function findSaveButton(tree: renderer.ReactTestRenderer): ReactTestInstance | undefined {
-    return tree.root.findAllByType('Pressable').find((node) => node.props.accessibilityLabel === 'common.save');
+    const onChange =
+        params.onChange ??
+        vi.fn<(next: Array<{ name: string; value: string; isSecret?: boolean }>) => void>();
+    const screen = await renderScreen(
+        React.createElement(EnvironmentVariablesList, {
+            environmentVariables: params.environmentVariables,
+            machineId: 'machine-1',
+            profileDocs: params.profileDocs ?? null,
+            onChange,
+            sourceRequirementsByName: {},
+            onUpdateSourceRequirement: () => {},
+            getDefaultSecretNameForSourceVar: () => null,
+            onPickDefaultSecretForSourceVar: () => {},
+        }),
+    );
+    return { screen, onChange };
 }
 
 function getLastUseEnvironmentVariablesCall(): UseEnvironmentVariablesArgs {
@@ -156,33 +121,38 @@ function getLastUseEnvironmentVariablesCall(): UseEnvironmentVariablesArgs {
 describe('EnvironmentVariablesList', () => {
     beforeEach(() => {
         useEnvironmentVariablesMock.mockClear();
+        environmentVariableCardProps.length = 0;
     });
 
     describe('inline add interaction', () => {
-        it('adds a variable via the inline expander', () => {
-            const { tree, onChange } = renderList({ environmentVariables: [] });
+        it('adds a variable via the inline expander', async () => {
+            const { screen, onChange } = await renderList({ environmentVariables: [] });
 
-            const addItem = findItems(tree).find((node) => node.props.title === 'profiles.environmentVariables.addVariable');
-            expect(addItem).toBeTruthy();
+            const addExpander = screen.findByType(InlineAddExpander);
+            expect(addExpander).toBeTruthy();
 
-            act(() => {
-                addItem?.props.onPress?.();
+            await act(async () => {
+                addExpander.props.onOpenChange(true);
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
-            const [nameInput, valueInput] = findTextInputs(tree);
+            const textInputs = screen.findAllByType('TextInput');
+            const nameInput = textInputs[0];
+            const valueInput = textInputs[1];
             expect(nameInput).toBeTruthy();
             expect(valueInput).toBeTruthy();
 
-            act(() => {
-                nameInput?.props.onChangeText?.('FOO');
-                valueInput?.props.onChangeText?.('bar');
+            await act(async () => {
+                nameInput.props.onChangeText?.('FOO');
+                valueInput.props.onChangeText?.('bar');
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
-            const saveButton = findSaveButton(tree);
-            expect(saveButton).toBeTruthy();
+            const saveButton = screen.findByProps({ accessibilityLabel: 'common.save' });
 
-            act(() => {
-                saveButton?.props.onPress?.();
+            await act(async () => {
+                saveButton.props.onPress?.();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             expect(onChange).toHaveBeenCalledTimes(1);
@@ -191,7 +161,7 @@ describe('EnvironmentVariablesList', () => {
     });
 
     describe('sensitive key propagation', () => {
-        it('marks documented secret refs as sensitive keys for daemon preview', () => {
+        it('marks documented secret refs as sensitive keys for daemon preview', async () => {
             const profileDocs: ProfileDocumentation = {
                 description: 'test',
                 environmentVariables: [
@@ -205,7 +175,7 @@ describe('EnvironmentVariablesList', () => {
                 shellConfigExample: '',
             };
 
-            renderList({
+            await renderList({
                 environmentVariables: [
                     { name: 'FOO', value: '${MAGIC}' },
                     { name: 'BAR', value: '${HOME}' },
@@ -218,7 +188,7 @@ describe('EnvironmentVariablesList', () => {
             expect(options?.sensitiveKeys ?? []).toContain('MAGIC');
         });
 
-        it('marks a documented-secret variable as secret even when it references another variable', () => {
+        it('marks a documented-secret variable as secret even when it references another variable', async () => {
             const profileDocs: ProfileDocumentation = {
                 description: 'test',
                 environmentVariables: [
@@ -232,7 +202,7 @@ describe('EnvironmentVariablesList', () => {
                 shellConfigExample: '',
             };
 
-            const { tree } = renderList({
+            await renderList({
                 environmentVariables: [{ name: 'MAGIC', value: '${HOME}' }],
                 profileDocs,
             });
@@ -241,13 +211,12 @@ describe('EnvironmentVariablesList', () => {
             expect(keys).toEqual(expect.arrayContaining(['MAGIC', 'HOME']));
             expect(options?.sensitiveKeys ?? []).toEqual(expect.arrayContaining(['MAGIC', 'HOME']));
 
-            const cards = tree.root.findAllByType('EnvironmentVariableCard');
-            expect(cards).toHaveLength(1);
-            expect(cards[0]?.props.isSecret).toBe(true);
-            expect(cards[0]?.props.expectedValue).toBe('***');
+            expect(environmentVariableCardProps).toHaveLength(1);
+            expect(environmentVariableCardProps[0]?.isSecret).toBe(true);
+            expect(environmentVariableCardProps[0]?.expectedValue).toBe('***');
         });
 
-        it('respects daemon-forced sensitivity in card props', () => {
+        it('respects daemon-forced sensitivity in card props', async () => {
             useEnvironmentVariablesMock.mockReturnValueOnce({
                 variables: {},
                 meta: {
@@ -265,15 +234,14 @@ describe('EnvironmentVariablesList', () => {
                 isLoading: false,
             });
 
-            const { tree } = renderList({
+            await renderList({
                 environmentVariables: [{ name: 'AUTH_MODE', value: 'interactive', isSecret: false }],
             });
 
-            const cards = tree.root.findAllByType('EnvironmentVariableCard');
-            expect(cards).toHaveLength(1);
-            expect(cards[0]?.props.isSecret).toBe(true);
-            expect(cards[0]?.props.isForcedSensitive).toBe(true);
-            expect(cards[0]?.props.secretOverride).toBe(false);
+            expect(environmentVariableCardProps).toHaveLength(1);
+            expect(environmentVariableCardProps[0]?.isSecret).toBe(true);
+            expect(environmentVariableCardProps[0]?.isForcedSensitive).toBe(true);
+            expect(environmentVariableCardProps[0]?.secretOverride).toBe(false);
         });
     });
 });

@@ -1,51 +1,57 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
 import { ProfileEditForm } from './ProfileEditForm';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+const capture = vi.hoisted(() => ({
+    customBackendPress: null as null | (() => void),
+    reset() {
+        this.customBackendPress = null;
+    },
 }));
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                textSecondary: '#666',
-                button: { secondary: { tint: '#000' }, primary: { background: '#00f' } },
-                surface: '#fff',
-                text: '#000',
-                status: { connected: '#0f0', disconnected: '#f00' },
-                input: { placeholder: '#999' },
-            },
-        },
-        rt: { themeName: 'light' },
-    }),
-    StyleSheet: { create: () => ({}) },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: vi.fn() },
+        params: {},
+    });
+    return expoRouterMock.module;
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: vi.fn(),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct',
@@ -70,7 +76,9 @@ const settingsState = {
     },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'newSessionDefaultPersistenceModeV1') return 'persisted';
         if (key === 'newSessionDefaultPersistenceModeByTargetKeyV1') return {};
@@ -86,7 +94,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
         return [[], vi.fn()] as const;
     },
-}));
+});
+});
 
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: () => null,
@@ -135,7 +144,12 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, onPress }: any) => React.createElement('Item', { title, onPress }),
+    Item: ({ title, onPress }: any) => {
+        if (title === 'Custom Backend' && typeof onPress === 'function') {
+            capture.customBackendPress = onPress;
+        }
+        return React.createElement('Item', { title, onPress });
+    },
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
@@ -195,27 +209,22 @@ function buildProfile(): AIBackendProfile {
 
 describe('ProfileEditForm backend targets', () => {
     it('renders configured ACP backends as editable backend rows and persists target compatibility changes', async () => {
+        capture.reset();
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ProfileEditForm, {
-                    profile: buildProfile(),
-                    machineId: null,
-                    onSave,
-                    onCancel: vi.fn(),
-                    saveRef,
-                }),
-            );
-        });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: buildProfile(),
+            machineId: null,
+            onSave,
+            onCancel: vi.fn(),
+            saveRef,
+        }));
 
-        const backendRow = tree.root.findAll((node) => node.props?.title === 'Custom Backend')[0];
-        expect(backendRow).toBeTruthy();
+        expect(capture.customBackendPress).toBeTruthy();
 
         await act(async () => {
-            backendRow.props.onPress();
+            capture.customBackendPress?.();
         });
 
         const result = saveRef.current?.();
@@ -231,24 +240,20 @@ describe('ProfileEditForm backend targets', () => {
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ProfileEditForm, {
-                    profile: AIBackendProfileSchema.parse({
-                        ...buildProfile(),
-                        authMode: 'machineLogin',
-                        compatibility: { codex: false, customAcp: false },
-                        compatibilityByTargetKey: {
-                            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
-                        },
-                    }),
-                    machineId: null,
-                    onSave,
-                    onCancel: vi.fn(),
-                    saveRef,
-                }),
-            );
-        });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: AIBackendProfileSchema.parse({
+                ...buildProfile(),
+                authMode: 'machineLogin',
+                compatibility: { codex: false, customAcp: false },
+                compatibilityByTargetKey: {
+                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
+                },
+            }),
+            machineId: null,
+            onSave,
+            onCancel: vi.fn(),
+            saveRef,
+        }));
 
         const result = saveRef.current?.();
         expect(result).toBe(true);
@@ -265,24 +270,20 @@ describe('ProfileEditForm backend targets', () => {
         const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
         const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ProfileEditForm, {
-                    profile: AIBackendProfileSchema.parse({
-                        ...buildProfile(),
-                        compatibility: { codex: false, customAcp: true },
-                        compatibilityByTargetKey: {
-                            [legacyCustomAcpTargetKey]: true,
-                        },
-                        authMode: 'machineLogin',
-                    }),
-                    machineId: null,
-                    onSave,
-                    onCancel: vi.fn(),
-                    saveRef,
-                }),
-            );
-        });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: AIBackendProfileSchema.parse({
+                ...buildProfile(),
+                compatibility: { codex: false, customAcp: true },
+                compatibilityByTargetKey: {
+                    [legacyCustomAcpTargetKey]: true,
+                },
+                authMode: 'machineLogin',
+            }),
+            machineId: null,
+            onSave,
+            onCancel: vi.fn(),
+            saveRef,
+        }));
 
         const result = saveRef.current?.();
         expect(result).toBe(true);

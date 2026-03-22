@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,21 +39,24 @@ const activeSelectionMachineGroupsState = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual: any = await importOriginal();
-    return {
-        ...actual,
-        View: 'View',
-        Pressable: 'Pressable',
-        Text: 'Text',
-        ActivityIndicator: 'ActivityIndicator',
-        Platform: {
-            ...actual.Platform,
-            OS: 'web',
-            select: (options: any) => (options && 'default' in options ? options.default : undefined),
-        },
-        Linking: { canOpenURL: async () => false, openURL: async () => {} },
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Pressable: 'Pressable',
+                            Text: 'Text',
+                            ActivityIndicator: 'ActivityIndicator',
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => (options && 'default' in options ? options.default : undefined),
+                            },
+                            Linking: {
+                                canOpenURL: async () => false,
+                                openURL: async () => {},
+                            },
+                        }
+    );
 });
 
 vi.mock('expo-image', () => ({
@@ -63,9 +68,13 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -132,13 +141,16 @@ vi.mock('@/track', () => ({
     trackWhatsNewClicked: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
@@ -164,9 +176,10 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: 'MachineCliGlyphs',
@@ -210,11 +223,9 @@ describe('SettingsView (multi-server machines)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SettingsView));
-        });
+        tree = (await renderScreen(React.createElement(SettingsView))).tree;
 
-        const items = tree!.root.findAllByType('Item' as any);
+        const items = tree!.findAllByType('Item' as any);
         const itemTitles = items.map((item: any) => String(item.props.title ?? ''));
 
         expect(itemTitles).not.toContain('Machine A1');
@@ -225,7 +236,7 @@ describe('SettingsView (multi-server machines)', () => {
         expect(machinesEntry).toBeTruthy();
 
         await act(async () => {
-            machinesEntry!.props.onPress();
+            await pressTestInstanceAsync(machinesEntry!);
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines');

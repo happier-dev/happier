@@ -7,9 +7,14 @@ import { describe, expect, it, vi } from 'vitest';
 const postMessageSpy = vi.fn();
 let lastWebViewProps: any = null;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                }
+    );
+});
 
 vi.mock('react-native-webview', () => ({
     WebView: React.forwardRef((props: any, ref: any) => {
@@ -23,8 +28,9 @@ vi.mock('react-native-webview', () => ({
     }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: true,
             colors: {
@@ -34,12 +40,14 @@ vi.mock('react-native-unistyles', () => ({
                 divider: '#333',
             },
         },
-    }),
-}));
+    });
+});
 
 import { encodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
 
 import { XtermWebViewSurface } from './XtermWebViewSurface.native';
+import { renderScreen } from '@/dev/testkit';
+
 
 function emitEnvelope(envelope: any) {
     if (!lastWebViewProps?.onMessage) throw new Error('WebView onMessage missing');
@@ -70,9 +78,7 @@ describe('XtermWebViewSurface (native)', () => {
         const onReady = vi.fn();
         const ref = React.createRef<any>();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(XtermWebViewSurface, {
+        await renderScreen(React.createElement(XtermWebViewSurface, {
                     ref,
                     fontSize: 12,
                     lineHeightPx: 18,
@@ -80,9 +86,7 @@ describe('XtermWebViewSurface (native)', () => {
                     onResize,
                     onReady,
                     bridgeMaxChunkBytes: 64_000,
-                }),
-            );
-        });
+                }));
 
         expect(ref.current).toBeTruthy();
         expect(typeof ref.current.write).toBe('function');
@@ -119,18 +123,14 @@ describe('XtermWebViewSurface (native)', () => {
         const onResize = vi.fn();
         const onReady = vi.fn();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(XtermWebViewSurface, {
+        await renderScreen(React.createElement(XtermWebViewSurface, {
                     fontSize: 12,
                     lineHeightPx: 18,
                     onInput,
                     onResize,
                     onReady,
                     bridgeMaxChunkBytes: 1_000,
-                }),
-            );
-        });
+                }));
 
         const chunks = encodeChunkedEnvelope({
             envelope: { v: 1, type: 'input', payload: { data: 'chunked' } },
@@ -155,9 +155,7 @@ describe('XtermWebViewSurface (native)', () => {
         const ref = React.createRef<any>();
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(XtermWebViewSurface, {
+        tree = (await renderScreen(React.createElement(XtermWebViewSurface, {
                     ref,
                     fontSize: 12,
                     lineHeightPx: 18,
@@ -165,9 +163,7 @@ describe('XtermWebViewSurface (native)', () => {
                     onResize,
                     onReady,
                     bridgeMaxChunkBytes: 64_000,
-                }),
-            );
-        });
+                }))).tree;
 
         emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } });
         postMessageSpy.mockClear();

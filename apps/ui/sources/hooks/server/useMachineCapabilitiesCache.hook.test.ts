@@ -5,6 +5,8 @@ import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { flushHookEffects } from './serverFeatureHookHarness.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -108,9 +110,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(latest?.status).toBe('error');
     });
@@ -203,10 +203,8 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             return React.createElement('View');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Test));
+        await renderScreen(React.createElement(Test));
             await flushHookEffects();
-        });
 
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
         expect(machineCapabilitiesDetect.mock.calls[1]?.[1]).toEqual({ requests: [{ id: 'tool.executionRuns' }] });
@@ -310,9 +308,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(latest?.status).toBe('loaded');
     });
@@ -349,9 +345,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         }
 
         let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(React.createElement(Test, { request: requestA }));
-        });
+        tree = (await renderScreen(React.createElement(Test, { request: requestA }))).tree;
         const refreshA = latestRefresh!;
 
         act(() => {

@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,38 +15,36 @@ const capture = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            textSecondary: '#6b7280',
-            success: '#16a34a',
-            warningCritical: '#dc2626',
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId !== 'voice',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSettingMutable: () => [{ v: 1, actions: {} }, vi.fn()] as const,
     useSetting: () => ({ privacy: { shareDeviceInventory: true } }),
-}));
+});
+});
 
 vi.mock('@/components/ui/forms/SearchHeader', () => ({
     SearchHeader: () => null,
@@ -107,9 +107,7 @@ describe('ActionsSettingsView', () => {
         capture.reset();
         const { ActionsSettingsView } = await import('./ActionsSettingsView');
 
-        await act(async () => {
-            renderer.create(<ActionsSettingsView />);
-        });
+        await renderScreen(<ActionsSettingsView />);
 
         const voiceSection = capture.selectionTilesProps.find((props) => Array.isArray(props.options));
         expect(voiceSection).toBeUndefined();

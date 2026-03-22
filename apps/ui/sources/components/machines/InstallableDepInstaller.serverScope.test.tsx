@@ -1,44 +1,58 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import type { InstallableDepInstallerProps } from './InstallableDepInstaller';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const alertMock = vi.fn();
-const machineCapabilitiesInvokeMock = vi.fn(
+type MachineCapabilitiesInvokeMock = typeof import('@/sync/ops/capabilities').machineCapabilitiesInvoke;
+
+const machineCapabilitiesInvokeMock = vi.fn<MachineCapabilitiesInvokeMock>(
     async (_machineId: string, _request: unknown, _options: unknown) => ({ supported: false, reason: 'not-supported' }),
 );
 
-vi.mock('react-native', () => ({
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            ActivityIndicator: 'ActivityIndicator',
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#999999',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: alertMock,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: alertMock,
+        },
+    }).module;
+});
 
-vi.mock('@/sync/ops', () => ({
+vi.mock('@/sync/ops/capabilities', () => ({
     machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
 }));
 
@@ -50,53 +64,80 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
+const installLabels = {
+    install: 'Install now',
+    update: 'Update now',
+    reinstall: 'Reinstall now',
+} as const;
+
+const installModal = {
+    installTitle: 'Install dependency',
+    updateTitle: 'Update dependency',
+    reinstallTitle: 'Reinstall dependency',
+    description: 'Confirm install',
+} as const;
+
+const baseInstallerProps = {
+    machineId: 'machine-1',
+    serverId: 'server-b',
+    enabled: true,
+    groupTitle: 'Dependencies',
+    depId: CODEX_ACP_DEP_ID,
+    depTitle: 'Codex ACP',
+    depIconName: 'construct-outline',
+    depStatus: null,
+    capabilitiesStatus: 'loaded',
+    installLabels,
+    installModal,
+    refreshStatus: () => {},
+} satisfies Omit<InstallableDepInstallerProps, 'refreshLatestVersion' | 'extraItems'>;
+
+async function renderInstaller(
+    overrides: Partial<Pick<InstallableDepInstallerProps, 'depStatus' | 'capabilitiesStatus' | 'refreshLatestVersion' | 'extraItems'>> = {},
+) {
+    const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
+
+    return renderScreen(
+        <InstallableDepInstaller
+            {...baseInstallerProps}
+            {...overrides}
+        />,
+    );
+}
+
 describe('InstallableDepInstaller', () => {
+    beforeEach(() => {
+        alertMock.mockReset();
+        machineCapabilitiesInvokeMock.mockReset();
+        machineCapabilitiesInvokeMock.mockResolvedValue({
+            supported: true,
+            response: { ok: true, result: {} },
+        });
+    });
+
+    afterEach(() => {
+        return flushHookEffects({ cycles: 1 });
+    });
+
     it('routes install invocation through the provided serverId', async () => {
-        const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
-
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <InstallableDepInstaller
-                    machineId="machine-1"
-                    serverId="server-b"
-                    enabled
-                    groupTitle="Dependencies"
-                    depId={CODEX_ACP_DEP_ID}
-                    depTitle="Codex ACP"
-                    depIconName="construct-outline"
-                    depStatus={{
-                        installed: false,
-                        installedVersion: null,
-                        sourceKind: 'github_release_binary',
-                        lastInstallLogPath: null,
-                        lastBackgroundUpdateCheckAtMs: null,
-                    }}
-                    capabilitiesStatus="loaded"
-                    installLabels={{
-                        install: 'Install now',
-                        update: 'Update now',
-                        reinstall: 'Reinstall now',
-                    }}
-                    installModal={{
-                        installTitle: 'Install dependency',
-                        updateTitle: 'Update dependency',
-                        reinstallTitle: 'Reinstall dependency',
-                        description: 'Confirm install',
-                    }}
-                    refreshStatus={() => {}}
-                />,
-            );
+        const screen = await renderInstaller({
+            depStatus: {
+                installed: false,
+                installedVersion: null,
+                sourceKind: 'github_release_binary',
+                lastInstallLogPath: null,
+                lastBackgroundUpdateCheckAtMs: null,
+            },
         });
 
-        const installAction = tree.root.findAllByType('Item' as any).find((item) => item.props.title === 'Install now');
-        if (!installAction) throw new Error('Expected install action item');
-
+        const installAction = screen.findByProps({ title: installLabels.install });
         await act(async () => {
-            installAction.props.onPress();
+            await installAction.props.onPress();
         });
 
-        const confirmButtons = alertMock.mock.calls[0]?.[2];
+        const confirmButtons = alertMock.mock.calls.find(
+            (call) => call[0] === installModal.installTitle && Array.isArray(call[2]),
+        )?.[2];
         if (!Array.isArray(confirmButtons) || typeof confirmButtons[1]?.onPress !== 'function') {
             throw new Error('Expected confirmation buttons with install callback');
         }
@@ -104,60 +145,37 @@ describe('InstallableDepInstaller', () => {
         await act(async () => {
             await confirmButtons[1].onPress();
         });
+        await flushHookEffects({ cycles: 1 });
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({ id: CODEX_ACP_DEP_ID, method: 'install' }),
             expect.objectContaining({ timeoutMs: 5 * 60_000, serverId: 'server-b' }),
         );
+
+        await screen.unmount();
     });
 
     it('invokes installs without install-spec params', async () => {
-        const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
-
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <InstallableDepInstaller
-                    machineId="machine-1"
-                    serverId="server-b"
-                    enabled
-                    groupTitle="Dependencies"
-                    depId={CODEX_ACP_DEP_ID}
-                    depTitle="Codex ACP"
-                    depIconName="construct-outline"
-                    depStatus={{
-                        installed: false,
-                        installedVersion: null,
-                        sourceKind: 'github_release_binary',
-                        lastInstallLogPath: null,
-                        lastBackgroundUpdateCheckAtMs: null,
-                    }}
-                    capabilitiesStatus="loaded"
-                    installLabels={{
-                        install: 'Install now',
-                        update: 'Update now',
-                        reinstall: 'Reinstall now',
-                    }}
-                    installModal={{
-                        installTitle: 'Install dependency',
-                        updateTitle: 'Update dependency',
-                        reinstallTitle: 'Reinstall dependency',
-                        description: 'Confirm install',
-                    }}
-                    refreshStatus={() => {}}
-                />,
-            );
+        const screen = await renderInstaller({
+            depStatus: {
+                installed: false,
+                installedVersion: null,
+                sourceKind: 'github_release_binary',
+                lastInstallLogPath: null,
+                lastBackgroundUpdateCheckAtMs: null,
+            },
         });
 
-        const installAction = tree.root.findAllByType('Item' as any).find((item) => item.props.title === 'Install now');
-        if (!installAction) throw new Error('Expected install action item');
-
+        const installAction = screen.findByProps({ title: installLabels.install });
+        if (!installAction) {
+            throw new Error('Expected install action item');
+        }
         await act(async () => {
-            installAction.props.onPress();
+            await installAction.props.onPress();
         });
 
-        const confirmButtons = alertMock.mock.calls.at(-1)?.[2];
+        const confirmButtons = alertMock.mock.calls.find((call) => Array.isArray(call[2]))?.[2];
         if (!Array.isArray(confirmButtons) || typeof confirmButtons[1]?.onPress !== 'function') {
             throw new Error('Expected confirmation buttons with install callback');
         }
@@ -165,6 +183,7 @@ describe('InstallableDepInstaller', () => {
         await act(async () => {
             await confirmButtons[1].onPress();
         });
+        await flushHookEffects({ cycles: 1 });
 
         const lastCall = machineCapabilitiesInvokeMock.mock.calls.at(-1);
         expect(lastCall).toBeTruthy();
@@ -174,53 +193,28 @@ describe('InstallableDepInstaller', () => {
         const request = lastCall?.[1] as Record<string, unknown> | undefined;
         expect(request).toMatchObject({ id: CODEX_ACP_DEP_ID, method: 'install' });
         expect(request).not.toHaveProperty('params');
+
+        await screen.unmount();
     });
 
     it('renders the last background update check in the existing installables UI', async () => {
-        const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
-        vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('Mar 10, 2026, 6:13 PM');
+        const toLocaleStringSpy = vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('Mar 10, 2026, 6:13 PM');
 
-        const depStatus = {
-            installed: true,
-            installedVersion: '0.9.5',
-            sourceKind: 'github_release_binary',
-            lastInstallLogPath: null,
-            lastBackgroundUpdateCheckAtMs: 1_773_164_020_808,
-        };
-
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <InstallableDepInstaller
-                    machineId="machine-1"
-                    serverId="server-b"
-                    enabled
-                    groupTitle="Dependencies"
-                    depId={CODEX_ACP_DEP_ID}
-                    depTitle="Codex ACP"
-                    depIconName="construct-outline"
-                    depStatus={depStatus}
-                    capabilitiesStatus="loaded"
-                    installLabels={{
-                        install: 'Install now',
-                        update: 'Update now',
-                        reinstall: 'Reinstall now',
-                    }}
-                    installModal={{
-                        installTitle: 'Install dependency',
-                        updateTitle: 'Update dependency',
-                        reinstallTitle: 'Reinstall dependency',
-                        description: 'Confirm install',
-                    }}
-                    refreshStatus={() => {}}
-                />,
-            );
+        const screen = await renderInstaller({
+            depStatus: {
+                installed: true,
+                installedVersion: '0.9.5',
+                sourceKind: 'github_release_binary',
+                lastInstallLogPath: null,
+                lastBackgroundUpdateCheckAtMs: 1_773_164_020_808,
+            },
         });
 
-        const lastCheckedItem = tree.root.findAllByType('Item' as any).find(
-            (item) => item.props.title === 'settingsProviders.authentication.lastCheckedTitle',
-        );
+        const lastCheckedItem = screen.findByProps({ title: 'settingsProviders.authentication.lastCheckedTitle' });
         expect(lastCheckedItem).toBeTruthy();
         expect(lastCheckedItem?.props.subtitle).toBe('Mar 10, 2026, 6:13 PM');
+
+        await screen.unmount();
+        toLocaleStringSpy.mockRestore();
     });
 });

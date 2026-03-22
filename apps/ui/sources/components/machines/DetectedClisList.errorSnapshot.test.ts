@@ -7,33 +7,35 @@ import { DetectedClisList } from './DetectedClisList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'ios',
-        select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
-    },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Text: 'Text',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+                select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Text: 'Text',
+            View: 'View',
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native-unistyles', () => {
-    const theme = { colors: { textSecondary: '#666', shadow: { color: '#000', opacity: 0.2 }, status: { connected: '#0a0' } } };
-    return {
-        StyleSheet: {
-            create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles),
-            absoluteFillObject: {},
-        },
-        useUnistyles: () => ({ theme }),
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -46,6 +48,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex'],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: (agentId: string) => {
         if (agentId === 'claude') {
             return { displayNameKey: 'agentInput.agent.claude', cli: { detectKey: 'claude' } };

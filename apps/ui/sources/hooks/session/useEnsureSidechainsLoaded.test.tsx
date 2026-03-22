@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useEnsureSidechainsLoaded } from './useEnsureSidechainsLoaded';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,11 +47,7 @@ describe('useEnsureSidechainsLoaded', () => {
   it('does not re-request the same sidechain when callers pass a new array instance', async () => {
     let tree: renderer.ReactTestRenderer | null = null;
 
-    await act(async () => {
-      tree = renderer.create(
-        <Harness enabled sessionId="session-1" sidechainIds={['sidechain-1']} />,
-      );
-    });
+    tree = (await renderScreen(<Harness enabled sessionId="session-1" sidechainIds={['sidechain-1']} />)).tree;
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(1);
 
@@ -67,13 +65,7 @@ describe('useEnsureSidechainsLoaded', () => {
       .mockResolvedValueOnce('not_ready')
       .mockResolvedValueOnce('loaded');
 
-    await act(async () => {
-      renderer.create(
-        <Harness enabled sessionId="session-1" sidechainIds={['sidechain-1']} />,
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await renderScreen(<Harness enabled sessionId="session-1" sidechainIds={['sidechain-1']} />);
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(1);
 
@@ -90,13 +82,7 @@ describe('useEnsureSidechainsLoaded', () => {
     process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = '2';
     ensureSidechainMessagesLoadedSpy.mockResolvedValue('not_ready');
 
-    await act(async () => {
-      renderer.create(
-        <Harness enabled sessionId="session-1" sidechainIds={['sidechain-1']} />,
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await renderScreen(<Harness enabled sessionId="session-1" sidechainIds={['sidechain-1']} />);
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(1);
 

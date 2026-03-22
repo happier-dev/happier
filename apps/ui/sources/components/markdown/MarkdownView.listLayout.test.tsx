@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MarkdownView } from './MarkdownView';
+import { renderScreen } from '@/dev/testkit';
+
 
 declare global {
   // eslint-disable-next-line no-var
@@ -48,16 +50,12 @@ describe('MarkdownView (lists)', () => {
   it('renders unordered list items with hanging-indent rows and nested padding', async () => {
     let tree: renderer.ReactTestRenderer | null = null;
     try {
-      await act(async () => {
-        tree = renderer.create(
-          <MarkdownView
+      tree = (await renderScreen(<MarkdownView
             markdown={[
               '- Parent',
               '  - Child',
             ].join('\n')}
-          />,
-        );
-      });
+          />)).tree;
 
       const rows = tree!.root.findAll((node) => node.props?.testID === 'markdown-list-item-row');
       expect(rows).toHaveLength(2);

@@ -1,5 +1,6 @@
+import { renderHook } from '@/dev/testkit';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { UseDirectSessionRuntimeResult } from './useDirectSessionRuntime';
@@ -21,12 +22,21 @@ let activeServerId = 'server-1';
 vi.mock('@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog', () => ({
   showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
 }));
-vi.mock('@/modal', () => ({
-  Modal: { alert: modalAlertSpy, confirm: vi.fn(async () => false) },
-}));
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: activeServerId }),
 }));
@@ -49,30 +59,15 @@ type HookValue = ReturnType<typeof import('./useDirectSessionTakeover')['useDire
 async function renderHarness(
   directSessionRuntime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'status' | 'refreshNow'>,
 ): Promise<{ getCurrent: () => HookValue; unmount: () => void }> {
-  let current: HookValue | null = null;
   const { useDirectSessionTakeover } = await import('./useDirectSessionTakeover');
 
-  function Test() {
-    current = useDirectSessionTakeover({ sessionId: 's1', hasWriteAccess: true, directSessionRuntime });
-    return null;
-  }
-
-  let root: renderer.ReactTestRenderer | null = null;
-  await act(async () => {
-    root = renderer.create(React.createElement(Test));
-    await Promise.resolve();
-  });
-
-  return {
-    getCurrent: () => {
-      if (!current) throw new Error('Hook did not render');
-      return current;
+  return renderHook(
+    (runtime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'status' | 'refreshNow'>) =>
+      useDirectSessionTakeover({ sessionId: 's1', hasWriteAccess: true, directSessionRuntime: runtime }),
+    {
+      initialProps: directSessionRuntime,
     },
-    unmount: () => {
-      if (!root) return;
-      act(() => root?.unmount());
-    },
-  };
+  );
 }
 
 describe('useDirectSessionTakeover', () => {
@@ -127,7 +122,7 @@ describe('useDirectSessionTakeover', () => {
       { machineId: 'machine-1', sessionId: 's1' },
       { serverId: 'server-owned' },
     );
-    harness.unmount();
+    await harness.unmount();
   });
 
   it('re-checks direct-session status before manual takeover after a server switch', async () => {
@@ -147,7 +142,7 @@ describe('useDirectSessionTakeover', () => {
     expect(refreshNow).toHaveBeenCalledTimes(1);
     expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'chatFooter.directSessionMachineOffline');
-    harness.unmount();
+    await harness.unmount();
   });
 
   it('uses the owning session server when send takeover is confirmed after an active-server switch', async () => {
@@ -169,7 +164,7 @@ describe('useDirectSessionTakeover', () => {
       { machineId: 'machine-1', sessionId: 's1' },
       { serverId: 'server-owned' },
     );
-    harness.unmount();
+    await harness.unmount();
   });
 
   it('re-checks direct-session status before prompting for send takeover after a server switch', async () => {
@@ -189,6 +184,6 @@ describe('useDirectSessionTakeover', () => {
     expect(refreshNow).toHaveBeenCalledTimes(1);
     expect(showDirectSessionTakeoverDialogSpy).not.toHaveBeenCalled();
     expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
-    harness.unmount();
+    await harness.unmount();
   });
 });

@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TabBar } from './TabBar';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,18 +16,21 @@ const inboxState = vi.hoisted(() => ({
     hasContent: false,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        View: 'View',
+        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+    });
+});
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -36,31 +41,17 @@ vi.mock('react-native-unistyles', () => ({
                 button: { primary: { tint: '#fff' } },
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    surface: '#fff',
-                    divider: '#ddd',
-                    text: '#111',
-                    textSecondary: '#777',
-                    status: { error: '#f00' },
-                    button: { primary: { tint: '#fff' } },
-                },
-            };
-            return typeof input === 'function' ? input(theme) : input;
-        },
-    },
-}));
+    });
+});
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -78,9 +69,12 @@ vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
     useInboxHasContent: () => inboxState.hasContent,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useFriendRequests: () => friendRequestsState.items,
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useFriendRequests: (() => friendRequestsState.items) as typeof import('@/sync/domains/state/storage').useFriendRequests,
+});
+});
 
 vi.mock('@/hooks/server/useFriendsEnabled', () => ({
     useFriendsEnabled: () => true,
@@ -120,11 +114,7 @@ describe('TabBar', () => {
         inboxState.hasContent = true;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <TabBar activeTab="sessions" onTabPress={() => {}} />,
-            );
-        });
+        tree = (await renderScreen(<TabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
         const inboxTab = findTab(tree!, 'tabs.inbox');
         const friendsTab = findTab(tree!, 'tabs.friends');

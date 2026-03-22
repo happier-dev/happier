@@ -15,15 +15,21 @@ const modalAlert = vi.fn();
 const modalConfirm = vi.fn(async () => false);
 const modalPrompt = vi.fn(async () => null);
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlert,
-    confirm: modalConfirm,
-    prompt: modalPrompt,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+            confirm: modalConfirm,
+            prompt: modalPrompt,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 const requestMicrophonePermission = vi.fn(async () => ({ granted: true, canAskAgain: true }));
 const showMicrophonePermissionDeniedAlert = vi.fn();
@@ -134,9 +140,12 @@ const state: {
   clearRealtimeModeDebounce: vi.fn(),
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: { getState: () => state },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: { getState: () => state },
+});
+});
 vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
   resolveVoiceSessionBindingByControlSessionId: (params: any) => resolveVoiceSessionBindingByControlSessionId(params),
 }));
@@ -252,43 +261,46 @@ describe('Realtime voice modes', () => {
   describe('happier voice lifecycle', () => {
     it('records the session limit and announces when the server-minted lease is near expiry', async () => {
       vi.useFakeTimers();
-      fetchHappierVoiceToken.mockResolvedValueOnce({
-        allowed: true,
-        token: 'conv_token',
-        leaseId: 'lease_1',
-        expiresAtMs: Date.now() + 30_000,
-      });
+      try {
+        fetchHappierVoiceToken.mockResolvedValueOnce({
+          allowed: true,
+          token: 'conv_token',
+          leaseId: 'lease_1',
+          expiresAtMs: Date.now() + 30_000,
+        });
 
-      const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
-      const { session } = makeVoiceSession('conv_0');
-      registerVoiceSession(session);
+        const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
+        const { session } = makeVoiceSession('conv_0');
+        registerVoiceSession(session);
 
-      await startRealtimeSession('s1', 'BASE_CTX');
+        await startRealtimeSession('s1', 'BASE_CTX');
 
-      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationSessionId: 'voice-conversation-1',
-          text: 'errors.voiceSessionLimitStarted',
-        }),
-      );
-      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationSessionId: 'voice-conversation-1',
-          text: 'errors.voiceSessionLimitExpiring',
-        }),
-      );
+        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+          expect.objectContaining({
+            conversationSessionId: 'voice-conversation-1',
+            text: 'errors.voiceSessionLimitStarted',
+          }),
+        );
+        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+          expect.objectContaining({
+            conversationSessionId: 'voice-conversation-1',
+            text: 'errors.voiceSessionLimitExpiring',
+          }),
+        );
 
-      vi.advanceTimersByTime(30_000);
+        await vi.advanceTimersByTimeAsync(30_000);
 
-      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationSessionId: 'voice-conversation-1',
-          text: 'errors.voiceSessionLimitExpired',
-        }),
-      );
+        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+          expect.objectContaining({
+            conversationSessionId: 'voice-conversation-1',
+            text: 'errors.voiceSessionLimitExpired',
+          }),
+        );
 
-      await stopRealtimeSession();
-      vi.useRealTimers();
+        await stopRealtimeSession();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('appends welcome instructions to the initial context when enabled (immediate)', async () => {

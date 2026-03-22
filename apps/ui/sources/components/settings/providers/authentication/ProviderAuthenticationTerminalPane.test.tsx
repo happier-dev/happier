@@ -1,8 +1,27 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { createPartialStorageModuleMock } from '@/dev/testkit';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const mockMachine = {
+    id: 'machine-1',
+    seq: 0,
+    createdAt: 0,
+    updatedAt: 0,
+    active: true,
+    activeAt: 0,
+    metadata: {
+        host: 'localhost',
+        platform: 'darwin',
+        happyCliVersion: '0.0.0-test',
+        happyHomeDir: '/tmp/.happy',
+        homeDir: '/tmp',
+    },
+    metadataVersion: 0,
+    daemonState: null,
+    daemonStateVersion: 0,
+} satisfies Machine;
 
 let mockTerminalStatus: 'idle' | 'connecting' | 'connected' | 'error' | 'exited' = 'idle';
 const onInputMock = vi.fn();
@@ -30,14 +49,11 @@ vi.mock('@/hooks/machine/useMachineTerminalSession', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useMachine: () => ({
-        id: 'machine-1',
-        metadata: {
-            platform: 'darwin',
-        },
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        useMachine: (_machineId: string) => mockMachine,
     }),
-}));
+);
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,

@@ -1,11 +1,13 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
     type NotificationChannelV1,
     type NotificationsSettingsV1,
 } from '@happier-dev/protocol';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -60,14 +62,32 @@ const localSettingsState = {
     localNotificationsForegroundBehavior: 'silent',
 };
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+type NotificationsSettingsScreen = Awaited<ReturnType<typeof renderSettingsView>>;
+
+function requireRow(screen: NotificationsSettingsScreen, testID: string) {
+    const row = screen.findRow(testID);
+    expect(row).toBeTruthy();
+    return row!;
+}
+
+function requireRowByTitle(screen: NotificationsSettingsScreen, title: string) {
+    const row = screen.findRowByTitle(title);
+    expect(row).toBeTruthy();
+    return row!;
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 accent: { blue: '#00f' },
@@ -76,25 +96,32 @@ vi.mock('react-native-unistyles', () => ({
                 warning: '#f90',
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: modalPromptMock,
-        confirm: modalConfirmMock,
-        alert: modalAlertMock,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: modalPromptMock,
+            confirm: modalConfirmMock,
+            alert: modalAlertMock,
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSettings: () => settingsState,
     useLocalSettings: () => localSettingsState,
-}));
+});
+});
 
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
@@ -159,12 +186,16 @@ describe('NotificationsSettingsView', () => {
     it('renders device-local badge/local sections alongside the remote push section', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const groupTitles = [
+            'settingsNotifications.badges.title',
+            'settingsNotifications.local.title',
+            'settingsNotifications.push.title',
+            'settingsNotifications.webhooks.title',
+            'settingsNotifications.types.title',
+            'settingsNotifications.foregroundBehavior.title',
+        ].map((title) => screen.findGroup(title)?.props.title);
 
-        const groupTitles = tree!.root.findAllByType('ItemGroup' as any).map((node) => node.props.title);
         expect(groupTitles).toEqual([
             'settingsNotifications.badges.title',
             'settingsNotifications.local.title',
@@ -178,40 +209,23 @@ describe('NotificationsSettingsView', () => {
     it('exposes stable test ids for the notifications screen and primary controls', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
 
-        const rootList = tree!.root.findAllByType('ItemList' as any)[0];
-        expect(rootList?.props.testID).toBe('settings-notifications-screen');
-
-        const itemTestIds = tree!.root.findAllByType('Item' as any)
-            .map((item) => item.props.testID)
-            .filter(Boolean);
-
-        expect(itemTestIds).toEqual(expect.arrayContaining([
-            'settings-notifications-badges-enabled',
-            'settings-notifications-local-enabled',
-            'settings-notifications-push-enabled',
-            'settings-notifications-add-webhook',
-        ]));
+        expect(screen.findByTestId('settings-notifications-screen')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-badges-enabled')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-local-enabled')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-push-enabled')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-add-webhook')).toBeTruthy();
     });
 
     it('writes device-local badge settings through the local settings writer', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const badgeItem = items.find((item) => item.props.title === 'settingsNotifications.badges.enabledTitle');
-        expect(badgeItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const badgeItem = requireRow(screen, 'settings-notifications-badges-enabled');
 
         await act(async () => {
-            badgeItem!.props.rightElement.props.onValueChange(false);
+            badgeItem.props.rightElement.props.onValueChange(false);
         });
 
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({ activityBadgesEnabled: false });
@@ -220,17 +234,11 @@ describe('NotificationsSettingsView', () => {
     it('writes device-local local-notification topic settings through the local settings writer', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const readyItem = items.find((item) => item.props.title === 'settingsNotifications.local.readyTitle');
-        expect(readyItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const readyItem = requireRowByTitle(screen, 'settingsNotifications.local.readyTitle');
 
         await act(async () => {
-            readyItem!.props.rightElement.props.onValueChange(false);
+            readyItem.props.rightElement.props.onValueChange(false);
         });
 
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({ localNotificationsShowReady: false });
@@ -239,17 +247,11 @@ describe('NotificationsSettingsView', () => {
     it('writes device-local ready preview settings through the local settings writer', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const previewItem = items.find((item) => item.props.title === 'settingsNotifications.local.readyPreviewTitle');
-        expect(previewItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const previewItem = requireRowByTitle(screen, 'settingsNotifications.local.readyPreviewTitle');
 
         await act(async () => {
-            previewItem!.props.rightElement.props.onValueChange(false);
+            previewItem.props.rightElement.props.onValueChange(false);
         });
 
         expect(applyLocalSettingsMock).toHaveBeenCalledWith({ localNotificationsShowReadyMessageText: false });
@@ -258,17 +260,11 @@ describe('NotificationsSettingsView', () => {
     it('writes remote push settings through the synced account settings writer', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const pushItem = items.find((item) => item.props.subtitle === 'settingsNotifications.push.enabledSubtitle');
-        expect(pushItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const pushItem = requireRow(screen, 'settings-notifications-push-enabled');
 
         await act(async () => {
-            pushItem!.props.rightElement.props.onValueChange(false);
+            pushItem.props.rightElement.props.onValueChange(false);
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
@@ -301,17 +297,11 @@ describe('NotificationsSettingsView', () => {
     it('writes synced ready preview settings through the account settings writer', async () => {
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const previewItem = items.find((item) => item.props.title === 'settingsNotifications.types.readyPreview.title');
-        expect(previewItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const previewItem = requireRowByTitle(screen, 'settingsNotifications.types.readyPreview.title');
 
         await act(async () => {
-            previewItem!.props.rightElement.props.onValueChange(false);
+            previewItem.props.rightElement.props.onValueChange(false);
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
@@ -346,17 +336,11 @@ describe('NotificationsSettingsView', () => {
 
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const addWebhookItem = items.find((item) => item.props.title === 'settingsNotifications.webhooks.addTitle');
-        expect(addWebhookItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const addWebhookItem = requireRow(screen, 'settings-notifications-add-webhook');
 
         await act(async () => {
-            await addWebhookItem!.props.onPress();
+            await addWebhookItem.props.onPress();
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
@@ -414,16 +398,10 @@ describe('NotificationsSettingsView', () => {
 
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const webhookItem = requireRow(screen, 'settings-notifications-webhook-webhook-primary');
 
-        const items = tree!.root.findAllByType('Item' as any);
-        const webhookItem = items.find((item) => item.props.title === 'https://hooks.example.test/notify');
-        expect(webhookItem).toBeTruthy();
-
-        const deleteAction = webhookItem!.props.rightElement.props.actions.find((action: { id: string }) => action.id === 'delete');
+        const deleteAction = webhookItem.props.rightElement.props.actions.find((action: { id: string }) => action.id === 'delete');
         expect(deleteAction).toBeTruthy();
 
         await act(async () => {
@@ -471,17 +449,11 @@ describe('NotificationsSettingsView', () => {
 
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const signingSecretItem = items.find((item) => item.props.title === 'settingsNotifications.webhooks.signingSecretTitle');
-        expect(signingSecretItem).toBeTruthy();
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const signingSecretItem = requireRowByTitle(screen, 'settingsNotifications.webhooks.signingSecretTitle');
 
         await act(async () => {
-            await signingSecretItem!.props.onPress();
+            await signingSecretItem.props.onPress();
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
@@ -544,16 +516,10 @@ describe('NotificationsSettingsView', () => {
 
         const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<NotificationsSettingsView />);
-        });
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        const signingSecretItem = requireRowByTitle(screen, 'settingsNotifications.webhooks.signingSecretTitle');
 
-        const items = tree!.root.findAllByType('Item' as any);
-        const signingSecretItem = items.find((item) => item.props.title === 'settingsNotifications.webhooks.signingSecretTitle');
-        expect(signingSecretItem).toBeTruthy();
-
-        const clearAction = signingSecretItem!.props.rightElement.props.actions.find((action: { id: string }) => action.id === 'clear-signing-secret');
+        const clearAction = signingSecretItem.props.rightElement.props.actions.find((action: { id: string }) => action.id === 'clear-signing-secret');
         expect(clearAction).toBeTruthy();
 
         await act(async () => {

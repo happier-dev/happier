@@ -66,6 +66,8 @@ vi.mock('expo-constants', () => ({
 }));
 
 import { SettingsAnalyticsRuntime } from './SettingsAnalyticsRuntime';
+import { renderScreen } from '@/dev/testkit';
+
 
 describe('SettingsAnalyticsRuntime', () => {
     beforeEach(() => {
@@ -100,9 +102,7 @@ describe('SettingsAnalyticsRuntime', () => {
         trackingMock.flush.mockReset();
         trackingMock.flush.mockResolvedValue(undefined);
 
-        await act(async () => {
-            renderer.create(<SettingsAnalyticsRuntime />);
-        });
+        await renderScreen(<SettingsAnalyticsRuntime />);
 
         expect(trackingMock.identify).toHaveBeenCalledWith(
             'anon-user',
@@ -130,9 +130,7 @@ describe('SettingsAnalyticsRuntime', () => {
         trackingMock.flush.mockResolvedValue(undefined);
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SettingsAnalyticsRuntime />);
-        });
+        tree = (await renderScreen(<SettingsAnalyticsRuntime />)).tree;
 
         analyticsRuntimeState.settings = {
             ...analyticsRuntimeState.settings!,
@@ -162,9 +160,7 @@ describe('SettingsAnalyticsRuntime', () => {
         trackingMock.flush.mockResolvedValue(undefined);
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SettingsAnalyticsRuntime />);
-        });
+        tree = (await renderScreen(<SettingsAnalyticsRuntime />)).tree;
 
         trackingAnonymousUserId = 'anon-user-2';
         await act(async () => {

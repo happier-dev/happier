@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDraft } from './useDraft';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,14 +17,21 @@ vi.mock('@react-navigation/native', () => ({
   useIsFocused: () => isFocused,
 }));
 
-vi.mock('react-native', () => ({
-  AppState: {
-    addEventListener: () => ({ remove: () => {} }),
-  },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        }
+    );
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({
       sessions: sessionsById,
       updateSessionDraft: (sessionId: string, draft: string | null) => {
@@ -37,7 +46,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
       },
     }),
   },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -50,6 +60,7 @@ type HarnessState = Readonly<{
   setSessionId: (id: string) => void;
   value: string;
   setValue: (next: string) => void;
+  clearDraft: () => void;
   rerender: () => void;
 }>;
 
@@ -68,16 +79,13 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
     const [sessionId, setSessionId] = React.useState(params.initialSessionId);
     const [value, setValue] = React.useState('');
     const [, setTick] = React.useState(0);
-    useDraft(sessionId, value, setValue, { autoSaveInterval: 60_000 });
-    current = { sessionId, setSessionId, value, setValue, rerender: () => setTick((tick) => tick + 1) };
+    const { clearDraft } = useDraft(sessionId, value, setValue, { autoSaveInterval: 60_000 });
+    current = { sessionId, setSessionId, value, setValue, clearDraft, rerender: () => setTick((tick) => tick + 1) };
     return null;
   }
 
   let root: renderer.ReactTestRenderer | null = null;
-  await act(async () => {
-    root = renderer.create(React.createElement(Harness));
-    await flushAsync();
-  });
+  root = (await renderScreen(React.createElement(Harness))).tree;
 
   return {
     getCurrent: () => {
@@ -260,6 +268,25 @@ describe('useDraft', () => {
     });
 
     expect(harness.getCurrent().value).toBe('rollback target prompt');
+    harness.unmount();
+  });
+
+  it('does not restore the previous draft after clearDraft clears the composer', async () => {
+    sessionsById = {
+      s1: { draft: 'draft-1', metadata: {} },
+    };
+
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    expect(harness.getCurrent().value).toBe('draft-1');
+
+    await act(async () => {
+      harness.getCurrent().clearDraft();
+      harness.getCurrent().setValue('');
+      await flushAsync();
+    });
+
+    expect(sessionsById.s1?.draft).toBeNull();
+    expect(harness.getCurrent().value).toBe('');
     harness.unmount();
   });
 });
