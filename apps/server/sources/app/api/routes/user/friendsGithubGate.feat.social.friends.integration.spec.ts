@@ -1,34 +1,13 @@
 import Fastify from "fastify";
 import { beforeAll, afterAll, describe, expect, it, vi, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { userRoutes } from "./userRoutes";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
-
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
 
 function createTestApp() {
     const app = Fastify();
@@ -47,53 +26,32 @@ function createTestApp() {
     return trackApp(typed);
 }
 
+function applyFriendsRouteEnv(
+    harness: LightSqliteHarness,
+    overrides: Record<string, string | undefined> = {},
+): void {
+    harness.resetEnv({
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "1",
+        ...overrides,
+    });
+}
+
 describe("Friends + GitHub gating (integration)", () => {
-    const envBackup = { ...process.env };
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-friends-github-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-friends-github-",
+        });
     }, 120_000);
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         await db.repeatKey.deleteMany().catch(() => {});
         await db.accountIdentity.deleteMany().catch(() => {});
@@ -101,7 +59,9 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("POST /v1/friends/add returns 404 not_found when friends feature is off", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "0",
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -132,7 +92,9 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("GET /v1/user/search returns 404 not_found when friends feature is off", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "0",
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -155,7 +117,9 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("GET /v1/friends returns 404 not_found when friends feature is off", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "0",
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -178,7 +142,9 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("POST /v1/friends/remove returns 404 not_found when friends feature is off", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "0",
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -209,11 +175,13 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("POST /v1/friends/add returns 400 provider-required when either user lacks the required identity provider", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
-        process.env.GITHUB_CLIENT_ID = "test_client_id";
-        process.env.GITHUB_CLIENT_SECRET = "test_client_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://app.example.test/oauth/github/callback";
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: "1",
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "0",
+            GITHUB_CLIENT_ID: "test_client_id",
+            GITHUB_CLIENT_SECRET: "test_client_secret",
+            GITHUB_REDIRECT_URL: "https://app.example.test/oauth/github/callback",
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -244,8 +212,7 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("POST /v1/friends/add returns 400 username-required when username-based friends are enabled and either user lacks a username", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        applyFriendsRouteEnv(harness);
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -276,11 +243,12 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("GET /v1/user/search returns only users connected to the required identity provider", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
-        process.env.GITHUB_CLIENT_ID = "test_client_id";
-        process.env.GITHUB_CLIENT_SECRET = "test_client_secret";
-        process.env.GITHUB_REDIRECT_URL = "https://app.example.test/oauth/github/callback";
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: "0",
+            GITHUB_CLIENT_ID: "test_client_id",
+            GITHUB_CLIENT_SECRET: "test_client_secret",
+            GITHUB_REDIRECT_URL: "https://app.example.test/oauth/github/callback",
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -330,8 +298,7 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("GET /v1/user/search returns username accounts even without GitHub when username-based friends are enabled", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        applyFriendsRouteEnv(harness);
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -371,12 +338,12 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("GET /v1/user/search succeeds for light flavor when DB provider env is unset", async () => {
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
-        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
-        process.env.HAPPIER_SERVER_FLAVOR = "light";
-        process.env.HAPPY_SERVER_FLAVOR = "light";
-        delete process.env.HAPPIER_DB_PROVIDER;
-        delete process.env.HAPPY_DB_PROVIDER;
+        applyFriendsRouteEnv(harness, {
+            HAPPIER_SERVER_FLAVOR: "light",
+            HAPPY_SERVER_FLAVOR: "light",
+            HAPPIER_DB_PROVIDER: undefined,
+            HAPPY_DB_PROVIDER: undefined,
+        });
 
         const app = createTestApp();
         await userRoutes(app as any);

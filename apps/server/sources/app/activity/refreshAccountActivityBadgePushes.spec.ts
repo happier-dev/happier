@@ -1,22 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
+
 const dbSessionFindMany = vi.hoisted(() => vi.fn());
 const dbAccountPushTokenFindMany = vi.hoisted(() => vi.fn());
 const dbAccountPushTokenDeleteMany = vi.hoisted(() => vi.fn());
 const sendPushNotificationsAsyncSpy = vi.hoisted(() => vi.fn(async (messages: unknown[]) => messages.map(() => ({ status: "ok" }))));
 const getPushNotificationReceiptsAsyncSpy = vi.hoisted(() => vi.fn(async (_ids: string[]) => ({})));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: {
-            findMany: (...args: unknown[]) => dbSessionFindMany(...args),
-        },
-        accountPushToken: {
-            findMany: (...args: unknown[]) => dbAccountPushTokenFindMany(...args),
-            deleteMany: (...args: unknown[]) => dbAccountPushTokenDeleteMany(...args),
-        },
-    },
-}));
+const dbMocks = createDbMocks({
+    session: ["findMany"],
+    accountPushToken: ["findMany", "deleteMany"],
+} as const);
+
+dbMocks.db.session.findMany.mockImplementation((...args: unknown[]) => dbSessionFindMany(...args));
+dbMocks.db.accountPushToken.findMany.mockImplementation((...args: unknown[]) => dbAccountPushTokenFindMany(...args));
+dbMocks.db.accountPushToken.deleteMany.mockImplementation((...args: unknown[]) => dbAccountPushTokenDeleteMany(...args));
+
+installDbModuleMock({ db: dbMocks.db });
 
 vi.mock("@/utils/logging/log", () => ({
     log: vi.fn(),
