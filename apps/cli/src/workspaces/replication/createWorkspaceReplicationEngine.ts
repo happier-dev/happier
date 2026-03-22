@@ -32,13 +32,13 @@ import type { WorkspaceReplicationJobRecord } from './jobs/workspaceReplicationJ
 
 type ReadonlyWorkspaceManifest = Readonly<{
     entries: readonly WorkspaceManifest['entries'][number][];
-    fingerprint: WorkspaceManifest['fingerprint'];
+    fingerprint?: WorkspaceManifest['fingerprint'];
 }>;
 
 function toMutableWorkspaceManifest(manifest: ReadonlyWorkspaceManifest): WorkspaceManifest {
     return {
         entries: manifest.entries.map((entry) => ({ ...entry })),
-        fingerprint: manifest.fingerprint,
+        ...(manifest.fingerprint ? { fingerprint: manifest.fingerprint } : {}),
     };
 }
 
