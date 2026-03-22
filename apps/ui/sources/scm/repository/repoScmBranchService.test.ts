@@ -4,11 +4,14 @@ import { storage } from '@/sync/domains/state/storage';
 import { machineScmBranchList } from '@/sync/ops/scm/machineScm';
 import { sessionScmBranchList } from '@/sync/ops';
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: vi.fn(),
     },
-}));
+});
+});
 
 vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmBranchList: vi.fn(),

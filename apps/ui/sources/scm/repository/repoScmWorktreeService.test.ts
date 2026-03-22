@@ -11,11 +11,14 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmWorktreeRemove: (...args: unknown[]) => machineScmWorktreeRemoveMock(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: storageGetStateMock,
     },
-}));
+});
+});
 
 describe('repoScmWorktreeService', () => {
     afterEach(() => {

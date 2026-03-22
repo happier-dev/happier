@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: vi.fn(),
     },
-}));
+});
+});
 
 describe('resolveRepoScmMachinePathRequest', () => {
     afterEach(() => {

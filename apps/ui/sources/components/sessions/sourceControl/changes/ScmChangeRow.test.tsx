@@ -2,15 +2,24 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Pressable as RNPressable } from 'react-native';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-  Pressable: 'Pressable',
-  View: 'View',
-  Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Pressable: 'Pressable',
+                    View: 'View',
+                    Platform: {
+                        OS: 'web',
+                    },
+                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
   Text: 'Text',
@@ -22,9 +31,12 @@ vi.mock('@/constants/Typography', () => ({
   },
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('ScmChangeRow', () => {
   it('renders change stats and calls onPress', async () => {
@@ -32,9 +44,7 @@ describe('ScmChangeRow', () => {
     const { ScmChangeRow } = await import('./ScmChangeRow');
 
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ScmChangeRow
+    tree = (await renderScreen(<ScmChangeRow
           theme={{
             colors: {
               surface: '#fff',
@@ -61,11 +71,9 @@ describe('ScmChangeRow', () => {
           trailingElement={<RNPressable testID="trailing-action" />}
           onPress={onPress}
           density="compact"
-        />
-      );
-    });
+        />)).tree;
 
-    const textContent = tree.root.findAllByType('Text' as any).map((node) => {
+    const textContent = tree.findAllByType('Text' as any).map((node) => {
       const value = node.props.children;
       if (Array.isArray(value)) return value.join('');
       return String(value);
@@ -73,7 +81,7 @@ describe('ScmChangeRow', () => {
     expect(textContent.join(' ')).toContain('+3');
     expect(textContent.join(' ')).toContain('-1');
 
-    const clickable = tree.root.findAllByType('View' as any).find((node) => node.props.accessibilityLabel === 'files.changeRow.viewDiffA11y')!;
+    const clickable = tree.findAllByType('View' as any).find((node) => node.props.accessibilityLabel === 'files.changeRow.viewDiffA11y')!;
     act(() => {
       clickable.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn(), shiftKey: false });
     });
@@ -97,9 +105,7 @@ describe('ScmChangeRow', () => {
     } as any;
 
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ScmChangeRow
+    tree = (await renderScreen(<ScmChangeRow
           theme={theme}
           file={{
             fileName: 'new.ts',
@@ -111,11 +117,9 @@ describe('ScmChangeRow', () => {
             linesRemoved: 0,
           } as any}
           onPress={() => {}}
-        />
-      );
-    });
+        />)).tree;
 
-    const textContent = tree.root.findAllByType('Text' as any).map((node) => String(node.props.children));
+    const textContent = tree.findAllByType('Text' as any).map((node) => String(node.props.children));
     expect(textContent.join(' ')).toContain('A');
   });
 
@@ -136,9 +140,7 @@ describe('ScmChangeRow', () => {
     } as any;
 
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ScmChangeRow
+    tree = (await renderScreen(<ScmChangeRow
           theme={theme}
           file={{
             fileName: '/README.md',
@@ -150,11 +152,9 @@ describe('ScmChangeRow', () => {
             linesRemoved: 0,
           } as any}
           onPress={() => {}}
-        />
-      );
-    });
+        />)).tree;
 
-    const textContent = tree.root.findAllByType('Text' as any).map((node) => {
+    const textContent = tree.findAllByType('Text' as any).map((node) => {
       const value = node.props.children;
       if (Array.isArray(value)) return value.join('');
       return String(value);
@@ -180,9 +180,7 @@ describe('ScmChangeRow', () => {
     } as any;
 
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ScmChangeRow
+    tree = (await renderScreen(<ScmChangeRow
           theme={theme}
           file={{
             fileName: 'a.ts',
@@ -195,11 +193,9 @@ describe('ScmChangeRow', () => {
           } as any}
           highlighted
           onPress={() => {}}
-        />
-      );
-    });
+        />)).tree;
 
-    const container = tree.root.findAllByType('View' as any)[0]!;
+    const container = tree.findAllByType('View' as any)[0]!;
     const style = container.props.style;
     const backgroundColor = Array.isArray(style)
       ? (style.find((s) => s && typeof s === 'object' && 'backgroundColor' in s)?.backgroundColor ?? null)
@@ -227,9 +223,7 @@ describe('ScmChangeRow', () => {
     } as any;
 
     let tree!: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <ScmChangeRow
+    tree = (await renderScreen(<ScmChangeRow
           theme={theme}
           file={{
             fileName: 'a.ts',
@@ -243,11 +237,9 @@ describe('ScmChangeRow', () => {
           onPress={onPress}
           onPressPinned={onPressPinned}
           onToggleSelection={onToggleSelection}
-        />
-      );
-    });
+        />)).tree;
 
-    const clickable = tree.root.findAllByType('View' as any).find((node) => node.props.accessibilityLabel === 'files.changeRow.viewDiffA11y')!;
+    const clickable = tree.findAllByType('View' as any).find((node) => node.props.accessibilityLabel === 'files.changeRow.viewDiffA11y')!;
     act(() => {
       clickable.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn() });
     });

@@ -10,16 +10,20 @@ const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: 
 }));
 const evaluateScmOperationPreflight = vi.hoisted(() => vi.fn(() => ({ allowed: true, message: '' })));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: modalAlert,
-    confirm: modalConfirm,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+            confirm: modalConfirm,
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/sync/ops', () => ({
   sessionScmChangeDiscard,

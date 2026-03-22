@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NormalizedMessage } from '@/sync/typesRaw';
 
@@ -25,10 +25,21 @@ function toolCallMessage(toolName: string, toolInput: unknown): NormalizedMessag
     };
 }
 
-describe('WorkspaceMutationInvalidator', () => {
-    it('debounces and coalesces changed paths per session', () => {
-        vi.useFakeTimers();
+async function advanceTimers(ms: number): Promise<void> {
+    await vi.advanceTimersByTimeAsync(ms);
+}
 
+describe('WorkspaceMutationInvalidator', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('debounces and coalesces changed paths per session', async () => {
         const invalidations: Array<{ sessionId: string; paths: readonly string[]; unknown: boolean }> = [];
         const now = vi.fn(() => 1_000);
         const invalidator = new WorkspaceMutationInvalidator({
@@ -44,9 +55,9 @@ describe('WorkspaceMutationInvalidator', () => {
         invalidator.ingest('s1', [toolCallMessage('patch', { changes: [{ path: 'b.ts' }] })]);
 
         expect(invalidations).toHaveLength(0);
-        vi.advanceTimersByTime(199);
+        await advanceTimers(199);
         expect(invalidations).toHaveLength(0);
-        vi.advanceTimersByTime(1);
+        await advanceTimers(1);
 
         expect(invalidations).toHaveLength(1);
         expect(invalidations[0]?.sessionId).toBe('s1');
@@ -54,9 +65,7 @@ describe('WorkspaceMutationInvalidator', () => {
         expect(invalidations[0]?.unknown).toBe(false);
     });
 
-    it('rate-limits unknown-only mutations', () => {
-        vi.useFakeTimers();
-
+    it('rate-limits unknown-only mutations', async () => {
         const invalidations: Array<{ sessionId: string; paths: readonly string[]; unknown: boolean }> = [];
         let nowMs = 1_000;
         const now = vi.fn(() => nowMs);
@@ -70,24 +79,22 @@ describe('WorkspaceMutationInvalidator', () => {
         });
 
         invalidator.ingest('s1', [toolCallMessage('bash', { command: 'echo hi' })]);
-        vi.advanceTimersByTime(50);
+        await advanceTimers(50);
         expect(invalidations).toHaveLength(1);
         expect(invalidations[0]?.unknown).toBe(true);
         expect(invalidations[0]?.paths).toEqual([]);
 
         invalidator.ingest('s1', [toolCallMessage('bash', { command: 'echo hi2' })]);
-        vi.advanceTimersByTime(50);
+        await advanceTimers(50);
         expect(invalidations).toHaveLength(1);
 
         nowMs += 1600;
         invalidator.ingest('s1', [toolCallMessage('bash', { command: 'echo hi3' })]);
-        vi.advanceTimersByTime(50);
+        await advanceTimers(50);
         expect(invalidations).toHaveLength(2);
     });
 
-    it('does not invalidate for read-only Diff inspection', () => {
-        vi.useFakeTimers();
-
+    it('does not invalidate for read-only Diff inspection', async () => {
         const onInvalidate = vi.fn();
         const invalidator = new WorkspaceMutationInvalidator({
             debounceMs: 50,
@@ -103,14 +110,12 @@ describe('WorkspaceMutationInvalidator', () => {
                 { file_path: 'src/app.ts', oldText: 'old', newText: 'new' },
             ],
         })]);
-        vi.advanceTimersByTime(50);
+        await advanceTimers(50);
 
         expect(onInvalidate).not.toHaveBeenCalled();
     });
 
-    it('invalidates for canonical Diff mutation signals emitted from provider turn change sets', () => {
-        vi.useFakeTimers();
-
+    it('invalidates for canonical Diff mutation signals emitted from provider turn change sets', async () => {
         const onInvalidate = vi.fn();
         const invalidator = new WorkspaceMutationInvalidator({
             debounceMs: 50,
@@ -131,7 +136,7 @@ describe('WorkspaceMutationInvalidator', () => {
                 sessionChangeScope: 'turn',
             },
         })]);
-        vi.advanceTimersByTime(50);
+        await advanceTimers(50);
 
         expect(onInvalidate).toHaveBeenCalledWith({
             sessionId: 's1',

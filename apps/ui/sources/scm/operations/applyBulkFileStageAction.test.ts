@@ -30,15 +30,15 @@ vi.mock('@/scm/core/operationPolicy', () => ({
     evaluateScmOperationPreflight,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('applyBulkFileStageAction', () => {
     const initialStorageState = storage.getState();

@@ -1,8 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+type BranchMenuScreen = Awaited<ReturnType<typeof renderScreen>>;
 
 const sessionScmBranchCheckoutMock = vi.hoisted(() => vi.fn());
 const sessionScmBranchCreateMock = vi.hoisted(() => vi.fn());
@@ -17,31 +21,35 @@ const readCachedBranchesForSessionMock = vi.hoisted(() => vi.fn());
 const invalidateBranchesForSessionMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-}));
+async function openBranchMenu(screen: BranchMenuScreen): Promise<void> {
+    const menu = screen.findByType('DropdownMenu' as any);
+    await act(async () => {
+        menu.props.onOpenChange(true);
+    });
+    await flushHookEffects({ cycles: 1 });
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Pressable: 'Pressable',
+                            Platform: {
+                                OS: 'web',
+                                select: (value: any) => value?.default ?? null,
+                            },
+                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            divider: '#ddd',
-            surface: '#fff',
-            surfaceHigh: '#f6f6f6',
-            text: '#000',
-            textSecondary: '#666',
-            textLink: '#09f',
-        },
-    };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme, {}) : input) },
-    };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -56,9 +64,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}), mono: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionScmBranchCheckout: sessionScmBranchCheckoutMock,
@@ -74,17 +83,24 @@ vi.mock('@/scm/repository/repoScmBranchService', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => useSettingMock(key),
-}));
+});
+});
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushMock }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushMock },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
@@ -96,12 +112,15 @@ vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
     usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertMock,
-        confirm: vi.fn(async () => false),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertMock,
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
 describe('SourceControlBranchMenu', () => {
     beforeEach(() => {
@@ -135,10 +154,7 @@ describe('SourceControlBranchMenu', () => {
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SourceControlBranchMenu, {
+        const screen = await renderScreen(React.createElement(SourceControlBranchMenu, {
                     sessionId: 's1',
                     currentBranch: 'existing-branch',
                     snapshot: {
@@ -154,18 +170,10 @@ describe('SourceControlBranchMenu', () => {
                     } as any,
                     disabled: false,
                     writeEnabled: false,
-                } as any)
-            );
-        });
+                } as any));
 
-        let menu = tree.root.findByType('DropdownMenu' as any);
-        await act(async () => {
-            menu.props.onOpenChange(true);
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-        menu = tree.root.findByType('DropdownMenu' as any);
+        await openBranchMenu(screen);
+        const menu = screen.findByType('DropdownMenu' as any);
 
         expect(menu.props.items.some((item: any) => item.id === 'publish')).toBe(false);
         expect(menu.props.items.find((item: any) => item.id === 'branch:feature/test')?.disabled).toBe(true);
@@ -184,10 +192,7 @@ describe('SourceControlBranchMenu', () => {
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SourceControlBranchMenu
+        const screen = await renderScreen(<SourceControlBranchMenu
                     sessionId="s1"
                     currentBranch="main"
                     snapshot={{
@@ -202,16 +207,10 @@ describe('SourceControlBranchMenu', () => {
                         stashCount: 0,
                     } as any}
                     disabled={false}
-                />
-            );
-        });
+                />);
 
-        let menu = tree.root.findByType('DropdownMenu' as any);
-        await act(async () => {
-            menu.props.onOpenChange(true);
-            await Promise.resolve();
-        });
-        menu = tree.root.findByType('DropdownMenu' as any);
+        await openBranchMenu(screen);
+        const menu = screen.findByType('DropdownMenu' as any);
 
         expect(menu.props.items.some((item: any) => item.id === 'branch:cached-branch')).toBe(true);
         expect(fetchBranchesForSessionMock).toHaveBeenCalledWith({
@@ -229,10 +228,7 @@ describe('SourceControlBranchMenu', () => {
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SourceControlBranchMenu
+        const screen = await renderScreen(<SourceControlBranchMenu
                     sessionId="s1"
                     currentBranch="main"
                     snapshot={{
@@ -247,21 +243,15 @@ describe('SourceControlBranchMenu', () => {
                         stashCount: 0,
                     } as any}
                     disabled={false}
-                />
-            );
-        });
+                />);
 
-        let menu = tree.root.findByType('DropdownMenu' as any);
-        await act(async () => {
-            menu.props.onOpenChange(true);
-            await Promise.resolve();
-        });
+        await openBranchMenu(screen);
         await act(async () => {
             try {
                 await fetchBranchesForSessionMock.mock.results[0]?.value;
             } catch {}
         });
-        menu = tree.root.findByType('DropdownMenu' as any);
+        const menu = screen.findByType('DropdownMenu' as any);
 
         expect(menu.props.items.some((item: any) => item.id === 'branch:cached-branch')).toBe(true);
         expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'refresh failed');
@@ -274,10 +264,7 @@ describe('SourceControlBranchMenu', () => {
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SourceControlBranchMenu
+        const screen = await renderScreen(<SourceControlBranchMenu
                     sessionId="s1"
                     currentBranch="existing-branch"
                     snapshot={{
@@ -292,11 +279,9 @@ describe('SourceControlBranchMenu', () => {
                         stashCount: 0,
                     } as any}
                     disabled={false}
-                />
-            );
-        });
+                />);
 
-        const menu = tree.root.findByType('DropdownMenu' as any);
+        const menu = screen.findByType('DropdownMenu' as any);
 
         expect(menu.props.matchTriggerWidth).toBe(false);
     });
@@ -313,10 +298,7 @@ describe('SourceControlBranchMenu', () => {
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SourceControlBranchMenu
+        const screen = await renderScreen(<SourceControlBranchMenu
                     sessionId="s1"
                     currentBranch="main"
                     snapshot={{
@@ -331,11 +313,9 @@ describe('SourceControlBranchMenu', () => {
                         stashCount: 0,
                     } as any}
                     disabled={false}
-                />
-            );
-        });
+                />);
 
-        const menu = tree.root.findByType('DropdownMenu' as any);
+        const menu = screen.findByType('DropdownMenu' as any);
         await act(async () => {
             await menu.props.onSelect('branch:feature/test');
         });
@@ -354,10 +334,7 @@ describe('SourceControlBranchMenu', () => {
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SourceControlBranchMenu
+        const screen = await renderScreen(<SourceControlBranchMenu
                     sessionId="s1"
                     currentBranch="main"
                     snapshot={{
@@ -372,11 +349,9 @@ describe('SourceControlBranchMenu', () => {
                         stashCount: 0,
                     } as any}
                     disabled={false}
-                />
-            );
-        });
+                />);
 
-        const menu = tree.root.findByType('DropdownMenu' as any);
+        const menu = screen.findByType('DropdownMenu' as any);
         await act(async () => {
             await menu.props.onSelect('publish');
         });

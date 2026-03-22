@@ -1,15 +1,25 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Pressable: 'Pressable',
-  Platform: { OS: 'ios', select: (s: any) => s.ios ?? s.default },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Pressable: 'Pressable',
+                    Platform: {
+                        OS: 'ios',
+                        select: (s: any) => s.ios ?? s.default,
+                    },
+                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
   Text: 'Text',
@@ -19,9 +29,12 @@ vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-  t: (_k: string, vars?: any) => (vars?.count != null ? `selected:${vars.count}` : 'clear'),
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (_k: string, vars?: any) => (vars?.count != null ? `selected:${vars.count}` : 'clear'),
+    });
+});
 
 describe('ScmCommitSelectionSummaryRow', () => {
   it('renders and calls onClear', async () => {
@@ -40,9 +53,7 @@ describe('ScmCommitSelectionSummaryRow', () => {
     };
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ScmCommitSelectionSummaryRow theme={theme} count={3} onClear={onClear} density="compact" />);
-    });
+    tree = (await renderScreen(<ScmCommitSelectionSummaryRow theme={theme} count={3} onClear={onClear} density="compact" />)).tree;
     const pressable = tree.root.findByType('Pressable' as any);
 
     await act(async () => {

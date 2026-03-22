@@ -12,18 +12,26 @@ const pruneCommitSelectionPatchesMock = vi.hoisted(() => vi.fn());
 const getSnapshotErrorMock = vi.hoisted(() => vi.fn(() => null));
 const clearSearchCacheForProjectMock = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('react-native', () => ({
-  AppState: {
-    currentState: 'active',
-    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-  },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            AppState: {
+                currentState: 'active',
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+        }
+    );
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: getStateMock,
   },
-}));
+});
+});
 
 const fetchSnapshotForSessionMock = vi.hoisted(() => vi.fn());
 vi.mock('./scmRepositoryService', () => ({

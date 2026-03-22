@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -18,14 +20,19 @@ vi.mock('@expo/vector-icons', () => ({
   Octicons: 'Octicons',
 }));
 
-vi.mock('react-native', () => ({
-  Pressable: 'Pressable',
-  ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Pressable: 'Pressable',
+                    ActivityIndicator: 'ActivityIndicator',
+                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-  __esModule: true,
-  useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('@/dev/testkit');
+  return await createUnistylesMock({
     theme: {
       colors: {
         success: '#0a0',
@@ -34,8 +41,8 @@ vi.mock('react-native-unistyles', () => ({
         surface: '#fff',
       },
     },
-  }),
-}));
+  });
+});
 
 describe('ScmCommitSelectionToggleButton', () => {
   it('toggles commit selection via applyFileStageAction', async () => {
@@ -45,9 +52,7 @@ describe('ScmCommitSelectionToggleButton', () => {
     const { ScmCommitSelectionToggleButton } = await import('./ScmCommitSelectionToggleButton');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-	        <ScmCommitSelectionToggleButton
+    tree = (await renderScreen(<ScmCommitSelectionToggleButton
 	          sessionId="s1"
 	          sessionPath="/tmp/repo"
 	          snapshot={null}
@@ -57,9 +62,7 @@ describe('ScmCommitSelectionToggleButton', () => {
 	          selectedForCommit={false}
 	          surface="files"
 	          onAfterToggle={afterSpy}
-	        />
-      );
-    });
+	        />)).tree;
 
     const button = tree.root.findByType('Pressable' as any);
     await act(async () => {
