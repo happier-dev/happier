@@ -167,6 +167,9 @@ describe.skipIf(!shouldRunSaplingIntegration())('core e2e: scm sapling machine R
       happyHomeDir: daemonHomeDir,
       env: {
         ...process.env,
+        // The CLI source-entrypoint path is already covered by cliDist tests; this lane
+        // only needs the daemon/bootstrap contract and is more stable on the source path.
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         CI: '1',
         HAPPIER_VARIANT: 'dev',
         HAPPIER_DISABLE_CAFFEINATE: '1',

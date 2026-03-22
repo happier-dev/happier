@@ -238,7 +238,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
             }
           });
 
-          const taskToolUseIds = collectToolUseIds(plaintext, 'SubAgent');
+          const taskToolUseIds = collectToolUseIds(plaintext, 'Task');
           if (taskToolUseIds.size === 0) return false;
 
           const hasImportedSidechain = plaintext.some((msg) => {

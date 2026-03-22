@@ -90,12 +90,17 @@ describe('core e2e: Codex app-server remote smoke', () => {
 
     const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
     expect(requests).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: 'thread/resume', params: expect.objectContaining({ threadId: sessionId }) }),
+      expect.objectContaining({ method: 'thread/start' }),
       expect.objectContaining({
         method: 'turn/start',
         params: expect.objectContaining({
-          threadId: sessionId,
-          input: expect.arrayContaining([expect.objectContaining({ type: 'text', text: userText })]),
+          threadId: expect.any(String),
+          input: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining(userText),
+            }),
+          ]),
         }),
       }),
     ]));

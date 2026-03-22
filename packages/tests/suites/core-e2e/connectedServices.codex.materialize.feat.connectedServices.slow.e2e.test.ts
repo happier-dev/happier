@@ -64,11 +64,6 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
       },
     });
 
-    await ensureCliSharedDepsBuilt({
-      testDir,
-      env: { ...process.env, CI: '1' },
-    });
-
     const now = Date.now();
     const record = buildConnectedServiceCredentialRecord({
       now,
@@ -118,22 +113,30 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
       join(repoRootDir(), 'packages', 'tests', 'fixtures', 'acp-stub-provider', 'acp-stub-provider.mjs'),
     );
 
+    const daemonEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: '1',
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_DISABLE_CAFFEINATE: '1',
+      HAPPIER_HOME_DIR: daemonHomeDir,
+      HAPPIER_SERVER_URL: serverBaseUrl,
+      HAPPIER_WEBAPP_URL: serverBaseUrl,
+      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
+      HAPPIER_CODEX_ACP_BIN: acpStubProvider,
+      HAPPIER_DAEMON_HEARTBEAT_INTERVAL: '5000',
+      HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0',
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+    };
+
+    await ensureCliSharedDepsBuilt({
+      testDir,
+      env: daemonEnv,
+    });
+
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
-      env: {
-        ...process.env,
-        CI: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_HOME_DIR: daemonHomeDir,
-        HAPPIER_SERVER_URL: serverBaseUrl,
-        HAPPIER_WEBAPP_URL: serverBaseUrl,
-        HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-        HAPPIER_CODEX_ACP_BIN: acpStubProvider,
-        HAPPIER_DAEMON_HEARTBEAT_INTERVAL: '5000',
-        HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0',
-      },
+      env: daemonEnv,
     });
 
     const daemonPort = daemon.state.httpPort;

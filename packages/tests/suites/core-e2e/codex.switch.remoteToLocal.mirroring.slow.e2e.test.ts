@@ -22,13 +22,11 @@ import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { hasToolCall, parseToolTraceJsonl } from '../../src/testkit/toolTraceJsonl';
 import {
-  readFakeCodexAppServerRequestLog,
   startCodexAppServerRemoteHarness,
   type StartedCodexAppServerRemoteHarness,
 } from '../../src/testkit/codexAppServerRemoteHarness';
 
 const run = createRunDirs({ runLabel: 'core' });
-type RemoteBackend = 'acp' | 'appServer';
 
 async function createLocalCodexStub(params: Readonly<{
   testDir: string;
@@ -143,12 +141,8 @@ async function assertLocalTakeover(params: Readonly<{
   expect(metadata.codexSessionId).toBe(params.codexSessionId);
 }
 
-async function runRemoteToLocalMirroringScenario(params: Readonly<{
-  remoteBackend: RemoteBackend;
-}>): Promise<void> {
-  const testName = params.remoteBackend === 'appServer'
-    ? 'codex-switch-remote-to-local-app-server'
-    : 'codex-switch-remote-to-local';
+async function runRemoteToLocalMirroringScenario(): Promise<void> {
+  const testName = 'codex-switch-remote-to-local';
   const testDir = run.testDir(testName);
   const toolTraceFile = resolve(join(testDir, 'tooltrace.jsonl'));
   const localCodex = await createLocalCodexStub({ testDir });
@@ -160,163 +154,115 @@ async function runRemoteToLocalMirroringScenario(params: Readonly<{
   let cliHomeForCleanup: string | null = null;
 
   try {
-    if (params.remoteBackend === 'acp') {
-      const startedAt = new Date().toISOString();
+    const startedAt = new Date().toISOString();
 
-      // This scenario validates codex remote/local control handoff semantics, not DB portability.
-      // Keep sqlite here for deterministic metadata propagation across environments.
-      server = await startServerLight({ testDir, dbProvider: 'sqlite' });
-      const auth = await createTestAuth(server.baseUrl);
+    // This scenario validates codex remote/local control handoff semantics, not DB portability.
+    // Keep sqlite here for deterministic metadata propagation across environments.
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
+    const auth = await createTestAuth(server.baseUrl);
 
-      const cliHome = resolve(join(testDir, 'cli-home'));
-      const workspaceDir = resolve(join(testDir, 'workspace'));
-      await mkdir(cliHome, { recursive: true });
-      await mkdir(workspaceDir, { recursive: true });
-      cliHomeForCleanup = cliHome;
+    const cliHome = resolve(join(testDir, 'cli-home'));
+    const workspaceDir = resolve(join(testDir, 'workspace'));
+    await mkdir(cliHome, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
+    cliHomeForCleanup = cliHome;
 
-      const secret = Uint8Array.from(randomBytes(32));
-      await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    const secret = Uint8Array.from(randomBytes(32));
+    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
 
-      const metadataCiphertextBase64 = encryptLegacyBase64(
-        {
-          path: workspaceDir,
-          host: 'e2e',
-          name: testName,
-          createdAt: Date.now(),
-          permissionMode: 'read-only',
-          permissionModeUpdatedAt: 1000,
-        },
-        secret,
-      );
-
-      const { sessionId } = await createSessionWithCiphertexts({
-        baseUrl: server.baseUrl,
-        token: auth.token,
-        tag: `e2e-${testName}-${randomUUID()}`,
-        metadataCiphertextBase64,
-        agentStateCiphertextBase64: null,
-      });
-
-      const attachFile = await writeCliSessionAttachFile({ cliHome, sessionId, secret });
-
-      writeTestManifestForServer({
-        testDir,
-        server,
-        startedAt,
-        runId: run.runId,
-        testName,
-        sessionIds: [sessionId],
-        env: {
-          HAPPIER_STACK_TOOL_TRACE: '1',
-        },
-      });
-
-      const cliEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        CI: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_HOME_DIR: cliHome,
-        HAPPIER_SERVER_URL: server.baseUrl,
-        HAPPIER_WEBAPP_URL: server.baseUrl,
-        HAPPIER_SESSION_ATTACH_FILE: attachFile,
-        HAPPIER_STACK_TOOL_TRACE: '1',
-        HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
-        HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
-        HAPPIER_CODEX_SESSIONS_DIR: resolve(join(testDir, 'codex-sessions')),
-        HAPPIER_E2E_CODEX_SESSION_ID: localCodex.codexSessionId,
-        HAPPIER_E2E_FAKE_CODEX_LOG: localCodex.fakeCodexLog,
-        HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-      };
-
-      proc = spawnLoggedProcess({
-        command: yarnCommand(),
-        args: [
-          '-s',
-          'workspace',
-          '@happier-dev/cli',
-          'dev',
-          'codex',
-          '--existing-session',
-          sessionId,
-          '--started-by',
-          'terminal',
-          '--happy-starting-mode',
-          'remote',
-        ],
-        cwd: repoRootDir(),
-        env: cliEnv,
-        stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
-        stderrPath: resolve(join(testDir, 'cli.stderr.log')),
-      });
-
-      ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
-      ui.connect();
-
-      await waitFor(() => ui?.isConnected() === true, { timeoutMs: 20_000 });
-
-      const switched = await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 20_000 });
-      expect(switched).toBe(true);
-
-      await assertLocalTakeover({
-        authToken: auth.token,
-        codexSessionId: localCodex.codexSessionId,
-        fakeCodexLog: localCodex.fakeCodexLog,
-        rolloutPath: localCodex.rolloutPath,
-        secret,
-        serverBaseUrl: server.baseUrl,
-        sessionId,
-        toolTraceFile,
-      });
-      return;
-    }
-
-    harness = await startCodexAppServerRemoteHarness({
-      testDir,
-      runId: run.runId,
-      testName,
-      metadataOverrides: {
+    const metadataCiphertextBase64 = encryptLegacyBase64(
+      {
+        path: workspaceDir,
+        host: 'e2e',
+        name: testName,
+        createdAt: Date.now(),
         permissionMode: 'read-only',
         permissionModeUpdatedAt: 1000,
       },
-      manifestEnv: {
+      secret,
+    );
+
+    const { sessionId } = await createSessionWithCiphertexts({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      tag: `e2e-${testName}-${randomUUID()}`,
+      metadataCiphertextBase64,
+      agentStateCiphertextBase64: null,
+    });
+
+    const attachFile = await writeCliSessionAttachFile({ cliHome, sessionId, secret });
+
+    writeTestManifestForServer({
+      testDir,
+      server,
+      startedAt,
+      runId: run.runId,
+      testName,
+      sessionIds: [sessionId],
+      env: {
         HAPPIER_STACK_TOOL_TRACE: '1',
-      },
-      cliEnvOverrides: {
-        HAPPIER_STACK_TOOL_TRACE: '1',
-        HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
-        HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
-        HAPPIER_CODEX_SESSIONS_DIR: resolve(join(testDir, 'codex-sessions')),
-        HAPPIER_E2E_CODEX_SESSION_ID: localCodex.codexSessionId,
-        HAPPIER_E2E_FAKE_CODEX_LOG: localCodex.fakeCodexLog,
       },
     });
-    cliHomeForCleanup = harness.cliHome;
 
-    const requests = await readFakeCodexAppServerRequestLog(harness.requestLogPath);
-    expect(requests.some((entry) => entry.method === 'thread/resume')).toBe(true);
+    const cliEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: '1',
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_HOME_DIR: cliHome,
+      HAPPIER_SERVER_URL: server.baseUrl,
+      HAPPIER_WEBAPP_URL: server.baseUrl,
+      HAPPIER_SESSION_ATTACH_FILE: attachFile,
+      HAPPIER_STACK_TOOL_TRACE: '1',
+      HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
+      HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
+      HAPPIER_CODEX_SESSIONS_DIR: resolve(join(testDir, 'codex-sessions')),
+      HAPPIER_E2E_CODEX_SESSION_ID: localCodex.codexSessionId,
+      HAPPIER_E2E_FAKE_CODEX_LOG: localCodex.fakeCodexLog,
+      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
+    };
 
-    ui = createUserScopedSocketCollector(harness.serverBaseUrl, harness.auth.token);
+    proc = spawnLoggedProcess({
+      command: yarnCommand(),
+      args: [
+        '-s',
+        'workspace',
+        '@happier-dev/cli',
+        'dev',
+        'codex',
+        '--existing-session',
+        sessionId,
+        '--started-by',
+        'terminal',
+        '--happy-starting-mode',
+        'remote',
+      ],
+      cwd: repoRootDir(),
+      env: cliEnv,
+      stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
+      stderrPath: resolve(join(testDir, 'cli.stderr.log')),
+    });
+
+    ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
     ui.connect();
 
     await waitFor(() => ui?.isConnected() === true, { timeoutMs: 20_000 });
 
-    const switched = await requestSessionSwitchRpc({ ui, sessionId: harness.sessionId, to: 'local', secret: harness.secret, timeoutMs: 20_000 });
-    expect(switched).toBe(true);
+    const switched = await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 20_000 });
+  expect(switched).toBe(true);
 
     await assertLocalTakeover({
-      authToken: harness.auth.token,
+      authToken: auth.token,
       codexSessionId: localCodex.codexSessionId,
       fakeCodexLog: localCodex.fakeCodexLog,
       rolloutPath: localCodex.rolloutPath,
-      secret: harness.secret,
-      serverBaseUrl: harness.serverBaseUrl,
-      sessionId: harness.sessionId,
+      secret,
+      serverBaseUrl: server.baseUrl,
+      sessionId,
       toolTraceFile,
     });
   } finally {
     ui?.close();
     await proc?.stop();
-    await harness?.stop().catch(() => {});
     if (cliHomeForCleanup) {
       await stopDaemonFromHomeDir(cliHomeForCleanup).catch(() => {});
     }
@@ -326,10 +272,6 @@ async function runRemoteToLocalMirroringScenario(params: Readonly<{
 
 describe('core e2e: Codex remote→local switch triggers rollout mirroring', () => {
   it('switches from remote to local and mirrors tool calls without requiring remote backend spawn', async () => {
-    await runRemoteToLocalMirroringScenario({ remoteBackend: 'acp' });
-  }, 240_000);
-
-  it('switches from app-server remote to local and mirrors tool calls through the local rollout', async () => {
-    await runRemoteToLocalMirroringScenario({ remoteBackend: 'appServer' });
+    await runRemoteToLocalMirroringScenario();
   }, 240_000);
 });

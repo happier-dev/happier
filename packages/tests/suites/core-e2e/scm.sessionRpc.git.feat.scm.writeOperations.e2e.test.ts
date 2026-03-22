@@ -26,6 +26,7 @@ import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../src/testkit/rp
 import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
 const run = createRunDirs({ runLabel: 'core' });
+const daemonStartupTimeoutMs = 90_000;
 
 type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string };
 type SafeParseResult<T> = { success: true; data: T } | { success: false };
@@ -161,8 +162,12 @@ describe('core e2e: scm git machine RPC', () => {
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: daemonStartupTimeoutMs,
       env: {
         ...process.env,
+        // The CLI source-entrypoint path is already covered by cliDist tests; this lane
+        // only needs the daemon/bootstrap contract and is more stable on the source path.
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         CI: '1',
         HAPPIER_VARIANT: 'dev',
         HAPPIER_DISABLE_CAFFEINATE: '1',

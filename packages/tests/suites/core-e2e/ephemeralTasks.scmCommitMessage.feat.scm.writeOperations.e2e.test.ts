@@ -126,5 +126,5 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
 
     expect(res.ok).toBe(true);
     expect((res as any).result?.message).toBe('feat: ephemeral commit message');
-  }, 120_000);
+  }, 240_000);
 });

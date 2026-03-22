@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -9,6 +9,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
+import { waitForDaemonSessionWebhookMarker } from '../../src/testkit/daemon/waitForDaemonSessionWebhookMarker';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -35,7 +36,7 @@ type HandoffPrepareResult = Readonly<{
     phase: string;
     transportStrategy?: 'direct_peer' | 'server_routed_stream';
   }>;
-  resume: Readonly<{
+  resume?: Readonly<{
     directory: string;
     agent: 'claude' | 'codex' | 'opencode';
     resume: string;
@@ -44,6 +45,27 @@ type HandoffPrepareResult = Readonly<{
     environmentVariables?: Record<string, string>;
   }>;
 }>;
+
+type HandoffStatusResult = Readonly<{
+  handoffId: string;
+  status: Readonly<{
+    handoffId: string;
+    status: string;
+    phase: string;
+    jobId?: string;
+    transportStrategy?: 'direct_peer' | 'server_routed_stream';
+  }>;
+}>;
+
+function requirePreparedResume(
+  result: HandoffPrepareResult,
+  context: string,
+): NonNullable<HandoffPrepareResult['resume']> {
+  if (!result.resume) {
+    throw new Error(`Missing resume payload for ${context}`);
+  }
+  return result.resume;
+}
 
 type SessionSnapshotRow = Readonly<{
   session?: Readonly<{
@@ -120,6 +142,76 @@ async function fetchSessionSnapshot(params: Readonly<{
   return response.data;
 }
 
+async function waitForReadyHandoffPrepareResult(params: Readonly<{
+  machineRpc: ReturnType<typeof createDataKeyRpcClient>;
+  machineId: string;
+  handoffId: string;
+  initialResult: HandoffPrepareResult;
+  context: string;
+}>): Promise<HandoffPrepareResult> {
+  const readInnerRpcErrorCode = (value: unknown): string | null => {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const candidate = value as { ok?: unknown; errorCode?: unknown; error?: unknown };
+    if (candidate.ok !== false) {
+      return null;
+    }
+    if (typeof candidate.errorCode === 'string' && candidate.errorCode.trim().length > 0) {
+      return candidate.errorCode;
+    }
+    if (typeof candidate.error === 'string' && candidate.error.trim().length > 0) {
+      return candidate.error;
+    }
+    return 'rpc_failed';
+  };
+
+  if (params.initialResult.resume && params.initialResult.status.status === 'ready_for_cutover') {
+    return params.initialResult;
+  }
+
+  let readyResult: HandoffPrepareResult | null = null;
+  await waitFor(async () => {
+    const polledRaw = unwrapDataKeyRpcResult(
+      await params.machineRpc.call(`${params.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET}`, {
+        handoffId: params.handoffId,
+      }),
+      `${params.context} result get`,
+    );
+    const polledErrorCode = readInnerRpcErrorCode(polledRaw);
+    if (polledErrorCode && polledErrorCode !== 'not_found') {
+      throw new Error(`${params.context} result get failed: ${polledErrorCode}`);
+    }
+
+    const status = unwrapDataKeyRpcResult(
+      await params.machineRpc.call(`${params.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET}`, {
+        handoffId: params.handoffId,
+      }),
+      `${params.context} status get`,
+    ) as HandoffStatusResult;
+    if (status.status.status === 'awaiting_recovery' || status.status.status === 'failed' || status.status.status === 'aborted') {
+      throw new Error(`${params.context} entered terminal status ${status.status.status}`);
+    }
+
+    const polled = polledErrorCode ? null : polledRaw as HandoffPrepareResult;
+    if (polled && polled.resume && polled.status.status === 'ready_for_cutover') {
+      readyResult = polled;
+      return true;
+    }
+    return false;
+  }, {
+    timeoutMs: 30_000,
+    intervalMs: 100,
+    context: `${params.context} ready for cutover`,
+  });
+
+  if (!readyResult) {
+    throw new Error(`Expected ready handoff prepare result for ${params.handoffId}`);
+  }
+
+  return readyResult;
+}
+
 function sessionChildEnv(params: Readonly<{
   homeDir: string;
   serverBaseUrl: string;
@@ -174,6 +266,7 @@ describe('core e2e: session handoff via direct peer', () => {
     const sourceClaudeProjectDir = resolve(join(sourceClaudeConfigDir, 'projects', 'proj-handoff-direct'));
     const sourceClaudeSessionFile = resolve(join(sourceClaudeProjectDir, 'sess-handoff-direct.jsonl'));
     const targetClaudeConfigDir = resolve(join(testDir, 'target-claude-config'));
+    const sourceFakeClaudeLog = resolve(join(testDir, 'fake-claude-source.jsonl'));
     const targetFakeClaudeLog = resolve(join(testDir, 'fake-claude-target.jsonl'));
     const fakeClaudePath = fakeClaudeFixturePath();
 
@@ -185,6 +278,7 @@ describe('core e2e: session handoff via direct peer', () => {
     await mkdir(sourceDaemonDir, { recursive: true });
     await mkdir(targetDaemonDir, { recursive: true });
     await writeFile(resolve(join(sourceWorkspaceDir, 'README.md')), 'session handoff test\n', 'utf8');
+    await writeFile(resolve(join(sourceWorkspaceDir, 'deleted-after-first-handoff.txt')), 'delete me after first handoff\n', 'utf8');
     await writeFile(
       sourceClaudeSessionFile,
       [
@@ -344,52 +438,62 @@ describe('core e2e: session handoff via direct peer', () => {
       context: 'source daemon session removed immediately after direct-peer handoff start cutover',
     });
 
-    const prepared = unwrapDataKeyRpcResult(
-      await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET}`, {
-        handoffId: started.handoffId,
-        sourceMachineId: sourceSeed.machineId,
-        targetMachineId: targetSeed.machineId,
-        negotiatedTransportStrategy: 'direct_peer',
-        allowServerRoutedFallback: false,
-        sourceSessionStorageMode: 'direct',
-        targetPath: started.targetPath,
-        endpointCandidates: started.endpointCandidates,
-        workspaceTransfer: {
-          enabled: true,
-          strategy: 'sync_changes',
-          conflictPolicy: 'replace_existing',
-          includeIgnoredMode: 'exclude',
-          ignoredIncludeGlobs: [],
-        },
-      }),
-      'target handoff prepare',
-    ) as HandoffPrepareResult;
+    const prepared = await waitForReadyHandoffPrepareResult({
+      machineRpc: targetMachineRpc,
+      machineId: targetSeed.machineId,
+      handoffId: started.handoffId,
+      initialResult: unwrapDataKeyRpcResult(
+        await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET}`, {
+          handoffId: started.handoffId,
+          sourceMachineId: sourceSeed.machineId,
+          targetMachineId: targetSeed.machineId,
+          negotiatedTransportStrategy: 'direct_peer',
+          allowServerRoutedFallback: false,
+          sourceSessionStorageMode: 'direct',
+          targetPath: started.targetPath,
+          endpointCandidates: started.endpointCandidates,
+          workspaceTransfer: {
+            enabled: true,
+            strategy: 'sync_changes',
+            conflictPolicy: 'replace_existing',
+            includeIgnoredMode: 'exclude',
+            ignoredIncludeGlobs: [],
+          },
+        }),
+        'target handoff prepare',
+      ) as HandoffPrepareResult,
+      context: 'target handoff prepare',
+    });
+    const preparedResume = requirePreparedResume(prepared, 'target handoff prepare');
     expect(prepared.status.transportStrategy).toBe('direct_peer');
-    expect(prepared.resume.agent).toBe('claude');
-    expect(prepared.resume.transcriptStorage).toBe('direct');
-    const targetProjectId = prepared.resume.directory.replace(/[^a-zA-Z0-9-]/g, '-');
+    expect(preparedResume.agent).toBe('claude');
+    expect(preparedResume.transcriptStorage).toBe('direct');
+    const targetProjectId = preparedResume.directory.replace(/[^a-zA-Z0-9-]/g, '-');
     const targetImportedTranscriptPath = resolve(
       join(targetClaudeConfigDir, 'projects', targetProjectId, 'sess-handoff-direct.jsonl'),
     );
     await expect(readFile(targetImportedTranscriptPath, 'utf8')).resolves.toContain('source direct reply');
-    await expect(readFile(resolve(join(prepared.resume.directory, 'README.md')), 'utf8')).resolves.toBe('session handoff test\n');
+    await expect(readFile(resolve(join(preparedResume.directory, 'README.md')), 'utf8')).resolves.toBe('session handoff test\n');
+    await expect(readFile(resolve(join(preparedResume.directory, 'deleted-after-first-handoff.txt')), 'utf8')).resolves.toBe(
+      'delete me after first handoff\n',
+    );
 
     const targetSpawnResult = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
       port: targetDaemon.state.httpPort,
       path: '/spawn-session',
       controlToken: targetDaemon.state.controlToken,
       body: {
-        directory: prepared.resume.directory,
-        agent: prepared.resume.agent,
+        directory: preparedResume.directory,
+        agent: preparedResume.agent,
         existingSessionId: sessionId,
-        resume: prepared.resume.resume,
-        transcriptStorage: prepared.resume.transcriptStorage,
+        resume: preparedResume.resume,
+        transcriptStorage: preparedResume.transcriptStorage,
         environmentVariables: sessionChildEnv({
           homeDir: targetHomeDir,
           serverBaseUrl: server.baseUrl,
           fakeClaudePath,
           fakeClaudeLogPath: targetFakeClaudeLog,
-          extraEnvironmentVariables: prepared.resume.environmentVariables,
+          extraEnvironmentVariables: preparedResume.environmentVariables,
         }),
       },
       timeoutMs: 30_000,
@@ -429,6 +533,119 @@ describe('core e2e: session handoff via direct peer', () => {
       intervalMs: 250,
       context: 'server session active after handoff',
     });
+    await waitForDaemonSessionWebhookMarker({
+      happyHomeDir: targetHomeDir,
+      sessionId,
+      machineId: targetSeed.machineId,
+    });
+
+    await writeFile(resolve(join(preparedResume.directory, 'README.md')), 'session handoff test after second pass\n', 'utf8');
+    await writeFile(resolve(join(preparedResume.directory, 'added-after-first-handoff.txt')), 'added after first handoff\n', 'utf8');
+    await rm(resolve(join(preparedResume.directory, 'deleted-after-first-handoff.txt')));
+
+    const secondStarted = unwrapDataKeyRpcResult(
+      await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_START}`, {
+        sessionId,
+        sourceMachineId: targetSeed.machineId,
+        targetMachineId: sourceSeed.machineId,
+        sessionStorageMode: 'direct',
+        preferredTransportStrategies: ['direct_peer'],
+        negotiatedTransportStrategy: 'direct_peer',
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+          includeIgnoredMode: 'exclude',
+          ignoredIncludeGlobs: [],
+        },
+      }),
+      'target handoff-back start',
+    ) as HandoffStartResult;
+    expect(secondStarted.handoffId).not.toBe(started.handoffId);
+    expect(secondStarted.endpointCandidates.length).toBeGreaterThan(0);
+
+    const secondPrepared = await waitForReadyHandoffPrepareResult({
+      machineRpc: sourceMachineRpc,
+      machineId: sourceSeed.machineId,
+      handoffId: secondStarted.handoffId,
+      initialResult: unwrapDataKeyRpcResult(
+        await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET}`, {
+          handoffId: secondStarted.handoffId,
+          sourceMachineId: targetSeed.machineId,
+          targetMachineId: sourceSeed.machineId,
+          negotiatedTransportStrategy: 'direct_peer',
+          allowServerRoutedFallback: false,
+          sourceSessionStorageMode: 'direct',
+          targetPath: secondStarted.targetPath,
+          endpointCandidates: secondStarted.endpointCandidates,
+          workspaceTransfer: {
+            enabled: true,
+            strategy: 'sync_changes',
+            conflictPolicy: 'replace_existing',
+            includeIgnoredMode: 'exclude',
+            ignoredIncludeGlobs: [],
+          },
+        }),
+        'source handoff-back prepare',
+      ) as HandoffPrepareResult,
+      context: 'source handoff-back prepare',
+    });
+    const secondPreparedResume = requirePreparedResume(secondPrepared, 'source handoff-back prepare');
+
+    const sourceRespawnResult = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
+      port: sourceDaemon.state.httpPort,
+      path: '/spawn-session',
+      controlToken: sourceDaemon.state.controlToken,
+      body: {
+        directory: secondPreparedResume.directory,
+        agent: secondPreparedResume.agent,
+        existingSessionId: sessionId,
+        resume: secondPreparedResume.resume,
+        transcriptStorage: secondPreparedResume.transcriptStorage,
+        environmentVariables: sessionChildEnv({
+          homeDir: sourceHomeDir,
+          serverBaseUrl: server.baseUrl,
+          fakeClaudePath,
+          fakeClaudeLogPath: sourceFakeClaudeLog,
+          extraEnvironmentVariables: secondPreparedResume.environmentVariables,
+        }),
+      },
+      timeoutMs: 30_000,
+    });
+    expect(sourceRespawnResult.status).toBe(200);
+    expect(sourceRespawnResult.data.success).toBe(true);
+    expect(sourceRespawnResult.data.sessionId).toBe(sessionId);
+    await waitForDaemonSessionWebhookMarker({
+      happyHomeDir: sourceHomeDir,
+      sessionId,
+      machineId: sourceSeed.machineId,
+    });
+
+    const secondCommitted = unwrapDataKeyRpcResult(
+      await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT}`, {
+        handoffId: secondStarted.handoffId,
+      }),
+      'target handoff-back commit',
+    ) as Readonly<{ status: Readonly<{ status: string; phase: string }> }>;
+    expect(secondCommitted.status.status).toBe('completed');
+
+    await waitFor(async () => (await listDaemonSessions(targetDaemon!)).includes(sessionId) === false, {
+      timeoutMs: 30_000,
+      intervalMs: 100,
+      context: 'target daemon session removed after handoff-back cutover',
+    });
+    await waitFor(async () => (await listDaemonSessions(sourceDaemon!)).includes(sessionId) === true, {
+      timeoutMs: 30_000,
+      intervalMs: 100,
+      context: 'source daemon session active after handoff-back resume',
+    });
+    await expect(readFile(resolve(join(secondPreparedResume.directory, 'README.md')), 'utf8')).resolves.toBe(
+      'session handoff test after second pass\n',
+    );
+    await expect(readFile(resolve(join(secondPreparedResume.directory, 'added-after-first-handoff.txt')), 'utf8')).resolves.toBe(
+      'added after first handoff\n',
+    );
+    await expect(readFile(resolve(join(secondPreparedResume.directory, 'deleted-after-first-handoff.txt')), 'utf8')).rejects.toThrow();
   }, 180_000);
 
   it('does not let a late plaintext UI message execute on the source once direct-peer cutover has started', async () => {
@@ -490,6 +707,7 @@ describe('core e2e: session handoff via direct peer', () => {
         HAPPIER_E2E_FAKE_CLAUDE_LOG: sourceFakeClaudeLog,
         HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
         HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
     targetDaemon = await startTestDaemon({
@@ -509,6 +727,7 @@ describe('core e2e: session handoff via direct peer', () => {
         HAPPIER_E2E_FAKE_CLAUDE_LOG: targetFakeClaudeLog,
         HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS: '127.0.0.1',
         HAPPIER_SESSION_HANDOFF_DIRECT_PEER_BIND_HOST: '127.0.0.1',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
 
@@ -603,36 +822,43 @@ describe('core e2e: session handoff via direct peer', () => {
       context: 'late prompt never reaches the stopped source session after cutover start',
     });
 
-    const prepared = unwrapDataKeyRpcResult(
-      await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET}`, {
-        handoffId: started.handoffId,
-        sourceMachineId: sourceSeed.machineId,
-        targetMachineId: targetSeed.machineId,
-        negotiatedTransportStrategy: 'direct_peer',
-        allowServerRoutedFallback: false,
-        sourceSessionStorageMode: 'persisted',
-        targetPath: started.targetPath,
-        endpointCandidates: started.endpointCandidates,
-      }),
-      'target handoff prepare for late cutover proof',
-    ) as HandoffPrepareResult;
+    const prepared = await waitForReadyHandoffPrepareResult({
+      machineRpc: targetMachineRpc,
+      machineId: targetSeed.machineId,
+      handoffId: started.handoffId,
+      initialResult: unwrapDataKeyRpcResult(
+        await targetMachineRpc.call(`${targetSeed.machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET}`, {
+          handoffId: started.handoffId,
+          sourceMachineId: sourceSeed.machineId,
+          targetMachineId: targetSeed.machineId,
+          negotiatedTransportStrategy: 'direct_peer',
+          allowServerRoutedFallback: false,
+          sourceSessionStorageMode: 'persisted',
+          targetPath: started.targetPath,
+          endpointCandidates: started.endpointCandidates,
+        }),
+        'target handoff prepare for late cutover proof',
+      ) as HandoffPrepareResult,
+      context: 'target handoff prepare for late cutover proof',
+    });
+    const lateCutoverPreparedResume = requirePreparedResume(prepared, 'target handoff prepare for late cutover proof');
 
     const targetSpawnResult = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
       port: targetDaemon.state.httpPort,
       path: '/spawn-session',
       controlToken: targetDaemon.state.controlToken,
       body: {
-        directory: prepared.resume.directory,
-        agent: prepared.resume.agent,
+        directory: lateCutoverPreparedResume.directory,
+        agent: lateCutoverPreparedResume.agent,
         existingSessionId: sessionId,
-        resume: prepared.resume.resume,
-        transcriptStorage: prepared.resume.transcriptStorage,
+        resume: lateCutoverPreparedResume.resume,
+        transcriptStorage: lateCutoverPreparedResume.transcriptStorage,
         environmentVariables: sessionChildEnv({
           homeDir: targetHomeDir,
           serverBaseUrl: server.baseUrl,
           fakeClaudePath,
           fakeClaudeLogPath: targetFakeClaudeLog,
-          extraEnvironmentVariables: prepared.resume.environmentVariables,
+          extraEnvironmentVariables: lateCutoverPreparedResume.environmentVariables,
         }),
       },
       timeoutMs: 30_000,

@@ -31,119 +31,144 @@ describe('core e2e: execution runs (plan/delegate) produce structured meta', () 
     await server?.stop();
   }, 60_000);
 
-  it('runs plan and delegate intents end-to-end with fake Claude JSON outputs', async () => {
+  async function runStructuredExecutionIntent(params: {
+    intent: 'plan' | 'delegate';
+    expectedKind: 'plan_output.v1' | 'delegate_output.v1';
+  }): Promise<void> {
+    let ui: ReturnType<typeof createUserScopedSocketCollector> | null = null;
+    let localServer: StartedServer | null = null;
+    let localDaemon: StartedDaemon | null = null;
     const testDir = run.testDir(`execution-runs-plan-delegate-${randomUUID()}`);
-    server = await startServerLight({ testDir });
-    const serverBaseUrl = server.baseUrl;
-    const auth = await createTestAuth(serverBaseUrl);
+    try {
+      localServer = await startServerLight({ testDir });
+      server = localServer;
+      const serverBaseUrl = localServer.baseUrl;
+      const auth = await createTestAuth(serverBaseUrl);
 
-    const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
-    const workspaceDir = resolve(join(testDir, 'workspace'));
-    await mkdir(daemonHomeDir, { recursive: true });
-    await mkdir(workspaceDir, { recursive: true });
+      const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
+      const workspaceDir = resolve(join(testDir, 'workspace'));
+      await mkdir(daemonHomeDir, { recursive: true });
+      await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+      const secret = Uint8Array.from(randomBytes(32));
+      await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
 
-    const fakeClaudePath = fakeClaudeFixturePath();
-    const fakeClaudeLog = resolve(join(testDir, 'fake-claude.jsonl'));
+      const fakeClaudePath = fakeClaudeFixturePath();
+      const fakeClaudeLog = resolve(join(testDir, 'fake-claude.jsonl'));
 
-    daemon = await startTestDaemon({
-      testDir,
-      happyHomeDir: daemonHomeDir,
-      env: {
-        ...process.env,
-        CI: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_HOME_DIR: daemonHomeDir,
-        HAPPIER_SERVER_URL: serverBaseUrl,
-        HAPPIER_WEBAPP_URL: serverBaseUrl,
-        HAPPIER_CLAUDE_PATH: fakeClaudePath,
-        HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
-      },
-    });
-    const controlToken = (daemon.state as any)?.controlToken as string | undefined;
+      localDaemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: daemonHomeDir,
+        env: {
+          ...process.env,
+          CI: '1',
+          HAPPIER_VARIANT: 'dev',
+          HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_HOME_DIR: daemonHomeDir,
+          HAPPIER_SERVER_URL: serverBaseUrl,
+          HAPPIER_WEBAPP_URL: serverBaseUrl,
+          HAPPIER_CLAUDE_PATH: fakeClaudePath,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+        },
+      });
+      daemon = localDaemon;
+      const controlToken = (localDaemon.state as any)?.controlToken as string | undefined;
 
-    const ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
-    ui.connect();
-    await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
+      ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
+      ui.connect();
+      await waitFor(() => ui!.isConnected(), { timeoutMs: 20_000 });
 
-    const spawnSession = async (scenario: 'plan-json' | 'delegate-json'): Promise<string> => {
-      const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
-        port: daemon!.state.httpPort,
-        path: '/spawn-session',
-        controlToken,
-        body: {
-          directory: workspaceDir,
-          terminal: { mode: 'plain' },
-          environmentVariables: {
-            HAPPIER_HOME_DIR: daemonHomeDir,
-            HAPPIER_SERVER_URL: serverBaseUrl,
-            HAPPIER_WEBAPP_URL: serverBaseUrl,
-            HAPPIER_VARIANT: 'dev',
-            HAPPIER_DISABLE_CAFFEINATE: '1',
-            HAPPIER_CLAUDE_PATH: fakeClaudePath,
-            HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
-            HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: scenario,
+      const spawnSession = async (scenario: 'plan-json' | 'delegate-json'): Promise<string> => {
+        const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
+          port: localDaemon!.state.httpPort,
+          path: '/spawn-session',
+          controlToken,
+          body: {
+            directory: workspaceDir,
+            terminal: { mode: 'plain' },
+            environmentVariables: {
+              HAPPIER_HOME_DIR: daemonHomeDir,
+              HAPPIER_SERVER_URL: serverBaseUrl,
+              HAPPIER_WEBAPP_URL: serverBaseUrl,
+              HAPPIER_VARIANT: 'dev',
+              HAPPIER_DISABLE_CAFFEINATE: '1',
+              HAPPIER_CLAUDE_PATH: fakeClaudePath,
+              HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+              HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: scenario,
+            },
           },
-        },
-      });
-      expect(spawnRes.status).toBe(200);
-      expect(spawnRes.data.success).toBe(true);
-      const sessionId = spawnRes.data.sessionId;
-      expect(typeof sessionId).toBe('string');
-      if (typeof sessionId !== 'string' || sessionId.length === 0) throw new Error('Missing sessionId from daemon spawn-session');
-      return sessionId;
-    };
+        });
+        expect(spawnRes.status).toBe(200);
+        expect(spawnRes.data.success).toBe(true);
+        const sessionId = spawnRes.data.sessionId;
+        expect(typeof sessionId).toBe('string');
+        if (typeof sessionId !== 'string' || sessionId.length === 0) throw new Error('Missing sessionId from daemon spawn-session');
+        return sessionId;
+      };
 
-    const runIntentAndAssertStructured = async (params: {
-      sessionId: string;
-      intent: 'plan' | 'delegate';
-      expectedKind: 'plan_output.v1' | 'delegate_output.v1';
-    }): Promise<void> => {
-      const started = await callSessionRpc({
-        ui,
-        sessionId: params.sessionId,
-        method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
-        req: {
-          intent: params.intent,
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-          instructions: `Run ${params.intent}.`,
-          permissionMode: 'read_only',
-          retentionPolicy: 'ephemeral',
-          runClass: 'bounded',
-          ioMode: 'request_response',
-        },
-        secret,
-        schema: ExecutionRunStartResponseSchema,
-        timeoutMs: 40_000,
-      });
-
-      let finished: any = null;
-      await waitFor(async () => {
-        const res = await callSessionRpc({
-          ui,
+      const runIntentAndAssertStructured = async (params: {
+        sessionId: string;
+        intent: 'plan' | 'delegate';
+        expectedKind: 'plan_output.v1' | 'delegate_output.v1';
+      }): Promise<void> => {
+        const started = await callSessionRpc({
+          ui: ui!,
           sessionId: params.sessionId,
-          method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
-          req: { runId: started.runId, includeStructured: true },
+          method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
+          req: {
+            intent: params.intent,
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            instructions: `Run ${params.intent}.`,
+            permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+          },
           secret,
-          schema: ExecutionRunGetResponseSchema,
+          schema: ExecutionRunStartResponseSchema,
           timeoutMs: 40_000,
         });
-        if (res.run.status === 'running') return false;
-        finished = res;
-        return true;
-      }, { timeoutMs: 60_000, intervalMs: 250 });
 
-      expect(finished?.run?.status).toBe('succeeded');
-      expect(finished?.structuredMeta?.kind).toBe(params.expectedKind);
-    };
+        let finished: any = null;
+        await waitFor(async () => {
+          const res = await callSessionRpc({
+            ui: ui!,
+            sessionId: params.sessionId,
+            method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+            req: { runId: started.runId, includeStructured: true },
+            secret,
+            schema: ExecutionRunGetResponseSchema,
+            timeoutMs: 40_000,
+          });
+          if (res.run.status === 'running') return false;
+          finished = res;
+          return true;
+        }, { timeoutMs: 60_000, intervalMs: 250 });
 
-    const planSessionId = await spawnSession('plan-json');
-    await runIntentAndAssertStructured({ sessionId: planSessionId, intent: 'plan', expectedKind: 'plan_output.v1' });
+        expect(finished?.run?.status).toBe('succeeded');
+        expect(finished?.structuredMeta?.kind).toBe(params.expectedKind);
+      };
 
-    const delegateSessionId = await spawnSession('delegate-json');
-    await runIntentAndAssertStructured({ sessionId: delegateSessionId, intent: 'delegate', expectedKind: 'delegate_output.v1' });
-  }, 120_000);
+      const sessionId = await spawnSession(`${params.intent}-json`);
+      await runIntentAndAssertStructured({
+        sessionId,
+        intent: params.intent,
+        expectedKind: params.expectedKind,
+      });
+    } finally {
+      ui?.disconnect();
+      await localDaemon?.stop().catch(() => {});
+      await localServer?.stop().catch(() => {});
+      if (daemon === localDaemon) daemon = null;
+      if (server === localServer) server = null;
+    }
+  }
+
+  it('runs plan intent end-to-end with fake Claude JSON outputs', async () => {
+    await runStructuredExecutionIntent({ intent: 'plan', expectedKind: 'plan_output.v1' });
+  }, 240_000);
+
+  it('runs delegate intent end-to-end with fake Claude JSON outputs', async () => {
+    await runStructuredExecutionIntent({ intent: 'delegate', expectedKind: 'delegate_output.v1' });
+  }, 240_000);
 });

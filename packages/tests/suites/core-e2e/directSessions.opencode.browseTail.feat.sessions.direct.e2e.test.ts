@@ -22,6 +22,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
   let daemon: StartedDaemon | null = null;
   let fakeOpenCodeServer: Server | null = null;
   let fakeOpenCodeBaseUrl = '';
+  const daemonStartupTimeoutMs = 90_000;
 
   const openCodeMessages: Array<Record<string, unknown>> = [];
   const openCodeSessions: Array<Record<string, unknown>> = [];
@@ -157,6 +158,7 @@ describe('core e2e: direct OpenCode sessions browse/link/tail', () => {
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: daemonStartupTimeoutMs,
       env: {
         ...process.env,
         CI: '1',

@@ -18,6 +18,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
 
 const run = createRunDirs({ runLabel: 'core' });
+const daemonStartupTimeoutMs = 90_000;
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
@@ -78,9 +79,13 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
     daemon = await startTestDaemon({
       testDir,
       happyHomeDir: daemonHomeDir,
+      startupTimeoutMs: daemonStartupTimeoutMs,
       env: {
         ...process.env,
         CI: '1',
+        // This path is already covered by cliDist coverage; using the source entrypoint
+        // keeps the direct-session flow stable under lane load.
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         HAPPIER_HOME_DIR: daemonHomeDir,
         HAPPIER_SERVER_URL: server.baseUrl,
         HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,

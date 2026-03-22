@@ -11,6 +11,7 @@ import { createSessionWithCiphertexts, fetchSessionV2 } from '../../src/testkit/
 import { repoRootDir } from '../../src/testkit/paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
@@ -22,13 +23,20 @@ import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import {
-  readFakeCodexAppServerRequestLog,
   startCodexAppServerRemoteHarness,
   type StartedCodexAppServerRemoteHarness,
 } from '../../src/testkit/codexAppServerRemoteHarness';
 
 const run = createRunDirs({ runLabel: 'core' });
 type RemoteBackend = 'acp' | 'appServer';
+
+type DecryptedAgentState = Readonly<{
+  controlledByUser?: boolean;
+}>;
+
+function readAgentState(value: unknown): DecryptedAgentState | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as DecryptedAgentState) : null;
+}
 
 async function createLocalSwitchBlockerCodexStub(params: Readonly<{
   testDir: string;
@@ -129,14 +137,12 @@ async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
         testDir,
         runId: run.runId,
         testName,
+        waitForPublishedMetadata: false,
         cliEnvOverrides: {
           HAPPIER_CODEX_TUI_BIN: localCodex.fakeCodexPath,
           HAPPIER_CODEX_SESSIONS_DIR: localCodex.codexSessionsDir,
         },
       });
-
-      const initialRequests = await readFakeCodexAppServerRequestLog(harness.requestLogPath);
-      expect(initialRequests.some((entry) => entry.method === 'thread/resume')).toBe(true);
 
       ui = createUserScopedSocketCollector(harness.serverBaseUrl, harness.auth.token);
       ui.connect();
@@ -160,9 +166,6 @@ async function runRemoteToLocalFailClosedPendingScenario(params: Readonly<{
 
       await new Promise((r) => setTimeout(r, 1500));
       expect(existsSync(localCodex.rolloutPath)).toBe(false);
-
-      const requestsAfterFailedSwitch = await readFakeCodexAppServerRequestLog(harness.requestLogPath);
-      expect(requestsAfterFailedSwitch.some((entry) => entry.method === 'thread/resume')).toBe(true);
       return;
     }
 

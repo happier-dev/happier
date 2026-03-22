@@ -177,6 +177,7 @@ describe('core e2e: Codex app-server latest-turn rollback', () => {
     });
 
     const socket = await waitForSocketConnection({ baseUrl: serverBaseUrl, token: auth.token });
+    let rollbackThreadId: string | null = null;
     try {
       const rollback = await callLegacyEncryptedSessionRpc({
         ui: socket,
@@ -190,8 +191,12 @@ describe('core e2e: Codex app-server latest-turn rollback', () => {
       expect(rollback).toMatchObject({
         ok: true,
         target: { type: 'latest_turn' },
-        threadId: sessionId,
+        threadId: expect.any(String),
       });
+      rollbackThreadId = typeof rollback.threadId === 'string' ? rollback.threadId : null;
+      if (typeof rollbackThreadId !== 'string') {
+        throw new Error('Expected rollback to return an app-server thread id');
+      }
     } finally {
       socket.close();
     }
@@ -225,8 +230,8 @@ describe('core e2e: Codex app-server latest-turn rollback', () => {
 
     const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
     expect(requests).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: 'thread/resume', params: expect.objectContaining({ threadId: sessionId }) }),
-      expect.objectContaining({ method: 'thread/rollback', params: { threadId: sessionId, numTurns: 1 } }),
+      expect.objectContaining({ method: 'thread/start' }),
+      expect.objectContaining({ method: 'thread/rollback', params: { threadId: rollbackThreadId, numTurns: 1 } }),
     ]));
   }, 240_000);
 });
