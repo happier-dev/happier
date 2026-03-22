@@ -7,11 +7,20 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { repoRootDir } from '../paths';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spawnProcess';
+import { terminateProcessTreeByPid } from './processTree';
 import { waitForOkHealth } from '../http';
 import { yarnCommand } from './commands';
 import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
 import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
 import { resolveTsxImportHookPath } from './tsxImportHook';
+import {
+  inspectOwnedProcess,
+  registerProcessOwnershipLease,
+  resolveProcessOwnershipLeasesDir,
+  sweepProcessOwnershipLeases,
+  type ProcessInspectionResult,
+  type ProcessOwnershipLease,
+} from './processOwnershipLease';
 
 function pickPortCandidate(): number {
   // Avoid privileged / common ports.
@@ -67,6 +76,41 @@ function isHealthTimeoutDuringAuthInit(params: { error: unknown; stdoutTail: str
 
 function composeServerStartTail(stderrTail: string, stdoutTail: string): string {
   return `${stderrTail}\n${stdoutTail}`.trim();
+}
+
+function looksLikeServerLightCommand(command: string): boolean {
+  const normalized = command.replaceAll('\\', '/');
+  return normalized.includes('start:light')
+    && ((normalized.includes('apps/server') && (normalized.includes('dist/index') || normalized.includes('sources/main.light.ts')))
+      || (normalized.includes('happier') && normalized.includes('dist/index')));
+}
+
+export type ServerLightOwnershipLease = ProcessOwnershipLease<Readonly<{
+  port: number;
+  baseUrl: string;
+  dataDir: string;
+}>>;
+
+export function resolveServerLightOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
+  return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'server-light' });
+}
+
+export async function sweepServerLightOwnershipLeases(params: {
+  rootDir?: string;
+  currentOwnerPid: number;
+  currentOwnerStartTime: string | null;
+  inspectProcess?: (pid: number) => ProcessInspectionResult;
+  terminateProcessTreeByPid?: typeof terminateProcessTreeByPid;
+}): Promise<void> {
+  await sweepProcessOwnershipLeases({
+    rootDir: params.rootDir,
+    leaseKind: 'server-light',
+    currentOwnerPid: params.currentOwnerPid,
+    currentOwnerStartTime: params.currentOwnerStartTime,
+    inspectProcess: params.inspectProcess,
+    terminateProcessTreeByPid: params.terminateProcessTreeByPid,
+    isOwnedProcessCommand: (command) => looksLikeServerLightCommand(command),
+  });
 }
 
 async function readUtf8Tail(filePath: string, maxChars: number): Promise<string> {
@@ -689,6 +733,7 @@ export async function startServerLight(params: {
   };
 
   const dbProvider = params.dbProvider ?? resolveTestDbProvider(mergedEnv);
+  const currentOwnerInspection = inspectOwnedProcess(process.pid);
 
   const baseEnv: NodeJS.ProcessEnv = {
     ...mergedEnv,
@@ -729,6 +774,14 @@ export async function startServerLight(params: {
   // In multi-worktree setups it's easy for @prisma/client to become stale and then
   // light-mode boot will fail at runtime (PrismaClientValidationError).
   await ensureServerGeneratedProviders({ testDir: params.testDir, env: baseEnv, dbProvider });
+
+  if (currentOwnerInspection.ok) {
+    await sweepServerLightOwnershipLeases({
+      rootDir: repoRootDir(),
+      currentOwnerPid: process.pid,
+      currentOwnerStartTime: currentOwnerInspection.startTime,
+    });
+  }
 
   // Ensure the light database schema exists before the server boots.
   // Server light uses pglite/sqlite + Prisma but does not auto-migrate on startup.
@@ -784,6 +837,19 @@ export async function startServerLight(params: {
       },
       stdoutPath: resolve(params.testDir, 'server.stdout.log'),
       stderrPath: resolve(params.testDir, 'server.stderr.log'),
+    });
+
+    await registerProcessOwnershipLease({
+      rootDir: repoRootDir(),
+      leaseKind: 'server-light',
+      child: proc.child,
+      ownerPid: process.pid,
+      ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+      metadata: {
+        port,
+        baseUrl,
+        dataDir,
+      },
     });
 
     let stderrTail = '';

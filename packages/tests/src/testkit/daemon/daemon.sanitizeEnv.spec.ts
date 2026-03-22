@@ -12,6 +12,7 @@ describe('sanitizeDaemonEnvForSpawn', () => {
     });
 
     expect(env.HAPPIER_DISABLE_CAFFEINATE).toBe('1');
+    expect(env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED).toBe('0');
     expect(env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
     expect(env.HAPPIER_STACK_TOOL_TRACE_FILE).toBeUndefined();
     expect(env.TMUX).toBeUndefined();
