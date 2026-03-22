@@ -1,28 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
+const envScope = createEnvKeyScope([
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_LOCAL_SERVER_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_HOME_DIR',
+]);
 
 describe('configuration apiServerUrl', () => {
-  const prevServerUrl = process.env.HAPPIER_SERVER_URL;
-  const prevLocalServerUrl = process.env.HAPPIER_LOCAL_SERVER_URL;
-  const prevPublicServerUrl = process.env.HAPPIER_PUBLIC_SERVER_URL;
-  const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const prevHomeDir = process.env.HAPPIER_HOME_DIR;
-
   afterEach(() => {
-    if (prevServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = prevServerUrl;
-
-    if (prevLocalServerUrl === undefined) delete process.env.HAPPIER_LOCAL_SERVER_URL;
-    else process.env.HAPPIER_LOCAL_SERVER_URL = prevLocalServerUrl;
-
-    if (prevPublicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-    else process.env.HAPPIER_PUBLIC_SERVER_URL = prevPublicServerUrl;
-
-    if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
-
-    if (prevHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = prevHomeDir;
-
+    envScope.restore();
     vi.resetModules();
   });
 

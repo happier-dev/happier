@@ -77,6 +77,9 @@ class Configuration {
   public readonly filesZipMaxTotalBytes: number
   public readonly filesZipMaxEntryCount: number
   public readonly filesZipExcludedTopLevelDirs: readonly string[]
+  public readonly workspaceReplicationBlobPackTargetBytes: number
+  public readonly workspaceReplicationBlobPackMaxBlobs: number
+  public readonly workspaceReplicationBlobPackMaxSingleBlobBytes: number
   public readonly currentCliVersion: string
 
   public readonly isExperimentalEnabled: boolean
@@ -305,6 +308,20 @@ class Configuration {
       zipExcludedOut.push(value);
     }
     this.filesZipExcludedTopLevelDirs = zipExcludedOut;
+
+    // Workspace replication blob-pack sizing (Appendix A).
+    this.workspaceReplicationBlobPackTargetBytes = resolveIntEnvWithBounds(
+      'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES',
+      { min: 1, default: 128 * 1024 * 1024 },
+    );
+    this.workspaceReplicationBlobPackMaxBlobs = resolveIntEnvWithBounds(
+      'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_BLOBS',
+      { min: 1, default: 256 },
+    );
+    this.workspaceReplicationBlobPackMaxSingleBlobBytes = resolveIntEnvWithBounds(
+      'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_SINGLE_BLOB_BYTES',
+      { min: 1, default: 1024 * 1024 * 1024 },
+    );
 
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
@@ -779,7 +796,13 @@ function resolveServerSelection(params: Readonly<{
       ?? envCanonicalServerUrl;
 
     const persistedMatch = params.persisted
-      ? Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === envCanonicalServerUrl) ?? null
+      ? (() => {
+          const persistedActive = params.persisted.servers[params.persisted.activeServerId] ?? null;
+          if (persistedActive && normalizeServerUrl(persistedActive.serverUrl) === envCanonicalServerUrl) {
+            return persistedActive;
+          }
+          return Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === envCanonicalServerUrl) ?? null;
+        })()
       : null;
 
     let webappUrl = params.envWebappUrl;

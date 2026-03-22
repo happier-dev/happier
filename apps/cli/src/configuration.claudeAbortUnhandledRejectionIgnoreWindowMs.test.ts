@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
+const envScope = createEnvKeyScope([
+  'HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS',
+]);
 
 describe('configuration claudeAbortUnhandledRejectionIgnoreWindowMs', () => {
-  const prev = process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS;
-
   afterEach(() => {
-    if (prev === undefined) delete process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS;
-    else process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS = prev;
+    envScope.restore();
     vi.resetModules();
   });
 
