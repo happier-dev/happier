@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
-import { makeSessionFixtureListResponse, makeSessionFixtureRow } from './testFixtures';
+import {
+  createSessionListResponseFixture,
+  createSessionRecordFixture,
+} from '@/testkit/backends/sessionFixtures';
 
 import { fetchSessionByIdCompat } from './sessionsHttp';
 
@@ -15,8 +18,8 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       } as any)
       .mockResolvedValueOnce({
         status: 200,
-        data: makeSessionFixtureListResponse([
-          makeSessionFixtureRow({ id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' }),
+        data: createSessionListResponseFixture([
+          createSessionRecordFixture({ id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' }),
         ]),
       } as any);
 
@@ -64,8 +67,8 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     for (let page = 0; page < 21; page += 1) {
       getSpy.mockResolvedValueOnce({
         status: 200,
-        data: makeSessionFixtureListResponse(
-          page === 20 ? [makeSessionFixtureRow({ id: 's-final', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' })] : [],
+        data: createSessionListResponseFixture(
+          page === 20 ? [createSessionRecordFixture({ id: 's-final', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' })] : [],
           {
             nextCursor: page === 20 ? null : `cursor-${page + 1}`,
             hasNext: page !== 20,

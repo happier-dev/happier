@@ -12,7 +12,7 @@ import { cmdSessionUnarchive } from './unarchive';
 import { cmdSessionSetTitle } from './setTitle';
 import { cmdSessionSetPermissionMode } from './setPermissionMode';
 import { cmdSessionSetModel } from './setModel';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { cmdSessionRunGet } from './run/get';
 import { cmdSessionRunList } from './run/list';
 import { cmdSessionRunStart } from './run/start';
@@ -29,6 +29,7 @@ import { cmdSessionDelegateStart } from './delegate/start';
 import { cmdSessionVoiceAgentStart } from './voiceAgent/start';
 import { cmdSessionActionsList } from './actions/list';
 import { cmdSessionActionsDescribe } from './actions/describe';
+import { cmdSessionActionsExecute } from './actions/execute';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 
 function inferSessionKind(argv: readonly string[]): string {
@@ -50,6 +51,7 @@ function inferSessionKind(argv: readonly string[]): string {
     const actionSub = String(argv[1] ?? '').trim();
     if (actionSub === 'list') return 'session_actions_list';
     if (actionSub === 'describe') return 'session_actions_describe';
+    if (actionSub === 'execute') return 'session_actions_execute';
     return 'session_actions_unknown';
   }
   if (sub === 'run') {
@@ -98,8 +100,14 @@ export async function handleSessionCommand(
       console.log('happier session voice-agent start <session-id> --backends <id1,id2> --instructions <text> [--json]');
       console.log('happier session actions list [--json]');
       console.log('happier session actions describe <action-id> [--json]');
+      console.log('happier session actions execute <session-id> <action-id> [--input-json <json>] [--json]');
+      console.log('happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
       console.log('happier session run list <session-id> [--json]');
       console.log('happier session run get <session-id> <run-id> [--include-structured] [--json]');
+      console.log('happier session run send <session-id> <run-id> <message> [--resume] [--json]');
+      console.log('happier session run stop <session-id> <run-id> [--json]');
+      console.log('happier session run action <session-id> <run-id> <action-id> [--input-json <json>] [--json]');
+      console.log('happier session run wait <session-id> <run-id> [--timeout <seconds>] [--json]');
       console.log('happier session run stream-start <session-id> <run-id> <message> [--resume] [--json]');
       console.log('happier session run stream-read <session-id> <run-id> <stream-id> --cursor <n> [--max-events <n>] [--json]');
       console.log('happier session run stream-cancel <session-id> <run-id> <stream-id> [--json]');
@@ -236,6 +244,10 @@ export async function handleSessionCommand(
         }
         if (actionSub === 'describe') {
           await cmdSessionActionsDescribe(argv);
+          return;
+        }
+        if (actionSub === 'execute') {
+          await cmdSessionActionsExecute(argv, { readCredentialsFn });
           return;
         }
         throw new Error(`Unknown session actions subcommand: ${actionSub}`);

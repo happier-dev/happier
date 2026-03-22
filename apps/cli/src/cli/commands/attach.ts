@@ -6,9 +6,9 @@ import { inferAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agen
 import { getProviderAttachOps } from '@/backends/catalog';
 import { configuration } from '@/configuration';
 import { readCredentials, readSettings, type Credentials, type Settings } from '@/persistence';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createProviderAttachStatePublisher } from '@/agent/localControl/createProviderAttachStatePublisher';
 import {
   readTerminalAttachmentInfo,
@@ -20,7 +20,7 @@ import { focusWindowsTerminalWindow } from '@/terminal/attachment/windowsTermina
 import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleAttach';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
-import { evaluateCliSessionAttachEligibility } from '@/sessionControl/evaluateCliSessionAttachEligibility';
+import { evaluateCliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import { buildAttachSelectionModel } from './attachInteractiveSelection';
 
 import type { CommandContext } from '@/cli/commandRegistry';

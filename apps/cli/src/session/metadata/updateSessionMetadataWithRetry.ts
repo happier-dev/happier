@@ -7,9 +7,9 @@ import {
   encryptStoredSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
-} from './sessionEncryptionContext';
-import { resolveSessionControlSocketConnectTimeoutMs } from './sessionControlTimeouts';
-import { waitForSocketConnect } from './waitForSocketConnect';
+} from '@/session/transport/encryption/sessionEncryptionContext';
+import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketConnect';
+import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 
 type UpdateMetadataAck =
   | { result: 'success'; version: number; metadata: string }

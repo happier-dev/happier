@@ -9,7 +9,7 @@ import {
   type AIBackendProfile,
 } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readCredentials } from '@/persistence';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';

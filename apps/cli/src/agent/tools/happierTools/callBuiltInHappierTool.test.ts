@@ -1,44 +1,53 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const fetchSessionById = vi.fn();
+const resolveSessionTransportContext = vi.fn();
 const updateSessionMetadataWithRetry = vi.fn();
-const resolveSessionEncryptionContextFromCredentials = vi.fn(() => ({ type: 'plain' as const }));
-const resolveSessionStoredContentEncryptionMode = vi.fn(() => 'plain' as const);
+const startExecutionRun = vi.fn();
+const createCliActionExecutor = vi.fn(() => ({
+  execute,
+}));
 const execute = vi.fn();
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
-  fetchSessionById,
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({
+  resolveSessionTransportContext,
 }));
 
-vi.mock('@/sessionControl/updateSessionMetadataWithRetry', () => ({
+vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
   updateSessionMetadataWithRetry,
 }));
 
-vi.mock('@/sessionControl/sessionEncryptionContext', () => ({
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
+vi.mock('@/session/actions/createCliActionExecutor', () => ({
+  createCliActionExecutor,
 }));
 
-vi.mock('@/sessionControl/createSessionControlActionExecutor', () => ({
-  createSessionControlActionExecutor: vi.fn(() => ({
-    execute,
-  })),
+vi.mock('@/session/services/executionRuns', () => ({
+  startExecutionRun,
 }));
 
-vi.mock('@/sessionControl/sessionRpc', () => ({
+vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc: vi.fn(),
 }));
+
+const env = process.env;
 
 describe('callBuiltInHappierTool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fetchSessionById.mockResolvedValue({
-      id: 'sess-1',
-      metadata: { summary: { text: 'Old title' } },
+    process.env = { ...env };
+    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        metadata: { summary: { text: 'Old title' } },
+      },
+      ctx: { type: 'plain' as const },
+      mode: 'plain' as const,
     });
   });
 
-  it('executes action_execute through the shared action executor on the MCP surface', async () => {
+  it('executes action_execute through the shared action executor on the CLI surface', async () => {
     execute.mockResolvedValueOnce({ ok: true, result: { started: true } });
 
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
@@ -59,21 +68,11 @@ describe('callBuiltInHappierTool', () => {
     expect(execute).toHaveBeenCalledWith(
       'subagents.plan.start',
       { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.' },
-      { defaultSessionId: 'sess-1', surface: 'mcp' },
+      { defaultSessionId: 'sess-1', surface: 'cli' },
     );
   });
 
-  it('resolves action_options_resolve through the shared action executor on the MCP surface', async () => {
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: {
-        actionId: null,
-        fieldPath: null,
-        optionsSourceId: 'session.modes.available',
-        options: [{ value: 'plan', label: 'Plan' }],
-      },
-    });
-
+  it('rejects action_options_resolve on the CLI surface', async () => {
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
@@ -85,65 +84,114 @@ describe('callBuiltInHappierTool', () => {
     });
 
     expect(result).toEqual({
-      ok: true,
-      result: {
-        actionId: null,
-        fieldPath: null,
-        optionsSourceId: 'session.modes.available',
-        options: [{ value: 'plan', label: 'Plan' }],
-      },
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
     });
-    expect(execute).toHaveBeenCalledWith(
-      'action.options.resolve',
-      { optionsSourceId: 'session.modes.available' },
-      { defaultSessionId: 'sess-1', surface: 'mcp' },
-    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
+      token: 'token',
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        metadata: { summary: { text: 'Old title' } },
+      },
+    }));
   });
 
-  it('preserves action_options_resolve executor errors instead of rewriting them as unsupported', async () => {
-    execute.mockResolvedValueOnce({
+  it('preserves session resolution ambiguity details for built-in tool calls', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
       ok: false,
-      errorCode: 'invalid_parameters',
-      error: 'invalid_parameters',
+      code: 'session_id_ambiguous',
+      candidates: ['sess-1', 'sess-2'],
     });
 
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
-      sessionId: 'sess-1',
-      toolName: 'action_options_resolve',
-      args: {
-        optionsSourceId: 'session.modes.available',
-      },
+      sessionId: 'sess',
+      toolName: 'change_title',
+      args: { title: 'Renamed' },
     });
 
     expect(result).toEqual({
       ok: false,
-      errorCode: 'invalid_parameters',
-      error: 'invalid_parameters',
+      errorCode: 'session_id_ambiguous',
+      error: 'Session id is ambiguous',
+      candidates: ['sess-1', 'sess-2'],
     });
   });
 
-  it('reports malformed action_options_resolve payloads as resolver failures', async () => {
-    execute.mockResolvedValueOnce({
-      ok: true,
-      result: null,
+  it('rejects action_execute when the action is disabled on the CLI surface', async () => {
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'subagents.plan.start': { enabled: true, disabledSurfaces: ['cli'], disabledPlacements: [] },
+      },
     });
 
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       sessionId: 'sess-1',
-      toolName: 'action_options_resolve',
+      toolName: 'action_execute',
       args: {
-        optionsSourceId: 'session.modes.available',
+        actionId: 'subagents.plan.start',
+        input: { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.' },
       },
     });
 
     expect(result).toEqual({
       ok: false,
-      errorCode: 'action_options_resolve_failed',
-      error: 'Options source resolution failed',
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects action-backed MCP-only tools on the CLI surface', async () => {
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'memory_search',
+      args: {
+        machineId: 'machine-1',
+        query: { q: 'needle' },
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('preserves execution_run_start failures from the shared execution-run service', async () => {
+    startExecutionRun.mockResolvedValueOnce({
+      ok: false,
+      code: 'execution_run_budget_exceeded',
+      message: 'Execution run budget exceeded',
+    });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review.',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'execution_run_budget_exceeded',
+      error: 'Execution run budget exceeded',
     });
   });
 });

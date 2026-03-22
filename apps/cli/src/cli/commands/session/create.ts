@@ -1,51 +1,26 @@
 import chalk from 'chalk';
-import os from 'node:os';
 
+import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
+import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { Credentials } from '@/persistence';
-import { fetchSessionsPage, getOrCreateSessionByTag } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { summarizeSessionRecord } from '@/sessionControl/sessionSummary';
-import { readFlagValue, hasFlag } from '@/sessionControl/argvFlags';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
-
-async function tagExists(params: Readonly<{ credentials: Credentials; tag: string }>): Promise<boolean> {
-  const maxPagesRaw = (process.env.HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES ?? '').trim();
-  const maxPagesParsed = maxPagesRaw ? Number.parseInt(maxPagesRaw, 10) : NaN;
-  const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
-
-  const scan = async (archivedOnly: boolean): Promise<boolean> => {
-    let cursor: string | undefined;
-    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-      const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200, archivedOnly });
-      for (const row of page.sessions) {
-        const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
-        const rowTag = typeof (meta as any)?.tag === 'string' ? String((meta as any).tag).trim() : '';
-        if (rowTag && rowTag === params.tag) return true;
-      }
-      if (!page.hasNext || !page.nextCursor) break;
-      cursor = page.nextCursor;
-    }
-    return false;
-  };
-
-  if (await scan(false)) return true;
-  return await scan(true);
-}
+import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 
 export async function cmdSessionCreate(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const tag = (readFlagValue(argv, '--tag') ?? '').trim();
   const path = (readFlagValue(argv, '--path') ?? process.cwd()).trim();
-  const host = (readFlagValue(argv, '--host') ?? os.hostname()).trim();
+  const tag = (readFlagValue(argv, '--tag') ?? '').trim();
   const title = (readFlagValue(argv, '--title') ?? '').trim();
-  const noLoadExisting = hasFlag(argv, '--no-load-existing');
-
-  if (!tag) {
+  const initialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
+  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  if (hasFlag(argv, '--host') || hasFlag(argv, '--no-load-existing')) {
     throw new Error(
-      'Usage: happier session create --tag <tag> [--title <text>] [--path <path>] [--host <host>] [--no-load-existing] [--json]',
+      'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
     );
   }
 
@@ -59,36 +34,52 @@ export async function cmdSessionCreate(
     process.exit(1);
   }
 
-  const existed = await tagExists({ credentials, tag });
-  if (existed && noLoadExisting) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_create', error: { code: 'already_exists' } });
-      return;
+  const backendTarget = (() => {
+    if (!backendRaw) {
+      return { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID } as const;
     }
-    console.error(chalk.red('Error:'), `Session tag already exists: ${tag}`);
-    process.exit(1);
+    return parseSingleBackendTargetFromFlag(backendRaw);
+  })();
+  if (!backendTarget) {
+    throw new Error(
+      'Usage: happier session create [--path <path>] [--backend <backend-target>] [--title <text>] [--tag <tag>] [--prompt <text>|--message <text>] [--json]',
+    );
   }
 
-  const { session } = await getOrCreateSessionByTag({
-    credentials,
-    tag,
-    metadata: {
-      tag,
-      path,
-      host,
-      ...(title ? { summary: { text: title, updatedAt: Date.now() } } : {}),
-    },
-    agentState: null,
-  });
-
-  const summary = summarizeSessionRecord({ credentials, session });
-  const created = !existed;
+  let created: Awaited<ReturnType<typeof createSpawnedSession>>;
+  try {
+    created = await createSpawnedSession({
+      credentials,
+      directory: path,
+      backendTarget,
+      ...(title ? { title } : {}),
+      ...(tag ? { tag } : {}),
+      ...(initialPrompt ? { initialMessage: initialPrompt } : {}),
+    });
+  } catch (error) {
+    const mapped = mapUnknownErrorToControlError(error);
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: mapped.code,
+          ...(mapped.message ? { message: mapped.message } : {}),
+          ...(((error as { details?: unknown })?.details !== undefined) ? { details: (error as { details?: unknown }).details } : {}),
+        },
+      });
+      return;
+    }
+    throw Object.assign(new Error(mapped.message ?? (error instanceof Error ? error.message : 'Failed to create session')), {
+      code: mapped.code,
+    });
+  }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_create', data: { session: summary, created } });
+    printJsonEnvelope({ ok: true, kind: 'session_create', data: { session: created.session, created: created.created } });
     return;
   }
 
-  console.log(chalk.green('✓'), created ? 'session created' : 'session loaded');
-  console.log(JSON.stringify({ created, session: summary }, null, 2));
+  console.log(chalk.green('✓'), 'session created');
+  console.log(JSON.stringify({ created: true, session: created.session }, null, 2));
 }

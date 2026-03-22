@@ -2,15 +2,12 @@ import type { Credentials } from '@/persistence';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
-import {
-  resolveSessionEncryptionContextFromCredentials,
-  resolveSessionStoredContentEncryptionMode,
-} from '@/sessionControl/sessionEncryptionContext';
-import { createSessionControlActionExecutor } from '@/sessionControl/createSessionControlActionExecutor';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { startExecutionRun } from '@/session/services/executionRuns';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { createSessionTitleMetadataUpdater } from '@/session/services/setSessionTitle';
 
 export async function callBuiltInHappierTool(params: Readonly<{
   credentials: Credentials;
@@ -18,28 +15,48 @@ export async function callBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
 }>): Promise<Awaited<ReturnType<typeof dispatchBuiltInHappierTool>>> {
-  const rawSession = await fetchSessionById({ token: params.credentials.token, sessionId: params.sessionId });
-  if (!rawSession) {
-    return { ok: false, errorCode: 'session_not_found', error: `Session not found: ${params.sessionId}` };
+  const sessionTarget = await resolveSessionTransportContext({
+    credentials: params.credentials,
+    idOrPrefix: params.sessionId,
+  });
+  if (!sessionTarget.ok) {
+    if (sessionTarget.code === 'session_id_ambiguous') {
+      return {
+        ok: false,
+        errorCode: sessionTarget.code,
+        error: 'Session id is ambiguous',
+        ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
+      };
+    }
+    return {
+      ok: false,
+      errorCode: sessionTarget.code,
+      error: sessionTarget.code === 'unsupported'
+        ? `Session transport unsupported for: ${params.sessionId}`
+        : `Session not found: ${params.sessionId}`,
+      ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
+    };
   }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-  const executor = createSessionControlActionExecutor({
+  const { rawSession, ctx, mode, sessionId } = sessionTarget;
+  const executor = createCliActionExecutor({
     token: params.credentials.token,
-    sessionId: params.sessionId,
+    credentials: params.credentials,
+    sessionId,
     ctx,
     mode,
+    rawSession,
   });
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'mcp' }),
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'cli' }),
+    surface: 'cli',
   });
 
   return await dispatchBuiltInHappierTool({
     toolName: params.toolName,
     args: params.args,
-    sessionId: params.sessionId,
+    sessionId,
+    surface: 'cli',
     deps: {
       changeTitle: async (sessionId, title) => {
         await updateSessionMetadataWithRetry({
@@ -47,23 +64,22 @@ export async function callBuiltInHappierTool(params: Readonly<{
           credentials: params.credentials,
           sessionId,
           rawSession,
-          updater: (metadata) => ({ ...metadata, summary: { text: title, updatedAt: Date.now() } }),
+          updater: createSessionTitleMetadataUpdater({ title }),
         });
         return { success: true, title };
       },
       startExecutionRun: async (sessionId, request) => {
-        const result = await callSessionRpc({
+        const result = await startExecutionRun({
           token: params.credentials.token,
           sessionId,
           mode,
           ctx,
-          method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`,
           request,
         });
-        return { ok: true, result };
+        return normalizeExecutionRunToolResult(result);
       },
       executeActionByToolName: actionToolBridge.executeActionByToolName,
-      resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, params.sessionId),
+      resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, sessionId),
       isActionEnabled: actionToolBridge.isActionEnabled,
     },
   });

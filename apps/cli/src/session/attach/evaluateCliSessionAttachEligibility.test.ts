@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Credentials } from '@/persistence';
-import { makeSessionFixtureRow } from './testFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { evaluateCliSessionAttachEligibility } from './evaluateCliSessionAttachEligibility';
 
 const credentials: Credentials = {
@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe('evaluateCliSessionAttachEligibility', () => {
   it('rejects sessions from a different machine even when synced tmux metadata exists', async () => {
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_remote_tmux_1',
       active: true,
       encryptionMode: 'plain',
@@ -54,7 +54,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
   });
 
   it('requires local attachment state for tmux-backed terminal attach', async () => {
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_local_tmux_1',
       active: true,
       encryptionMode: 'plain',
@@ -83,7 +83,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
   });
 
   it('accepts provider-attach sessions on the current machine without local terminal attachment state', async () => {
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_local_opencode_1',
       active: true,
       encryptionMode: 'plain',
@@ -122,7 +122,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       status: 'ready',
     }));
 
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_local_opencode_managed_state_1',
       active: true,
       encryptionMode: 'plain',
@@ -159,7 +159,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       status: 'ready',
     }));
 
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_local_opencode_local_marker_1',
       active: true,
       encryptionMode: 'plain',
@@ -196,7 +196,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
   });
 
   it('accepts provider-attach sessions as remote when machine ownership is missing', async () => {
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_local_opencode_missing_machine_1',
       active: true,
       encryptionMode: 'plain',
@@ -225,7 +225,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
   });
 
   it('accepts provider-attach sessions as remote when they belong to another machine', async () => {
-    const rawSession = makeSessionFixtureRow({
+    const rawSession = createSessionRecordFixture({
       id: 'sid_remote_opencode_1',
       active: true,
       encryptionMode: 'plain',

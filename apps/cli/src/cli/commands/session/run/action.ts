@@ -2,14 +2,11 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import { ExecutionRunActionRequestSchema } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { readJsonFlagValue } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { executeExecutionRunAction } from '@/session/services/executionRuns';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunAction(
   argv: string[],
@@ -19,12 +16,24 @@ export async function cmdSessionRunAction(
   const idOrPrefix = String(argv[2] ?? '').trim();
   const runId = String(argv[3] ?? '').trim();
   const actionId = String(argv[4] ?? '').trim();
-  const input = readJsonFlagValue(argv, '--input-json');
+  const rawInput = readFlagValue(argv, '--input-json');
+  let input: unknown = undefined;
 
   if (!idOrPrefix || !runId || !actionId) {
-    throw new Error('Usage: happier session run action <session-id-or-prefix> <run-id> <action-id> --input-json <json> [--json]');
+    throw new Error('Usage: happier session run action <session-id-or-prefix> <run-id> <action-id> [--input-json <json>] [--json]');
   }
-  if (input === null) {
+  if (rawInput !== null) {
+    try {
+      input = JSON.parse(rawInput);
+    } catch {
+      if (json) {
+        printJsonEnvelope({ ok: false, kind: 'session_run_action', error: { code: 'execution_run_invalid_action_input' } });
+        return;
+      }
+      throw new Error('Invalid --input-json');
+    }
+  }
+  if (rawInput === null && argv.includes('--input-json')) {
     if (json) {
       printJsonEnvelope({ ok: false, kind: 'session_run_action', error: { code: 'execution_run_invalid_action_input' } });
       return;
@@ -42,45 +51,43 @@ export async function cmdSessionRunAction(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_action',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
+  const { sessionId, ctx, mode } = sessionTarget;
+  const request = ExecutionRunActionRequestSchema.parse({ runId, actionId, input });
+  const result = await executeExecutionRunAction({ token: credentials.token, sessionId, mode, ctx, request });
 
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
+  if (!result.ok) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_action', error: { code: 'session_not_found', sessionId } });
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_action',
+        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+      });
       return;
     }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
+    throw new Error(result.message ?? result.code);
   }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-  const request = ExecutionRunActionRequestSchema.parse({ runId, actionId, input });
-  const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_ACTION}`;
-  const result = await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
 
   if (json) {
     printJsonEnvelope({
       ok: true,
       kind: 'session_run_action',
-      data: { sessionId, runId, actionId, ...(result as any) },
+      data: { sessionId, runId, actionId, ...(result.data as any) },
     });
     return;
   }
 
   console.log(chalk.green('✓'), 'run action executed');
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result.data, null, 2));
 }

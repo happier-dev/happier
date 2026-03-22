@@ -5,14 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
-import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: vi.fn(async () => null),
 }));
 
-import { fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 
 import type { Credentials } from '@/persistence';
 import { resolveExistingSessionAttachContext } from './resolveExistingSessionAttachContext';
@@ -47,7 +47,7 @@ describe('resolveExistingSessionAttachContext', () => {
 
   it('returns a v2 plain attach payload and vendorResumeId for plaintext sessions', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      makeSessionFixtureRow({
+      createSessionRecordFixture({
         id: 'sess_plain',
         encryptionMode: 'plain',
         metadata: JSON.stringify({ flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-plain-1' }),
@@ -93,7 +93,7 @@ describe('resolveExistingSessionAttachContext', () => {
     });
 
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      makeSessionFixtureRow({
+      createSessionRecordFixture({
         id: 'sess_e2ee',
         encryptionMode: 'e2ee',
         metadata: metadataCiphertext,
@@ -124,7 +124,7 @@ describe('resolveExistingSessionAttachContext', () => {
 
   it('returns a missing-credentials failure when an encrypted session needs a DEK but credentials are unavailable', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      makeSessionFixtureRow({
+      createSessionRecordFixture({
         id: 'sess_e2ee',
         encryptionMode: 'e2ee',
         metadata: 'ciphertext',

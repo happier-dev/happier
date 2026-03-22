@@ -1,20 +1,11 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { ExecutionRunGetRequestSchema } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { readIntFlagValue } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { delay } from '@/utils/time';
-
-function isTerminalStatus(status: unknown): status is 'succeeded' | 'failed' | 'cancelled' | 'timeout' {
-  return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'timeout';
-}
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { waitForExecutionRun } from '@/session/services/executionRuns';
 
 export async function cmdSessionRunWait(
   argv: string[],
@@ -47,53 +38,44 @@ export async function cmdSessionRunWait(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_wait',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
+  const { sessionId, ctx, mode } = sessionTarget;
+  const result = await waitForExecutionRun({
+    token: credentials.token,
+    sessionId,
+    mode,
+    ctx,
+    runId,
+    timeoutMs: timeoutSeconds * 1000,
+    pollIntervalMs,
+  });
 
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
+  if (!result.ok) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_wait', error: { code: 'session_not_found', sessionId } });
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_wait',
+        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+      });
       return;
     }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
-  }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-  const request = ExecutionRunGetRequestSchema.parse({ runId });
-  const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`;
-
-  const deadlineMs = Date.now() + timeoutSeconds * 1000;
-  while (Date.now() <= deadlineMs) {
-    const res = await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
-    const status = (res as any)?.run?.status;
-    if (isTerminalStatus(status)) {
-      if (json) {
-        printJsonEnvelope({ ok: true, kind: 'session_run_wait', data: { sessionId, runId, status } });
-        return;
-      }
-      console.log(chalk.green('✓'), `run finished: ${status}`);
-      return;
-    }
-    await delay(pollIntervalMs);
+    throw new Error(result.message ?? result.code);
   }
 
   if (json) {
-    printJsonEnvelope({ ok: false, kind: 'session_run_wait', error: { code: 'timeout' } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_wait', data: { sessionId, runId, status: result.status } });
     return;
   }
-  throw new Error('timeout');
+  console.log(chalk.green('✓'), `run finished: ${result.status}`);
 }

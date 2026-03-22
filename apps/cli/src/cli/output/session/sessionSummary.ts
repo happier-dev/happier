@@ -1,6 +1,6 @@
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from './sessionEncryptionContext';
-import type { RawSessionListRow, RawSessionRecord } from './sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
   readSystemSessionMetadataFromMetadata,
   type SessionSummary as ProtocolSessionSummary,

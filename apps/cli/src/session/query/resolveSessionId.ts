@@ -1,6 +1,6 @@
 import type { Credentials } from '@/persistence';
-import { fetchSessionById, fetchSessionsPage } from './sessionsHttp';
-import { tryDecryptSessionMetadata } from './sessionEncryptionContext';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchSessionById, fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
 
 export type ResolveSessionIdResult =
   | { ok: true; sessionId: string }

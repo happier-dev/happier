@@ -1,9 +1,9 @@
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
-import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from './sessionEncryptionContext';
-import { resolveSessionControlSocketConnectTimeoutMs } from './sessionControlTimeouts';
-import { waitForSocketConnect } from './waitForSocketConnect';
+import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
+import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketConnect';
+import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 
 export async function callSessionRpc(params: Readonly<{
   token: string;

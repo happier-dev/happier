@@ -5,8 +5,8 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from './sessionEncryptionContext';
-import type { RawSessionListRow, RawSessionRecord } from './sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 export type CliSessionRowModel = Readonly<{
   id: string;

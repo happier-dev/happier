@@ -4,16 +4,16 @@ import { readCredentials, type Credentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
-import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
-import { buildCliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
+import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 

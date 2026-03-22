@@ -1,13 +1,13 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { createSessionControlActionExecutor } from '@/sessionControl/createSessionControlActionExecutor';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { readFlagValue } from '@/sessionControl/argvFlags';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { normalizeBackendTargetKeysFromCsv } from '../shared/normalizeBackendTargetKeys';
 
 export async function cmdSessionPlanStart(
@@ -79,7 +79,7 @@ export async function cmdSessionPlanStart(
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
   const mode = resolveSessionStoredContentEncryptionMode(rawSession);
 
-  const executor = createSessionControlActionExecutor({ token: credentials.token, sessionId, mode, ctx });
+  const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, mode, ctx });
   const started = await executor.execute('subagents.plan.start', input, { defaultSessionId: sessionId });
 
   if (!started.ok) {

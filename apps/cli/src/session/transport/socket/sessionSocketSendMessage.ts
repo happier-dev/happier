@@ -4,7 +4,7 @@ import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
 
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import type { SessionStoredMessageContent } from '@happier-dev/protocol';
-import { resolveSessionControlSocketAckTimeoutMs, resolveSessionControlSocketConnectTimeoutMs } from './sessionControlTimeouts';
+import { resolveSessionControlSocketAckTimeoutMs, resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { waitForSocketConnect } from './waitForSocketConnect';
 
 export async function sendSessionMessageViaSocketCommitted(params: Readonly<{

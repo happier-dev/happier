@@ -1,4 +1,4 @@
-import type { CliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
+import type { CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { formatSessionUpdatedAtForCli, shortenSessionIdForCli } from '@/ui/sessionListFormatting';
 
 type TableColumn = Readonly<{

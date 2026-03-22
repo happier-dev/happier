@@ -3,9 +3,9 @@ import { getAgentLocalControlCapability, type AgentId } from '@happier-dev/agent
 import { getProviderAttachOps } from '@/backends/catalog';
 import { configuration } from '@/configuration';
 import type { Credentials } from '@/persistence';
-import { buildCliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
-import { evaluateCliSessionAttachEligibility } from '@/sessionControl/evaluateCliSessionAttachEligibility';
-import type { RawSessionListRow } from '@/sessionControl/sessionsHttp';
+import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
+import { evaluateCliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
+import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
 

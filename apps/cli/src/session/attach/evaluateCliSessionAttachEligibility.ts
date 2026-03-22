@@ -6,11 +6,11 @@ import {
 
 import { getProviderAttachOps } from '@/backends/catalog';
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from './sessionEncryptionContext';
-import type { RawSessionListRow, RawSessionRecord } from './sessionsHttp';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan, type TerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
 import type { Metadata } from '@/api/types';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 export type CliSessionAttachEligibilityReasonCode =
   | 'archived'

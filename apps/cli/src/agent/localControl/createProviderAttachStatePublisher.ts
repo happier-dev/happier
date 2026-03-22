@@ -5,12 +5,12 @@ import type { AgentState } from '@/api/types';
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import { updateSessionAgentStateWithAck } from '@/api/session/stateUpdates';
 import { configuration } from '@/configuration';
-import { waitForSocketConnect } from '@/sessionControl/waitForSocketConnect';
+import { waitForSocketConnect } from '@/session/transport/socket/waitForSocketConnect';
 import {
   decryptStoredSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
-} from '@/sessionControl/sessionEncryptionContext';
+} from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { createAgentLocalControlState } from './createAgentLocalControlState';
 

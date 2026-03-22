@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { makeSessionFixtureRow } from './testFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const { mockAxiosGet } = vi.hoisted(() => ({
   mockAxiosGet: vi.fn(),
@@ -45,7 +45,7 @@ describe('resolveSessionIdOrPrefix', () => {
         return {
           status: 200,
           data: {
-            sessions: [makeSessionFixtureRow({ id: 'sess_integration_run_start_123' })],
+            sessions: [createSessionRecordFixture({ id: 'sess_integration_run_start_123' })],
             nextCursor: null,
             hasNext: false,
           },
@@ -93,7 +93,7 @@ describe('resolveSessionIdOrPrefix', () => {
         return {
           status: 200,
           data: {
-            sessions: [makeSessionFixtureRow({ id: 'sess_integration_archived_123' })],
+            sessions: [createSessionRecordFixture({ id: 'sess_integration_archived_123' })],
             nextCursor: null,
             hasNext: false,
           },
@@ -152,7 +152,7 @@ describe('resolveSessionIdOrPrefix', () => {
         return {
           status: 200,
           data: {
-            sessions: [makeSessionFixtureRow({ id: 'sess_dup_123' })],
+            sessions: [createSessionRecordFixture({ id: 'sess_dup_123' })],
             nextCursor: null,
             hasNext: false,
           },
@@ -163,7 +163,7 @@ describe('resolveSessionIdOrPrefix', () => {
         return {
           status: 200,
           data: {
-            sessions: [makeSessionFixtureRow({ id: 'sess_dup_123' })],
+            sessions: [createSessionRecordFixture({ id: 'sess_dup_123' })],
             nextCursor: null,
             hasNext: false,
           },

@@ -2,19 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
 
-import { makeSessionFixtureListResponse } from './testFixtures';
+import { createSessionListResponseFixture } from '@/testkit/backends/sessionFixtures';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 describe('sessionControl.sessionsHttp timeouts', () => {
-  const prevServerUrl = process.env.HAPPIER_SERVER_URL;
-  const prevTimeout = process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS;
+  let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS']);
 
   afterEach(() => {
-    if (prevServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = prevServerUrl;
-
-    if (prevTimeout === undefined) delete process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS;
-    else process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS = prevTimeout;
-
+    envScope.restore();
+    envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS']);
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -30,7 +26,7 @@ describe('sessionControl.sessionsHttp timeouts', () => {
     getSpy
       // AxiosResponse typing is noisy; minimal stubs are sufficient for these timeout assertions.
       .mockResolvedValueOnce({ status: 404, data: {} } as any)
-      .mockResolvedValueOnce({ status: 200, data: makeSessionFixtureListResponse([]) } as any);
+      .mockResolvedValueOnce({ status: 200, data: createSessionListResponseFixture([]) } as any);
 
     await expect(fetchSessionById({ token: 't', sessionId: 's1' })).resolves.toBeNull();
     await expect(fetchSessionsPage({ token: 't', limit: 1 })).resolves.toMatchObject({ sessions: [] });

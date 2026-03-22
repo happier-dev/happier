@@ -5,8 +5,8 @@ import { resolveVendorResumeIdForExistingSession } from '@/daemon/spawn/resolveV
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
-} from '@/sessionControl/sessionEncryptionContext';
-import { fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
+} from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 
 export type ExistingSessionAttachContext = Readonly<{
   ok: true;

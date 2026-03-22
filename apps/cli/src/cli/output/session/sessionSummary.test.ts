@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
-import { summarizeSessionRow } from '@/sessionControl/sessionSummary';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { summarizeSessionRow } from '@/cli/output/session/sessionSummary';
 
 describe('summarizeSessionRow', () => {
   const credentials = {
@@ -31,7 +31,7 @@ describe('summarizeSessionRow', () => {
 
     const session = summarizeSessionRow({
       credentials,
-      row: makeSessionFixtureRow({
+      row: createSessionRecordFixture({
         id: 'session-system',
         metadata,
         metadataVersion: 1,
@@ -46,7 +46,7 @@ describe('summarizeSessionRow', () => {
     const metadata = encodeBase64(encryptLegacy({ tag: 'MySession' }, credentials.encryption.secret));
     const session = summarizeSessionRow({
       credentials,
-      row: makeSessionFixtureRow({
+      row: createSessionRecordFixture({
         id: 'session-user',
         metadata,
         metadataVersion: 1,
@@ -60,7 +60,7 @@ describe('summarizeSessionRow', () => {
   it('is tolerant of malformed metadata', () => {
     const session = summarizeSessionRow({
       credentials,
-      row: makeSessionFixtureRow({
+      row: createSessionRecordFixture({
         id: 'session-malformed',
         metadata: 'not-base64',
       }),

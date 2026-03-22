@@ -1,14 +1,16 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { ExecutionRunListRequestSchema } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import {
+  ExecutionRunListRequestSchema,
+  ExecutionRunStatusSchema,
+} from '@happier-dev/protocol';
 
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
-import { callSessionRpc } from '@/sessionControl/sessionRpc';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { listExecutionRuns } from '@/session/services/executionRuns';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/parseSingleBackendTargetFromFlag';
 
 export async function cmdSessionRunList(
   argv: string[],
@@ -17,7 +19,7 @@ export async function cmdSessionRunList(
   const json = wantsJson(argv);
   const idOrPrefix = String(argv[2] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--json]');
+    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -30,48 +32,57 @@ export async function cmdSessionRunList(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!sessionTarget.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_list',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(sessionTarget.code);
   }
-  const sessionId = resolved.sessionId;
-
-  const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
-  if (!rawSession) {
-    if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_run_list', error: { code: 'session_not_found', sessionId } });
-      return;
-    }
-    console.error(chalk.red('Error:'), `Session not found: ${sessionId}`);
-    process.exit(1);
+  const { sessionId, ctx, mode } = sessionTarget;
+  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
+  if (backendRaw && !backendTarget) {
+    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
   }
-
-  const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
-  const request = ExecutionRunListRequestSchema.parse({});
-  const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_LIST}`;
-  const result = await callSessionRpc({
+  const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
+  const status = statusRaw ? ExecutionRunStatusSchema.parse(statusRaw) : undefined;
+  const limit = readIntFlagValue(argv, '--limit');
+  const request = ExecutionRunListRequestSchema.parse({
+    ...(backendTarget ? { backendTarget } : {}),
+    ...(status ? { status } : {}),
+    ...(typeof limit === 'number' ? { limit } : {}),
+  });
+  const result = await listExecutionRuns({
     token: credentials.token,
     sessionId,
     mode,
     ctx,
-    method,
     request,
   });
 
+  if (!result.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_list',
+        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+      });
+      return;
+    }
+    throw new Error(result.message ?? result.code);
+  }
+
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId, ...(result as any) } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId, ...(result.data as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'execution runs listed');
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result.data, null, 2));
 }

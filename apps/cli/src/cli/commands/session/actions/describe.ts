@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 import { getActionSpec, serializeActionSpec } from '@happier-dev/protocol';
 
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 
 export async function cmdSessionActionsDescribe(argv: string[]): Promise<void> {
   const json = wantsJson(argv);

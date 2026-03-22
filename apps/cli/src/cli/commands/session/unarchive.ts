@@ -1,9 +1,8 @@
 import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { unarchiveSession } from '@/sessionControl/sessionsHttp';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 
 export async function cmdSessionUnarchive(
   argv: string[],
@@ -25,27 +24,27 @@ export async function cmdSessionUnarchive(
     process.exit(1);
   }
 
-  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
-  if (!resolved.ok) {
+  const result = await setSessionArchivedState({
+    credentials,
+    idOrPrefix,
+    archived: false,
+  });
+  if (!result.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_unarchive',
-        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+        error: { code: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) },
       });
       return;
     }
-    throw new Error(resolved.code);
+    throw new Error(result.code);
   }
-  const sessionId = resolved.sessionId;
-
-  await unarchiveSession({ token: credentials.token, sessionId });
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_unarchive', data: { sessionId, archivedAt: null } });
+    printJsonEnvelope({ ok: true, kind: 'session_unarchive', data: { sessionId: result.sessionId, archivedAt: result.archivedAt } });
     return;
   }
 
-  console.log(chalk.green('✓'), `unarchived ${sessionId}`);
+  console.log(chalk.green('✓'), `unarchived ${result.sessionId}`);
 }
-

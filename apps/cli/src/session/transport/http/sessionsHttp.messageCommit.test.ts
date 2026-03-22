@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 describe('sessionControl.sessionsHttp message commits', () => {
-  const previousServerUrl = process.env.HAPPIER_SERVER_URL;
+  let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL']);
 
   afterEach(() => {
-    if (previousServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = previousServerUrl;
+    envScope.restore();
+    envScope = createEnvKeyScope(['HAPPIER_SERVER_URL']);
     vi.restoreAllMocks();
     vi.resetModules();
   });

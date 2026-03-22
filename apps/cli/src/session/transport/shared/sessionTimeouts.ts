@@ -11,6 +11,9 @@ function readPositiveIntEnvMs(key: string, fallback: number, opts?: Readonly<{ m
 
 const DEFAULT_SOCKET_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_SOCKET_ACK_TIMEOUT_MS = 10_000;
+const DEFAULT_SESSION_WAIT_IDLE_CONFIRM_MS = 250;
+const DEFAULT_SESSION_STOP_TIMEOUT_MS = 10_000;
+const DEFAULT_SESSION_STOP_POLL_INTERVAL_MS = 200;
 
 export function resolveSessionControlSocketConnectTimeoutMs(): number {
   return readPositiveIntEnvMs('HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS', DEFAULT_SOCKET_CONNECT_TIMEOUT_MS, { min: 1, max: 60_000 });
@@ -20,3 +23,22 @@ export function resolveSessionControlSocketAckTimeoutMs(): number {
   return readPositiveIntEnvMs('HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS', DEFAULT_SOCKET_ACK_TIMEOUT_MS, { min: 1, max: 60_000 });
 }
 
+export function resolveSessionControlWaitIdleConfirmMs(): number {
+  return readPositiveIntEnvMs(
+    'HAPPIER_SESSION_WAIT_IDLE_CONFIRM_MS',
+    DEFAULT_SESSION_WAIT_IDLE_CONFIRM_MS,
+    { min: 1, max: 5_000 },
+  );
+}
+
+export function resolveSessionControlStopTimeoutMs(): number {
+  return readPositiveIntEnvMs('HAPPIER_SESSION_STOP_TIMEOUT_MS', DEFAULT_SESSION_STOP_TIMEOUT_MS, { min: 1, max: 60_000 });
+}
+
+export function resolveSessionControlStopPollIntervalMs(): number {
+  return readPositiveIntEnvMs(
+    'HAPPIER_SESSION_STOP_POLL_INTERVAL_MS',
+    DEFAULT_SESSION_STOP_POLL_INTERVAL_MS,
+    { min: 1, max: 5_000 },
+  );
+}
