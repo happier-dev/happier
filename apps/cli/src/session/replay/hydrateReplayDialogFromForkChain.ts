@@ -3,8 +3,8 @@ import type { Credentials } from '@/persistence';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
 import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
-import { fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { readMemorySynopsisPointerV1FromSessionMetadata } from '@/session/memoryArtifacts/memorySynopsisPointerV1';
 
 import type { HappierReplayDialogItem } from './types';

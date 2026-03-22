@@ -1,7 +1,7 @@
 import os from 'node:os';
 
 import type { Credentials } from '@/persistence';
-import { getOrCreateSessionByTag } from '@/sessionControl/sessionsHttp';
+import { getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
 
 export async function createReplaySeededSession(params: Readonly<{
   credentials: Credentials;

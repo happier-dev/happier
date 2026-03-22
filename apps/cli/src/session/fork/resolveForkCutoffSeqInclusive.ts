@@ -3,7 +3,7 @@ import axios from 'axios';
 import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 
 type RawTranscriptRow = Readonly<{

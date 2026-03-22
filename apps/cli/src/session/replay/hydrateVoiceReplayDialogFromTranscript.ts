@@ -2,10 +2,10 @@ import { normalizeVoiceAgentTurnTranscriptText, type HappierReplayDialogItem } f
 import { SessionSynopsisV1Schema, VoiceAgentTurnV1Schema } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import { fetchSessionById } from '@/sessionControl/sessionsHttp';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 import { fetchEncryptedTranscriptMessages } from '@/session/replay/fetchEncryptedTranscriptMessages';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 
 function truncateReplayText(text: string, maxTextChars?: number): string {
   const normalizedMax =
