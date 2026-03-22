@@ -2,67 +2,10 @@ import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 
-import {
-    FEATURE_CATALOG,
-    FEATURE_IDS,
-    isFeatureId,
-    type FeatureId,
-} from '../../packages/protocol/src/features/catalog.ts'
-import { evaluateFeatureBuildPolicy } from '../../packages/protocol/src/features/buildPolicy.ts'
-import {
-    resolveEmbeddedFeaturePolicyEnv,
-    resolveFeatureBuildPolicyFromEnvOrEmbedded,
-} from '../../packages/protocol/src/features/embeddedFeaturePolicy.ts'
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 
 const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
 const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 4;
-
-function resolveDisabledFeatureIdsBase(env: NodeJS.ProcessEnv): Set<FeatureId> {
-    const disabled = new Set<FeatureId>();
-
-    const embeddedEnv = resolveEmbeddedFeaturePolicyEnv(
-        env.HAPPIER_FEATURE_POLICY_ENV ?? env.HAPPIER_EMBEDDED_POLICY_ENV,
-    );
-    const buildPolicy = resolveFeatureBuildPolicyFromEnvOrEmbedded({
-        embeddedEnv: embeddedEnv ?? undefined,
-        allowRaw: env.HAPPIER_BUILD_FEATURES_ALLOW ?? null,
-        denyRaw: [env.HAPPIER_BUILD_FEATURES_DENY, env.HAPPIER_TEST_FEATURES_DENY]
-            .filter(Boolean)
-            .join(',') || null,
-    });
-
-    for (const featureId of FEATURE_IDS) {
-        if (evaluateFeatureBuildPolicy(buildPolicy, featureId) === 'deny') {
-            disabled.add(featureId);
-        }
-    }
-
-    return disabled;
-}
-
-function applyFeatureDependencyClosure(disabled: Set<FeatureId>): Set<FeatureId> {
-    let changed = true;
-    while (changed) {
-        changed = false;
-
-        for (const featureId of FEATURE_IDS) {
-            if (disabled.has(featureId)) continue;
-
-            const deps = FEATURE_CATALOG[featureId].dependencies;
-            if (deps.some((dep) => isFeatureId(dep) && disabled.has(dep))) {
-                disabled.add(featureId);
-                changed = true;
-            }
-        }
-    }
-
-    return disabled;
-}
-
-function resolveVitestFeatureTestExcludeGlobs(env: NodeJS.ProcessEnv = process.env): readonly string[] {
-    const disabled = applyFeatureDependencyClosure(resolveDisabledFeatureIdsBase(env));
-    return Object.freeze(Array.from(disabled, (featureId) => `**/*.feat.${featureId}.*`));
-}
 
 function resolveExpoNodeModuleStub(id: string): string | null {
     if (id === 'expo-modules-core' || /(?:^|[\\/])node_modules[\\/](?:@[^\\/]+[\\/])?expo-modules-core[\\/]src[\\/]index\.ts$/.test(id) || /expo-modules-core[\\/]src[\\/]index\.ts$/.test(id)) {
