@@ -4,9 +4,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { bundledWorkspacePackages } from './workspaceBundleManifest.mjs';
+export { bundledWorkspacePackages };
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-export { bundledWorkspacePackages } from './workspaceBundleManifest.mjs';
 
 function findRepoRoot(startDir) {
   let dir = startDir;
