@@ -60,6 +60,8 @@ async function readPrepareTargetJobFile(filePath: string): Promise<SessionHandof
     }
     throw error;
   }
+}
+
 export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
   activeServerDir: string;
 }>): SessionHandoffPrepareTargetJobStore {

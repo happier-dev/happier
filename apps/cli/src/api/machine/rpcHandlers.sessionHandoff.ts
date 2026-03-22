@@ -87,9 +87,9 @@ import {
   type SessionHandoffMetadataV2,
 } from '../../session/handoff/transfer/sessionHandoffMetadataV2';
 import {
-  createWorkspaceReplicationJobStore,
-  type WorkspaceReplicationJobRecord,
-} from '../../workspaces/replication/jobs/workspaceReplicationJobStore';
+  createSessionHandoffPrepareTargetJobStore,
+  type SessionHandoffPrepareTargetJobRecord,
+} from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { applyWorkspaceReplicationPlan } from '../../workspaces/replication/apply/applyWorkspaceReplicationPlan';
 import { createWorkspaceReplicationTransfers } from '../../workspaces/replication/transport/workspaceReplicationTransfers';
 
@@ -350,10 +350,10 @@ function buildPrepareJobRecord(input: Readonly<{
   completedAtMs?: number;
   failedAtMs?: number;
   lastErrorMessage?: string;
-}>): WorkspaceReplicationJobRecord {
+}>): SessionHandoffPrepareTargetJobRecord {
   return {
     jobId: input.jobId,
-    correlationId: input.handoffId,
+    handoffId: input.handoffId,
     createdAtMs: input.createdAtMs,
     updatedAtMs: input.updatedAtMs ?? input.createdAtMs,
     ...(input.cancelRequestedAtMs ? { cancelRequestedAtMs: input.cancelRequestedAtMs } : {}),
@@ -369,8 +369,8 @@ function buildPrepareJobRecord(input: Readonly<{
 async function readPersistedPrepareJob(params: Readonly<{
   handoffId: string;
   current?: StoredHandoffState;
-  jobStore: ReturnType<typeof createWorkspaceReplicationJobStore>;
-}>): Promise<WorkspaceReplicationJobRecord | null> {
+  jobStore: ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
+}>): Promise<SessionHandoffPrepareTargetJobRecord | null> {
   const currentJobId = params.current?.status.jobId;
   if (currentJobId) {
     const currentJob = await params.jobStore.read(currentJobId);
@@ -378,7 +378,7 @@ async function readPersistedPrepareJob(params: Readonly<{
       return currentJob;
     }
   }
-  return await params.jobStore.findByCorrelationId(params.handoffId);
+  return await params.jobStore.findByHandoffId(params.handoffId);
 }
 
 async function waitForPrepareJobFastPath(runPromise: Promise<void>): Promise<'completed' | 'pending'> {
@@ -677,7 +677,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
 }>): void {
   const store = new Map<string, StoredHandoffState>();
-  const prepareJobStore = createWorkspaceReplicationJobStore({
+  const prepareJobStore = createSessionHandoffPrepareTargetJobStore({
     activeServerDir: configuration.activeServerDir,
   });
   const activePrepareJobs = new Map<string, Promise<void>>();
@@ -1165,7 +1165,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     let providerBundle: SessionHandoffProviderBundle | null = null;
     let providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublication | null = null;
 
-    const persistJobRecord = async (jobRecord: WorkspaceReplicationJobRecord): Promise<void> => {
+    const persistJobRecord = async (jobRecord: SessionHandoffPrepareTargetJobRecord): Promise<void> => {
       await prepareJobStore.write(jobRecord);
       const previous = store.get(parsed.data.handoffId) ?? current;
       store.set(parsed.data.handoffId, {
