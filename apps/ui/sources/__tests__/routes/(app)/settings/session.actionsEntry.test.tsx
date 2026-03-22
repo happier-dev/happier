@@ -120,7 +120,7 @@ describe('Session settings (Actions entry)', () => {
         const SessionSettingsScreen = mod.default;
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
+        const titles = screen.findAllByType('Item' as any).map((item) => item.props.title);
 
         expect(titles).not.toContain('common.actions');
     });

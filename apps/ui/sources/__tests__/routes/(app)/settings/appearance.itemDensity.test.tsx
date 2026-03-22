@@ -124,7 +124,7 @@ describe('Appearance settings item density', () => {
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(React.createElement(mod.default));
 
-        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const itemDensityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.itemDensity');
         expect(itemDensityDropdown).toBeTruthy();
         expect(itemDensityDropdown?.props?.selectedId).toBe('comfortable');

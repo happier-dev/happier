@@ -153,7 +153,7 @@ describe('/session/[id]/terminal', () => {
     it('opens the right pane with the terminal tab selected', async () => {
         const screen = await renderRouteScreen();
 
-        const panel = screen.root.findByType('SessionRightPanel' as any);
+        const panel = screen.findByType('SessionRightPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'terminal' });
@@ -181,7 +181,7 @@ describe('/session/[id]/terminal', () => {
     it('closes by navigating back and closing the right-pane state', async () => {
         const screen = await renderRouteScreen();
 
-        const panel = screen.root.findByType('SessionRightPanel' as any);
+        const panel = screen.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -195,7 +195,7 @@ describe('/session/[id]/terminal', () => {
 
         const screen = await renderRouteScreen();
 
-        const panel = screen.root.findByType('SessionRightPanel' as any);
+        const panel = screen.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });

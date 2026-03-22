@@ -66,21 +66,20 @@ async function flushEffects(): Promise<void> {
 
 async function renderRootLayout() {
     const { default: RootLayout } = await import('@/app/(app)/_layout');
-    let tree: ReturnType<typeof renderer.create> | undefined;
-    tree = (await renderScreen(<RootLayout />)).tree;
+    const screen = await renderScreen(<RootLayout />);
     await act(async () => {
         await flushEffects();
     });
-    return tree;
+    return screen;
 }
 
-function getFriendsManageScreen(tree: ReturnType<typeof renderer.create> | undefined) {
-    const screens = tree?.root.findAllByType(Stack.Screen) ?? [];
+function getFriendsManageScreen(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const screens = screen.findAllByType(Stack.Screen) ?? [];
     return screens.find((node) => node.props?.name === 'friends/manage');
 }
 
-function getScreenNames(tree: ReturnType<typeof renderer.create> | undefined): string[] {
-    return (tree?.root.findAllByType(Stack.Screen) ?? [])
+function getScreenNames(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
+    return (screen.findAllByType(Stack.Screen) ?? [])
         .map((node) => node.props?.name)
         .filter((name): name is string => typeof name === 'string');
 }

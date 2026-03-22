@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -15,9 +14,8 @@ describe('legacy prompts library route', () => {
     it('redirects back to the prompts settings home', async () => {
         const module = await import('@/app/(app)/settings/prompts/library');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(module.default))).tree;
-        const redirect = tree.root.findByType('Redirect');
+        const screen = await renderScreen(React.createElement(module.default));
+        const redirect = screen.findByType('Redirect' as any);
 
         expect(redirect.props.href).toBe('/(app)/settings/prompts');
     });

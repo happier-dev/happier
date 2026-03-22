@@ -251,7 +251,7 @@ describe('Memory search screen', () => {
         });
         await settleMemorySearchScreen();
 
-        const textsAfterSwitch = screen.root.findAllByType('Text' as any).map((node) => node.props.children);
+        const textsAfterSwitch = screen.findAllByType('Text' as any).map((node) => node.props.children);
         expect(textsAfterSwitch).toContain('common.loading');
         expect(textsAfterSwitch).not.toContain('memorySearchSettings.status.readyLight');
 

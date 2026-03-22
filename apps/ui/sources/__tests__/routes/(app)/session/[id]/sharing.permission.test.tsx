@@ -121,10 +121,9 @@ describe('Session Sharing Screen permissions', () => {
         sessionHydrated = false;
         const Screen = (await import('@/app/(app)/session/[id]/sharing')).default;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<Screen />)).tree;
+        const screen = await renderScreen(<Screen />);
 
-        expect(tree!.root.findByType('ActivityIndicator' as any)).toBeDefined();
+        expect(screen.findByType('ActivityIndicator' as any)).toBeDefined();
         expect(getSessionSharesSpy).not.toHaveBeenCalled();
         expect(getPublicShareSpy).not.toHaveBeenCalled();
         expect(getFriendsListSpy).not.toHaveBeenCalled();

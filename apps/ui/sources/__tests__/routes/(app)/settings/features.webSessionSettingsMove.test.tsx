@@ -133,7 +133,7 @@ describe('FeaturesSettingsScreen (web settings moved)', () => {
     it('does not show Enter-to-send or Message history (moved to Session settings)', async () => {
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
         const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
-        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
+        const titles = screen.findAllByType('Item' as any).map((item) => item.props.title);
 
         expect(titles).not.toContain('settingsFeatures.enterToSend');
         expect(titles).not.toContain('settingsFeatures.historyScope');

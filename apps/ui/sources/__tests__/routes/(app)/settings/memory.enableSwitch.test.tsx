@@ -138,7 +138,7 @@ describe('Memory settings (enable switch)', () => {
 
         const screen = await renderScreen(React.createElement(Screen));
 
-        const switches = screen.root.findAllByType('Switch' as any);
+        const switches = screen.findAllByType('Switch' as any);
         expect(switches).toHaveLength(0);
         expect(machineRpcSpy).not.toHaveBeenCalled();
     });
@@ -174,7 +174,7 @@ describe('Memory settings (enable switch)', () => {
 
         const screen = await renderScreen(React.createElement(Screen));
 
-        const switches = screen.root.findAllByType('Switch' as any);
+        const switches = screen.findAllByType('Switch' as any);
         const enabledSwitch = switches.find((node: any) => node?.props?.testID == null);
         expect(enabledSwitch).toBeTruthy();
         await act(async () => {

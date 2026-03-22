@@ -136,7 +136,7 @@ describe('Session settings session list density', () => {
         const SessionSettingsScreen = mod.default;
 
         const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const densityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.sessionListDensity.title');
         expect(densityDropdown).toBeTruthy();
         expect(densityDropdown?.props?.selectedId).toBe('cozy');

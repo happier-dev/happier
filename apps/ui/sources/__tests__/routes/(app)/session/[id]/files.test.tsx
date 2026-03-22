@@ -129,7 +129,7 @@ describe('/session/[id]/files', () => {
     it('renders the shared SessionRightPanel surface fullscreen and opens the right pane state', async () => {
         const screen = await renderRouteScreen();
 
-        const panel = screen.root.findByType('SessionRightPanel' as any);
+        const panel = screen.findByType('SessionRightPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
@@ -157,7 +157,7 @@ describe('/session/[id]/files', () => {
     it('closes by navigating back and closing the right-pane state', async () => {
         const screen = await renderRouteScreen();
 
-        const panel = screen.root.findByType('SessionRightPanel' as any);
+        const panel = screen.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -170,7 +170,7 @@ describe('/session/[id]/files', () => {
         canGoBack = false;
         const screen = await renderRouteScreen();
 
-        const panel = screen.root.findByType('SessionRightPanel' as any);
+        const panel = screen.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });

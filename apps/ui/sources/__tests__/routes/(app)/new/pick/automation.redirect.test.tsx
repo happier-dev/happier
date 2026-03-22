@@ -34,7 +34,7 @@ describe('legacy automation picker route', () => {
 
         const screen = await renderScreen(React.createElement(module.default));
 
-        const redirect = screen.root.findByType('Redirect');
+        const redirect = screen.findByType('Redirect' as any);
         expect(redirect.props.href).toEqual({
             pathname: '/new',
             params: {

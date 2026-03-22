@@ -118,7 +118,7 @@ describe('Transcript settings (thinking display mode)', () => {
 
         expect(screen.findRowByTitle('settingsSession.thinking.displayModeTitle')).toBeTruthy();
 
-        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         expect(dropdowns.length).toBeGreaterThan(0);
 
         const thinkingDropdown = dropdowns.find((dropdown: any) => dropdown?.props?.selectedId === 'inline_summary');

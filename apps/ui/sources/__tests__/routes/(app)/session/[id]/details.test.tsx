@@ -210,7 +210,7 @@ describe('/session/[id]/details', () => {
     it('renders the shared SessionDetailsPanel when tabs exist', async () => {
         scopeState = { details: { tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
         const screen = await renderScreen(<Screen />);
-        const panel = screen.root.findByType('SessionDetailsPanel' as any);
+        const panel = screen.findByType('SessionDetailsPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
     });
@@ -225,7 +225,7 @@ describe('/session/[id]/details', () => {
         scopeState = { details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
         const screen = await renderScreen(<Screen />);
 
-        const panel = screen.root.findByType('SessionDetailsPanel' as any);
+        const panel = screen.findByType('SessionDetailsPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -239,7 +239,7 @@ describe('/session/[id]/details', () => {
         scopeState = { details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
         const screen = await renderScreen(<Screen />);
 
-        const panel = screen.root.findByType('SessionDetailsPanel' as any);
+        const panel = screen.findByType('SessionDetailsPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });

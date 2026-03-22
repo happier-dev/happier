@@ -112,8 +112,8 @@ describe('Session settings (web features moved)', () => {
         const SessionSettingsScreen = mod.default;
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
-        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const titles = screen.findAllByType('Item' as any).map((item) => item.props.title);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const dropdownTriggerTitles = dropdowns
             .map((dropdown) => dropdown.props?.itemTrigger?.title)
             .filter((title): title is string => typeof title === 'string');
