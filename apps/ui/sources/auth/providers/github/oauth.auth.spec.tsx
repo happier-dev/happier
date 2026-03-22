@@ -15,6 +15,8 @@ import {
     setActiveServerSnapshot,
     upsertAndActivateServerSpy,
 } from './test/oauthReturnHarness';
+import { renderScreen } from '@/dev/testkit';
+
 
 type FetchResult = {
     ok: boolean;
@@ -374,9 +376,7 @@ describe('/oauth/[provider] (auth flow)', () => {
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        tree = (await renderScreen(React.createElement(Screen))).tree;
         if (!tree) throw new Error('Expected OAuth screen to render');
         const ensuredTree = tree;
         try {
@@ -439,9 +439,7 @@ describe('/oauth/[provider] (auth flow)', () => {
         const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        tree = (await renderScreen(React.createElement(Screen))).tree;
         if (!tree) throw new Error('Expected OAuth screen to render');
         const ensuredTree = tree;
         try {
