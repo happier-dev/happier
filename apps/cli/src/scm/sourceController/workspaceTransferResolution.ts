@@ -1,6 +1,8 @@
 import { readdir, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+import type { WorkspaceManifest } from '@happier-dev/protocol';
+
 import { defaultScmBackendRegistry } from '../defaultRegistry';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
@@ -219,6 +221,32 @@ export async function buildWorkspaceExportArtifactsWithSourceController(input: R
         ...workspaceExportArtifacts,
         sourceControllerMetadata: sourceInputs.sourceControllerMetadata,
     });
+}
+
+export async function buildWorkspaceExportManifestWithSourceController(input: Readonly<{
+    sourcePath: string;
+    workspaceTransfer: ScmSourceControllerWorkspaceTransferRequestInput;
+    registry?: ScmBackendRegistry;
+}>): Promise<WorkspaceManifest> {
+    const resolved = await resolveWorkspaceTransferStateWithSourceController(input);
+
+    if (resolved.workspaceExportArtifacts) {
+        return {
+            entries: resolved.workspaceExportArtifacts.manifest.entries.map((entry) => ({ ...entry })),
+            fingerprint: resolved.workspaceExportArtifacts.manifest.fingerprint,
+        };
+    }
+
+    const sourceInputs = await resolveWorkspaceReplicationSourceInputsWithSourceController(input);
+    const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries({
+        entries: sourceInputs.entries,
+        shouldIgnoreAccessError: isIgnorableWorkspaceExportAccessError,
+    });
+
+    return {
+        entries: workspaceExportArtifacts.manifest.entries.map((entry) => ({ ...entry })),
+        fingerprint: workspaceExportArtifacts.manifest.fingerprint,
+    };
 }
 
 export async function buildWorkspaceExportArtifactsWithBlobProviderFromSourceController(input: Readonly<{

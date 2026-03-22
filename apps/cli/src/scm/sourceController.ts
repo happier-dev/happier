@@ -5,6 +5,7 @@ export {
 } from './sourceController/workspaceCheckoutOperations';
 export {
     assertPortableWorkspaceTransferEntriesWithSourceController,
+    buildWorkspaceExportManifestWithSourceController,
     buildWorkspaceExportArtifactsWithBlobProviderFromSourceController,
     buildWorkspaceExportArtifactsWithSourceController,
     classifyPortableWorkspaceTransferEntryWithSourceController,

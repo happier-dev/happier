@@ -4,6 +4,7 @@ import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
 import {
+  buildWorkspaceExportManifestWithSourceController,
   buildWorkspaceExportArtifactsWithBlobProviderFromSourceController,
   buildWorkspaceExportArtifactsWithSourceController,
   reconcilePostMaterializationWithSourceController,
@@ -46,15 +47,15 @@ async function readCurrentSyncScopeManifestOrEmpty(params: Readonly<{
     return { entries: [] };
   }
 
-  const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithSourceController({
+  const currentManifest = await buildWorkspaceExportManifestWithSourceController({
     sourcePath: params.targetPath,
     workspaceTransfer: createScmSourceControllerWorkspaceTransferRequest(params.workspaceTransfer),
     registry: params.registry,
   });
 
   return {
-    entries: workspaceExportArtifacts.manifest.entries.map((entry) => ({ ...entry })),
-    fingerprint: workspaceExportArtifacts.manifest.fingerprint,
+    entries: currentManifest.entries.map((entry) => ({ ...entry })),
+    fingerprint: currentManifest.fingerprint,
   };
 }
 
