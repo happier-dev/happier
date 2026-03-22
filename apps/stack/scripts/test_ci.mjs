@@ -1,23 +1,11 @@
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { collectTestFiles } from './utils/test/collect_test_files.mjs';
+import { collectStackUnitTestFiles } from './utils/test/test_collection.mjs';
+import { runNodeTestFilesSync } from './utils/test/test_process.mjs';
 
 async function main() {
-  const packageRoot = fileURLToPath(new URL('..', import.meta.url));
-  const scriptsDir = join(packageRoot, 'scripts');
-  const testsDir = join(packageRoot, 'tests');
-
-  const testFiles = [];
-  testFiles.push(...(await collectTestFiles({
-    dir: scriptsDir,
-    includeSuffixes: ['.test.mjs'],
-    excludeSuffixes: ['.integration.test.mjs', '.real.integration.test.mjs'],
-  })));
-  testFiles.push(...(await collectTestFiles({
-    dir: testsDir,
-    includeSuffixes: ['.test.mjs'],
-    excludeSuffixes: ['.integration.test.mjs', '.real.integration.test.mjs'],
-  })));
+  const { packageRoot, scriptsDir, testsDir, testFiles } = await collectStackUnitTestFiles(import.meta.url, {
+    collect: collectTestFiles,
+  });
 
   if (testFiles.length === 0) {
     process.stderr.write(`[stack:test] no .test.mjs files found under ${scriptsDir} or ${testsDir}\n`);
@@ -25,8 +13,7 @@ async function main() {
   }
 
   // Node 20 does not expand globs for `--test`, so we enumerate files.
-  const { spawnSync } = await import('node:child_process');
-  const res = spawnSync(process.execPath, ['--test', ...testFiles], { stdio: 'inherit' });
+  const res = runNodeTestFilesSync(testFiles, { cwd: packageRoot, env: process.env });
   process.exit(res.status ?? 1);
 }
 
