@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
+
+import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 
 const HEAP_LIMIT_REGEX = /(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/;
 const BASELINE_MAX_OLD_SPACE_SIZE_MB = 8192;
@@ -39,7 +40,7 @@ export function resolveMaxOldSpaceSizeMb(env, totalMemoryBytes = os.totalmem()) 
     : resolveRecommendedMaxOldSpaceSizeMb(totalMemoryBytes);
 }
 
-function main(argv) {
+async function main(argv) {
   const command = argv[2];
   const args = argv.slice(3);
   if (!command) {
@@ -51,24 +52,34 @@ function main(argv) {
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nextNodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
 
-  const proc = spawn(command, args, {
-    env: {
-      ...process.env,
-      NODE_OPTIONS: nextNodeOptions,
+  const result = await runManagedChildCommand({
+    command,
+    args,
+    spawnOptions: {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: nextNodeOptions,
+      },
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
     },
-    stdio: 'inherit',
-    shell: process.platform === 'win32',
+    cleanupPollMs: 25,
+    signalCleanupGraceMs: 0,
+    exitCleanupGraceMs: 1_000,
+    parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
   });
 
-  proc.on('exit', (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exit(code ?? 0);
-  });
+  if (!result.ok) {
+    throw result.error;
+  }
+
+  if (result.signal) {
+    process.exit(resolveSignalExitCode(result.signal));
+    return;
+  }
+  process.exit(result.code ?? 0);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv);
+  void main(process.argv);
 }

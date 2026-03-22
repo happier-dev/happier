@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function parsePositiveInt(raw) {
@@ -22,21 +22,21 @@ export function resolveVitestConfigPath(argv) {
 }
 
 function spawnVitestRun({ configPath, shardSpec, nodeOptions }) {
-  return new Promise((resolve) => {
-    const proc = spawn(
-      'vitest',
-      ['run', '--config', configPath, '--shard', shardSpec],
-      {
-        env: {
-          ...process.env,
-          NODE_OPTIONS: nodeOptions,
-        },
-        stdio: 'inherit',
-        shell: process.platform === 'win32',
+  return runManagedChildCommand({
+    command: 'vitest',
+    args: ['run', '--config', configPath, '--shard', shardSpec],
+    spawnOptions: {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: nodeOptions,
       },
-    );
-
-    proc.on('exit', (code, signal) => resolve({ code, signal }));
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    },
+    cleanupPollMs: 25,
+    signalCleanupGraceMs: 0,
+    exitCleanupGraceMs: 1_000,
+    parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
   });
 }
 
@@ -57,8 +57,11 @@ async function main(argv) {
     console.log(`[vitest] shard ${index}/${shardCount}`);
     const shardSpec = `${index}/${shardCount}`;
     const result = await spawnVitestRun({ configPath, shardSpec, nodeOptions });
+    if (!result.ok) {
+      throw result.error;
+    }
     if (result.signal) {
-      process.kill(process.pid, result.signal);
+      process.exit(resolveSignalExitCode(result.signal));
       return;
     }
     if (result.code && result.code !== 0) {
