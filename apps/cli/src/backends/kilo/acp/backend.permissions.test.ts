@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { PermissionMode } from '@/api/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createKiloBackend } from './backend';
 
 type AcpBackendLike = {
@@ -9,7 +12,31 @@ type AcpBackendLike = {
   };
 };
 
+const envKeys = ['PATH', 'HAPPIER_KILO_PATH'] as const;
+const tempDirs = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
+
+function createFakeBin(name: string): string {
+  const dir = createTempDirSync('happier-kilo-backend-');
+  tempDirs.add(dir);
+  const isWindows = process.platform === 'win32';
+  return writeExecutableShimSync({
+    dir,
+    fileName: isWindows ? `${name}.cmd` : name,
+    contents: isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+}
+
+afterEach(() => {
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
+  for (const dir of tempDirs) removeTempDirSync(dir);
+  tempDirs.clear();
+});
+
 function readPermissionConfig(permissionMode: PermissionMode | undefined): Record<string, string> {
+  process.env.PATH = '';
+  process.env.HAPPIER_KILO_PATH = createFakeBin('kilo');
   const backend = createKiloBackend({
     cwd: '/tmp',
     env: {},
@@ -22,6 +49,13 @@ function readPermissionConfig(permissionMode: PermissionMode | undefined): Recor
 }
 
 describe('Kilo ACP backend permissions', () => {
+  it('fails closed when the Kilo CLI is unavailable', () => {
+    process.env.PATH = '';
+    delete process.env.HAPPIER_KILO_PATH;
+
+    expect(() => createKiloBackend({ cwd: '/tmp', env: {} })).toThrow(/Kilo CLI \(kilo\).*available/i);
+  });
+
   it.each([
     { mode: 'default', wildcard: 'ask', read: 'allow', edit: 'ask', bash: 'ask', external: 'ask' },
     { mode: 'read-only', wildcard: 'deny', read: 'allow', edit: 'deny', bash: 'deny', external: 'deny' },
