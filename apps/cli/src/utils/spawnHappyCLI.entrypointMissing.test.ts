@@ -82,9 +82,8 @@ describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
     expect(process.env.TSX_TSCONFIG_PATH).toBeUndefined();
   });
 
-  it('uses argv-only fallback when dist entrypoint is missing in a self-contained bundled runtime', async () => {
+  it('uses argv-only fallback when dist entrypoint is missing in a self-contained bundled runtime without an explicit runtime override', async () => {
     vi.resetModules();
-    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME', 'bun');
     vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', '/$bunfs/dist/index.mjs');
 
     const originalArgv = [...process.argv];

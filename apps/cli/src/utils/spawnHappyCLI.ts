@@ -174,6 +174,13 @@ function isCurrentProcessSelfContainedBinary(): boolean {
   return !isRuntimeExecutablePath(execPath);
 }
 
+function isCurrentProcessBundledBunExecutable(): boolean {
+  const execPath = String(process.execPath ?? '').trim();
+  if (!execPath) return false;
+  const base = basename(execPath).toLowerCase();
+  return base === 'bun' || base === 'bun.exe';
+}
+
 function resolveCurrentProcessBundledScriptPath(): string | null {
   const scriptPath = String(process.argv[1] ?? '').trim();
   if (!scriptPath) return null;
@@ -185,6 +192,34 @@ function resolveCurrentProcessBundledScriptPath(): string | null {
   if (base.includes('happier')) return scriptPath;
   if (base === 'index.mjs' && (lowered.includes('/@happier-dev/cli/') || lowered.includes('/happier/'))) {
     return scriptPath;
+  }
+  return null;
+}
+
+function buildCurrentProcessBinaryFallbackInvocation(args: string[]): HappyCliSubprocessInvocation | null {
+  if (!isCurrentProcessSelfContainedBinary()) return null;
+  return {
+    runtime: 'bun',
+    argv: [...args],
+  };
+}
+
+function buildCurrentProcessBundledBunFallbackInvocation(
+  args: string[],
+): HappyCliSubprocessInvocation | null {
+  const bundledScriptPath = resolveCurrentProcessBundledScriptPath();
+  if (!bundledScriptPath) return null;
+  if (isCurrentProcessSelfContainedBinary()) {
+    return {
+      runtime: 'bun',
+      argv: [...args],
+    };
+  }
+  if (isCurrentProcessBundledBunExecutable()) {
+    return {
+      runtime: 'bun',
+      argv: [bundledScriptPath, ...args],
+    };
   }
   return null;
 }
@@ -201,7 +236,12 @@ function resolveSubprocessRuntimeExecutable(runtime: HappyCliSubprocessRuntime):
     }
     return javaScriptRuntime;
   }
-  if (runtime === 'bun' && isBun()) return process.execPath;
+  if (
+    runtime === 'bun' &&
+    (isBun() || isCurrentProcessSelfContainedBinary() || isCurrentProcessBundledBunExecutable())
+  ) {
+    return process.execPath;
+  }
   return runtime;
 }
 
@@ -252,6 +292,16 @@ export function buildHappyCliSubprocessInvocation(args: string[]): HappyCliSubpr
 
   // Sanity check of the entrypoint path exists
   if (!existsSync(entrypoint)) {
+    const currentProcessBundledBunFallback = buildCurrentProcessBundledBunFallbackInvocation(args);
+    if (currentProcessBundledBunFallback) {
+      return currentProcessBundledBunFallback;
+    }
+
+    const currentProcessBinaryFallback = buildCurrentProcessBinaryFallbackInvocation(args);
+    if (currentProcessBinaryFallback) {
+      return currentProcessBinaryFallback;
+    }
+
     const allowTsxFallback = shouldAllowDevTsxFallback();
     if (runtime === 'node' && allowTsxFallback) {
       const tsxInvocation = buildDevTsxSubprocessInvocation(args, entrypoint);
