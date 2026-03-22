@@ -1,6 +1,9 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeContainingText, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,8 +36,9 @@ const latestContextSectionProps = vi.hoisted(() => ({
     value: null as any,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -56,52 +60,35 @@ vi.mock('react-native-unistyles', () => ({
                 shadow: { color: '#000', opacity: 0.2 },
             },
         },
-    }),
-    StyleSheet: {
-        create: (factory: any) =>
-            factory({
-                dark: false,
-                colors: {
-                    groupped: { background: '#fff', chevron: '#777', sectionTitle: '#666' },
-                    surface: '#fff',
-                    surfaceHigh: '#f7f7f7',
-                    surfaceHighest: '#eee',
-                    surfacePressed: '#f0f0f0',
-                    surfacePressedOverlay: '#ececec',
-                    surfaceSelected: '#e6f0ff',
-                    surfaceRipple: '#ddd',
-                    text: '#111',
-                    textSecondary: '#777',
-                    textDestructive: '#c00',
-                    input: { background: '#eee', placeholder: '#999' },
-                    divider: '#ddd',
-                    accent: { blue: '#0a84ff' },
-                    modal: { border: '#ddd' },
-                    shadow: { color: '#000', opacity: 0.2 },
-                },
-            }),
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: routerBackSpy, replace: routerReplaceSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { back: routerBackSpy, replace: routerReplaceSpy },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
@@ -127,8 +114,9 @@ vi.mock('@/components/automations/shared/ExistingSessionAutomationUnavailableNot
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => {
         const labels: Record<string, string> = {
             'automations.create.defaultName': 'Scheduled message',
             'automations.create.createButtonTitle': 'Create automation',
@@ -140,16 +128,19 @@ vi.mock('@/text', () => ({
             'automations.form.toggleEnabledHelp': 'When disabled, no scheduled runs will be executed.',
         };
         return labels[key] ?? key;
-    },
-}));
+    } });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSession: () => sessionState.session,
     useSettings: () => ({}),
     storage: {
         getState: () => getStateSpy(),
     },
-}));
+});
+});
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: () => hydrateReadyState.ready,
@@ -170,45 +161,28 @@ vi.mock('@/sync/http/client', () => ({
 
 async function flushRender(): Promise<void> {
     await act(async () => {
-        await Promise.resolve();
+        await flushHookEffects({ cycles: 1, turns: 1 });
     });
 }
 
-function findTextInput(tree: renderer.ReactTestRenderer, placeholder: string) {
-    return tree.root.find((node) => (node.type as any) === 'TextInput' && node.props.placeholder === placeholder);
-}
-
-function findAgentInput(tree: renderer.ReactTestRenderer) {
-    return tree.root.findByType('AgentInput');
-}
-
-async function submitViaComposer(tree: renderer.ReactTestRenderer) {
-    const composer = findAgentInput(tree);
-    await act(async () => {
-        await composer.props.onSend();
-    });
-}
-
-function findNameInput(tree: renderer.ReactTestRenderer) {
-    return tree.root.find(
-        (node) => (node.type as any) === 'TextInput' && node.props.autoCapitalize === 'words',
-    );
-}
-
-function findPressableByText(tree: renderer.ReactTestRenderer, text: string) {
-    const textNode = tree.root.find((node) => {
-        if ((node.type as unknown) !== 'Text') return false;
-        const children = node.props.children;
-        if (typeof children === 'string') return children === text;
-        if (Array.isArray(children)) return children.includes(text);
-        return false;
-    });
-    let current: any = textNode;
-    while (current && (current.type as unknown) !== 'Pressable') {
-        current = current.parent;
+function getComposerProps() {
+    const composer = latestAgentInputProps.value;
+    if (!composer) {
+        throw new Error('AgentInput props were not captured');
     }
-    if (!current) throw new Error(`Pressable with text "${text}" not found`);
-    return current;
+    return composer;
+}
+
+async function setComposerText(value: string): Promise<void> {
+    await act(async () => {
+        getComposerProps().onChangeText(value);
+    });
+}
+
+async function submitComposer(): Promise<void> {
+    await act(async () => {
+        await getComposerProps().onSend();
+    });
 }
 
 describe('SessionAutomationCreateScreen', () => {
@@ -250,17 +224,11 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        expect(
-            tree!.root.findAll((node) => (node.type as unknown) === 'Text'
-                && String(node.props.children ?? '') === 'Cannot create automation for this session')
-        ).toHaveLength(0);
-        expect(() => findPressableByText(tree!, 'Create automation')).toThrow();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Cannot create automation for this session')).toBeUndefined();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Create automation')).toBeUndefined();
     });
 
     it('renders the inherited existing-session context section before the shared composer', async () => {
@@ -300,13 +268,10 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        expect(tree!.root.findAllByType('ExistingSessionAutomationContextSection')).toHaveLength(1);
+        expect(screen.findAllByType('ExistingSessionAutomationContextSection')).toHaveLength(1);
         expect(latestContextSectionProps.value).toEqual(expect.objectContaining({
             context: expect.objectContaining({
                 draft: expect.objectContaining({
@@ -324,65 +289,37 @@ describe('SessionAutomationCreateScreen', () => {
     it('relies on the shared composer submit action instead of rendering a duplicate create row', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
         expect(latestAgentInputProps.value?.submitAccessibilityLabel).toBe('Create automation');
-        expect(() => findPressableByText(tree!, 'Create automation')).toThrow();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Create automation')).toBeUndefined();
     });
 
     it('uses the automation enabled toggle semantics on the automation-only create screen', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const enableLabels = tree!.root.findAll((node) => {
-            if ((node.type as unknown) !== 'Text') return false;
-            const children = node.props.children;
-            if (typeof children === 'string') return children === 'Enable automation';
-            if (Array.isArray(children)) return children.includes('Enable automation');
-            return false;
-        });
-        const enabledLabels = tree!.root.findAll((node) => {
-            if ((node.type as unknown) !== 'Text') return false;
-            const children = node.props.children;
-            if (typeof children === 'string') return children === 'Enabled';
-            if (Array.isArray(children)) return children.includes('Enabled');
-            return false;
-        });
-
-        expect(enableLabels).toHaveLength(0);
-        expect(enabledLabels).toHaveLength(1);
-        expect(tree!.root.findAllByType('Switch')).toHaveLength(1);
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Enable automation')).toBeUndefined();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Enabled')).toBeTruthy();
+        expect(screen.findAllByType('Switch')).toHaveLength(1);
     });
 
     it('can create an existing-session automation in a paused state', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const toggle = tree!.root.findByType('Switch');
+        const toggle = screen.findByType('Switch');
         await act(async () => {
-            toggle.props.onValueChange(false);
+            invokeTestInstanceHandler(toggle, 'onValueChange', false);
         });
 
-        const message = findAgentInput(tree!);
-        await act(async () => {
-            message.props.onChangeText('Do the thing');
-        });
-
-        await submitViaComposer(tree!);
+        await setComposerText('Do the thing');
+        await submitComposer();
 
         expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
         expect(syncSpies.createAutomation.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
@@ -427,23 +364,17 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const message = findAgentInput(tree!);
-        await act(async () => {
-            message.props.onChangeText('Do the thing');
-        });
+        await setComposerText('Do the thing');
 
-        const name = findNameInput(tree!);
+        const name = screen.findByProps({ autoCapitalize: 'words' });
         await act(async () => {
             name.props.onChangeText('My automation');
         });
 
-        await submitViaComposer(tree!);
+        await submitComposer();
 
         expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
         const input = syncSpies.createAutomation.mock.calls[0][0];
@@ -489,18 +420,12 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const message = findAgentInput(tree!);
-        await act(async () => {
-            message.props.onChangeText('Send the latest automation QA summary into this session.');
-        });
+        await setComposerText('Send the latest automation QA summary into this session.');
 
-        await submitViaComposer(tree!);
+        await submitComposer();
 
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledTimes(1);
         expect(syncSpies.encryption.encryptAutomationTemplateRaw.mock.calls[0][0]).toEqual(expect.objectContaining({
@@ -525,18 +450,12 @@ describe('SessionAutomationCreateScreen', () => {
     it('navigates to the session automations list after creation instead of relying on history back', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const message = findAgentInput(tree!);
-        await act(async () => {
-            message.props.onChangeText('Do the thing');
-        });
+        await setComposerText('Do the thing');
 
-        await submitViaComposer(tree!);
+        await submitComposer();
 
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenCalledWith('/session/s1/automations');
@@ -565,18 +484,12 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s_plain" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s_plain" />);
         await flushRender();
 
-        const message = findAgentInput(tree!);
-        await act(async () => {
-            message.props.onChangeText('Hello');
-        });
+        await setComposerText('Hello');
 
-        await submitViaComposer(tree!);
+        await submitComposer();
 
         expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
         const input = syncSpies.createAutomation.mock.calls[0][0];
@@ -609,20 +522,17 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s_non_resumable" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s_non_resumable" />);
         await flushRender();
 
-        const unavailableNotices = tree!.root.findAllByType('ExistingSessionAutomationUnavailableNotice');
+        const unavailableNotices = screen.findAllByType('ExistingSessionAutomationUnavailableNotice');
         expect(unavailableNotices).toHaveLength(1);
         expect(unavailableNotices[0]?.props).toEqual({
             reason: 'This session can’t be resumed',
         });
-        expect(tree!.root.findAllByType('AutomationSettingsForm')).toHaveLength(0);
-        expect(tree!.root.findAllByType('ExistingSessionAutomationContextSection')).toHaveLength(0);
-        expect(tree!.root.findAllByType('AgentInput')).toHaveLength(0);
+        expect(screen.findAllByType('AutomationSettingsForm')).toHaveLength(0);
+        expect(screen.findAllByType('ExistingSessionAutomationContextSection')).toHaveLength(0);
+        expect(screen.findAllByType('AgentInput')).toHaveLength(0);
         expect(syncSpies.createAutomation).not.toHaveBeenCalled();
     });
 
@@ -648,18 +558,12 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s_inactive_resumable" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s_inactive_resumable" />);
         await flushRender();
 
-        const message = findAgentInput(tree!);
-        await act(async () => {
-            message.props.onChangeText('Hello');
-        });
+        await setComposerText('Hello');
 
-        await submitViaComposer(tree!);
+        await submitComposer();
 
         expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
     });
@@ -684,18 +588,14 @@ describe('SessionAutomationCreateScreen', () => {
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s1" />);
-        });
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const composer = findAgentInput(tree!);
         await act(async () => {
-            composer.props.onChangeText('Send the automation heartbeat');
-            composer.props.onPermissionModeChange?.('acceptEdits');
-            composer.props.onModelModeChange?.('gpt-5');
-            await composer.props.onSend();
+            getComposerProps().onChangeText('Send the automation heartbeat');
+            getComposerProps().onPermissionModeChange?.('acceptEdits');
+            getComposerProps().onModelModeChange?.('gpt-5');
+            await getComposerProps().onSend();
         });
 
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledTimes(1);

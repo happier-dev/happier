@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,30 +51,40 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAutomations: () => automationsState.list,
     useSession: () => sessionState.value,
     useSettings: () => settingsState.value,
     storage: {
         getState: () => getStateSpy(),
     },
-}));
+});
+});
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: () => hydrateReadyState.ready,
@@ -176,9 +188,7 @@ describe('SessionAutomationsScreen', () => {
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
-        });
+        tree = (await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }))).tree;
         await flushRender();
 
         const json = JSON.stringify(tree!.toJSON());
@@ -223,9 +233,7 @@ describe('SessionAutomationsScreen', () => {
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
-        });
+        tree = (await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }))).tree;
         await flushRender();
 
         const add = findPressableByText(tree!, 'Add automation');
@@ -253,9 +261,7 @@ describe('SessionAutomationsScreen', () => {
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
-        });
+        tree = (await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }))).tree;
         await flushRender();
 
         const add = findPressableByText(tree!, 'Add automation');

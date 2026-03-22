@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
+import { usePopoverBoundaryRef } from '@/components/ui/popover';
 import { TextInput } from '@/components/ui/text/Text';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { t } from '@/text';
@@ -49,6 +50,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [scheduleMenuOpen, setScheduleMenuOpen] = React.useState(false);
+    const popoverBoundaryRef = usePopoverBoundaryRef();
 
     const update = React.useCallback((patch: Partial<AutomationSettingsValue>) => {
         props.onChange({ ...props.value, ...patch });
@@ -63,6 +65,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
         : t('automations.form.toggleEnabledSubtitle');
 
     const showEnabledToggle = props.showEnabledToggle ?? true;
+    const showDetailFields = !showEnabledToggle || props.value.enabled;
     const automationDetailsGroupTitle = showEnabledToggle
         ? t('common.details')
         : t('automations.form.groupAutomationTitle');
@@ -103,129 +106,135 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup title={automationDetailsGroupTitle}>
-                <ItemGroupColumns>
-                    <ItemGroupColumn>
-                        <FieldItem label={t('automations.form.labels.name')}>
-                            <TextInput
-                                style={styles.textInput}
-                                value={props.value.name}
-                                onChangeText={(value) => update({ name: value })}
-                                placeholder={t('automations.form.placeholders.name')}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                autoCapitalize="words"
-                                autoCorrect={false}
-                            />
-                        </FieldItem>
-                    </ItemGroupColumn>
-                    <ItemGroupColumn>
-                        <FieldItem label={t('automations.form.labels.descriptionOptional')}>
-                            <TextInput
-                                style={styles.textInput}
-                                value={props.value.description}
-                                onChangeText={(value) => update({ description: value })}
-                                placeholder={t('automations.form.placeholders.description')}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                autoCapitalize="sentences"
-                                autoCorrect={true}
-                            />
-                        </FieldItem>
-                    </ItemGroupColumn>
-                </ItemGroupColumns>
-            </ItemGroup>
+            {showDetailFields ? (
+                <>
+                    <ItemGroup title={automationDetailsGroupTitle}>
+                        <ItemGroupColumns>
+                            <ItemGroupColumn>
+                                <FieldItem label={t('automations.form.labels.name')}>
+                                    <TextInput
+                                        style={styles.textInput}
+                                        value={props.value.name}
+                                        onChangeText={(value) => update({ name: value })}
+                                        placeholder={t('automations.form.placeholders.name')}
+                                        placeholderTextColor={theme.colors.input.placeholder}
+                                        autoCapitalize="words"
+                                        autoCorrect={false}
+                                    />
+                                </FieldItem>
+                            </ItemGroupColumn>
+                            <ItemGroupColumn>
+                                <FieldItem label={t('automations.form.labels.descriptionOptional')}>
+                                    <TextInput
+                                        style={styles.textInput}
+                                        value={props.value.description}
+                                        onChangeText={(value) => update({ description: value })}
+                                        placeholder={t('automations.form.placeholders.description')}
+                                        placeholderTextColor={theme.colors.input.placeholder}
+                                        autoCapitalize="sentences"
+                                        autoCorrect={true}
+                                    />
+                                </FieldItem>
+                            </ItemGroupColumn>
+                        </ItemGroupColumns>
+                    </ItemGroup>
 
-            <ItemGroup title={t('automations.form.groupScheduleTitle')}>
-                <DropdownMenu
-                    open={scheduleMenuOpen}
-                    onOpenChange={setScheduleMenuOpen}
-                    selectedId={props.value.scheduleKind}
-                    rowKind="item"
-                    variant="selectable"
-                    search={false}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    itemTrigger={{
-                        title: t('automations.form.groupScheduleTitle'),
-                        icon: selectedScheduleIcon,
-                    }}
-                    items={scheduleItems}
-                    onSelect={(itemId) => {
-                        update({ scheduleKind: itemId === 'cron' ? 'cron' : 'interval' });
-                        setScheduleMenuOpen(false);
-                    }}
-                />
+                    <ItemGroup title={t('automations.form.groupScheduleTitle')}>
+                        <DropdownMenu
+                            open={scheduleMenuOpen}
+                            onOpenChange={setScheduleMenuOpen}
+                            selectedId={props.value.scheduleKind}
+                            rowKind="item"
+                            variant="selectable"
+                            search={false}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            popoverBoundaryRef={popoverBoundaryRef}
+                            popoverPortalWebTarget="body"
+                            itemTrigger={{
+                                title: t('automations.form.groupScheduleTitle'),
+                                icon: selectedScheduleIcon,
+                            }}
+                            items={scheduleItems}
+                            onSelect={(itemId) => {
+                                update({ scheduleKind: itemId === 'cron' ? 'cron' : 'interval' });
+                                setScheduleMenuOpen(false);
+                            }}
+                        />
 
-                <ItemGroupColumns paddingVertical={14} rowGap={18}>
-                    {props.value.scheduleKind === 'interval' ? (
-                        <>
-                            <ItemGroupColumn>
-                                <FieldItem label={t('automations.form.labels.everyMinutes')}>
-                                    <TextInput
-                                        style={styles.textInput}
-                                        value={String(props.value.everyMinutes)}
-                                        onChangeText={(value) => {
-                                            const parsed = Number.parseInt(value, 10);
-                                            if (!Number.isFinite(parsed)) return;
-                                            update({ everyMinutes: clampEveryMinutes(parsed) });
-                                        }}
-                                        placeholder={t('automations.form.placeholders.everyMinutes')}
-                                        placeholderTextColor={theme.colors.input.placeholder}
-                                        keyboardType="numeric"
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                    />
-                                </FieldItem>
-                            </ItemGroupColumn>
-                            <ItemGroupColumn>
-                                <FieldItem label={t('automations.form.labels.timezoneOptional')}>
-                                    <TextInput
-                                        style={styles.textInput}
-                                        value={props.value.timezone ?? ''}
-                                        onChangeText={(value) => update({ timezone: normalizeTimezone(value) })}
-                                        placeholder={t('automations.form.placeholders.timezone')}
-                                        placeholderTextColor={theme.colors.input.placeholder}
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                    />
-                                </FieldItem>
-                            </ItemGroupColumn>
-                        </>
-                    ) : (
-                        <>
-                            <ItemGroupColumn>
-                                <FieldItem
-                                    label={t('automations.form.labels.cronExpression')}
-                                    supportingText={t('automations.form.schedule.cronHelpText')}
-                                >
-                                    <TextInput
-                                        style={styles.textInput}
-                                        value={props.value.cronExpr}
-                                        onChangeText={(value) => update({ cronExpr: value })}
-                                        placeholder={t('automations.form.placeholders.cronExpression')}
-                                        placeholderTextColor={theme.colors.input.placeholder}
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                    />
-                                </FieldItem>
-                            </ItemGroupColumn>
-                            <ItemGroupColumn>
-                                <FieldItem label={t('automations.form.labels.timezoneOptional')}>
-                                    <TextInput
-                                        style={styles.textInput}
-                                        value={props.value.timezone ?? ''}
-                                        onChangeText={(value) => update({ timezone: normalizeTimezone(value) })}
-                                        placeholder={t('automations.form.placeholders.timezone')}
-                                        placeholderTextColor={theme.colors.input.placeholder}
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                    />
-                                </FieldItem>
-                            </ItemGroupColumn>
-                        </>
-                    )}
-                </ItemGroupColumns>
-            </ItemGroup>
+                        <ItemGroupColumns paddingVertical={14} rowGap={18}>
+                            {props.value.scheduleKind === 'interval' ? (
+                                <>
+                                    <ItemGroupColumn>
+                                        <FieldItem label={t('automations.form.labels.everyMinutes')}>
+                                            <TextInput
+                                                style={styles.textInput}
+                                                value={String(props.value.everyMinutes)}
+                                                onChangeText={(value) => {
+                                                    const parsed = Number.parseInt(value, 10);
+                                                    if (!Number.isFinite(parsed)) return;
+                                                    update({ everyMinutes: clampEveryMinutes(parsed) });
+                                                }}
+                                                placeholder={t('automations.form.placeholders.everyMinutes')}
+                                                placeholderTextColor={theme.colors.input.placeholder}
+                                                keyboardType="numeric"
+                                                autoCapitalize="none"
+                                                autoCorrect={false}
+                                            />
+                                        </FieldItem>
+                                    </ItemGroupColumn>
+                                    <ItemGroupColumn>
+                                        <FieldItem label={t('automations.form.labels.timezoneOptional')}>
+                                            <TextInput
+                                                style={styles.textInput}
+                                                value={props.value.timezone ?? ''}
+                                                onChangeText={(value) => update({ timezone: normalizeTimezone(value) })}
+                                                placeholder={t('automations.form.placeholders.timezone')}
+                                                placeholderTextColor={theme.colors.input.placeholder}
+                                                autoCapitalize="none"
+                                                autoCorrect={false}
+                                            />
+                                        </FieldItem>
+                                    </ItemGroupColumn>
+                                </>
+                            ) : (
+                                <>
+                                    <ItemGroupColumn>
+                                        <FieldItem
+                                            label={t('automations.form.labels.cronExpression')}
+                                            supportingText={t('automations.form.schedule.cronHelpText')}
+                                        >
+                                            <TextInput
+                                                style={styles.textInput}
+                                                value={props.value.cronExpr}
+                                                onChangeText={(value) => update({ cronExpr: value })}
+                                                placeholder={t('automations.form.placeholders.cronExpression')}
+                                                placeholderTextColor={theme.colors.input.placeholder}
+                                                autoCapitalize="none"
+                                                autoCorrect={false}
+                                            />
+                                        </FieldItem>
+                                    </ItemGroupColumn>
+                                    <ItemGroupColumn>
+                                        <FieldItem label={t('automations.form.labels.timezoneOptional')}>
+                                            <TextInput
+                                                style={styles.textInput}
+                                                value={props.value.timezone ?? ''}
+                                                onChangeText={(value) => update({ timezone: normalizeTimezone(value) })}
+                                                placeholder={t('automations.form.placeholders.timezone')}
+                                                placeholderTextColor={theme.colors.input.placeholder}
+                                                autoCapitalize="none"
+                                                autoCorrect={false}
+                                            />
+                                        </FieldItem>
+                                    </ItemGroupColumn>
+                                </>
+                            )}
+                        </ItemGroupColumns>
+                    </ItemGroup>
+                </>
+            ) : null}
         </>
     );
 });

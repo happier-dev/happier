@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 const useAutomationsSupportMock = vi.fn();
 
@@ -8,29 +10,26 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => useAutomationsSupportMock(),
 }));
 
-vi.mock('react-native', () => ({
-    ActivityIndicator: 'ActivityIndicator',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    ActivityIndicator: 'ActivityIndicator',
+                    View: 'View',
+                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                groupped: { background: '#fff' },
-                text: '#000',
-                textSecondary: '#999',
-            },
-        }),
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#999',
             },
         },
-    }),
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -48,13 +47,16 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
         if (key === 'automations.gate.disabledTitle') return 'Automations are disabled';
         if (key === 'automations.gate.disabledBody') return 'Enable them from Settings, then turn on Experiments and Automations.';
         return key;
     },
-}));
+    });
+});
 
 afterEach(() => {
     useAutomationsSupportMock.mockReset();
@@ -72,13 +74,9 @@ describe('AutomationsGate', () => {
 
         const { AutomationsGate } = await import('./AutomationsGate');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AutomationsGate>
+        tree = (await renderScreen(<AutomationsGate>
                     <TextStub>Allowed</TextStub>
-                </AutomationsGate>,
-            );
-        });
+                </AutomationsGate>)).tree;
 
         const json = JSON.stringify(tree.toJSON());
         expect(json).not.toContain('Allowed');
@@ -97,13 +95,9 @@ describe('AutomationsGate', () => {
 
         const { AutomationsGate } = await import('./AutomationsGate');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AutomationsGate>
+        tree = (await renderScreen(<AutomationsGate>
                     <TextStub>Allowed</TextStub>
-                </AutomationsGate>,
-            );
-        });
+                </AutomationsGate>)).tree;
 
         expect(JSON.stringify(tree.toJSON())).toContain('Allowed');
     });
@@ -119,13 +113,9 @@ describe('AutomationsGate', () => {
 
         const { AutomationsGate } = await import('./AutomationsGate');
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AutomationsGate>
+        tree = (await renderScreen(<AutomationsGate>
                     <TextStub>Allowed</TextStub>
-                </AutomationsGate>,
-            );
-        });
+                </AutomationsGate>)).tree;
 
         const json = JSON.stringify(tree.toJSON());
         expect(json).not.toContain('Allowed');

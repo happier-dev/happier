@@ -15,8 +15,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.children),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
         const labels: Record<string, string> = {
             'common.details': 'Details',
             'common.machine': 'Machine',
@@ -37,7 +39,8 @@ vi.mock('@/text', () => ({
         };
         return labels[key] ?? key;
     },
-}));
+    });
+});
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',

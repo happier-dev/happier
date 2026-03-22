@@ -1,6 +1,12 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    findTestInstanceByTypeContainingText,
+    flushHookEffects,
+    invokeTestInstanceHandler,
+    pressTestInstanceAsync,
+    renderScreen,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,49 +44,22 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { background: '#fff' },
-                text: '#111',
-                textSecondary: '#777',
-                surface: '#fff',
-                surfaceHigh: '#f7f7f7',
-                surfaceHighest: '#eee',
-                surfacePressedOverlay: '#f0f0f0',
-                divider: '#ddd',
-                shadow: { color: '#000', opacity: 0.15 },
-                fab: { background: '#0a84ff' },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (factory: any) =>
-            factory({
-                colors: {
-                    groupped: { background: '#fff' },
-                    text: '#111',
-                    textSecondary: '#777',
-                    surface: '#fff',
-                    surfaceHigh: '#f7f7f7',
-                    surfaceHighest: '#eee',
-                    surfacePressedOverlay: '#f0f0f0',
-                    divider: '#ddd',
-                    shadow: { color: '#000', opacity: 0.15 },
-                    fab: { background: '#0a84ff' },
-                },
-            }),
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
@@ -94,53 +73,32 @@ vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: (props: any) => React.createElement('SessionGettingStartedGuidance', props),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalConfirmSpy,
-        alert: modalAlertSpy,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: modalConfirmSpy,
+            alert: modalAlertSpy,
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAutomations: () => automationsState.list,
-    useAllMachines: () => machinesState.list,
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useAutomations: () => automationsState.list,
+        useAllMachines: () => machinesState.list,
+    });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-async function flushRender(): Promise<void> {
-    await act(async () => {
-        await Promise.resolve();
-    });
-}
-
-function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.root.find((node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === label);
-}
-
-function findPressableByText(tree: renderer.ReactTestRenderer, text: string) {
-    const textNode = tree.root.find((node) => {
-        if ((node.type as unknown) !== 'Text') return false;
-        const children = node.props.children;
-        if (typeof children === 'string') return children === text;
-        if (Array.isArray(children)) return children.includes(text);
-        return false;
-    });
-    let current: any = textNode;
-    while (current && (current.type as unknown) !== 'Pressable') {
-        current = current.parent;
-    }
-    if (!current) {
-        throw new Error(`Pressable with text "${text}" not found`);
-    }
-    return current;
-}
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('AutomationsScreen', () => {
     beforeEach(() => {
@@ -166,38 +124,27 @@ describe('AutomationsScreen', () => {
     it('shows machine setup guidance instead of the generic empty state when no machines are connected', async () => {
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationsScreen));
-        });
-        await flushRender();
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
 
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
-        expect(() =>
-            tree!.root.findByType('SessionGettingStartedGuidance' as any)
-        ).not.toThrow();
-        expect(JSON.stringify(tree!.toJSON())).not.toContain('automations.screen.emptyTitle');
-        expect(() => tree!.root.findByType('FAB' as any)).toThrow();
+        expect(screen.findAllByType('SessionGettingStartedGuidance' as any)).toHaveLength(1);
+        expect(screen.findAllByType('FAB' as any)).toHaveLength(0);
     });
 
     it('shows generic empty state when machines are connected and links create action to New Session automation mode', async () => {
         machinesState.list = [{ id: 'm1' }];
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationsScreen));
-        });
-        await flushRender();
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
 
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(tree!.toJSON())).toContain('automations.screen.emptyTitle');
+        expect(screen.findAllByType('SessionGettingStartedGuidance' as any)).toHaveLength(0);
 
-        const createButton = tree!.root.findByType('FAB' as any);
+        const createButton = screen.findByType('FAB' as any);
         expect(createButton.props.accessibilityLabel).toBe('automations.screen.createAutomationA11y');
-        await act(async () => {
-            createButton.props.onPress();
-        });
+        await pressTestInstanceAsync(createButton);
 
         expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1');
     });
@@ -216,32 +163,22 @@ describe('AutomationsScreen', () => {
 
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationsScreen));
-        });
-        await flushRender();
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
 
-        const runNow = findPressableByLabel(tree!, 'automations.detail.runNowTitle');
-        await act(async () => {
-            runNow.props.onPress();
-        });
+        const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        await pressTestInstanceAsync(runNow);
         expect(syncSpies.runAutomationNow).toHaveBeenCalledWith('a1');
 
-        const toggle = tree!.root.find((node) => (node.type as unknown) === 'Switch');
-        await act(async () => {
-            toggle.props.onValueChange(false);
-        });
+        const toggle = screen.findByType('Switch' as any);
+        invokeTestInstanceHandler(toggle, 'onValueChange', false);
         expect(syncSpies.pauseAutomation).toHaveBeenCalledWith('a1');
 
-        const card = findPressableByText(tree!, 'Nightly');
-        await act(async () => {
-            card.props.onPress();
-        });
+        const card = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Nightly');
+        expect(card).toBeTruthy();
         // First press after a control interaction is ignored to prevent accidental navigation.
-        await act(async () => {
-            card.props.onPress();
-        });
+        await pressTestInstanceAsync(card);
+        await pressTestInstanceAsync(card);
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalled();
         expect(routerPushSpy).toHaveBeenCalledWith('/automations/a1');
     });

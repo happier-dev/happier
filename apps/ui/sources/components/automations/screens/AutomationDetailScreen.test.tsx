@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,13 +41,18 @@ const machinesState = vi.hoisted(() => ({
     }>,
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy, back: routerBackSpy, replace: routerReplaceSpy }),
-    useLocalSearchParams: () => ({ id: 'a1' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushSpy, back: routerBackSpy, replace: routerReplaceSpy },
+        params: { id: 'a1' },
+    });
+    return expoRouterMock.module;
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#777',
@@ -53,18 +60,8 @@ vi.mock('react-native-unistyles', () => ({
                 accent: { blue: '#0a84ff' },
             },
         },
-    }),
-    StyleSheet: {
-        create: (factory: any) =>
-            factory({
-                colors: {
-                    textSecondary: '#777',
-                    text: '#111',
-                    accent: { blue: '#0a84ff' },
-                },
-            }),
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -104,8 +101,9 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => {
         const labels: Record<string, string> = {
             'automations.detail.runNowTitle': 'Run now',
             'automations.detail.editAutomation': 'Edit automation',
@@ -115,25 +113,31 @@ vi.mock('@/text', () => ({
             'status.offline': 'offline',
         };
         return labels[key] ?? key;
-    },
-}));
+    } });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAutomation: () => automationState.automation,
     useAutomationRuns: () => [],
     useAllMachines: () => machinesState.list,
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(async () => {}),
-        confirm: modalConfirmSpy,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(async () => {}),
+            confirm: modalConfirmSpy,
+        },
+    }).module;
+});
 
 describe('AutomationDetailScreen', () => {
     beforeEach(() => {
@@ -163,17 +167,10 @@ describe('AutomationDetailScreen', () => {
     it('blurs the active element before navigating to edit automation', async () => {
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const editButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Edit automation');
         await act(async () => {
-            tree = renderer.create(React.createElement(AutomationDetailScreen));
-            await Promise.resolve();
-        });
-
-        const editButton = tree!.root.find(
-            (node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === 'Edit automation',
-        );
-        await act(async () => {
-            editButton.props.onPress();
+            pressTestInstance(editButton, 'Edit automation');
         });
 
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
@@ -193,14 +190,10 @@ describe('AutomationDetailScreen', () => {
 
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationDetailScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
         const refreshCallsBeforeToggle = syncSpies.refreshAutomations.mock.calls.length;
 
-        const toggle = tree!.root.find((node) => String(node.type) === 'Switch');
+        const toggle = screen.findByType('Switch');
         await act(async () => {
             toggle.props.onValueChange(true);
         });
@@ -214,18 +207,12 @@ describe('AutomationDetailScreen', () => {
     it('queues a run-now action without immediately refetching automation runs', async () => {
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationDetailScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
         const fetchRunsCallsBeforeRunNow = syncSpies.fetchAutomationRuns.mock.calls.length;
 
-        const runNowButton = tree!.root.find(
-            (node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === 'Run now',
-        );
+        const runNowButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Run now');
         await act(async () => {
-            await runNowButton.props.onPress();
+            await pressTestInstance(runNowButton, 'Run now');
         });
 
         expect(syncSpies.runAutomationNow).toHaveBeenCalledWith('a1');
@@ -245,15 +232,8 @@ describe('AutomationDetailScreen', () => {
 
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationDetailScreen));
-            await Promise.resolve();
-        });
-
-        const machineAssignmentsGroup = tree!.root.find(
-            (node) => String(node.type) === 'ItemGroup' && node.props.title === 'Machine assignments',
-        );
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const machineAssignmentsGroup = screen.findByProps({ title: 'Machine assignments' });
 
         expect(machineAssignmentsGroup.props.footer).toBeUndefined();
     });
@@ -279,17 +259,8 @@ describe('AutomationDetailScreen', () => {
 
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationDetailScreen));
-            await Promise.resolve();
-        });
-
-        const machineRows = tree!.root.findAll(
-            (node) =>
-                String(node.type) === 'Pressable'
-                && node.props.accessibilityLabel === 'Leeroys-MacBook-Pro',
-        );
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const machineRows = screen.findAllByProps({ accessibilityLabel: 'Leeroys-MacBook-Pro' });
 
         expect(machineRows.map((node) => node.props.subtitle)).toEqual(
             expect.arrayContaining([
@@ -302,17 +273,11 @@ describe('AutomationDetailScreen', () => {
     it('navigates to the automations list after deleting instead of relying on history back', async () => {
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationDetailScreen));
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
 
-        const deleteButton = tree!.root.find(
-            (node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === 'Delete automation',
-        );
+        const deleteButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Delete automation');
         await act(async () => {
-            await deleteButton.props.onPress();
+            await pressTestInstance(deleteButton, 'Delete automation');
         });
 
         expect(syncSpies.deleteAutomation).toHaveBeenCalledWith('a1');
