@@ -19,11 +19,9 @@ describe('workspaceReplicationGc', () => {
                 createdAtMs: 100,
                 updatedAtMs: 100,
                 status: {
-                    handoffId: 'handoff_keep_running',
-                    jobId: 'job_keep_running',
-                    status: 'in_progress',
-                    phase: 'transferring',
-                    recoveryActions: ['keep_stopped'],
+                    status: 'running',
+                    phase: 'transferring_blobs',
+                    warnings: [],
                 },
             });
             await jobStore.write({
@@ -33,11 +31,9 @@ describe('workspaceReplicationGc', () => {
                 updatedAtMs: 10,
                 completedAtMs: 10,
                 status: {
-                    handoffId: 'handoff_remove_completed',
-                    jobId: 'job_remove_completed',
                     status: 'completed',
                     phase: 'finalizing',
-                    recoveryActions: [],
+                    warnings: [],
                 },
             });
 
@@ -52,7 +48,7 @@ describe('workspaceReplicationGc', () => {
             await expect(jobStore.read('job_keep_running')).resolves.toMatchObject({
                 jobId: 'job_keep_running',
                 status: {
-                    status: 'in_progress',
+                    status: 'running',
                 },
             });
         } finally {

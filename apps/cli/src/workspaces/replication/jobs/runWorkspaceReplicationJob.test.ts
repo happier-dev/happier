@@ -19,11 +19,9 @@ describe('runWorkspaceReplicationJob', () => {
                 createdAtMs: 10,
                 updatedAtMs: 10,
                 status: {
-                    handoffId: 'handoff_1',
-                    jobId: 'job_1',
                     status: 'pending',
-                    phase: 'staging_target',
-                    recoveryActions: ['restart_on_source'],
+                    phase: 'planning',
+                    warnings: [],
                 },
             });
 
@@ -50,8 +48,6 @@ describe('runWorkspaceReplicationJob', () => {
                 completedAtMs: 24,
                 updatedAtMs: 25,
                 status: {
-                    handoffId: 'handoff_1',
-                    jobId: 'job_1',
                     status: 'completed',
                     phase: 'finalizing',
                 },
@@ -84,11 +80,9 @@ describe('runWorkspaceReplicationJob', () => {
                 createdAtMs: 10,
                 updatedAtMs: 10,
                 status: {
-                    handoffId: 'handoff_2',
-                    jobId: 'job_2',
                     status: 'pending',
-                    phase: 'staging_target',
-                    recoveryActions: ['restart_on_source'],
+                    phase: 'planning',
+                    warnings: [],
                 },
             });
 
@@ -108,7 +102,7 @@ describe('runWorkspaceReplicationJob', () => {
                 lastErrorMessage: 'boom',
                 status: {
                     status: 'failed',
-                    phase: 'staging_target',
+                    phase: 'planning',
                 },
             });
         } finally {

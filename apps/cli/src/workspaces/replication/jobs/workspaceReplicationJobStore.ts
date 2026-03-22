@@ -1,10 +1,6 @@
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  SessionHandoffPrepareTargetResultGetResponseSchema,
-  SessionHandoffStatusSchema,
-} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -14,8 +10,29 @@ import {
   resolveWorkspaceReplicationJobPath,
 } from '../state/workspaceReplicationPaths';
 
+const WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION = 1 as const;
+
+export const WorkspaceReplicationJobPhaseSchema = z.enum([
+  'initializing',
+  'planning',
+  'transferring_blobs',
+  'applying',
+  'finalizing',
+]);
+
+export const WorkspaceReplicationJobStatusSchema = z
+  .object({
+    status: z.enum(['pending', 'running', 'completed', 'aborted', 'failed', 'awaiting_recovery']),
+    phase: WorkspaceReplicationJobPhaseSchema,
+    warnings: z.array(z.string().min(1)).default([]),
+  })
+  .strip();
+
 export const WorkspaceReplicationJobRecordSchema = z
   .object({
+    schemaVersion: z
+      .literal(WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION)
+      .default(WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION),
     jobId: z.string().min(1),
     correlationId: z.string().min(1).optional(),
     createdAtMs: z.number().int().min(0),
@@ -25,10 +42,9 @@ export const WorkspaceReplicationJobRecordSchema = z
     completedAtMs: z.number().int().min(0).optional(),
     failedAtMs: z.number().int().min(0).optional(),
     lastErrorMessage: z.string().min(1).optional(),
-    status: SessionHandoffStatusSchema,
-    prepareTargetResult: SessionHandoffPrepareTargetResultGetResponseSchema.optional(),
+    status: WorkspaceReplicationJobStatusSchema,
   })
-  .strict();
+  .strip();
 
 export type WorkspaceReplicationJobRecord = z.infer<typeof WorkspaceReplicationJobRecordSchema>;
 
@@ -45,7 +61,11 @@ export type WorkspaceReplicationJobStore = Readonly<{
 async function readWorkspaceReplicationJobFile(filePath: string): Promise<WorkspaceReplicationJobRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const parsed = WorkspaceReplicationJobRecordSchema.safeParse(JSON.parse(raw));
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = WorkspaceReplicationJobRecordSchema.safeParse({
+      ...value,
+      schemaVersion: WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION,
+    });
     return parsed.success ? parsed.data : null;
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
@@ -73,7 +93,10 @@ export function createWorkspaceReplicationJobStore(input: Readonly<{
   return {
     async write(record) {
       await mkdir(paths.jobsDirectory, { recursive: true });
-      const parsed = WorkspaceReplicationJobRecordSchema.parse(record);
+      const parsed = WorkspaceReplicationJobRecordSchema.parse({
+        ...record,
+        schemaVersion: WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION,
+      });
       await writeJsonAtomic(resolveJobPath(parsed.jobId), parsed);
     },
     async read(jobId) {

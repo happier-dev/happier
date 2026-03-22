@@ -19,11 +19,9 @@ describe('abortWorkspaceReplicationJob', () => {
                 createdAtMs: 10,
                 updatedAtMs: 10,
                 status: {
-                    handoffId: 'handoff_abort_1',
-                    jobId: 'job_abort_1',
-                    status: 'in_progress',
-                    phase: 'transferring',
-                    recoveryActions: ['restart_on_source'],
+                    status: 'running',
+                    phase: 'transferring_blobs',
+                    warnings: [],
                 },
             });
 
@@ -40,7 +38,7 @@ describe('abortWorkspaceReplicationJob', () => {
                 updatedAtMs: 77,
                 status: {
                     status: 'aborted',
-                    phase: 'transferring',
+                    phase: 'transferring_blobs',
                 },
             });
             await expect(jobStore.read('job_abort_1')).resolves.toMatchObject({
@@ -70,11 +68,9 @@ describe('abortWorkspaceReplicationJob', () => {
                 updatedAtMs: 20,
                 completedAtMs: 20,
                 status: {
-                    handoffId: 'handoff_abort_2',
-                    jobId: 'job_abort_2',
                     status: 'completed',
                     phase: 'finalizing',
-                    recoveryActions: [],
+                    warnings: [],
                 },
             });
 
