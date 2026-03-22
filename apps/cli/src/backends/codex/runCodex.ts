@@ -35,6 +35,7 @@ import { publishCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
 import { createCodexAppServerRuntime } from './appServer/runtime';
 import { buildCodexAppServerConfigOverrides } from './appServer/buildCodexAppServerConfigOverrides';
+import { seedCodexAppServerPendingSessionOverrides } from './appServer/seedPendingSessionOverrides';
 import { SessionRollbackRpcParamsSchema } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionModeFromPermissionMode';
@@ -42,7 +43,6 @@ import { publishInFlightSteerCapability } from './utils/publishInFlightSteerCapa
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
@@ -78,6 +78,7 @@ import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminal
 import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
 import { createSwitchToLocalAbortPromise } from './localControl/createSwitchToLocalAbortPromise';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 import { requestSwitchToLocal as requestCodexSwitchToLocal } from './localControl/requestSwitchToLocal';
 import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
@@ -839,7 +840,7 @@ export async function runCodex(opts: {
 
             try {
                 if (outcome.archive) {
-                    await archiveAndCloseSession(session);
+                    await archiveAndCloseRuntimeSession(session, opts.credentials, outcome.archiveReason);
                 }
             } catch (e) {
                 logger.debug('[Codex] Failed to archive session during termination (non-fatal)', e);
@@ -965,6 +966,20 @@ export async function runCodex(opts: {
         if (!message) continue;
         messageBuffer.addMessage(message, 'status');
     }
+
+    const localRemoteSwitchController = createLocalRemoteModeController({
+        session,
+        getThinking: () => thinking,
+        resolveLocalSwitchAvailability,
+        requestSwitchToLocalIfSupported,
+        mountRemoteUi: () => remoteTerminalUi!.mount(),
+        unmountRemoteUi: () => remoteTerminalUi!.unmount(),
+        setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi!.setAllowSwitchToLocal(allowed),
+    });
+
+    // Register the remote switch handler before any remote-mode awaits so a session that becomes
+    // externally visible during startup can still fail closed instead of returning "method not available".
+    localRemoteSwitchController.registerRemoteSwitchHandler();
 
     //
     // Start Context 
@@ -1177,6 +1192,20 @@ export async function runCodex(opts: {
 	                  })
 	                : null;
 
+            const seedCodexAppServerOverridesBeforeStartOrLoad = async (): Promise<void> => {
+                if (!useCodexAppServer || wasCreated) {
+                    return;
+                }
+                const codexRuntime = getCodexRemoteRuntime();
+                if (!codexRuntime) {
+                    return;
+                }
+                await seedCodexAppServerPendingSessionOverrides({
+                    metadata: session.getMetadataSnapshot(),
+                    runtime: codexRuntime,
+                });
+            };
+
 	        runtimeOverridesSync = await initializeRuntimeOverridesSynchronizer({
 	            explicitPermissionMode: typeof explicitPermissionMode === 'string'
 	                ? normalizePermissionModeToIntent(explicitPermissionMode) ?? undefined
@@ -1257,16 +1286,6 @@ export async function runCodex(opts: {
 	            },
 	        });
 
-        const localRemoteSwitchController = createLocalRemoteModeController({
-            session,
-            getThinking: () => thinking,
-            resolveLocalSwitchAvailability,
-            requestSwitchToLocalIfSupported,
-            mountRemoteUi: () => remoteTerminalUi!.mount(),
-            unmountRemoteUi: () => remoteTerminalUi!.unmount(),
-            setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi!.setAllowSwitchToLocal(allowed),
-        });
-
         while (!shouldExit) {
             if (mode === 'local') {
                 await localRemoteSwitchController.publishModeState('local');
@@ -1296,7 +1315,6 @@ export async function runCodex(opts: {
             requestedSwitchToLocal = false;
             startOrLoadAbortController = new AbortController();
             switchToLocalBarrier = createSwitchToLocalBarrier();
-            localRemoteSwitchController.registerRemoteSwitchHandler();
 
             // For strict resume flows, start (or load) the Codex ACP session eagerly. Otherwise, remote mode
             // can remain idle (and even switch back to local) without spawning the Codex backend until the
@@ -1314,6 +1332,7 @@ export async function runCodex(opts: {
                 if (resumeId && (useCodexAppServer || isStrictExplicit || isStrictLocalControl)) {
                     messageBuffer.addMessage('Resuming previous context…', 'status');
                     const resumeSignal = startOrLoadAbortController.signal;
+                    await seedCodexAppServerOverridesBeforeStartOrLoad();
                     const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                         resumeId,
                         // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
@@ -1386,6 +1405,7 @@ export async function runCodex(opts: {
                     const existingAppServerSessionId = readAttachedCodexAppServerThreadId();
                     if (existingAppServerSessionId) {
                         const startSignal = startOrLoadAbortController.signal;
+                        await seedCodexAppServerOverridesBeforeStartOrLoad();
                         const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                             existingSessionId: existingAppServerSessionId,
                         })).then(() => undefined);
@@ -1520,6 +1540,7 @@ export async function runCodex(opts: {
                         if (resumeId) {
                             messageBuffer.addMessage('Resuming previous context…', 'status');
                             const resumeSignal = startOrLoadAbortController.signal;
+                            await seedCodexAppServerOverridesBeforeStartOrLoad();
                             const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                                 resumeId,
                                 // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
@@ -1574,7 +1595,8 @@ export async function runCodex(opts: {
                                 messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
                                 session.sendSessionEvent({ type: 'message', message: 'Resume failed; starting a new session.' });
                                 const startSignal = startOrLoadAbortController.signal;
-                                    const fallbackPromise = Promise.resolve(codexRuntime.startOrLoad({})).then(() => undefined);
+                                await seedCodexAppServerOverridesBeforeStartOrLoad();
+                                const fallbackPromise = Promise.resolve(codexRuntime.startOrLoad({})).then(() => undefined);
                                 try {
                                     await awaitWithAbortSignal(
                                         fallbackPromise,
@@ -1600,6 +1622,7 @@ export async function runCodex(opts: {
                             }
                         } else {
                             const startSignal = startOrLoadAbortController.signal;
+                            await seedCodexAppServerOverridesBeforeStartOrLoad();
                             const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({})).then(() => undefined);
                             try {
                                 await awaitWithAbortSignal(

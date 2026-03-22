@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +8,10 @@ import {
     SESSION_MODES_STATE_KEY,
 } from '@happier-dev/agents';
 
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+
 import { createCodexAppServerRuntime } from './runtime';
+import { createCodexAppServerTestEnvScope } from './testkit/fakeCodexAppServer';
 
 async function writeFakeCodexAppServerScript(params: Readonly<{
     dir: string;
@@ -57,7 +59,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "model/list") {',
-        '        process.stdout.write(JSON.stringify({ id: msg.id, result: [{ id: "gpt-5.4", displayName: "GPT-5.4", isDefault: true }, { id: "gpt-5.4-mini", displayName: "GPT-5.4 Mini" }] }) + "\\n");',
+        '        process.stdout.write(JSON.stringify({ id: msg.id, result: [{ id: "gpt-5.4", displayName: "GPT-5.4", isDefault: true, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"], defaultReasoningEffort: "medium" }, { id: "gpt-5.4-mini", displayName: "GPT-5.4 Mini", supportedReasoningEfforts: ["medium", "high"], defaultReasoningEffort: "medium" }] }) + "\\n");',
         '        continue;',
         '    }',
         '    if (msg.method === "turn/start") {',
@@ -116,6 +118,36 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 18);',
         '            continue;',
         '        }',
+        '        if (text === "bridge-streams-multi-item") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: "msg_a", delta: "Alpha" } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/reasoning/textDelta", params: { itemId: "reason_a", delta: "think-a" } }) + "\\n");',
+        '            }, 7);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "msg_a", type: "agentMessage", text: "Alpha done" } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "reason_a", type: "reasoning", content: ["think-a done"] } } }) + "\\n");',
+        '            }, 9);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: "msg_b", delta: "Beta" } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/reasoning/textDelta", params: { itemId: "reason_b", delta: "think-b" } }) + "\\n");',
+        '            }, 11);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "msg_b", type: "agentMessage", text: "Beta done" } } }) + "\\n");',
+        '            }, 12);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "reason_b", type: "reasoning", content: ["think-b done"] } } }) + "\\n");',
+        '            }, 13);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 18);',
+        '            continue;',
+        '        }',
         '        if (text === "bridge-turn-diff") {',
             '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/diff/updated", params: { threadId: msg.params?.threadId ?? null, turnId, unifiedDiff: "diff --git a/src/diffed.ts b/src/diffed.ts\\n--- a/src/diffed.ts\\n+++ b/src/diffed.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n" } }) + "\\n");',
@@ -123,6 +155,42 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
         '            }, 16);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-completed-only-command-result") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "call_failed_1", type: "commandExecution", command: "mkdir -p /tmp/demo", cwd: "/repo", stderr: "Rejected(\\\\\\"rejected by user\\\\\\")", exitCode: 1 } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 14);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-foreign-thread-streams") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: "thread-child", turnId: "turn-child", itemId: "child_msg", delta: "Child " } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { threadId: "thread-child", turnId: "turn-child", item: { id: "child_cmd", type: "commandExecution", command: "pwd", cwd: "/child" } } }) + "\\n");',
+        '            }, 7);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { threadId: "thread-child", turnId: "turn-child", item: { id: "child_cmd", type: "commandExecution", stdout: "/child", exitCode: 0 } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { threadId: "thread-child", turnId: "turn-child", item: { id: "child_msg", type: "agentMessage", text: "Child final" } } }) + "\\n");',
+        '            }, 9);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: "thread-child", turn: { id: "turn-child" } } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: msg.params?.threadId ?? null, turnId, itemId: "parent_msg", delta: "Parent " } }) + "\\n");',
+        '            }, 11);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { threadId: msg.params?.threadId ?? null, turnId, item: { id: "parent_msg", type: "agentMessage", text: "Parent final" } } }) + "\\n");',
+        '            }, 12);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 18);',
         '            continue;',
         '        }',
         '        if (text === "bridge-approvals") {',
@@ -156,6 +224,21 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
         '            }, 24);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-user-action") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "tool_input_general", type: "mcpToolCall", server: "functions", tool: "request_user_input", arguments: {} } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ id: "request-input-general", method: "item/tool/requestUserInput", params: { threadId: msg.params?.threadId ?? null, turnId, itemId: "tool_input_general", questions: [{ id: "export_shape", header: "Export Shape", question: "Which session export behavior should the plan target?", isOther: false, isSecret: false, options: [{ label: "Single JSON", description: "Portable JSON export" }, { label: "Single CSV", description: "Spreadsheet export" }] }] } }) + "\\n");',
+        '            }, 7);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "tool_input_general", type: "mcpToolCall", result: { Ok: { status: "ok" } } } } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 14);',
         '            continue;',
         '        }',
         '        setTimeout(() => {',
@@ -196,46 +279,48 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
 }
 
 describe('createCodexAppServerRuntime', () => {
-    const originalAppServerBin = process.env.HAPPIER_CODEX_APP_SERVER_BIN;
-    const originalRpcTimeout = process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS;
-    const originalTranscriptStorage = process.env.HAPPIER_TRANSCRIPT_STORAGE;
-    const originalCodexHome = process.env.CODEX_HOME;
-    const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+    let envScope = createCodexAppServerTestEnvScope();
+    const tempRoots = new Set<string>();
 
-    afterEach(() => {
-        if (originalAppServerBin === undefined) {
-            delete process.env.HAPPIER_CODEX_APP_SERVER_BIN;
-        } else {
-            process.env.HAPPIER_CODEX_APP_SERVER_BIN = originalAppServerBin;
-        }
-        if (originalRpcTimeout === undefined) {
-            delete process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS;
-        } else {
-            process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = originalRpcTimeout;
-        }
-        if (originalTranscriptStorage === undefined) {
-            delete process.env.HAPPIER_TRANSCRIPT_STORAGE;
-        } else {
-            process.env.HAPPIER_TRANSCRIPT_STORAGE = originalTranscriptStorage;
-        }
-        if (originalCodexHome === undefined) {
-            delete process.env.CODEX_HOME;
-        } else {
-            process.env.CODEX_HOME = originalCodexHome;
-        }
-        if (originalOpenAiApiKey === undefined) {
-            delete process.env.OPENAI_API_KEY;
-        } else {
-            process.env.OPENAI_API_KEY = originalOpenAiApiKey;
-        }
+    afterEach(async () => {
+        envScope.restore();
+        envScope = createCodexAppServerTestEnvScope();
+        await Promise.all([...tempRoots].map(async (dir) => {
+            await removeTempDir(dir);
+        }));
+        tempRoots.clear();
     });
 
-    it('starts a new app-server thread and publishes the thread id to session metadata', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-start-'));
+    async function createRuntimeFixture(
+        prefix: string,
+        options: Readonly<{
+            rollbackError?: Readonly<{
+                code: number;
+                message: string;
+            }>;
+        }> = {},
+    ): Promise<{
+        root: string;
+        requestLogPath: string;
+        fakeAppServer: string;
+    }> {
+        const root = await createTempDir(prefix);
+        tempRoots.add(root);
         const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const fakeAppServer = await writeFakeCodexAppServerScript({
+            dir: root,
+            requestLogPath,
+            rollbackError: options.rollbackError,
+        });
+        envScope.patch({
+            HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
+            HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '10000',
+        });
+        return { root, requestLogPath, fakeAppServer };
+    }
+
+    it('starts a new app-server thread and publishes the thread id to session metadata', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-start-');
 
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
             updater({ machineId: 'machine_1' }),
@@ -256,18 +341,28 @@ describe('createCodexAppServerRuntime', () => {
             codexBackendMode: 'appServer',
         });
         expect(updateMetadata.mock.results[1]?.value).toMatchObject({
-            [SESSION_MODES_STATE_KEY]: expect.objectContaining({
-                currentModeId: 'default',
-                availableModes: expect.arrayContaining([
-                    expect.objectContaining({ id: 'default', name: 'Default' }),
-                    expect.objectContaining({ id: 'plan', name: 'Plan' }),
-                ]),
-            }),
             [SESSION_MODELS_STATE_KEY]: expect.objectContaining({
                 currentModelId: 'gpt-5.4',
-                availableModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.4', name: 'GPT-5.4' })]),
+                availableModels: expect.arrayContaining([
+                    expect.objectContaining({
+                        id: 'gpt-5.4',
+                        name: 'GPT-5.4',
+                        modelOptions: expect.arrayContaining([
+                            expect.objectContaining({ id: 'reasoning_effort', currentValue: 'medium' }),
+                            expect.objectContaining({
+                                id: 'speed',
+                                currentValue: 'standard',
+                                options: expect.arrayContaining([
+                                    expect.objectContaining({ value: 'standard', name: 'Standard' }),
+                                    expect.objectContaining({ value: 'fast', name: 'Fast' }),
+                                ]),
+                            }),
+                        ]),
+                    }),
+                ]),
             }),
         });
+        expect(updateMetadata.mock.results[1]?.value?.[SESSION_MODES_STATE_KEY]).toBeUndefined();
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
         expect(requestLog).toEqual(
             expect.arrayContaining([
@@ -288,13 +383,12 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('publishes connected-service direct-session metadata when activeServerDir owns CODEX_HOME', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-direct-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
-        process.env.HAPPIER_TRANSCRIPT_STORAGE = 'direct';
-        process.env.CODEX_HOME = join(root, 'servers', 'cloud', 'daemon', 'connected-services', 'homes', 'openai-codex', 'profile', 'codex', 'codex-home');
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-direct-');
+        const scopedEnv = {
+            HAPPIER_TRANSCRIPT_STORAGE: 'direct',
+            CODEX_HOME: join(root, 'servers', 'cloud', 'daemon', 'connected-services', 'homes', 'openai-codex', 'profile', 'codex', 'codex-home'),
+        } satisfies NodeJS.ProcessEnv;
+        await mkdir(scopedEnv.CODEX_HOME, { recursive: true });
 
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
             updater({ machineId: 'machine_1' }),
@@ -302,6 +396,7 @@ describe('createCodexAppServerRuntime', () => {
         const runtime = createCodexAppServerRuntime({
             directory: root,
             activeServerDir: join(root, 'servers', 'cloud'),
+            processEnv: scopedEnv,
             onThinkingChange: vi.fn(),
             session: { updateMetadata } as any,
         });
@@ -321,11 +416,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('resumes an existing app-server thread for resume ids and existing session ids', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-resume-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-resume-');
 
         const runtime = createCodexAppServerRuntime({
             directory: root,
@@ -363,11 +454,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('sends prompts over the persistent client and waits for turn completion notifications', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-turn-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-turn-');
 
         const onThinkingChange = vi.fn();
         const runtime = createCodexAppServerRuntime({
@@ -404,11 +491,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('interrupts an in-flight turn without spawning a replacement app-server process', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-interrupt-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-interrupt-');
 
         const onThinkingChange = vi.fn();
         const runtime = createCodexAppServerRuntime({
@@ -438,12 +521,8 @@ describe('createCodexAppServerRuntime', () => {
         ]);
     });
 
-    it('steers an in-flight turn through turn/steer without replacing the active turn', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-steer-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+    it('does not advertise in-flight steer support even though turn/steer is available at the transport level', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-');
 
         const runtime = createCodexAppServerRuntime({
             directory: root,
@@ -452,7 +531,7 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
-        expect(runtime.supportsInFlightSteer()).toBe(true);
+        expect(runtime.supportsInFlightSteer()).toBe(false);
 
         const sendPromptPromise = runtime.sendPrompt('cancel-me');
         await new Promise((resolve) => setTimeout(resolve, 30));
@@ -475,11 +554,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('bridges stream notifications into transcript deltas and tool updates during sendPrompt', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-bridge-streams-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-streams-');
 
         const session = {
             updateMetadata: vi.fn(),
@@ -496,14 +571,7 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams');
 
-        expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
-            'codex',
-            expect.objectContaining({ segmentKind: 'assistant', deltaText: 'Hello ' }),
-        );
-        expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
-            'codex',
-            expect.objectContaining({ segmentKind: 'thinking', deltaText: 'thinking' }),
-        );
+        expect(session.sendTranscriptDraftDelta).not.toHaveBeenCalled();
         expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
             expect.arrayContaining([
                 ['codex', expect.objectContaining({ type: 'message', message: 'Hello ' }), expect.any(Object)],
@@ -525,11 +593,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('does not append the full final assistant text into streaming drafts when the final text diverges from earlier deltas', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-divergent-final-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-divergent-final-');
 
         const session = {
             updateMetadata: vi.fn(),
@@ -546,9 +610,7 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-streams-divergent-final');
 
-        expect(session.sendTranscriptDraftDelta.mock.calls).toEqual([
-            ['codex', expect.objectContaining({ segmentKind: 'assistant', deltaText: 'READY ' })],
-        ]);
+        expect(session.sendTranscriptDraftDelta).not.toHaveBeenCalled();
         expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
             expect.arrayContaining([
                 ['codex', expect.objectContaining({ type: 'message', message: 'READY_FOR_FOLLOWUP' }), expect.any(Object)],
@@ -556,12 +618,49 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it('keeps multiple assistant and reasoning item streams isolated within one turn', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-multi-item-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendTranscriptDraftDelta: vi.fn(),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-streams-multi-item');
+
+        const committedCalls = session.sendAgentMessageCommitted.mock.calls as unknown as Array<
+            [string, { type?: string; message?: string; text?: string }, { localId: string; meta?: Record<string, any> }]
+        >;
+        const finalAssistantMessages = committedCalls
+            .map(([, body, opts]) => ({ body, opts }))
+            .filter((call) => call.body?.type === 'message' && call.opts?.meta?.happierStreamSegmentV1?.segmentState === 'complete');
+        const finalThinkingMessages = committedCalls
+            .map(([, body, opts]) => ({ body, opts }))
+            .filter((call) => call.body?.type === 'thinking' && call.opts?.meta?.happierStreamSegmentV1?.segmentState === 'complete');
+
+        expect(finalAssistantMessages).toEqual(expect.arrayContaining([
+            expect.objectContaining({ body: expect.objectContaining({ message: 'Alpha done' }) }),
+            expect.objectContaining({ body: expect.objectContaining({ message: 'Beta done' }) }),
+        ]));
+        expect(new Set(finalAssistantMessages.map((call) => call.opts.localId)).size).toBe(2);
+
+        expect(finalThinkingMessages).toEqual(expect.arrayContaining([
+            expect.objectContaining({ body: expect.objectContaining({ text: 'think-a done' }) }),
+            expect.objectContaining({ body: expect.objectContaining({ text: 'think-b done' }) }),
+        ]));
+        expect(new Set(finalThinkingMessages.map((call) => call.opts.localId)).size).toBe(2);
+    });
+
     it('emits a canonical Diff tool when the app-server publishes turn diff updates', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-bridge-turn-diff-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-turn-diff-');
 
         const session = {
             updateMetadata: vi.fn(),
@@ -602,12 +701,117 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it('bridges completed-only command results as a synthetic tool-call plus tool-result', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-completed-only-command-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendTranscriptDraftDelta: vi.fn(),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-completed-only-command-result');
+
+        expect(session.sendCodexMessage.mock.calls).toEqual(
+            expect.arrayContaining([
+                [expect.objectContaining({
+                    type: 'tool-call',
+                    callId: 'call_failed_1',
+                    name: 'CodexBash',
+                    input: { command: 'mkdir -p /tmp/demo', cwd: '/repo' },
+                })],
+                [expect.objectContaining({
+                    type: 'tool-call-result',
+                    callId: 'call_failed_1',
+                    output: expect.objectContaining({
+                        stderr: expect.stringContaining('rejected by user'),
+                        exitCode: 1,
+                    }),
+                })],
+            ]),
+        );
+    });
+
+    it('routes child-thread item notifications into a synthetic SubAgent sidechain without leaking them into the parent transcript', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-foreign-thread-streams-');
+
+        const session = {
+            updateMetadata: vi.fn(),
+            sendAgentMessage: vi.fn(),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendTranscriptDraftDelta: vi.fn(),
+            sendCodexMessage: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-foreign-thread-streams');
+
+        const draftAssistantTexts = session.sendTranscriptDraftDelta.mock.calls
+            .map((call) => call[1]?.sidechainId ? null : call[1]?.deltaText)
+            .filter((value): value is string => typeof value === 'string');
+        const childDraftCalls = session.sendTranscriptDraftDelta.mock.calls.filter(
+            (call) => call[1]?.sidechainId === 'thread-child',
+        );
+        expect(draftAssistantTexts.some((value) => value.includes('Child'))).toBe(false);
+        expect(childDraftCalls).toEqual([]);
+        expect(session.sendAgentMessageCommitted.mock.calls).toEqual(
+            expect.arrayContaining([
+                ['codex', expect.objectContaining({ type: 'message', message: 'Parent final' }), expect.any(Object)],
+            ]),
+        );
+        expect(session.sendAgentMessageCommitted.mock.calls).not.toEqual(
+            expect.arrayContaining([
+                ['codex', expect.objectContaining({ type: 'message', message: 'Child ' }), expect.any(Object)],
+                ['codex', expect.objectContaining({ type: 'message', message: 'Child final' }), expect.any(Object)],
+            ]),
+        );
+        expect(session.sendAgentMessage.mock.calls).toEqual(
+            expect.arrayContaining([
+                ['codex', expect.objectContaining({
+                    type: 'tool-call',
+                    callId: 'thread-child',
+                    name: 'SubAgent',
+                    input: expect.objectContaining({
+                        threadId: 'thread-child',
+                    }),
+                })],
+                ['codex', expect.objectContaining({
+                    type: 'tool-call',
+                    callId: 'child_cmd',
+                    name: 'CodexBash',
+                    sidechainId: 'thread-child',
+                })],
+                ['codex', expect.objectContaining({
+                    type: 'tool-result',
+                    callId: 'child_cmd',
+                    sidechainId: 'thread-child',
+                })],
+                ['codex', expect.objectContaining({
+                    type: 'tool-result',
+                    callId: 'thread-child',
+                    output: expect.objectContaining({
+                        status: 'completed',
+                        threadId: 'thread-child',
+                    }),
+                })],
+            ]),
+        );
+    });
+
     it('bridges approval and request-user-input server requests through the permission handler', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-bridge-approvals-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-approvals-');
 
         const permissionHandler = {
             handleToolCall: vi
@@ -680,12 +884,74 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('applies session mode, model, and Speed overrides through app-server requests and republishes metadata', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-controls-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+    it('bridges non-approval request-user-input prompts as AskUserQuestion and returns structured answers', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-user-action-');
+
+        const permissionHandler = {
+            handleToolCall: vi
+                .fn()
+                .mockResolvedValueOnce({
+                    decision: 'approved',
+                    answers: {
+                        'Which session export behavior should the plan target?': 'Single JSON',
+                    },
+                }),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendTranscriptDraftDelta: vi.fn(),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: permissionHandler as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-user-action');
+
+        expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+            'tool_input_general',
+            'AskUserQuestion',
+            {
+                questions: [
+                    {
+                        header: 'Export Shape',
+                        question: 'Which session export behavior should the plan target?',
+                        options: [
+                            { label: 'Single JSON', description: 'Portable JSON export' },
+                            { label: 'Single CSV', description: 'Spreadsheet export' },
+                        ],
+                        multiSelect: false,
+                    },
+                ],
+            },
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'request-input-general',
+                    params: null,
+                    result: {
+                        answers: {
+                            export_shape: {
+                                answers: ['Single JSON'],
+                            },
+                        },
+                    },
+                    error: null,
+                }),
+            ]),
+        );
+    });
+
+    it('applies session mode, model, reasoning, and Fast overrides through app-server requests and republishes metadata', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-controls-');
 
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
             updater({ machineId: 'machine_1' }),
@@ -698,17 +964,40 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.startOrLoad({});
         await runtime.setSessionMode('plan');
-        await runtime.setSessionModel('gpt-5.4');
         await runtime.setSessionConfigOption('speed', 'fast');
+        await runtime.setSessionModel('gpt-5.4');
+        await runtime.setSessionConfigOption('reasoning_effort', 'high');
         await runtime.sendPrompt('use-overrides');
 
-        expect(updateMetadata.mock.results.at(-1)?.value).toMatchObject({
+        const latestMetadata = updateMetadata.mock.results.at(-1)?.value;
+
+        expect(latestMetadata).toMatchObject({
             [SESSION_MODES_STATE_KEY]: expect.objectContaining({ currentModeId: 'plan' }),
-            [SESSION_MODELS_STATE_KEY]: expect.objectContaining({ currentModelId: 'gpt-5.4' }),
             [SESSION_CONFIG_OPTIONS_STATE_KEY]: expect.objectContaining({
-                configOptions: [expect.objectContaining({ id: 'speed', currentValue: 'fast' })],
+                configOptions: [],
             }),
         });
+        expect((latestMetadata as Record<string, unknown>)[SESSION_MODELS_STATE_KEY]).toEqual(
+            expect.objectContaining({
+                currentModelId: 'gpt-5.4',
+                availableModels: expect.arrayContaining([
+                    expect.objectContaining({
+                        id: 'gpt-5.4',
+                        modelOptions: expect.arrayContaining([
+                            expect.objectContaining({ id: 'reasoning_effort', currentValue: 'high' }),
+                            expect.objectContaining({
+                                id: 'speed',
+                                currentValue: 'fast',
+                                options: expect.arrayContaining([
+                                    expect.objectContaining({ value: 'standard', name: 'Standard' }),
+                                    expect.objectContaining({ value: 'fast', name: 'Fast' }),
+                                ]),
+                            }),
+                        ]),
+                    }),
+                ]),
+            }),
+        );
         expect(updateMetadata.mock.results.map((entry) => entry.value)).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ codexSessionId: 'thread-overrides' }),
@@ -716,25 +1005,43 @@ describe('createCodexAppServerRuntime', () => {
         );
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(
+            requestLog
+                .filter((entry) => entry.method === 'collaborationMode/list')
+                .every((entry) => JSON.stringify(entry.params ?? null) === '{}'),
+        ).toBe(true);
+        expect(
+            requestLog
+                .filter((entry) => entry.method === 'model/list')
+                .every((entry) => JSON.stringify(entry.params ?? null) === '{}'),
+        ).toBe(true);
         expect(requestLog).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     method: 'thread/resume',
-                    params: expect.objectContaining({ threadId: 'thread-started', model: 'gpt-5.4', persistExtendedHistory: true }),
+                    params: expect.objectContaining({ threadId: 'thread-started', serviceTier: 'fast', persistExtendedHistory: true }),
                 }),
                 expect.objectContaining({
                     method: 'thread/resume',
-                    params: expect.objectContaining({ threadId: 'thread-overrides', serviceTier: 'fast', persistExtendedHistory: true }),
+                    params: expect.objectContaining({
+                        threadId: 'thread-overrides',
+                        model: 'gpt-5.4',
+                        serviceTier: 'fast',
+                        persistExtendedHistory: true,
+                    }),
                 }),
                 expect.objectContaining({
                     method: 'turn/start',
                     params: expect.objectContaining({
                         threadId: 'thread-overrides',
+                        model: 'gpt-5.4',
+                        effort: 'high',
+                        serviceTier: 'fast',
                         collaborationMode: {
                             mode: 'plan',
                             settings: {
                                 model: 'gpt-5.4',
-                                reasoning_effort: 'medium',
+                                reasoning_effort: 'high',
                                 developer_instructions: null,
                             },
                         },
@@ -744,19 +1051,47 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it('includes preselected model and Fast service tier in fresh thread/start requests', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-thread-start-overrides-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.setSessionModel('gpt-5.4');
+        await runtime.setSessionConfigOption('speed', 'fast');
+        await runtime.startOrLoad({});
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/start',
+                    params: expect.objectContaining({
+                        cwd: root,
+                        model: 'gpt-5.4',
+                        serviceTier: 'fast',
+                        persistExtendedHistory: true,
+                    }),
+                }),
+            ]),
+        );
+    });
+
     it('does not surface Speed controls when Codex is authenticated only by OPENAI_API_KEY', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-auth-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
-        process.env.OPENAI_API_KEY = 'sk-test-codex';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-auth-');
+        const scopedEnv = {
+            OPENAI_API_KEY: 'sk-test-codex',
+        } satisfies NodeJS.ProcessEnv;
 
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
             updater({ machineId: 'machine_1' }),
         );
         const runtime = createCodexAppServerRuntime({
             directory: root,
+            processEnv: scopedEnv,
             onThinkingChange: vi.fn(),
             session: { updateMetadata } as any,
         });
@@ -771,11 +1106,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('rolls back the latest conversation turn through the app-server thread API and records its transcript seq range', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-rollback-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-rollback-');
 
         let lastObservedMessageSeq = 7;
         const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
@@ -826,11 +1157,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('rolls back multiple turns before a target user message and records the rolled-back seq range', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-rollback-before-user-message-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({ dir: root, requestLogPath });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-rollback-before-user-message-');
 
         let lastObservedMessageSeq = 3;
         let lastObservedUserMessageSeq = 1;
@@ -899,15 +1226,10 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('returns unsupported_action when rollback is rejected by app-server schema support', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-runtime-rollback-unsupported-'));
-        const requestLogPath = join(root, 'requests.log');
-        const fakeAppServer = await writeFakeCodexAppServerScript({
-            dir: root,
-            requestLogPath,
-            rollbackError: { code: -32602, message: 'invalid params: expected { threadId, numTurns }' },
-        });
-        process.env.HAPPIER_CODEX_APP_SERVER_BIN = fakeAppServer;
-        process.env.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS = '10000';
+        const { root, requestLogPath } = await createRuntimeFixture(
+            'happier-codex-app-server-runtime-rollback-unsupported-',
+            { rollbackError: { code: -32602, message: 'invalid params: expected { threadId, numTurns }' } },
+        );
 
         const runtime = createCodexAppServerRuntime({
             directory: root,

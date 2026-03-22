@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
-import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
 import {
     resolveSessionRollbackPlan,
     type CompletedConversationTurn,
@@ -11,8 +11,14 @@ import {
 } from '@happier-dev/protocol';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
+import { logger } from '@/ui/logger';
 import { publishCodexSessionIdMetadata } from '../utils/codexSessionIdMetadata';
 import { resolveApprovalChoiceLabel } from '../runtime/codexRequestUserInputBridge';
+import {
+    buildCodexRequestUserInputAnswers,
+    looksLikeCodexApprovalRequestUserInput,
+    normalizeCodexRequestUserInputQuestionsToAskUserQuestionInput,
+} from '../runtime/codexRequestUserInputQuestions';
 import { resolveCodexAppServerPolicyForPermissionMode } from '../utils/permissionModePolicy';
 import { readCodexEnvironmentAuthState } from '../cli/auth/readCodexEnvironmentAuthState';
 
@@ -28,6 +34,7 @@ import {
     publishCodexAppServerSessionControlsMetadata,
     resolveCodexAppServerCollaborationModeSelection,
 } from './sessionControlsMetadata';
+import { createCodexSyntheticSubagentTracker } from '../collaboration/createCodexSyntheticSubagentTracker';
 import {
     captureCompletedTurnSeqRange,
     publishRollbackRangeMetadata,
@@ -65,6 +72,11 @@ type PermissionResult = Readonly<{
     decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
     execPolicyAmendment?: Readonly<{ command: string[] }>;
     answers?: Record<string, string>;
+}>;
+
+type StreamUpdateContext = Readonly<{
+    sidechainId: string | null;
+    streamScopeId: string;
 }>;
 
 type PermissionHandlerSubset = Readonly<{
@@ -149,6 +161,10 @@ function readServiceTier(value: unknown): string | null {
     return record ? trimStringValue(record.serviceTier) ?? trimStringValue(record.service_tier) : null;
 }
 
+function buildThreadServiceTierParams(currentServiceTier: string | null): { serviceTier?: 'fast' | null } {
+    return currentServiceTier === 'fast' ? { serviceTier: 'fast' } : {};
+}
+
 function createPendingTurn(threadId: string): PendingTurn {
     let resolveTurn!: () => void;
     let rejectTurn!: (error: Error) => void;
@@ -191,6 +207,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     flushTurn: () => Promise<void>;
     rollbackConversation: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
 }> {
+    const runtimeEnv = params.processEnv ?? process.env;
     const lastPublishedThreadId: { value: string | null } = { value: null };
     let threadId: string | null = null;
     let turnInFlight = false;
@@ -200,6 +217,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     let clientPromise: Promise<DisposableCodexAppServerClient> | null = null;
     let currentModeId: string | null = null;
     let currentModelId: string | null = null;
+    let currentReasoningEffort: string | null = null;
     let currentServiceTier: string | null = null;
     let pendingTurnStartSeqInclusive: number | null = null;
     let pendingTurnUserMessageSeq: number | null = null;
@@ -209,12 +227,19 @@ export function createCodexAppServerRuntime(params: Readonly<{
         provider: 'codex',
         snapshotUnifiedDiff: true,
     });
-    const streamedTranscriptWriter = createStreamedTranscriptWriter({
+    const itemTranscriptBridge = createKeyedStreamedTranscriptBridge<{
+        streamKey: string;
+        sidechainId: string | null;
+    }>({
         provider: 'codex',
-        session: params.session,
+        createSessionForStream: () => params.session,
     });
     const assistantTextByItemId = new Map<string, string>();
     const reasoningTextByItemId = new Map<string, string>();
+    const syntheticSubagentThreadIds = new Set<string>();
+    const syntheticSubagentTracker = createCodexSyntheticSubagentTracker({
+        session: params.session,
+    });
     let bridgeWork = Promise.resolve();
 
     const getCurrentPermissionMode = (): PermissionMode => params.getPermissionMode?.() ?? params.permissionMode ?? 'default';
@@ -234,15 +259,15 @@ export function createCodexAppServerRuntime(params: Readonly<{
             session: params.session,
             getCodexThreadId: () => threadId,
             backendMode: 'appServer',
-            transcriptStorage: process.env.HAPPIER_TRANSCRIPT_STORAGE === 'direct' ? 'direct' : 'persisted',
-            codexHome: process.env.CODEX_HOME ?? null,
+            transcriptStorage: runtimeEnv.HAPPIER_TRANSCRIPT_STORAGE === 'direct' ? 'direct' : 'persisted',
+            codexHome: runtimeEnv.CODEX_HOME ?? null,
             activeServerDir: params.activeServerDir ?? null,
             lastPublished: lastPublishedThreadId,
         });
     };
 
     const publishSessionControls = async (client: DisposableCodexAppServerClient): Promise<void> => {
-        const environmentAuth = readCodexEnvironmentAuthState();
+        const environmentAuth = readCodexEnvironmentAuthState(runtimeEnv);
         await publishCodexAppServerSessionControlsMetadata({
             client,
             session: params.session,
@@ -250,6 +275,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             authMethod: environmentAuth.method,
             currentModeId,
             currentModelId,
+            currentReasoningEffort,
             currentServiceTier,
         }).catch(() => undefined);
     };
@@ -260,21 +286,21 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return await next;
     };
 
-    const appendStreamDelta = (itemId: string, text: string, values: Map<string, string>, append: (deltaText: string) => void): void => {
+    const appendStreamDelta = (itemKey: string, text: string, values: Map<string, string>, append: (deltaText: string) => void): void => {
         if (!text) return;
         append(text);
-        values.set(itemId, `${values.get(itemId) ?? ''}${text}`);
+        values.set(itemKey, `${values.get(itemKey) ?? ''}${text}`);
     };
 
     const appendStreamFinal = (
-        itemId: string,
+        itemKey: string,
         text: string,
         values: Map<string, string>,
         append: (deltaText: string) => void,
         override: (finalText: string) => void,
     ): void => {
-        const accumulated = values.get(itemId) ?? '';
-        values.delete(itemId);
+        const accumulated = values.get(itemKey) ?? '';
+        values.delete(itemKey);
         if (!text) return;
         if (!accumulated) {
             append(text);
@@ -288,40 +314,83 @@ export function createCodexAppServerRuntime(params: Readonly<{
         override(text);
     };
 
-    const applyStreamUpdate = async (update: CodexAppServerStreamUpdate): Promise<void> => {
+    const buildItemStateKey = (scopeId: string, itemId: string): string => `${scopeId}:${itemId}`;
+    const buildItemStreamKey = (scopeId: string, kind: 'assistant' | 'reasoning', itemId: string): string =>
+        `${scopeId}:${kind}:${itemId}`;
+
+    const ensureSyntheticSubagentThread = async (threadId: string): Promise<string> => {
+        if (syntheticSubagentThreadIds.has(threadId)) return threadId;
+        await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
+        syntheticSubagentTracker.ensureStarted({ threadId });
+        syntheticSubagentThreadIds.add(threadId);
+        return threadId;
+    };
+
+    const finalizeSyntheticSubagentThread = async (threadId: string, status: 'completed' | 'interrupted'): Promise<void> => {
+        await ensureSyntheticSubagentThread(threadId);
+        await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
+        syntheticSubagentTracker.finalize({ threadId, status });
+    };
+
+    const applyStreamUpdate = async (update: CodexAppServerStreamUpdate, context: StreamUpdateContext): Promise<void> => {
         if (update.type === 'assistant-text-delta') {
-            appendStreamDelta(update.itemId, update.text, assistantTextByItemId, (deltaText) => {
-                streamedTranscriptWriter.appendAssistantDelta(deltaText);
+            appendStreamDelta(buildItemStateKey(context.streamScopeId, update.itemId), update.text, assistantTextByItemId, (deltaText) => {
+                itemTranscriptBridge.appendAssistantDelta({
+                    deltaText,
+                    streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
+                    sidechainId: context.sidechainId,
+                });
             });
             return;
         }
 
         if (update.type === 'assistant-text-final') {
-            appendStreamFinal(update.itemId, update.text, assistantTextByItemId, (deltaText) => {
-                streamedTranscriptWriter.appendAssistantDelta(deltaText);
+            appendStreamFinal(buildItemStateKey(context.streamScopeId, update.itemId), update.text, assistantTextByItemId, (deltaText) => {
+                itemTranscriptBridge.appendAssistantDelta({
+                    deltaText,
+                    streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
+                    sidechainId: context.sidechainId,
+                });
             }, (finalText) => {
-                streamedTranscriptWriter.overrideAssistantText(finalText);
+                itemTranscriptBridge.overrideAssistantText({
+                    text: finalText,
+                    streamKey: buildItemStreamKey(context.streamScopeId, 'assistant', update.itemId),
+                    sidechainId: context.sidechainId,
+                });
             });
             return;
         }
 
         if (update.type === 'reasoning-delta') {
-            appendStreamDelta(update.itemId, update.text, reasoningTextByItemId, (deltaText) => {
-                streamedTranscriptWriter.appendThinkingDelta(deltaText);
+            appendStreamDelta(buildItemStateKey(context.streamScopeId, update.itemId), update.text, reasoningTextByItemId, (deltaText) => {
+                itemTranscriptBridge.appendThinkingDelta({
+                    deltaText,
+                    streamKey: buildItemStreamKey(context.streamScopeId, 'reasoning', update.itemId),
+                    sidechainId: context.sidechainId,
+                });
             });
             return;
         }
 
         if (update.type === 'reasoning-final') {
-            appendStreamFinal(update.itemId, update.text, reasoningTextByItemId, (deltaText) => {
-                streamedTranscriptWriter.appendThinkingDelta(deltaText);
+            appendStreamFinal(buildItemStateKey(context.streamScopeId, update.itemId), update.text, reasoningTextByItemId, (deltaText) => {
+                itemTranscriptBridge.appendThinkingDelta({
+                    deltaText,
+                    streamKey: buildItemStreamKey(context.streamScopeId, 'reasoning', update.itemId),
+                    sidechainId: context.sidechainId,
+                });
             }, (finalText) => {
-                streamedTranscriptWriter.overrideThinkingText(finalText);
+                itemTranscriptBridge.overrideThinkingText({
+                    text: finalText,
+                    streamKey: buildItemStreamKey(context.streamScopeId, 'reasoning', update.itemId),
+                    sidechainId: context.sidechainId,
+                });
             });
             return;
         }
 
         if (update.type === 'turn-diff-updated') {
+            if (context.sidechainId) return;
             const activeTurnId = pendingTurn?.turnId ?? null;
             if (update.turnId && activeTurnId && update.turnId !== activeTurnId) {
                 return;
@@ -335,7 +404,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
 
         if (update.type === 'tool-call') {
-            await streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
+            await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
             if (update.toolKind === 'file-change') {
                 const input = update.input && typeof update.input === 'object' && !Array.isArray(update.input)
                     ? update.input as Record<string, unknown>
@@ -349,30 +418,51 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     });
                 }
             }
-            params.session.sendCodexMessage({
-                type: 'tool-call',
-                name: update.name,
-                callId: update.callId,
-                input: update.input,
-                id: randomUUID(),
-            });
+            if (context.sidechainId) {
+                params.session.sendAgentMessage('codex', {
+                    type: 'tool-call',
+                    name: update.name,
+                    callId: update.callId,
+                    input: update.input,
+                    id: randomUUID(),
+                    sidechainId: context.sidechainId,
+                });
+            } else {
+                params.session.sendCodexMessage({
+                    type: 'tool-call',
+                    name: update.name,
+                    callId: update.callId,
+                    input: update.input,
+                    id: randomUUID(),
+                });
+            }
             return;
         }
 
         if (update.type === 'tool-result') {
-            params.session.sendCodexMessage({
-                type: 'tool-call-result',
-                callId: update.callId,
-                output: update.output,
-                id: randomUUID(),
-            });
+            if (context.sidechainId) {
+                params.session.sendAgentMessage('codex', {
+                    type: 'tool-result',
+                    callId: update.callId,
+                    output: update.output,
+                    id: randomUUID(),
+                    sidechainId: context.sidechainId,
+                });
+            } else {
+                params.session.sendCodexMessage({
+                    type: 'tool-call-result',
+                    callId: update.callId,
+                    output: update.output,
+                    id: randomUUID(),
+                });
+            }
         }
     };
 
     const flushStreamState = async (reason: 'turn-end' | 'abort'): Promise<void> => {
         assistantTextByItemId.clear();
         reasoningTextByItemId.clear();
-        await streamedTranscriptWriter.flushAll({
+        await itemTranscriptBridge.flushAll({
             reason,
             ...(reason === 'abort' ? { interruptedReason: 'app-server-turn-interrupted' } : {}),
         });
@@ -408,21 +498,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
     };
 
-    const buildUserInputResponse = (update: Extract<CodexAppServerStreamUpdate, { type: 'user-input-request' }>, result: PermissionResult): Readonly<Record<string, unknown>> => {
-        const answers: Record<string, { answers: string[] }> = {};
-        for (const question of update.questions) {
-            if (!question || typeof question !== 'object' || Array.isArray(question)) continue;
-            const questionRecord = question as Record<string, unknown>;
-            const questionId = typeof questionRecord.id === 'string' ? questionRecord.id : null;
-            if (!questionId) continue;
-            const explicit = typeof result.answers?.[questionId] === 'string' ? result.answers[questionId] : null;
-            if (explicit && explicit.trim()) {
-                answers[questionId] = { answers: [explicit] };
-                continue;
-            }
-        }
+    const buildUserInputResponse = (
+        update: Extract<CodexAppServerStreamUpdate, { type: 'user-input-request' }>,
+        result: PermissionResult,
+        options?: Readonly<{ allowDecisionFallback?: boolean }>,
+    ): Readonly<Record<string, unknown>> => {
+        const answers = buildCodexRequestUserInputAnswers({
+            questions: update.questions,
+            answersByKey: result.answers ?? {},
+        });
 
-        if (Object.keys(answers).length === 0) {
+        if (options?.allowDecisionFallback === true && Object.keys(answers).length === 0) {
             const pickQuestionWithOptions = update.questions.find((question): question is Record<string, unknown> => {
                 if (!question || typeof question !== 'object' || Array.isArray(question)) return false;
                 const options = (question as Record<string, unknown>).options;
@@ -482,25 +568,67 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 return mapApprovalDecision(update.requestKind, result);
             }
 
-            if (update.type === 'user-input-request') {
-                const result = params.permissionHandler
-                    ? await params.permissionHandler.handleToolCall(update.callId, update.toolName, {
-                        ...(update.input && typeof update.input === 'object' && !Array.isArray(update.input)
-                            ? update.input as Record<string, unknown>
+        if (update.type === 'user-input-request') {
+            const treatAsApproval = looksLikeCodexApprovalRequestUserInput({
+                toolName: update.toolName,
+                questions: update.questions,
+            });
+            logger.debug('[codex-app-server] requestUserInput received', {
+                callId: update.callId,
+                toolName: update.toolName,
+                treatAsApproval,
+                questionSummaries: update.questions.map((question) => {
+                    if (!question || typeof question !== 'object' || Array.isArray(question)) return null;
+                    const record = question as Record<string, unknown>;
+                    const options = Array.isArray(record.options)
+                        ? record.options
+                            .map((option) => {
+                                if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
+                                const optionRecord = option as Record<string, unknown>;
+                                return typeof optionRecord.label === 'string' ? optionRecord.label : null;
+                            })
+                            .filter((label): label is string => Boolean(label))
+                        : [];
+                    return {
+                        id: typeof record.id === 'string' ? record.id : null,
+                        header: typeof record.header === 'string' ? record.header : null,
+                        question: typeof record.question === 'string' ? record.question : null,
+                        options,
+                    };
+                }).filter(Boolean),
+            });
+            const toolName = treatAsApproval ? update.toolName : 'AskUserQuestion';
+            const toolInput = treatAsApproval
+                ? {
+                    ...(update.input && typeof update.input === 'object' && !Array.isArray(update.input)
+                        ? update.input as Record<string, unknown>
                             : {}),
                         requestUserInput: {
                             questions: update.questions,
                         },
-                    })
+                    }
+                    : normalizeCodexRequestUserInputQuestionsToAskUserQuestionInput(update.questions);
+            const result = params.permissionHandler
+                    ? await params.permissionHandler.handleToolCall(update.callId, toolName, toolInput)
                     : { decision: 'abort' as const };
-                return buildUserInputResponse(update, result);
-            }
+            logger.debug('[codex-app-server] requestUserInput resolved', {
+                callId: update.callId,
+                toolName,
+                decision: result.decision,
+                answerKeys: result.answers ? Object.keys(result.answers) : [],
+            });
+            return buildUserInputResponse(update, result, { allowDecisionFallback: treatAsApproval });
+        }
         }
 
         return null;
     };
 
-    const finishPendingTurn = async (options?: Readonly<{ error?: Error; flushReason?: 'turn-end' | 'abort' }>): Promise<void> => {
+    const finishPendingTurn = async (options?: Readonly<{
+        error?: Error;
+        flushReason?: 'turn-end' | 'abort';
+        insideBridgeWork?: boolean;
+    }>): Promise<void> => {
         const activeTurn = pendingTurn;
         const completedTurnStartSeqInclusive = pendingTurnStartSeqInclusive;
         const completedTurnUserMessageSeq = pendingTurnUserMessageSeq;
@@ -510,9 +638,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
         turnInFlight = false;
         setThinking(false);
         if (options?.flushReason) {
-            await runBridgeWork(async () => {
-                await flushStreamState(options.flushReason!);
-            });
+            if (options.insideBridgeWork === true) {
+                await flushStreamState(options.flushReason);
+            } else {
+                await runBridgeWork(async () => {
+                    await flushStreamState(options.flushReason!);
+                });
+            }
         }
         if (options?.flushReason === 'turn-end' && activeTurn) {
             const turnChangeSet = turnChangeCollector.flushTurn({
@@ -583,6 +715,42 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return !notificationTurnId || !activeTurn.turnId || notificationTurnId === activeTurn.turnId;
     };
 
+    const resolveStreamUpdateContext = (notificationParams: unknown): StreamUpdateContext | null => {
+        const activeTurn = pendingTurn;
+        if (!activeTurn) return null;
+        const notificationThreadId = readThreadId(notificationParams);
+        if (notificationThreadId && notificationThreadId !== activeTurn.threadId) {
+            return {
+                sidechainId: notificationThreadId,
+                streamScopeId: notificationThreadId,
+            };
+        }
+        return {
+            sidechainId: null,
+            streamScopeId: activeTurn.threadId,
+        };
+    };
+
+    const registerActiveTurnStreamNotificationHandler = (
+        client: DisposableCodexAppServerClient,
+        method: string,
+    ): void => {
+        client.registerNotificationHandler(method, (notificationParams) => {
+            return runBridgeWork(async () => {
+                const context = resolveStreamUpdateContext(notificationParams);
+                if (!context) return;
+                if (context.sidechainId) {
+                    await ensureSyntheticSubagentThread(context.sidechainId);
+                } else if (!notificationMatchesPendingTurn(notificationParams)) {
+                    return;
+                }
+                for (const update of streamEventBridge.onNotification({ method, params: notificationParams })) {
+                    await applyStreamUpdate(update, context);
+                }
+            });
+        });
+    };
+
     const ensureClient = async (): Promise<DisposableCodexAppServerClient> => {
         if (!clientPromise) {
             clientPromise = createCodexAppServerClient({
@@ -611,48 +779,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             setThinking(true);
                         });
                     });
-                    client.registerNotificationHandler('item/agentMessage/delta', (notificationParams) => {
-                        return runBridgeWork(async () => {
-                            for (const update of streamEventBridge.onNotification({ method: 'item/agentMessage/delta', params: notificationParams })) {
-                                await applyStreamUpdate(update);
-                            }
-                        });
-                    });
-                    client.registerNotificationHandler('turn/diff/updated', (notificationParams) => {
-                        return runBridgeWork(async () => {
-                            for (const update of streamEventBridge.onNotification({ method: 'turn/diff/updated', params: notificationParams })) {
-                                await applyStreamUpdate(update);
-                            }
-                        });
-                    });
-                    client.registerNotificationHandler('item/reasoning/summaryTextDelta', (notificationParams) => {
-                        return runBridgeWork(async () => {
-                            for (const update of streamEventBridge.onNotification({ method: 'item/reasoning/summaryTextDelta', params: notificationParams })) {
-                                await applyStreamUpdate(update);
-                            }
-                        });
-                    });
-                    client.registerNotificationHandler('item/reasoning/textDelta', (notificationParams) => {
-                        return runBridgeWork(async () => {
-                            for (const update of streamEventBridge.onNotification({ method: 'item/reasoning/textDelta', params: notificationParams })) {
-                                await applyStreamUpdate(update);
-                            }
-                        });
-                    });
-                    client.registerNotificationHandler('item/started', (notificationParams) => {
-                        return runBridgeWork(async () => {
-                            for (const update of streamEventBridge.onNotification({ method: 'item/started', params: notificationParams })) {
-                                await applyStreamUpdate(update);
-                            }
-                        });
-                    });
-                    client.registerNotificationHandler('item/completed', (notificationParams) => {
-                        return runBridgeWork(async () => {
-                            for (const update of streamEventBridge.onNotification({ method: 'item/completed', params: notificationParams })) {
-                                await applyStreamUpdate(update);
-                            }
-                        });
-                    });
+                    registerActiveTurnStreamNotificationHandler(client, 'item/agentMessage/delta');
+                    registerActiveTurnStreamNotificationHandler(client, 'turn/diff/updated');
+                    registerActiveTurnStreamNotificationHandler(client, 'item/reasoning/summaryTextDelta');
+                    registerActiveTurnStreamNotificationHandler(client, 'item/reasoning/textDelta');
+                    registerActiveTurnStreamNotificationHandler(client, 'item/started');
+                    registerActiveTurnStreamNotificationHandler(client, 'item/completed');
                     client.registerRequestHandler('item/commandExecution/requestApproval', (requestParams) => {
                         return runBridgeWork(() => handleServerRequest('item/commandExecution/requestApproval', requestParams));
                     });
@@ -664,11 +796,24 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     });
                     const registerTerminalHandler = (method: string): void => {
                         client.registerNotificationHandler(method, async (notificationParams) => {
-                            if (notificationMatchesPendingTurn(notificationParams)) {
-                                await finishPendingTurn({
-                                    flushReason: method === 'turn/completed' ? 'turn-end' : 'abort',
-                                });
-                            }
+                            await runBridgeWork(async () => {
+                                if (notificationMatchesPendingTurn(notificationParams)) {
+                                    await finishPendingTurn({
+                                        flushReason: method === 'turn/completed' ? 'turn-end' : 'abort',
+                                        insideBridgeWork: true,
+                                    });
+                                    return;
+                                }
+                                const activeTurn = pendingTurn;
+                                const childThreadId = readThreadId(notificationParams);
+                                if (!activeTurn || !childThreadId || childThreadId === activeTurn.threadId) {
+                                    return;
+                                }
+                                await finalizeSyntheticSubagentThread(
+                                    childThreadId,
+                                    method === 'turn/completed' ? 'completed' : 'interrupted',
+                                );
+                            });
                         });
                     };
                     registerTerminalHandler('turn/completed');
@@ -709,6 +854,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const { approvalPolicy, sandbox } = resolveCurrentPolicy();
                 const response = await client.request('thread/resume', {
                     threadId: resumeId,
+                    ...(currentModelId ? { model: currentModelId } : {}),
+                    ...buildThreadServiceTierParams(currentServiceTier),
                     approvalPolicy,
                     sandbox,
                     persistExtendedHistory: true,
@@ -720,6 +867,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const { approvalPolicy, sandbox } = resolveCurrentPolicy();
                 const response = await client.request('thread/resume', {
                     threadId: existingSessionId,
+                    ...(currentModelId ? { model: currentModelId } : {}),
+                    ...buildThreadServiceTierParams(currentServiceTier),
                     approvalPolicy,
                     sandbox,
                     persistExtendedHistory: true,
@@ -730,6 +879,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
             const { approvalPolicy, sandbox } = resolveCurrentPolicy();
             const response = await client.request('thread/start', {
                 cwd: params.directory,
+                ...(currentModelId ? { model: currentModelId } : {}),
+                ...buildThreadServiceTierParams(currentServiceTier),
                 approvalPolicy,
                 sandbox,
                 experimentalRawEvents: true,
@@ -752,7 +903,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     return {
         getSessionId: () => threadId,
-        supportsInFlightSteer: () => true,
+        // Codex app-server exposes turn/steer at the transport level, but live provider behavior still
+        // queues follow-up corrections until the active turn completes. Fail closed so Happier uses the
+        // normal pending-queue UX instead of promising immediate mid-turn steering that does not happen.
+        supportsInFlightSteer: () => false,
         isTurnInFlight: () => turnInFlight,
         beginTurn: () => {
             turnChangeCollector.beginTurn();
@@ -785,6 +939,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             threadId = null;
             currentModeId = null;
             currentModelId = null;
+            currentReasoningEffort = null;
             currentServiceTier = null;
             await disposeClient();
             turnInFlight = false;
@@ -798,9 +953,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 throw new Error('Codex app-server setSessionMode requires a non-empty mode id');
             }
             const selection = resolveCodexAppServerCollaborationModeSelection({
-                modesResponse: await client.request('collaborationMode/list'),
+                modesResponse: await client.request('collaborationMode/list', {}),
+                modelsResponse: await client.request('model/list', {}),
                 modeId: nextModeId,
                 currentModelId,
+                currentReasoningEffort,
             });
             if (!selection) {
                 throw new Error(`Unknown Codex app-server collaboration mode: ${mode}`);
@@ -816,18 +973,29 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const response = await client.request('thread/resume', {
                     threadId,
                     model: currentModelId,
+                    ...buildThreadServiceTierParams(currentServiceTier),
                     approvalPolicy,
                     sandbox,
                     persistExtendedHistory: true,
                 });
                 threadId = readThreadId(response) ?? threadId;
                 currentModelId = readModelId(response) ?? currentModelId;
-                currentServiceTier = readServiceTier(response);
+                currentServiceTier = readServiceTier(response) ?? currentServiceTier;
                 publishThreadId();
             }
             await publishSessionControls(client);
         },
         setSessionConfigOption: async (key: string, value: unknown) => {
+            if (key === 'reasoning_effort') {
+                const nextReasoningEffort = trimStringValue(value);
+                if (!nextReasoningEffort) {
+                    throw new Error('Codex app-server reasoning_effort requires a non-empty value');
+                }
+                currentReasoningEffort = nextReasoningEffort;
+                const client = await ensureClient();
+                await publishSessionControls(client);
+                return;
+            }
             if (key === 'speed') {
                 const nextServiceTier = trimStringValue(value);
                 if (nextServiceTier !== 'fast' && nextServiceTier !== 'standard') {
@@ -839,7 +1007,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     const { approvalPolicy, sandbox } = resolveCurrentPolicy();
                     const response = await client.request('thread/resume', {
                         threadId,
-                        serviceTier: currentServiceTier === 'fast' ? 'fast' : null,
+                        ...buildThreadServiceTierParams(currentServiceTier),
                         approvalPolicy,
                         sandbox,
                         persistExtendedHistory: true,
@@ -886,14 +1054,19 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const { approvalPolicy, sandboxPolicy } = resolveCurrentPolicy();
                 const collaborationMode = currentModeId
                     ? resolveCodexAppServerCollaborationModeSelection({
-                        modesResponse: await client.request('collaborationMode/list'),
+                        modesResponse: await client.request('collaborationMode/list', {}),
+                        modelsResponse: await client.request('model/list', {}),
                         modeId: currentModeId,
                         currentModelId,
+                        currentReasoningEffort,
                     })?.payload
                     : null;
                 const response = await client.request('turn/start', {
                     threadId: activeThreadId,
                     input: [{ type: 'text', text: prompt }],
+                    ...(currentModelId ? { model: currentModelId } : {}),
+                    ...(currentReasoningEffort ? { effort: currentReasoningEffort } : {}),
+                    ...(currentServiceTier === 'fast' ? { serviceTier: 'fast' } : {}),
                     approvalPolicy,
                     sandboxPolicy,
                     ...(collaborationMode ? { collaborationMode } : {}),
