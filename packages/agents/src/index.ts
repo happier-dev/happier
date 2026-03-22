@@ -216,19 +216,25 @@ export {
 } from './sessions/replay/happierReplayPrompt.js';
 export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAgentTurnTranscriptText.js';
 
-// Namespaced provider-specific helpers/knobs.
-export * as providers from './providers/index.js';
-
+// Provider CLI runtime surface (used by bundled products like apps/cli via @happier-dev/cli-common).
 export {
   PROVIDER_CLI_RUNTIME_SPECS,
   getProviderCliRuntimeSpec,
-  type ProviderCliInstallCommand as ProviderCliRuntimeInstallCommand,
-  type ProviderCliInstallPlatform as ProviderCliRuntimeInstallPlatform,
+  type ProviderCliInstallCommand,
+  type ProviderCliInstallPlatform,
   type ProviderCliManagedInstallSpec,
   type ProviderCliManualInstallKind,
   type ProviderCliManualInstallRecipes,
   type ProviderCliRuntimeSpec,
   type ProviderCliSourcePreference,
+} from './providers/providerCliRuntime.js';
+
+// Namespaced provider-specific helpers/knobs.
+export * as providers from './providers/index.js';
+
+export {
+  type ProviderCliInstallCommand as ProviderCliRuntimeInstallCommand,
+  type ProviderCliInstallPlatform as ProviderCliRuntimeInstallPlatform,
 } from './providers/providerCliRuntime.js';
 export * from './providers/providerCliInstallGuidance.js';
 
