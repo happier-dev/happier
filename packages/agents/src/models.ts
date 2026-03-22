@@ -1,6 +1,11 @@
 import type { AgentId } from './types.js';
 
 export type AgentModelNonAcpApplyScope = 'spawn_only' | 'next_prompt';
+export type AgentModelDescriptor = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+}>;
 
 export type AgentModelConfig = Readonly<{
   supportsSelection: boolean;
@@ -41,7 +46,69 @@ export type AgentModelConfig = Readonly<{
   dynamicProbe?: 'auto' | 'static-only';
   defaultMode: string;
   allowedModes: readonly string[];
+  staticModels?: readonly AgentModelDescriptor[];
 }>;
+
+const CLAUDE_STATIC_MODELS = Object.freeze([
+  {
+    id: 'claude-opus-4-6',
+    name: 'Opus 4.6',
+    description: 'Highest-capability Claude model for the hardest coding and reasoning tasks.',
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    name: 'Sonnet 4.6',
+    description: 'Balanced Claude model for everyday coding, editing, and analysis.',
+  },
+  {
+    id: 'claude-haiku-4-5',
+    name: 'Haiku 4.5',
+    description: 'Fastest Claude option for lighter tasks and lower-latency replies.',
+  },
+  {
+    id: 'claude-opus-4-5',
+    name: 'Opus 4.5',
+    description: 'Prior Opus generation alias for compatibility with existing Claude setups.',
+  },
+  {
+    id: 'claude-sonnet-4-5',
+    name: 'Sonnet 4.5',
+    description: 'Prior Sonnet generation alias for compatibility with existing Claude setups.',
+  },
+] satisfies readonly AgentModelDescriptor[]);
+
+const GEMINI_STATIC_MODELS = Object.freeze([
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    description: 'Best for complex reasoning, coding, and longer-running tasks.',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    description: 'Fast, balanced Gemini model for general-purpose work.',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    description: 'Lowest-latency Gemini 2.5 option for lightweight prompts.',
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash Preview',
+    description: 'Preview flash model from the Gemini 3 generation.',
+  },
+  {
+    id: 'gemini-3-pro-preview',
+    name: 'Gemini 3 Pro Preview',
+    description: 'Preview pro model with stronger reasoning and coding depth.',
+  },
+  {
+    id: 'gemini-3.1-pro-preview',
+    name: 'Gemini 3.1 Pro Preview',
+    description: 'Latest Gemini 3.1 preview with the strongest reasoning in this static list.',
+  },
+] satisfies readonly AgentModelDescriptor[]);
 
 export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = Object.freeze({
   claude: {
@@ -50,18 +117,9 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     nonAcpApplyScope: 'next_prompt',
     defaultMode: 'default',
     allowedModes: [
-      // Static suggestions for Claude Code.
-      //
-      // Prefer Anthropic’s alias model IDs here (short, user-friendly).
-      // Advanced users can still enter any specific snapshot/model ID via freeform input.
-      'claude-opus-4-6',
-      'claude-sonnet-4-6',
-      'claude-haiku-4-5',
-
-      // Still-common prior generation aliases.
-      'claude-opus-4-5',
-      'claude-sonnet-4-5',
+      ...CLAUDE_STATIC_MODELS.map((model) => model.id),
     ],
+    staticModels: CLAUDE_STATIC_MODELS,
   },
   codex: {
     supportsSelection: true,
@@ -86,13 +144,9 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     acpModelConfigOptionId: 'model',
     defaultMode: 'gemini-2.5-pro',
     allowedModes: [
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-      'gemini-3-flash-preview',
-      'gemini-3-pro-preview',
-      'gemini-3.1-pro-preview',
+      ...GEMINI_STATIC_MODELS.map((model) => model.id),
     ],
+    staticModels: GEMINI_STATIC_MODELS,
   },
   auggie: {
     supportsSelection: true,
@@ -163,4 +217,19 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
 
 export function getAgentModelConfig(agentId: AgentId): AgentModelConfig {
   return AGENT_MODEL_CONFIG[agentId];
+}
+
+export function getAgentStaticModels(agentId: AgentId): readonly AgentModelDescriptor[] {
+  const config = getAgentModelConfig(agentId);
+  const staticModels = Array.isArray(config.staticModels) && config.staticModels.length > 0
+    ? config.staticModels
+    : config.allowedModes.map((id) => ({ id, name: id }));
+
+  const seen = new Set<string>();
+  return staticModels.filter((model) => {
+    const id = typeof model.id === 'string' ? model.id.trim() : '';
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }

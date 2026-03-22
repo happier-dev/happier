@@ -26,7 +26,8 @@ describe('modelOptions', () => {
     });
 
     it('returns options for agents with configurable model selection', () => {
-        expect(getModelOptionsForAgentType('gemini').map((o) => o.value)).toEqual([
+        const options = getModelOptionsForAgentType('gemini');
+        expect(options.map((o) => o.value)).toEqual([
             'default',
             'gemini-2.5-pro',
             'gemini-2.5-flash',
@@ -35,6 +36,11 @@ describe('modelOptions', () => {
             'gemini-3-pro-preview',
             'gemini-3.1-pro-preview',
         ]);
+        expect(options.find((option) => option.value === 'gemini-3.1-pro-preview')).toMatchObject({
+            value: 'gemini-3.1-pro-preview',
+            label: 'Gemini 3.1 Pro Preview',
+            description: expect.any(String),
+        });
     });
 
     it('returns a default-only option for selection-capable agents without static lists', () => {
@@ -48,9 +54,15 @@ describe('modelOptions', () => {
     });
 
     it('includes a curated static list for Claude while still allowing freeform models', () => {
-        const values = getModelOptionsForAgentType('claude').map((o) => o.value);
+        const options = getModelOptionsForAgentType('claude');
+        const values = options.map((o) => o.value);
         expect(values[0]).toBe('default');
         expect(values.length).toBeGreaterThan(1);
+        expect(options.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
+            value: 'claude-opus-4-6',
+            label: 'Claude Opus 4.6',
+            description: expect.any(String),
+        });
     });
 
     it('prefers ACP session models when present', () => {

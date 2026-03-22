@@ -10,9 +10,9 @@ describe('getAgentAdvancedModeCapabilities', () => {
             supportsAcceptEdits: boolean;
             supportsRuntimeModeSwitch: AgentRuntimeModeSwitchKind;
         }> = [
-            { agentId: 'claude', supportsPlanMode: true, supportsAcceptEdits: true, supportsRuntimeModeSwitch: 'provider-native' },
-            { agentId: 'opencode', supportsPlanMode: true, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'acp-setSessionMode' },
-            { agentId: 'codex', supportsPlanMode: false, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'metadata-gating' },
+            { agentId: 'claude', supportsPlanMode: true, supportsAcceptEdits: true, supportsRuntimeModeSwitch: 'providerNative' },
+            { agentId: 'opencode', supportsPlanMode: true, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'sessionModeApi' },
+            { agentId: 'codex', supportsPlanMode: true, supportsAcceptEdits: false, supportsRuntimeModeSwitch: 'sessionModeApi' },
         ];
 
         for (const testCase of cases) {
@@ -27,9 +27,9 @@ describe('getAgentAdvancedModeCapabilities', () => {
     it('returns valid runtime switch kinds for all canonical agents', () => {
         const validKinds: readonly AgentRuntimeModeSwitchKind[] = [
             'none',
-            'metadata-gating',
-            'acp-setSessionMode',
-            'provider-native',
+            'metadataGating',
+            'sessionModeApi',
+            'providerNative',
         ];
 
         for (const agentId of AGENT_IDS) {

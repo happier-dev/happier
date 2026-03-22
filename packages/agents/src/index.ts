@@ -46,7 +46,9 @@ export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } fr
 export {
   AGENT_MODEL_CONFIG,
   getAgentModelConfig,
+  getAgentStaticModels,
   type AgentModelConfig,
+  type AgentModelDescriptor,
   type AgentModelNonAcpApplyScope,
 } from './models.js';
 export {
