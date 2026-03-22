@@ -1,27 +1,40 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
-import { createInTxHarness } from "../../testkit/txHarness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { publicShareRoutes } from "./publicShareRoutes";
 
 vi.mock("@/app/share/accessControl", () => ({
     isSessionOwner: vi.fn(async () => true),
 }));
 
-const emitUpdate = vi.fn();
-const buildPublicShareCreatedUpdate = vi.fn((_ps: any, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "public-share-created" },
-}));
-const buildPublicShareUpdatedUpdate = vi.fn((_ps: any, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "public-share-updated" },
-}));
-const buildPublicShareDeletedUpdate = vi.fn((_sessionId: string, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "public-share-deleted" },
-}));
+const { emitUpdate, buildPublicShareCreatedUpdate, buildPublicShareUpdatedUpdate, buildPublicShareDeletedUpdate, randomKeyNaked, markAccountChanged } =
+    vi.hoisted(() => ({
+        emitUpdate: vi.fn(),
+        buildPublicShareCreatedUpdate: vi.fn((_ps: any, updSeq: number, updId: string) => ({
+            id: updId,
+            seq: updSeq,
+            body: { t: "public-share-created" },
+        })),
+        buildPublicShareUpdatedUpdate: vi.fn((_ps: any, updSeq: number, updId: string) => ({
+            id: updId,
+            seq: updSeq,
+            body: { t: "public-share-updated" },
+        })),
+        buildPublicShareDeletedUpdate: vi.fn((_sessionId: string, updSeq: number, updId: string) => ({
+            id: updId,
+            seq: updSeq,
+            body: { t: "public-share-deleted" },
+        })),
+        randomKeyNaked: vi.fn(() => "upd-id"),
+        markAccountChanged: vi.fn(async (_tx: any, params: any) => {
+            if (params.kind === "share") return 50;
+            if (params.kind === "session") return 51;
+            return 99;
+        }),
+    }));
 
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
@@ -30,130 +43,166 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildPublicShareDeletedUpdate,
 }));
 
-const randomKeyNaked = vi.fn(() => "upd-id");
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
-
-const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
-    if (params.kind === "share") return 50;
-    if (params.kind === "session") return 51;
-    return 99;
-});
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
-let txFindUnique: any;
-let txCreate: any;
-let txUpdate: any;
-let txDelete: any;
-let txSessionFindUnique: any;
-
-vi.mock("@/storage/inTx", () => {
-    const harness = createInTxHarness(() => ({
-            session: {
-                findUnique: (...args: any[]) => txSessionFindUnique(...args),
-            },
-            publicSessionShare: {
-                findUnique: (...args: any[]) => txFindUnique(...args),
-                create: (...args: any[]) => txCreate(...args),
-                update: (...args: any[]) => txUpdate(...args),
-                delete: (...args: any[]) => txDelete(...args),
-            },
-        }));
-    return { afterTx: harness.afterTx, inTx: harness.inTx };
-});
-
-vi.mock("@/storage/db", () => ({ db: {} }));
-
 describe("publicShareRoutes (AccountChange integration)", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        txFindUnique = vi.fn();
-        txCreate = vi.fn();
-        txUpdate = vi.fn();
-        txDelete = vi.fn();
-        txSessionFindUnique = vi.fn(async () => ({ encryptionMode: "e2ee" }));
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-public-share-changes-",
+            initAuth: false,
+            initEncrypt: false,
+            initFiles: false,
+        });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness.close();
     });
 
-    it("POST create marks share+session and emits created update using latest cursor", async () => {
-        txFindUnique.mockResolvedValue(null);
-        txCreate.mockResolvedValue({
-            id: "ps1",
-            sessionId: "s1",
-            createdByUserId: "u1",
-            tokenHash: Buffer.from("h"),
-            encryptedDataKey: new Uint8Array([1, 2, 3]),
-            expiresAt: null,
-            maxUses: null,
-            useCount: 0,
-            isConsentRequired: false,
-            createdAt: new Date(1),
-            updatedAt: new Date(1),
+    beforeEach(() => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        harness.resetEnv();
+    });
+
+    afterEach(async () => {
+        harness.resetEnv();
+        await harness.resetDbTables([
+            () => db.publicShareAccessLog.deleteMany(),
+            () => db.publicShareBlockedUser.deleteMany(),
+            () => db.publicSessionShare.deleteMany(),
+            () => db.sessionMessage.deleteMany(),
+            () => db.accountChange.deleteMany(),
+            () => db.session.deleteMany(),
+            () => db.repeatKey.deleteMany(),
+            () => db.account.deleteMany(),
+        ]);
+    });
+
+    async function seedOwnerSession(encryptionMode: "e2ee" | "plain" = "e2ee") {
+        const owner = await db.account.create({
+            data: { publicKey: `pk-${encryptionMode}` },
+            select: { id: true },
         });
 
-        const { publicShareRoutes } = await import("./publicShareRoutes");
-        const app = createFakeRouteApp();
-        publicShareRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/sessions/:sessionId/public-share");
-        const reply = createReplyStub();
-
-        await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                body: { token: "tok", encryptedDataKey: Buffer.from("k").toString("base64") },
+        const session = await db.session.create({
+            data: {
+                accountId: owner.id,
+                tag: `session-${encryptionMode}`,
+                encryptionMode,
+                metadata: JSON.stringify({ v: 1 }),
+                agentState: null,
+                dataEncryptionKey: encryptionMode === "plain" ? null : Buffer.from([1, 2, 3]),
             },
-            reply,
+            select: { id: true },
+        });
+
+        return { owner, session };
+    }
+
+    it("POST create marks share+session and emits created update using latest cursor", async () => {
+        const { owner, session } = await seedOwnerSession();
+
+        await withAuthenticatedTestApp(
+            (app) => publicShareRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: `/v1/sessions/${session.id}/public-share`,
+                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    payload: {
+                        token: "tok-create",
+                        encryptedDataKey: Buffer.from("key").toString("base64"),
+                    },
+                });
+
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({
+                    publicShare: expect.objectContaining({
+                        token: "tok-create",
+                        useCount: 0,
+                        isConsentRequired: false,
+                    }),
+                });
+            },
         );
 
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u1", kind: "share", entityId: "s1" }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u1", kind: "session", entityId: "s1" }));
+        const stored = await db.publicSessionShare.findUnique({
+            where: { sessionId: session.id },
+            select: { sessionId: true, encryptedDataKey: true },
+        });
+        expect(stored?.sessionId).toBe(session.id);
+        expect(stored?.encryptedDataKey).toBeInstanceOf(Uint8Array);
 
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(markAccountChanged).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ accountId: owner.id, kind: "share", entityId: session.id }),
+        );
+        expect(markAccountChanged).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ accountId: owner.id, kind: "session", entityId: session.id }),
+        );
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
+                userId: owner.id,
                 payload: expect.objectContaining({
                     seq: 51,
                     body: expect.objectContaining({ t: "public-share-created" }),
                 }),
+                recipientFilter: { type: "all-interested-in-session", sessionId: session.id },
             }),
         );
     });
 
     it("POST update marks share+session and emits updated update using latest cursor", async () => {
-        txFindUnique.mockResolvedValue({ id: "ps1", sessionId: "s1" });
-        txUpdate.mockResolvedValue({
-            id: "ps1",
-            sessionId: "s1",
-            createdByUserId: "u1",
-            tokenHash: Buffer.from("h"),
-            encryptedDataKey: new Uint8Array([1, 2, 3]),
-            expiresAt: null,
-            maxUses: null,
-            useCount: 2,
-            isConsentRequired: false,
-            createdAt: new Date(1),
-            updatedAt: new Date(2),
+        const { owner, session } = await seedOwnerSession();
+        await db.publicSessionShare.create({
+            data: {
+                sessionId: session.id,
+                createdByUserId: owner.id,
+                tokenHash: createHash("sha256").update("tok-existing", "utf8").digest(),
+                encryptedDataKey: Buffer.from([1, 2, 3]),
+                maxUses: 2,
+                isConsentRequired: false,
+            },
         });
 
-        const { publicShareRoutes } = await import("./publicShareRoutes");
-        const app = createFakeRouteApp();
-        publicShareRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => publicShareRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: `/v1/sessions/${session.id}/public-share`,
+                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    payload: {
+                        expiresAt: 1_800_000_000_000,
+                        isConsentRequired: true,
+                    },
+                });
 
-        const handler = getRouteHandler(app, "POST", "/v1/sessions/:sessionId/public-share");
-        const reply = createReplyStub();
-
-        await handler(
-            {
-                userId: "u1",
-                params: { sessionId: "s1" },
-                body: { expiresAt: null, isConsentRequired: false },
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({
+                    publicShare: expect.objectContaining({
+                        token: null,
+                        isConsentRequired: true,
+                    }),
+                });
             },
-            reply,
         );
 
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        const stored = await db.publicSessionShare.findUnique({
+            where: { sessionId: session.id },
+            select: { isConsentRequired: true, expiresAt: true },
+        });
+        expect(stored?.isConsentRequired).toBe(true);
+        expect(stored?.expiresAt?.getTime()).toBe(1_800_000_000_000);
+
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
+                userId: owner.id,
                 payload: expect.objectContaining({
                     seq: 51,
                     body: expect.objectContaining({ t: "public-share-updated" }),
@@ -163,21 +212,39 @@ describe("publicShareRoutes (AccountChange integration)", () => {
     });
 
     it("DELETE marks share+session and emits deleted update using latest cursor", async () => {
-        txFindUnique.mockResolvedValue({ id: "ps1", sessionId: "s1" });
-        txDelete.mockResolvedValue({});
+        const { owner, session } = await seedOwnerSession();
+        await db.publicSessionShare.create({
+            data: {
+                sessionId: session.id,
+                createdByUserId: owner.id,
+                tokenHash: createHash("sha256").update("tok-delete", "utf8").digest(),
+                encryptedDataKey: Buffer.from([1, 2, 3]),
+                isConsentRequired: false,
+            },
+        });
 
-        const { publicShareRoutes } = await import("./publicShareRoutes");
-        const app = createFakeRouteApp();
-        publicShareRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => publicShareRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "DELETE",
+                    url: `/v1/sessions/${session.id}/public-share`,
+                    headers: { "x-test-user-id": owner.id },
+                });
 
-        const handler = getRouteHandler(app, "DELETE", "/v1/sessions/:sessionId/public-share");
-        const reply = createReplyStub();
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({ success: true });
+            },
+        );
 
-        await handler({ userId: "u1", params: { sessionId: "s1" } }, reply);
-
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        const stored = await db.publicSessionShare.findUnique({
+            where: { sessionId: session.id },
+            select: { id: true },
+        });
+        expect(stored).toBeNull();
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
+                userId: owner.id,
                 payload: expect.objectContaining({
                     seq: 51,
                     body: expect.objectContaining({ t: "public-share-deleted" }),
@@ -187,19 +254,22 @@ describe("publicShareRoutes (AccountChange integration)", () => {
     });
 
     it("DELETE returns 404 when no public share exists", async () => {
-        txFindUnique.mockResolvedValue(null);
+        const { owner, session } = await seedOwnerSession();
 
-        const { publicShareRoutes } = await import("./publicShareRoutes");
-        const app = createFakeRouteApp();
-        publicShareRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => publicShareRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "DELETE",
+                    url: `/v1/sessions/${session.id}/public-share`,
+                    headers: { "x-test-user-id": owner.id },
+                });
 
-        const handler = getRouteHandler(app, "DELETE", "/v1/sessions/:sessionId/public-share");
-        const reply = createReplyStub();
+                expect(res.statusCode).toBe(404);
+                expect(res.json()).toEqual({ error: "Share not found" });
+            },
+        );
 
-        const res = await handler({ userId: "u1", params: { sessionId: "s1" } }, reply);
-
-        expect(reply.code).toHaveBeenCalledWith(404);
-        expect(res).toEqual({ error: "Share not found" });
         expect(emitUpdate).not.toHaveBeenCalled();
     });
 });

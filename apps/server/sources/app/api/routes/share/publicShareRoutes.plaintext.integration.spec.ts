@@ -1,75 +1,25 @@
-import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
-import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { createHash } from "crypto";
 
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
-import { initDbSqlite, db } from "@/storage/db";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { publicShareRoutes } from "./publicShareRoutes";
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
-
-function createAuthenticatedTestApp() {
-    const app = Fastify({ logger: false });
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-    const typed = app.withTypeProvider<ZodTypeProvider>() as any;
-    typed.decorate("authenticate", async (request: any, reply: any) => {
-        const userId = request.headers["x-test-user-id"];
-        if (typeof userId !== "string" || !userId) {
-            return reply.code(401).send({ error: "Unauthorized" });
-        }
-        request.userId = userId;
-    });
-    return typed;
-}
-
 describe("publicShareRoutes plaintext sessions (integration)", () => {
-    const envBackup = { ...process.env };
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-public-share-plain-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-public-share-plain-",
+            initAuth: false,
+            initEncrypt: false,
+            initFiles: false,
+        });
     });
 
     afterAll(async () => {
-        process.env = envBackup;
-        await db.$disconnect();
-        await rm(baseDir, { recursive: true, force: true });
+        await harness.close();
     });
 
     it("creates and accesses a public share for a plaintext session without encryptedDataKey", async () => {
