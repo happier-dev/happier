@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
@@ -11,7 +13,13 @@ import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadS
 import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
 import { applyWorkspaceReplicationPlan } from '@/workspaces/replication/apply/applyWorkspaceReplicationPlan';
-import type { WorkspaceReplicationTransfers } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
+import {
+  createWorkspaceReplicationTransfers,
+  type WorkspaceReplicationTransfers,
+} from '@/workspaces/replication/transport/workspaceReplicationTransfers';
+import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
+import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
+import { buildOneWaySafeReplicationPlan } from '@/workspaces/replication/planning/buildOneWaySafeReplicationPlan';
 
 import {
   buildSessionHandoffWorkspaceExportArtifacts,
@@ -245,7 +253,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     assertCanContinue?: () => Promise<void>;
   }>) => Promise<Readonly<{ targetPath: string }>>;
-  applyWorkspaceReplicationPlan?: (params: Readonly<{
+  applyReplicationPlan?: (params: Readonly<{
     activeServerDir: string;
     sourceOffer: SessionHandoffWorkspaceReplicationSourceOffer;
     targetPath: string;
@@ -259,6 +267,14 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   currentTargetManifest: WorkspaceManifest;
   sourceOffer: SessionHandoffWorkspaceReplicationSourceOffer | null;
 }>> {
+  const jobStore = createWorkspaceReplicationJobStore({
+    activeServerDir: input.activeServerDir,
+  });
+  const baselineStore = createWorkspaceReplicationBaselineStore({
+    activeServerDir: input.activeServerDir,
+  });
+  const correlationId = `session_handoff_workspace_prepare_target:${input.handoffId}`;
+
   const currentTargetManifest =
     input.workspaceTransfer?.enabled && input.workspaceTransfer.strategy === 'sync_changes'
       ? await (input.loadCurrentTargetManifest ?? (async (params: Readonly<{
@@ -295,9 +311,76 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
       })
       : null;
 
+  if (
+    input.workspaceTransfer?.enabled === true
+    && input.workspaceTransfer.strategy === 'sync_changes'
+    && sourceOffer
+    && input.metadata
+  ) {
+    const baseline = await baselineStore.load({
+      sourceMachineId: input.sourceMachineId,
+      sourceWorkspaceRoot: input.metadata.sourceRootPath,
+      targetMachineId: input.targetMachineId,
+      targetWorkspaceRoot: input.targetPath,
+      mode: 'one_way_safe',
+    });
+    if (baseline) {
+      const plan = buildOneWaySafeReplicationPlan({
+        baseline,
+        sourceManifest: sourceOffer.manifest,
+        targetManifest: currentTargetManifest,
+      });
+      if (!plan.canApplySafely) {
+        const existingJob = await jobStore.findByCorrelationId(correlationId);
+        const nowMs = Date.now();
+        const jobId = existingJob?.jobId ?? `job_${randomUUID().replace(/-/gu, '')}`;
+        await jobStore.write({
+          jobId,
+          correlationId,
+          relationshipId: sourceOffer.relationshipId,
+          directionId: sourceOffer.directionId,
+          offerId: sourceOffer.offerId,
+          mode: 'one_way_safe',
+          createdAtMs: existingJob?.createdAtMs ?? nowMs,
+          updatedAtMs: nowMs,
+          failedAtMs: nowMs,
+          lastErrorMessage: `Target workspace diverged since last baseline (${plan.blockingTargetDivergencePaths.length} paths)`,
+          status: {
+            status: 'failed',
+            phase: 'planning',
+            checkpoint: 'relationship_resolved',
+            blockingDivergenceCandidates: plan.blockingTargetDivergencePaths,
+          },
+        });
+        throw new Error(`Target workspace diverged since last baseline for ${input.targetPath}`);
+      }
+    }
+  }
+
+  if (input.workspaceTransfer?.enabled === true && input.workspaceTransfer.strategy === 'sync_changes' && sourceOffer) {
+    const existingJob = await jobStore.findByCorrelationId(correlationId);
+    const nowMs = Date.now();
+    const jobId = existingJob?.jobId ?? `job_${randomUUID().replace(/-/gu, '')}`;
+    await jobStore.write({
+      jobId,
+      correlationId,
+      relationshipId: sourceOffer.relationshipId,
+      directionId: sourceOffer.directionId,
+      offerId: sourceOffer.offerId,
+      mode: 'one_way_safe',
+      createdAtMs: existingJob?.createdAtMs ?? nowMs,
+      updatedAtMs: nowMs,
+      status: {
+        status: 'in_progress',
+        phase: 'apply',
+        checkpoint: 'apply_started',
+      },
+    });
+  }
+
   const importedWorkspace =
     input.workspaceTransfer?.enabled && sourceOffer
-      ? await (input.applyWorkspaceReplicationPlan ?? applyWorkspaceReplicationPlan)({
+      ? await (input.applyReplicationPlan ?? applyWorkspaceReplicationPlan)({
         activeServerDir: input.activeServerDir,
         sourceOffer,
         targetPath: input.targetPath,
@@ -319,6 +402,48 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
         workspaceTransfer: input.workspaceTransfer,
         assertCanContinue: input.assertCanContinue,
       });
+
+  if (
+    input.workspaceTransfer?.enabled === true
+    && input.workspaceTransfer.strategy === 'sync_changes'
+    && sourceOffer
+    && input.metadata
+  ) {
+    const nowMs = Date.now();
+    await baselineStore.save({
+      scope: {
+        sourceMachineId: input.sourceMachineId,
+        sourceWorkspaceRoot: input.metadata.sourceRootPath,
+        targetMachineId: input.targetMachineId,
+        targetWorkspaceRoot: input.targetPath,
+        mode: 'one_way_safe',
+      },
+      baseline: {
+        manifestFingerprint: sourceOffer.sourceFingerprint,
+        manifest: sourceOffer.manifest,
+        savedAtMs: nowMs,
+      },
+    });
+
+    const existingJob = await jobStore.findByCorrelationId(correlationId);
+    const jobId = existingJob?.jobId ?? `job_${randomUUID().replace(/-/gu, '')}`;
+    await jobStore.write({
+      jobId,
+      correlationId,
+      relationshipId: sourceOffer.relationshipId,
+      directionId: sourceOffer.directionId,
+      offerId: sourceOffer.offerId,
+      mode: 'one_way_safe',
+      createdAtMs: existingJob?.createdAtMs ?? nowMs,
+      updatedAtMs: nowMs,
+      completedAtMs: nowMs,
+      status: {
+        status: 'completed',
+        phase: 'commit_baseline',
+        checkpoint: 'baseline_committed',
+      },
+    });
+  }
 
   return {
     importedWorkspace,
@@ -405,6 +530,7 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
 }
 
 export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
+  createReplicationTransfers: typeof createWorkspaceReplicationTransfers;
   createState: typeof createSessionHandoffWorkspaceReplicationState;
   resolveSourceOffer: typeof resolveSessionHandoffWorkspaceReplicationSourceOffer;
   prepareTargetWorkspace: typeof prepareSessionHandoffWorkspaceTarget;
@@ -417,6 +543,7 @@ export function createSessionHandoffWorkspaceReplicationAdapter(): Readonly<{
   receiveTransferredBundlesPayloadFile: typeof receiveSessionHandoffTransferredBundlesPayloadFile;
 }> {
   return {
+    createReplicationTransfers: createWorkspaceReplicationTransfers,
     createState: createSessionHandoffWorkspaceReplicationState,
     resolveSourceOffer: resolveSessionHandoffWorkspaceReplicationSourceOffer,
     prepareTargetWorkspace: prepareSessionHandoffWorkspaceTarget,

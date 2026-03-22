@@ -91,8 +91,6 @@ import {
   type SessionHandoffPrepareTargetJobRecord,
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
-import { applyWorkspaceReplicationPlan } from '../../workspaces/replication/apply/applyWorkspaceReplicationPlan';
-import { createWorkspaceReplicationTransfers } from '../../workspaces/replication/transport/workspaceReplicationTransfers';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SessionHandoffProviderBundle } from '../../session/handoff/types';
@@ -658,7 +656,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     assertCanContinue?: () => Promise<void>;
   }>) => Promise<Readonly<{ targetPath: string }>>;
-  applyWorkspaceReplicationPlan?: (params: Readonly<{
+  applyReplicationPlan?: (params: Readonly<{
     activeServerDir: string;
     sourceOffer: NonNullable<Awaited<ReturnType<typeof resolveSessionHandoffWorkspaceReplicationSourceOffer>>>;
     targetPath: string;
@@ -687,8 +685,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   const transferRouteCache = createMachineTransferRouteCache({
     serverId: configuration.activeServerId,
   });
-  const workspaceReplicationTransfers = createWorkspaceReplicationTransfers();
   const workspaceReplicationAdapter = createSessionHandoffWorkspaceReplicationAdapter();
+  const workspaceReplicationTransfers = workspaceReplicationAdapter.createReplicationTransfers();
   const ephemeralServerRoutedPayloadSources = new Map<string, TransferPayloadSource>();
 
   const disposeEphemeralServerRoutedPayloadSourcesForHandoff = async (handoffId: string): Promise<void> => {
@@ -758,17 +756,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         sessionStorageMode,
       }));
   const importWorkspaceBundle = params.importWorkspaceBundle;
-  const applyWorkspaceReplicationPlanInternal =
-    params.applyWorkspaceReplicationPlan ??
-    (async (workspaceParams: Readonly<{
-      activeServerDir: string;
-      sourceOffer: NonNullable<Awaited<ReturnType<typeof resolveSessionHandoffWorkspaceReplicationSourceOffer>>>;
-      targetPath: string;
-      strategy: NonNullable<SessionHandoffWorkspaceTransfer['strategy']>;
-      conflictPolicy: SessionHandoffWorkspaceTransfer['conflictPolicy'];
-      currentTargetManifest?: WorkspaceManifest;
-    }>) =>
-      await applyWorkspaceReplicationPlan(workspaceParams));
+  const applyReplicationPlanInternal = params.applyReplicationPlan;
   const loadCurrentTargetManifest = params.loadCurrentTargetManifest;
   const shouldDeferSourcePreparation = (request: SessionHandoffStartRequest): boolean =>
     params.machineTransferChannel !== undefined
@@ -1294,7 +1282,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             assertCanContinue: assertPrepareJobNotCancelled,
             loadCurrentTargetManifest,
             importWorkspaceBundle,
-            applyWorkspaceReplicationPlan: applyWorkspaceReplicationPlanInternal,
+            ...(applyReplicationPlanInternal
+              ? { applyReplicationPlan: applyReplicationPlanInternal }
+              : {}),
           });
           const workspaceStatusProgress =
             resolvedWorkspaceTransfer?.enabled && sourceOffer

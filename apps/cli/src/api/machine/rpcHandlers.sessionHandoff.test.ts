@@ -1098,7 +1098,7 @@ describe('rpcHandlers (session handoff)', () => {
       importSessionBundle,
       importWorkspaceBundle,
       loadCurrentTargetManifest,
-      applyWorkspaceReplicationPlan,
+      applyReplicationPlan: applyWorkspaceReplicationPlan,
     });
 
     const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
@@ -1223,6 +1223,7 @@ describe('rpcHandlers (session handoff)', () => {
       includeWorkspaceBlobPayloads: true,
     }));
     const createSessionHandoffWorkspaceReplicationAdapter = vi.fn(() => ({
+      createReplicationTransfers: () => ({}) as any,
       createState,
       resolveSourceOffer,
       prepareSourceWorkspaceTransfer,
@@ -1312,7 +1313,7 @@ describe('rpcHandlers (session handoff)', () => {
           ],
           fingerprint: 'sha256:previous',
         }),
-        applyWorkspaceReplicationPlan: async () => ({
+        applyReplicationPlan: async () => ({
           targetPath: '/repo-seam',
         }),
       });
@@ -1392,6 +1393,7 @@ describe('rpcHandlers (session handoff)', () => {
       sourceOffer: null,
     }));
     const createSessionHandoffWorkspaceReplicationAdapter = vi.fn(() => ({
+      createReplicationTransfers: () => ({}) as any,
       createState,
       resolveSourceOffer,
       prepareSourceWorkspaceTransfer,
@@ -1473,7 +1475,7 @@ describe('rpcHandlers (session handoff)', () => {
         importSessionBundle,
         importWorkspaceBundle,
         loadCurrentTargetManifest,
-        applyWorkspaceReplicationPlan,
+        applyReplicationPlan: applyWorkspaceReplicationPlan,
       });
 
       const start = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
@@ -1527,7 +1529,7 @@ describe('rpcHandlers (session handoff)', () => {
         workspaceTransfer,
         importWorkspaceBundle: expect.any(Function),
         loadCurrentTargetManifest: expect.any(Function),
-        applyWorkspaceReplicationPlan: expect.any(Function),
+        applyReplicationPlan: expect.any(Function),
         assertCanContinue: expect.any(Function),
       }));
       expect(importWorkspaceBundle).not.toHaveBeenCalled();
@@ -2594,7 +2596,7 @@ describe('rpcHandlers (session handoff)', () => {
         importSessionBundle,
         importWorkspaceBundle,
         loadCurrentTargetManifest,
-        applyWorkspaceReplicationPlan,
+        applyReplicationPlan: applyWorkspaceReplicationPlan,
         directPeerTransfer: {
           publishTransfer: vi.fn(() => []),
           requestPayloadFile,
@@ -2883,7 +2885,7 @@ describe('rpcHandlers (session handoff)', () => {
         importSessionBundle,
         importWorkspaceBundle,
         loadCurrentTargetManifest,
-        applyWorkspaceReplicationPlan,
+        applyReplicationPlan: applyWorkspaceReplicationPlan,
         machineTransferChannel: channels.target,
       });
 
@@ -3140,7 +3142,7 @@ describe('rpcHandlers (session handoff)', () => {
         importSessionBundle,
         importWorkspaceBundle,
         loadCurrentTargetManifest,
-        applyWorkspaceReplicationPlan,
+        applyReplicationPlan: applyWorkspaceReplicationPlan,
         machineTransferChannel: channels.target,
       });
 

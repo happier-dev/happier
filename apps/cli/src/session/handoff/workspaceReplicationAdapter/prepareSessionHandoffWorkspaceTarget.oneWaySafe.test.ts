@@ -83,7 +83,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         },
         loadCurrentTargetManifest: async () => targetManifest,
         importWorkspaceBundle: async () => ({ targetPath: '/target' }),
-        applyWorkspaceReplicationPlan: async () => ({ targetPath: '/target' }),
+        applyReplicationPlan: async () => ({ targetPath: '/target' }),
       });
 
       const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
@@ -189,7 +189,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
           persistedTransferredBundles: createSessionHandoffTransferredBundles({}),
           loadCurrentTargetManifest: async () => targetManifest,
           importWorkspaceBundle: async () => ({ targetPath: '/target' }),
-          applyWorkspaceReplicationPlan: async () => {
+          applyReplicationPlan: async () => {
             throw new Error('Expected applyWorkspaceReplicationPlan to not be called when divergence is blocking');
           },
         }),
