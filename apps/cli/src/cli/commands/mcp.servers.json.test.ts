@@ -6,6 +6,7 @@ import { accountSettingsParse, McpServersSettingsV1Schema, type AccountSettings 
 
 import { handleMcpCommand } from './mcp';
 import type { McpCommandDeps } from './mcp/deps';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 function createCredentialsStub(): Credentials {
   return {
@@ -56,19 +57,18 @@ async function runJsonMcpCommand(
   args: string[],
   deps: Partial<McpCommandDeps>,
 ): Promise<Readonly<{ parsed: JsonEnvelope; exitCode: number | undefined }>> {
-  const logs: string[] = [];
-  const logSpy = vi.spyOn(console, 'log').mockImplementation((...nextArgs) => logs.push(nextArgs.join(' ')));
+  const output = captureConsoleLogAndMuteStdout();
   const previousExitCode = process.exitCode;
   process.exitCode = undefined;
 
   try {
     await handleMcpCommand(args, deps);
     return {
-      parsed: JSON.parse(logs.join('\n').trim()) as JsonEnvelope,
+      parsed: JSON.parse(output.logs.join('\n').trim()) as JsonEnvelope,
       exitCode: process.exitCode,
     };
   } finally {
-    logSpy.mockRestore();
+    output.restore();
     process.exitCode = previousExitCode;
   }
 }

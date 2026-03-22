@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
-import { hasFlag, readFlagValue } from '@/sessionControl/argvFlags';
-import { printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
