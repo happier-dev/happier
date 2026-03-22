@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    applyEnvValues,
+    createStartServerDbMocks,
+    installStartServerDbModuleMock,
     installStartServerCommonWiringMocks,
-    restoreEnvValues,
-    snapshotStartServerEnv,
 } from '@/testkit/startServerMocks';
+import { createStartServerHarness } from '@/testkit/startServerHarness';
 
 const retentionStop = vi.fn();
 
@@ -13,18 +13,8 @@ vi.mock('@/storage/redis/redis', () => ({
     getRedisClient: () => ({ ping: vi.fn(async () => 'PONG') }),
 }));
 
-vi.mock('@/storage/db', () => ({
-    db: {
-        $connect: vi.fn(async () => {}),
-        $disconnect: vi.fn(async () => {}),
-    },
-    getDbProviderFromEnv: (_env: any, fallback: any) => fallback,
-    initDbPostgres: vi.fn(() => {}),
-    initDbPglite: vi.fn(async () => {}),
-    initDbMysql: vi.fn(async () => {}),
-    initDbSqlite: vi.fn(async () => {}),
-    shutdownDbPglite: vi.fn(async () => {}),
-}));
+const startServerDbMocks = createStartServerDbMocks();
+installStartServerDbModuleMock(startServerDbMocks);
 
 installStartServerCommonWiringMocks();
 
@@ -35,22 +25,21 @@ vi.mock('@/utils/process/shutdown', () => ({
 }));
 
 describe('startServer retention worker wiring', () => {
-    const envBackup = snapshotStartServerEnv();
+    const startServerHarness = createStartServerHarness({
+        SERVER_ROLE: 'all',
+    });
 
     beforeEach(() => {
-        vi.clearAllMocks();
-        restoreEnvValues(envBackup);
-        applyEnvValues({
-            SERVER_ROLE: 'all',
-        });
+        startServerDbMocks.reset();
+        startServerHarness.reset();
     });
 
     afterEach(() => {
-        restoreEnvValues(envBackup);
+        startServerHarness.restore();
     });
 
     it('starts the unified retention worker when SERVER_ROLE=all', async () => {
-        vi.resetModules();
+        startServerHarness.prepareImport();
         const retentionWorkerModule = await import('@/app/retention/runtime/startRetentionWorker');
         const startRetentionWorker = vi.mocked(retentionWorkerModule.startRetentionWorker);
         startRetentionWorker.mockReturnValue({ stop: retentionStop });

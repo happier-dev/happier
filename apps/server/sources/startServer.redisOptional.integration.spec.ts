@@ -1,28 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-    applyEnvValues,
+    createStartServerDbMocks,
+    installStartServerDbModuleMock,
     installStartServerCommonWiringMocks,
-    restoreEnvValues,
-    snapshotStartServerEnv,
 } from "@/testkit/startServerMocks";
+import { createStartServerHarness } from "@/testkit/startServerHarness";
 
 const ping = vi.fn(async () => "PONG");
 vi.mock("@/storage/redis/redis", () => ({
     getRedisClient: () => ({ ping }),
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        $connect: vi.fn(async () => {}),
-        $disconnect: vi.fn(async () => {}),
-    },
-    getDbProviderFromEnv: (_env: any, fallback: any) => fallback,
-    initDbPostgres: vi.fn(() => {}),
-    initDbPglite: vi.fn(async () => {}),
-    initDbMysql: vi.fn(async () => {}),
-    initDbSqlite: vi.fn(async () => {}),
-    shutdownDbPglite: vi.fn(async () => {}),
-}));
+const startServerDbMocks = createStartServerDbMocks();
+
+installStartServerDbModuleMock(startServerDbMocks);
 
 installStartServerCommonWiringMocks();
 
@@ -32,51 +23,40 @@ vi.mock("@/utils/process/shutdown", () => ({
 }));
 
 describe("startServer Redis dependency (full flavor)", () => {
-    const envBackup = snapshotStartServerEnv();
+    const startServerHarness = createStartServerHarness({
+        HAPPY_SERVER_FLAVOR: undefined,
+        HAPPIER_SERVER_FLAVOR: undefined,
+        HAPPY_SOCKET_REDIS_ADAPTER: undefined,
+        HAPPIER_SOCKET_REDIS_ADAPTER: undefined,
+        HAPPY_SOCKET_ADAPTER: undefined,
+        HAPPIER_SOCKET_ADAPTER: undefined,
+        REDIS_URL: undefined,
+        SERVER_ROLE: undefined,
+    });
 
     beforeEach(() => {
-        vi.clearAllMocks();
-        restoreEnvValues(envBackup);
-        applyEnvValues({
-            HAPPY_SERVER_FLAVOR: undefined,
-            HAPPIER_SERVER_FLAVOR: undefined,
-            HAPPY_SOCKET_REDIS_ADAPTER: undefined,
-            HAPPIER_SOCKET_REDIS_ADAPTER: undefined,
-            HAPPY_SOCKET_ADAPTER: undefined,
-            HAPPIER_SOCKET_ADAPTER: undefined,
-            REDIS_URL: undefined,
-            SERVER_ROLE: undefined,
-        });
+        startServerDbMocks.reset();
+        startServerHarness.reset();
     });
 
     afterEach(() => {
-        restoreEnvValues(envBackup);
+        startServerHarness.restore();
     });
 
     it("does not ping Redis when adapter is not enabled (even if REDIS_URL is set)", async () => {
-        applyEnvValues({
+        await startServerHarness.start("full", {
             SERVER_ROLE: "api",
             REDIS_URL: "redis://localhost:6379",
         });
-
-        vi.resetModules();
-        const { startServer } = await import("./startServer");
-
-        await startServer("full");
         expect(ping).not.toHaveBeenCalled();
     });
 
     it("pings Redis when adapter is enabled", async () => {
-        applyEnvValues({
+        await startServerHarness.start("full", {
             SERVER_ROLE: "api",
             REDIS_URL: "redis://localhost:6379",
             HAPPIER_SOCKET_ADAPTER: "redis-streams",
         });
-
-        vi.resetModules();
-        const { startServer } = await import("./startServer");
-
-        await startServer("full");
         expect(ping).toHaveBeenCalledTimes(1);
     });
 });

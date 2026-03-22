@@ -33,7 +33,7 @@ describe('sessionRetentionRule', () => {
     beforeEach(async () => {
         emitUpdate.mockReset();
         activityCache.shutdown();
-        harness.restoreEnv();
+        harness.resetEnv();
         await harness.resetDbTables([
             () => db.publicShareAccessLog.deleteMany(),
             () => db.publicSessionShare.deleteMany(),

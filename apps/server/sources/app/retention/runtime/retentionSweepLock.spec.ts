@@ -1,26 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createDbMocks, installDbModuleMock } from '../../api/testkit/dbMocks';
+
 const globalLockCreate = vi.fn();
 const globalLockUpdateMany = vi.fn();
 const globalLockFindUnique = vi.fn();
 const globalLockDeleteMany = vi.fn();
 
-vi.mock('@/storage/db', () => ({
-    db: {
-        globalLock: {
-            create: globalLockCreate,
-            updateMany: globalLockUpdateMany,
-            findUnique: globalLockFindUnique,
-            deleteMany: globalLockDeleteMany,
-        },
-    },
+const dbMocks = createDbMocks({
+    globalLock: ["create", "updateMany", "findUnique", "deleteMany"],
+} as const);
+
+dbMocks.db.globalLock.create.mockImplementation((...args: any[]) => globalLockCreate(...args));
+dbMocks.db.globalLock.updateMany.mockImplementation((...args: any[]) => globalLockUpdateMany(...args));
+dbMocks.db.globalLock.findUnique.mockImplementation((...args: any[]) => globalLockFindUnique(...args));
+dbMocks.db.globalLock.deleteMany.mockImplementation((...args: any[]) => globalLockDeleteMany(...args));
+
+installDbModuleMock({
+    db: dbMocks.db,
     isPrismaErrorCode: (error: unknown, code: string) => {
         if (!error || typeof error !== 'object') {
             return false;
         }
         return (error as { code?: unknown }).code === code;
     },
-}));
+});
 
 vi.mock('@/utils/keys/randomKeyNaked', () => ({
     randomKeyNaked: vi.fn(() => 'lock-value'),
