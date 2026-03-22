@@ -1,23 +1,31 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
-import { createInTxHarness } from "../../testkit/txHarness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const emitUpdate = vi.fn();
-const buildNewArtifactUpdate = vi.fn((_artifact: any, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "new-artifact" },
-}));
-const buildUpdateArtifactUpdate = vi.fn((_artifactId: string, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "update-artifact" },
-}));
-const buildDeleteArtifactUpdate = vi.fn((_artifactId: string, updSeq: number, updId: string) => ({
-    id: updId,
-    seq: updSeq,
-    body: { t: "delete-artifact" },
-}));
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { artifactsRoutes } from "./artifactsRoutes";
+
+const { emitUpdate, buildNewArtifactUpdate, buildUpdateArtifactUpdate, buildDeleteArtifactUpdate, randomKeyNaked, markAccountChanged } =
+    vi.hoisted(() => ({
+        emitUpdate: vi.fn(),
+        buildNewArtifactUpdate: vi.fn((_artifact: any, updSeq: number, updId: string) => ({
+            id: updId,
+            seq: updSeq,
+            body: { t: "new-artifact" },
+        })),
+        buildUpdateArtifactUpdate: vi.fn((_artifactId: string, updSeq: number, updId: string) => ({
+            id: updId,
+            seq: updSeq,
+            body: { t: "update-artifact" },
+        })),
+        buildDeleteArtifactUpdate: vi.fn((_artifactId: string, updSeq: number, updId: string) => ({
+            id: updId,
+            seq: updSeq,
+            body: { t: "delete-artifact" },
+        })),
+        randomKeyNaked: vi.fn(() => "upd-id"),
+        markAccountChanged: vi.fn(async () => 700),
+    }));
 
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
@@ -26,90 +34,95 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildDeleteArtifactUpdate,
 }));
 
-const randomKeyNaked = vi.fn(() => "upd-id");
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
-
-const markAccountChanged = vi.fn(async () => 700);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
-
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
-const dbArtifactFindUnique = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        artifact: {
-            findMany: vi.fn(async () => []),
-            findFirst: vi.fn(async () => null),
-            findUnique: (...args: any[]) => dbArtifactFindUnique(...args),
-        },
-    },
-}));
-
-let txArtifactFindFirst: any;
-let txArtifactFindUnique: any;
-let txArtifactCreate: any;
-let txArtifactUpdateMany: any;
-let txArtifactDelete: any;
-
-vi.mock("@/storage/inTx", () => {
-    const harness = createInTxHarness(() => ({
-            artifact: {
-                findFirst: (...args: any[]) => txArtifactFindFirst(...args),
-                findUnique: (...args: any[]) => txArtifactFindUnique(...args),
-                create: (...args: any[]) => txArtifactCreate(...args),
-                updateMany: (...args: any[]) => txArtifactUpdateMany(...args),
-                delete: (...args: any[]) => txArtifactDelete(...args),
-            },
-        }));
-    return { afterTx: harness.afterTx, inTx: harness.inTx };
-});
-
 describe("artifactsRoutes (AccountChange integration)", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
+    let harness: LightSqliteHarness;
 
-        dbArtifactFindUnique.mockResolvedValue(null);
-        txArtifactFindFirst = vi.fn();
-        txArtifactFindUnique = vi.fn();
-        txArtifactCreate = vi.fn();
-        txArtifactUpdateMany = vi.fn();
-        txArtifactDelete = vi.fn();
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-artifacts-changes-",
+            initAuth: false,
+            initEncrypt: false,
+            initFiles: false,
+        });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness.close();
     });
 
-    it("marks artifact create and emits new-artifact using returned cursor", async () => {
-        txArtifactFindUnique.mockResolvedValue(null);
-        txArtifactCreate.mockResolvedValue({
-            id: "a1",
-            accountId: "u1",
-            header: Buffer.from("h"),
-            headerVersion: 1,
-            body: Buffer.from("b"),
-            bodyVersion: 1,
-            dataEncryptionKey: Buffer.from("k"),
-            seq: 0,
-            createdAt: new Date(1),
-            updatedAt: new Date(1),
+    beforeEach(() => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        harness.resetEnv();
+    });
+
+    afterEach(async () => {
+        harness.resetEnv();
+        await harness.resetDbTables([
+            () => db.accountChange.deleteMany(),
+            () => db.artifact.deleteMany(),
+            () => db.repeatKey.deleteMany(),
+            () => db.account.deleteMany(),
+        ]);
+    });
+
+    async function seedAccount() {
+        return await db.account.create({
+            data: { publicKey: "pk-artifacts" },
+            select: { id: true },
         });
+    }
 
-        const { artifactsRoutes } = await import("./artifactsRoutes");
-        const app = createFakeRouteApp();
-        artifactsRoutes(app as any);
+    it("marks artifact create and emits new-artifact using returned cursor", async () => {
+        const account = await seedAccount();
+        const artifactId = "11111111-1111-4111-8111-111111111111";
 
-        const handler = getRouteHandler(app, "POST", "/v1/artifacts");
-        const reply = createReplyStub();
+        await withAuthenticatedTestApp(
+            (app) => artifactsRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: "/v1/artifacts",
+                    headers: { "x-test-user-id": account.id, "content-type": "application/json" },
+                    payload: {
+                        id: artifactId,
+                        header: Buffer.from("head").toString("base64"),
+                        body: Buffer.from("body").toString("base64"),
+                        dataEncryptionKey: Buffer.from("key").toString("base64"),
+                    },
+                });
 
-        await handler(
-            { userId: "u1", body: { id: "a1", header: "aGVhZA==", body: "Ym9keQ==", dataEncryptionKey: "a2V5" } },
-            reply,
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual(
+                    expect.objectContaining({
+                        id: artifactId,
+                        headerVersion: 1,
+                        bodyVersion: 1,
+                    }),
+                );
+            },
         );
 
+        const stored = await db.artifact.findUnique({
+            where: { id: artifactId },
+            select: { accountId: true, headerVersion: true, bodyVersion: true },
+        });
+        expect(stored).toEqual({
+            accountId: account.id,
+            headerVersion: 1,
+            bodyVersion: 1,
+        });
         expect(markAccountChanged).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ accountId: "u1", kind: "artifact", entityId: "a1" }),
+            expect.objectContaining({ accountId: account.id, kind: "artifact", entityId: artifactId }),
         );
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
+                userId: account.id,
                 payload: expect.objectContaining({
                     seq: 700,
                     body: expect.objectContaining({ t: "new-artifact" }),
@@ -119,68 +132,103 @@ describe("artifactsRoutes (AccountChange integration)", () => {
     });
 
     it("marks artifact update and emits update-artifact using returned cursor", async () => {
-        txArtifactFindFirst.mockResolvedValue({
-            id: "a2",
-            accountId: "u1",
-            header: Buffer.from("h"),
-            headerVersion: 1,
-            body: Buffer.from("b"),
-            bodyVersion: 1,
-            dataEncryptionKey: Buffer.from("k"),
-            seq: 7,
-            createdAt: new Date(1),
-            updatedAt: new Date(1),
+        const account = await seedAccount();
+        const artifactId = "22222222-2222-4222-8222-222222222222";
+        await db.artifact.create({
+            data: {
+                id: artifactId,
+                accountId: account.id,
+                header: Buffer.from("head-old"),
+                headerVersion: 1,
+                body: Buffer.from("body-old"),
+                bodyVersion: 1,
+                dataEncryptionKey: Buffer.from("key"),
+                seq: 7,
+            },
         });
-        txArtifactUpdateMany.mockResolvedValue({ count: 1 });
 
-        const { artifactsRoutes } = await import("./artifactsRoutes");
-        const app = createFakeRouteApp();
-        artifactsRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => artifactsRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: `/v1/artifacts/${artifactId}`,
+                    headers: { "x-test-user-id": account.id, "content-type": "application/json" },
+                    payload: {
+                        header: Buffer.from("head-new").toString("base64"),
+                        expectedHeaderVersion: 1,
+                    },
+                });
 
-        const handler = getRouteHandler(app, "POST", "/v1/artifacts/:id");
-        const reply = createReplyStub();
-
-        const response = await handler(
-            { userId: "u1", params: { id: "a2" }, body: { header: "aGVsbG8=", expectedHeaderVersion: 1 } },
-            reply,
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({ success: true, headerVersion: 2 });
+            },
         );
 
+        const stored = await db.artifact.findUnique({
+            where: { id: artifactId },
+            select: { header: true, headerVersion: true, seq: true },
+        });
+        expect(stored?.headerVersion).toBe(2);
+        expect(stored?.seq).toBe(8);
+        expect(stored?.header).toEqual(Uint8Array.from(Buffer.from("head-new")));
         expect(markAccountChanged).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ accountId: "u1", kind: "artifact", entityId: "a2" }),
+            expect.objectContaining({ accountId: account.id, kind: "artifact", entityId: artifactId }),
         );
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
+                userId: account.id,
                 payload: expect.objectContaining({
                     seq: 700,
                     body: expect.objectContaining({ t: "update-artifact" }),
                 }),
             }),
         );
-        expect(response).toEqual(expect.objectContaining({ success: true, headerVersion: 2 }));
     });
 
     it("marks artifact delete and emits delete-artifact using returned cursor", async () => {
-        txArtifactFindFirst.mockResolvedValue({ id: "a3" });
-        txArtifactDelete.mockResolvedValue({ id: "a3" });
+        const account = await seedAccount();
+        const artifactId = "33333333-3333-4333-8333-333333333333";
+        await db.artifact.create({
+            data: {
+                id: artifactId,
+                accountId: account.id,
+                header: Buffer.from("head"),
+                headerVersion: 1,
+                body: Buffer.from("body"),
+                bodyVersion: 1,
+                dataEncryptionKey: Buffer.from("key"),
+                seq: 3,
+            },
+        });
 
-        const { artifactsRoutes } = await import("./artifactsRoutes");
-        const app = createFakeRouteApp();
-        artifactsRoutes(app as any);
+        await withAuthenticatedTestApp(
+            (app) => artifactsRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "DELETE",
+                    url: `/v1/artifacts/${artifactId}`,
+                    headers: { "x-test-user-id": account.id },
+                });
 
-        const handler = getRouteHandler(app, "DELETE", "/v1/artifacts/:id");
-        const reply = createReplyStub();
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toEqual({ success: true });
+            },
+        );
 
-        await handler({ userId: "u1", params: { id: "a3" } }, reply);
-
+        const stored = await db.artifact.findUnique({
+            where: { id: artifactId },
+            select: { id: true },
+        });
+        expect(stored).toBeNull();
         expect(markAccountChanged).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ accountId: "u1", kind: "artifact", entityId: "a3" }),
+            expect.objectContaining({ accountId: account.id, kind: "artifact", entityId: artifactId }),
         );
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
+                userId: account.id,
                 payload: expect.objectContaining({
                     seq: 700,
                     body: expect.objectContaining({ t: "delete-artifact" }),
