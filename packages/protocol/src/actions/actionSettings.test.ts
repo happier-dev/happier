@@ -64,4 +64,22 @@ describe('ActionsSettingsV1Schema', () => {
       disabledPlacements: [],
     });
   });
+
+  it('normalizes legacy session_control_cli surface overrides to cli', () => {
+    const parsed = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'review.start': {
+          disabledSurfaces: ['session_control_cli'],
+        },
+      },
+    });
+
+    expect(parsed.actions['review.start' as keyof typeof parsed.actions]).toEqual({
+      enabledPlacements: [],
+      disabledSurfaces: ['cli'],
+      disabledPlacements: [],
+    });
+    expect(isActionEnabledByActionsSettings('review.start' as any, parsed, { surface: 'cli' } as any)).toBe(false);
+  });
 });

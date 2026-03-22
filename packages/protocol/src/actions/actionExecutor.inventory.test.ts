@@ -67,6 +67,100 @@ describe('createActionExecutor (inventory/discovery)', () => {
     );
   });
 
+  it('treats successful execution-run service envelopes as successful fanout results', async () => {
+    const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({
+      ok: true,
+      data: {
+        runId: 'run_1',
+        callId: 'call_1',
+        sidechainId: 'side_1',
+      },
+    }));
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('subagents.plan.start', {
+      sessionId: 'session_1',
+      backendTargetKeys: ['agent:codex'],
+      instructions: 'Plan this task.',
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        intent: 'plan',
+        sessionId: 'session_1',
+        results: [
+          {
+            key: 'agent:codex',
+            ok: true,
+            result: {
+              runId: 'run_1',
+              callId: 'call_1',
+              sidechainId: 'side_1',
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  it('preserves failed execution-run service envelope codes and messages in fanout results', async () => {
+    const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({
+      ok: false,
+      code: 'execution_run_not_allowed',
+      message: 'Unable to resolve a default base branch for CodeRabbit review.',
+    }));
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('review.start', {
+      sessionId: 'session_1',
+      engineIds: ['coderabbit'],
+      instructions: 'Review this task.',
+      changeType: 'committed',
+      base: { kind: 'none' },
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        intent: 'review',
+        sessionId: 'session_1',
+        results: [
+          {
+            key: 'coderabbit',
+            ok: false,
+            errorCode: 'execution_run_not_allowed',
+            error: 'Unable to resolve a default base branch for CodeRabbit review.',
+          },
+        ],
+      },
+    });
+  });
+
+  it('defaults execution.run.send delivery to steer_if_supported and omits resume when unset', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('execution.run.send', {
+      sessionId: 'session_1',
+      runId: 'run_1',
+      message: 'Continue and summarize what changed.',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.executionRunSend).toHaveBeenCalledWith(
+      'session_1',
+      {
+        runId: 'run_1',
+        message: 'Continue and summarize what changed.',
+        delivery: 'steer_if_supported',
+      },
+      undefined,
+    );
+  });
+
   it('forwards path and host to session.spawn_new', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -129,6 +223,28 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: 's1', includeDisabled: true });
   });
 
+  it('forwards parsed request fields to execution.run.list deps', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('execution.run.list', {
+      sessionId: 'session_1',
+      status: 'running',
+      limit: 5,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.executionRunList).toHaveBeenCalledWith(
+      'session_1',
+      expect.objectContaining({
+        sessionId: 'session_1',
+        status: 'running',
+        limit: 5,
+      }),
+      undefined,
+    );
+  });
+
   it('routes agents.backends.list to deps.agentsBackendsList', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -145,6 +261,38 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const res = await executor.execute('agents.models.list', { agentId: 'claude', machineId: 'm1', limit: 3 });
     expect(res.ok).toBe(true);
     expect(deps.agentsModelsList).toHaveBeenCalledWith({ agentId: 'claude', machineId: 'm1', limit: 3 });
+  });
+
+  it('routes configured ACP backendTargetKey through agents.models.list', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('agents.models.list', {
+      backendTargetKey: 'acpBackend:review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.agentsModelsList).toHaveBeenCalledWith({
+      agentId: 'customAcp',
+      backendTargetKey: 'acpBackend:review-bot',
+      machineId: 'm1',
+      limit: 2,
+    });
+  });
+
+  it('rejects ambiguous customAcp agentId for agents.models.list without backendTargetKey', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('agents.models.list', {
+      agentId: 'customAcp',
+      machineId: 'm1',
+    });
+
+    expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });
 
   it('routes session.spawn_picker to deps.sessionSpawnPicker', async () => {
@@ -409,6 +557,22 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(res.ok).toBe(true);
     expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId: 'plan' });
+  });
+
+  it('preserves default as a real mode id when the available modes literally include default', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    (deps.sessionModesList as any).mockResolvedValueOnce({
+      items: [{ id: 'default', label: 'Default' }, { id: 'plan', label: 'Plan' }],
+    });
+
+    const res = await executor.execute('session.mode.set', {
+      sessionId: 's1',
+      modeId: 'default',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId: 'default' });
   });
 
   it('rejects session.mode.set when the requested mode is unavailable', async () => {

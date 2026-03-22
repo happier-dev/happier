@@ -6,6 +6,7 @@ import {
   searchSerializedActionSpecsForSurface,
   serializeActionFieldOptions,
 } from './actionCatalog.js';
+import { resolveRequestedSessionModeId } from './sessionModeIds.js';
 import { getActionSpec, isActionSpecSurfacedOn, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
@@ -84,8 +85,8 @@ export type ActionExecutorDeps = Readonly<{
   machinesList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
   serversList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
   reviewEnginesList: (args: Readonly<{ sessionId: string; includeDisabled?: boolean }>) => Promise<unknown>;
-  agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean }>) => Promise<unknown>;
-  agentsModelsList: (args: Readonly<{ agentId: string; machineId?: string }>) => Promise<unknown>;
+  agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean; limit?: number }>) => Promise<unknown>;
+  agentsModelsList: (args: Readonly<{ agentId: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
 
   // Session messaging (socket message event, server-scoped)
   sessionSendMessage: (args: Readonly<{ sessionId: string; message: string; serverId?: string | null }>) => Promise<unknown>;
@@ -352,6 +353,46 @@ type FanoutResultItem = Readonly<{
   error?: string;
 }>;
 
+function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
+  if (
+    result
+    && typeof result === 'object'
+    && (result as any).ok === true
+    && (result as any).data
+    && typeof (result as any).data === 'object'
+  ) {
+    return (result as any).data;
+  }
+  return result;
+}
+
+function readFanoutStartError(result: unknown): { errorCode?: string; error: string } {
+  const errorCode =
+    result
+    && typeof result === 'object'
+    && typeof (result as any).errorCode === 'string'
+      ? String((result as any).errorCode)
+      : result
+        && typeof result === 'object'
+        && typeof (result as any).code === 'string'
+          ? String((result as any).code)
+          : undefined;
+  const error =
+    result
+    && typeof result === 'object'
+    && typeof (result as any).error === 'string'
+      ? String((result as any).error)
+      : result
+        && typeof result === 'object'
+        && typeof (result as any).message === 'string'
+          ? String((result as any).message)
+          : 'execution_run_failed';
+  return {
+    error,
+    ...(errorCode ? { errorCode } : {}),
+  };
+}
+
 async function fanoutStarts(params: Readonly<{
   keys: readonly string[];
   startOne: (key: string) => Promise<unknown>;
@@ -359,13 +400,13 @@ async function fanoutStarts(params: Readonly<{
   const results = await Promise.all(
     params.keys.map(async (key): Promise<FanoutResultItem> => {
       try {
-        const result = await params.startOne(key);
+        const rawResult = await params.startOne(key);
+        const result = normalizeSuccessfulFanoutStartResult(rawResult);
         if (result && typeof result === 'object' && (result as any).ok === false) {
           return {
             key,
             ok: false,
-            error: typeof (result as any).error === 'string' ? String((result as any).error) : 'execution_run_failed',
-            ...(typeof (result as any).errorCode === 'string' ? { errorCode: String((result as any).errorCode) } : {}),
+            ...readFanoutStartError(result),
           };
         }
         if (
@@ -380,8 +421,7 @@ async function fanoutStarts(params: Readonly<{
           return {
             key,
             ok: false,
-            error: typeof (result as any).error === 'string' ? String((result as any).error) : 'execution_run_failed',
-            ...(typeof (result as any).errorCode === 'string' ? { errorCode: String((result as any).errorCode) } : {}),
+            ...readFanoutStartError(result),
           };
         }
         return { key, ok: true, result };
@@ -597,7 +637,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const opts = serverId ? { serverId } : undefined;
-          const res = await deps.executionRunList(sessionId, {}, opts);
+          const res = await deps.executionRunList(sessionId, parsed.data, opts);
           return { ok: true, result: res };
         }
 
@@ -615,7 +655,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const opts = serverId ? { serverId } : undefined;
-          const res = await deps.executionRunSend(sessionId, { runId: (parsed.data as any).runId, message: (parsed.data as any).message, resume: (parsed.data as any).resume }, opts);
+          const res = await deps.executionRunSend(sessionId, {
+            runId: (parsed.data as any).runId,
+            message: (parsed.data as any).message,
+            delivery: typeof (parsed.data as any).delivery === 'string'
+              ? (parsed.data as any).delivery
+              : 'steer_if_supported',
+            ...((parsed.data as any).resume === true ? { resume: true } : {}),
+          }, opts);
           return { ok: true, result: res };
         }
 
@@ -756,10 +803,27 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'agents.models.list') {
+          const backendTargetKey = normalizeId((parsed.data as any).backendTargetKey);
+          let resolvedAgentId = normalizeId((parsed.data as any).agentId);
+          if (backendTargetKey) {
+            const parsedTarget = parseBackendTargetKey(backendTargetKey);
+            const derivedAgentId = parsedTarget.kind === 'builtInAgent' ? parsedTarget.agentId : 'customAcp';
+            if (resolvedAgentId && resolvedAgentId !== derivedAgentId) {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+            resolvedAgentId = derivedAgentId;
+          }
+          if (resolvedAgentId === 'customAcp' && !backendTargetKey) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+          if (!resolvedAgentId) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
           const res = await deps.agentsModelsList({
-            agentId: String((parsed.data as any).agentId),
+            agentId: resolvedAgentId,
             ...(((parsed.data as any).machineId) ? { machineId: String((parsed.data as any).machineId) } : {}),
             ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+            ...(backendTargetKey ? { backendTargetKey } : {}),
           });
           return { ok: true, result: res };
         }
@@ -808,9 +872,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const modeIdRaw = normalizeId((parsed.data as any).modeId);
-          const modeId = modeIdRaw === 'default' ? '' : modeIdRaw;
+          const availableModes = normalizeResolvedOptions(await deps.sessionModesList({ sessionId }));
+          const modeId = resolveRequestedSessionModeId(modeIdRaw, availableModes);
           if (modeId) {
-            const availableModes = normalizeResolvedOptions(await deps.sessionModesList({ sessionId }));
             if (!availableModes.some((option) => normalizeId(option.value) === modeId)) {
               return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
             }

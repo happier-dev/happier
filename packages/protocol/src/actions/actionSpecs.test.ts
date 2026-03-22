@@ -20,6 +20,47 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.voice_tool).toBe(true);
   });
 
+  it('accepts explicit execution.run.list filter fields in the action schema', () => {
+    const spec = getActionSpec('execution.run.list');
+
+    expect(
+      spec.inputSchema.parse({
+        sessionId: 'session_1',
+        backendId: 'claude',
+        status: 'running',
+        limit: 5,
+      }),
+    ).toEqual({
+      sessionId: 'session_1',
+      backendId: 'claude',
+      status: 'running',
+      limit: 5,
+    });
+  });
+
+  it('requires backendTargetKey when listing models for customAcp', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'customAcp',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects mismatched agentId and backendTargetKey when listing models', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(() =>
+      spec.inputSchema.parse({
+        agentId: 'claude',
+        backendTargetKey: 'agent:codex',
+        machineId: 'machine-1',
+      }),
+    ).toThrow();
+  });
+
   it('registers both friendly and namespaced slash aliases for review.start', () => {
     const spec = getActionSpec('review.start');
     expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
@@ -134,7 +175,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -162,7 +203,7 @@ describe('Action Spec Registry', () => {
         voice_tool: true,
         voice_action_block: true,
         mcp: true,
-        session_control_cli: true,
+        cli: true,
       },
       inputSchema: z.object({}).strict(),
       inputHints: {
@@ -199,7 +240,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -226,7 +267,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {
@@ -255,7 +296,7 @@ describe('Action Spec Registry', () => {
           voice_tool: true,
           voice_action_block: true,
           mcp: true,
-          session_control_cli: true,
+          cli: true,
         },
         inputSchema: z.object({}).strict(),
         inputHints: {

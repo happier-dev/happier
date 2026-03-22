@@ -8,7 +8,8 @@ import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
 import { ApprovalRequestCreatedBySchema } from '../approvals/approvalRequestV1.js';
 import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
 import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../promptLibrary/promptAssetsV1.js';
-import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
+import { BackendTargetKeySchema, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
+import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
 import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
 
@@ -24,7 +25,7 @@ export const ActionSurfaceSchema = z.object({
   voice_tool: z.boolean(),
   voice_action_block: z.boolean(),
   mcp: z.boolean(),
-  session_control_cli: z.boolean(),
+  cli: z.boolean(),
 }).strict();
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
@@ -295,10 +296,37 @@ const AgentsBackendsListInputSchema = z.object({
 }).passthrough();
 
 const AgentsModelsListInputSchema = z.object({
-  agentId: z.string().min(1),
+  agentId: z.string().min(1).optional(),
+  backendTargetKey: BackendTargetKeySchema.optional(),
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (!value.agentId && !value.backendTargetKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'agentId or backendTargetKey is required',
+      path: ['agentId'],
+    });
+  }
+  if (value.agentId === 'customAcp' && !value.backendTargetKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'backendTargetKey is required for customAcp',
+      path: ['backendTargetKey'],
+    });
+  }
+  if (value.agentId && value.backendTargetKey) {
+    const parsedTarget = parseBackendTargetKey(value.backendTargetKey);
+    const derivedAgentId = parsedTarget.kind === 'builtInAgent' ? parsedTarget.agentId : 'customAcp';
+    if (value.agentId !== derivedAgentId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'agentId must match backendTargetKey when both are provided',
+        path: ['agentId'],
+      });
+    }
+  }
+});
 
 const ActionSpecSearchInputSchema = z.object({
   query: z.string().trim().optional(),
@@ -518,7 +546,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Search action specs',
@@ -547,7 +575,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Get action spec',
@@ -574,7 +602,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Resolve action options',
@@ -677,7 +705,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputSchema: ReviewStartInputSchema,
   },
@@ -719,7 +747,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputSchema: PlanStartInputSchema,
   },
@@ -761,7 +789,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputSchema: DelegateStartInputSchema,
   },
@@ -802,7 +830,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputSchema: VoiceAgentStartInputSchema,
   },
@@ -816,10 +844,26 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     bindings: { voiceClientToolName: 'listExecutionRuns', mcpToolName: 'execution_run_list' },
     inputHints: {
       title: 'List execution runs',
-      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'backendTarget', title: 'Backend target', widget: 'text' },
+        {
+          path: 'status',
+          title: 'Status',
+          widget: 'select',
+          options: [
+            { value: 'running', label: 'Running' },
+            { value: 'succeeded', label: 'Succeeded' },
+            { value: 'failed', label: 'Failed' },
+            { value: 'cancelled', label: 'Cancelled' },
+            { value: 'timeout', label: 'Timeout' },
+          ],
+        },
+        { path: 'limit', title: 'Max runs', widget: 'text' },
+      ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","status":"running","limit":10}' },
     },
     surfaces: {
       ui_button: true,
@@ -827,9 +871,11 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
-    inputSchema: z.object({ sessionId: z.string().min(1).optional() }).passthrough(),
+    inputSchema: ExecutionRunListRequestSchema.extend({
+      sessionId: z.string().min(1).optional(),
+    }),
   },
   {
     id: 'execution.run.get',
@@ -847,7 +893,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputHints: {
       title: 'Get a run',
@@ -873,7 +919,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputHints: {
       title: 'Send to run',
@@ -900,7 +946,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputHints: {
       title: 'Stop a run',
@@ -923,7 +969,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: true,
+      cli: true,
     },
     inputHints: {
       title: 'Run action',
@@ -950,7 +996,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Open a session',
@@ -978,7 +1024,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Fork a session',
@@ -999,7 +1045,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Rollback a session conversation',
@@ -1023,7 +1069,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Hand off a session',
@@ -1051,7 +1097,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: true,
+      cli: true,
     },
     inputHints: {
       title: 'Create a new session',
@@ -1083,7 +1129,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Create a new session (picker)',
@@ -1112,7 +1158,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List recent paths',
@@ -1139,7 +1185,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List machines',
@@ -1163,7 +1209,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List servers',
@@ -1187,7 +1233,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List review engines',
@@ -1215,7 +1261,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List agent backends',
@@ -1235,7 +1281,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listAgentModels' },
     examples: {
-      voice: { argsExample: '{"agentId":"claude","limit":10}' },
+      voice: { argsExample: '{"backendTargetKey":"agent:claude","limit":10}' },
     },
     surfaces: {
       ui_button: false,
@@ -1243,12 +1289,13 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List agent models',
       fields: [
-        { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
+        { path: 'agentId', title: 'Agent id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
@@ -1273,7 +1320,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Send a message',
@@ -1301,7 +1348,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Respond to permission request',
@@ -1342,7 +1389,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Respond to user-action request',
@@ -1413,7 +1460,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Set session mode',
@@ -1448,7 +1495,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Set primary action session',
@@ -1475,7 +1522,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Set tracked sessions',
@@ -1500,7 +1547,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'List sessions',
@@ -1528,7 +1575,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Get session activity',
@@ -1555,7 +1602,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputHints: {
       title: 'Get recent messages',
@@ -1590,7 +1637,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: EmptyObjectSchema,
   },
@@ -1615,7 +1662,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: OptionalSessionIdInputSchema,
   },
@@ -1669,7 +1716,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: MemorySearchInputSchema,
   },
@@ -1696,7 +1743,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
@@ -1725,7 +1772,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: true,
       voice_action_block: true,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
@@ -1745,7 +1792,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: PromptDocUpdateInputSchema,
     inputHints: {
@@ -1771,7 +1818,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: PromptBundleUpdateInputSchema,
     inputHints: {
@@ -1797,7 +1844,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: PromptAssetExportInputSchema,
     inputHints: {
@@ -1843,7 +1890,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: PromptRegistryInstallInputSchema,
     inputHints: {
@@ -1889,7 +1936,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: true,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: ApprovalRequestCreateInputSchema,
     inputHints: {
@@ -1914,7 +1961,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_tool: false,
       voice_action_block: false,
       mcp: false,
-      session_control_cli: false,
+      cli: false,
     },
     inputSchema: ApprovalRequestDecideInputSchema,
     inputHints: {

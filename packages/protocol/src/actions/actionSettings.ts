@@ -9,14 +9,29 @@ export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
 
-const ActionSettingsOverrideSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    enabledPlacements: z.array(ActionUiPlacementSchema).default([]),
-    disabledSurfaces: z.array(ActionSurfaceKeySchema).default([]),
-    disabledPlacements: z.array(ActionUiPlacementSchema).default([]),
-  })
-  .strict();
+function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return raw;
+  }
+
+  const next = { ...(raw as Record<string, unknown>) };
+  if (Array.isArray(next.disabledSurfaces)) {
+    next.disabledSurfaces = next.disabledSurfaces.map((surface) => surface === 'session_control_cli' ? 'cli' : surface);
+  }
+  return next;
+}
+
+const ActionSettingsOverrideSchema = z.preprocess(
+  normalizeLegacyActionSettingsOverride,
+  z
+    .object({
+      enabled: z.boolean().optional(),
+      enabledPlacements: z.array(ActionUiPlacementSchema).default([]),
+      disabledSurfaces: z.array(ActionSurfaceKeySchema).default([]),
+      disabledPlacements: z.array(ActionUiPlacementSchema).default([]),
+    })
+    .strict(),
+);
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
 export const ActionsSettingsV1Schema = z

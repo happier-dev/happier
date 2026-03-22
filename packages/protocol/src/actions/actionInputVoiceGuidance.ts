@@ -83,6 +83,12 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
   },
   'agents.models.list': {
     agentId: [{ text: 'Use listAgentBackends first if you do not already know the backend name', requiresActionIds: ['agents.backends.list'] }],
+    backendTargetKey: [{
+      text: 'Required when using customAcp; pass the exact configured backendTargetKey such as acpBackend:review-bot',
+    }, {
+      text: 'Use listAgentBackends first if you do not already know the backend name',
+      requiresActionIds: ['agents.backends.list'],
+    }],
     limit: [{ text: 'Set limit when the user only needs a few results' }],
   },
   'execution.run.get': {
@@ -220,10 +226,13 @@ function normalizeGuidanceAvailability(params: VoiceGuidanceAvailability | undef
   const disabledActionIds = new Set(
     (params?.disabledActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean) as string[],
   );
+  const hasExplicitAvailableActionIds = Boolean(
+    params && Object.prototype.hasOwnProperty.call(params, 'availableActionIds'),
+  );
   const availableRaw = (params?.availableActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean) as string[];
   return {
     disabledActionIds,
-    availableActionIds: availableRaw.length > 0 ? new Set(availableRaw) : null,
+    availableActionIds: hasExplicitAvailableActionIds ? new Set(availableRaw) : null,
   };
 }
 

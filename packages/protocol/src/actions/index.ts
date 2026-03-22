@@ -66,3 +66,4 @@ export {
 
 export { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
 export { actionSpecToElevenLabsClientToolParameters } from './actionInputElevenLabsToolSchema.js';
+export { resolveRequestedSessionModeId } from './sessionModeIds.js';

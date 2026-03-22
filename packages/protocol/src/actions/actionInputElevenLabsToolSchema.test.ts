@@ -90,6 +90,39 @@ describe('actionInputElevenLabsToolSchema', () => {
     expect(String((schema as any).properties?.agentId?.description ?? '')).toContain('listAgentBackends');
   });
 
+  it('describes backendTargetKey for configured ACP model discovery', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec, {
+      availableActionIds: ['agents.backends.list', 'agents.models.list'],
+    });
+
+    expect(String((schema as any).properties?.backendTargetKey?.description ?? '')).toContain('Required when using customAcp');
+    expect(String((schema as any).properties?.backendTargetKey?.description ?? '')).toContain('acpBackend:');
+  });
+
+  it('keeps the customAcp backendTargetKey requirement even when backend discovery is unavailable', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec, {
+      availableActionIds: ['agents.models.list'],
+    });
+
+    expect(String((schema as any).properties?.backendTargetKey?.description ?? '')).toContain('Required when using customAcp');
+    expect(String((schema as any).properties?.backendTargetKey?.description ?? '')).toContain('acpBackend:');
+  });
+
+  it('omits discovery guidance when the available action set is explicitly empty', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec, {
+      availableActionIds: [],
+    });
+
+    expect(String((schema as any).properties?.backendTargetKey?.description ?? '')).toContain('Required when using customAcp');
+    expect(String((schema as any).properties?.backendTargetKey?.description ?? '')).not.toContain('listAgentBackends');
+  });
+
   it('drops non-string enums that ElevenLabs rejects on numeric parameters', () => {
     const spec = getActionSpec('memory.search');
 
