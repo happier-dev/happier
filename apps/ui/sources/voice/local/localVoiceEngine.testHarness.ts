@@ -286,9 +286,13 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
     resolveRuntimeFeatureDecision: (args: any) => resolveRuntimeFeatureDecision(args),
 }));
 
-vi.mock('expo-router', () => ({
-    router: { navigate: (...args: any[]) => routerNavigate(...args) },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { navigate: (...args: any[]) => routerNavigate(...args) },
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
     DaemonVoiceAgentClient: class {
@@ -332,19 +336,24 @@ vi.mock('@/voice/modelPacks/manifests', () => ({
     resolveModelPackManifestUrl: (params: any) => (resolveModelPackManifestUrl as any)(params),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Dimensions: {
-        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
-    },
-    Platform: {
-        get OS() {
-            return platformOs;
-        },
-        select: (spec: any) => (spec && (spec.ios ?? spec.default)) ?? undefined,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            Dimensions: {
+                get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+            },
+            Platform: {
+                get OS() {
+                            return platformOs;
+                        },
+                select: (spec: any) => (spec && (spec.ios ?? spec.default)) ?? undefined,
+            },
+        }
+    );
+});
 
 vi.mock('expo-audio', () => ({
     RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },

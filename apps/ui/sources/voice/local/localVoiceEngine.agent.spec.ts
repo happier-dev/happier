@@ -23,21 +23,36 @@ import type { VoiceAgentClient } from '@/voice/agent/types';
 
 type VoiceAgentTurnStreamReadResult = Awaited<ReturnType<VoiceAgentClient['readTurnStream']>>;
 
-async function waitForCreatedAudioPlayerListener(eventName: string) {
+type MockWithCalls = {
+    mock: {
+        calls: unknown[][];
+    };
+};
+
+async function waitForCondition(check: () => boolean, timeoutMessage: string) {
     for (let i = 0; i < 4000; i++) {
-        const player = createdAudioPlayers[0] as any;
-        if (player?.__hasListener?.(eventName) === true) return;
+        if (check()) return;
         await Promise.resolve();
     }
-    throw new Error(`Timed out waiting for audio player listener: ${eventName}`);
+    throw new Error(`Timed out waiting for ${timeoutMessage}`);
+}
+
+async function waitForMockCalls(mock: MockWithCalls, expectedCount: number) {
+    await waitForCondition(() => mock.mock.calls.length >= expectedCount, `mock call count ${expectedCount}`);
+}
+
+async function flushMicrotasks(iterations: number) {
+    for (let i = 0; i < iterations; i++) {
+        await Promise.resolve();
+    }
+}
+
+async function waitForCreatedAudioPlayerListener(eventName: string) {
+    await waitForCondition(() => createdAudioPlayers[0]?.__hasListener?.(eventName) === true, `audio player listener: ${eventName}`);
 }
 
 async function waitForCreatedAudioPlayer() {
-    for (let i = 0; i < 10_000; i++) {
-        if (createdAudioPlayers.length > 0) return;
-        await Promise.resolve();
-    }
-    throw new Error('Timed out waiting for created audio player');
+    await waitForCondition(() => createdAudioPlayers.length > 0, 'created audio player');
 }
 
 let localVoiceEngine: typeof import('./localVoiceEngine');
@@ -117,9 +132,8 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        for (let i = 0; i < 2000 && (globalThis.fetch as any).mock.calls.length < 3; i++) {
-            await Promise.resolve();
-        }
+        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
+        await waitForMockCalls(fetchMock, 3);
         await waitForCreatedAudioPlayer();
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
         await waitForCreatedAudioPlayerListener('playbackStatusUpdate');
@@ -204,9 +218,8 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        for (let i = 0; i < 2000 && (globalThis.fetch as any).mock.calls.length < 3; i++) {
-            await Promise.resolve();
-        }
+        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
+        await waitForMockCalls(fetchMock, 3);
         await stopPromise;
 
         expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -934,9 +947,7 @@ describe('local voice engine agent behavior', () => {
         const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        for (let i = 0; i < 2000 && daemonVoiceAgentStart.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
+        await flushMicrotasks(4000);
 
         expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(1);
     });
@@ -992,12 +1003,7 @@ describe('local voice engine agent behavior', () => {
         const { getLocalVoiceState, toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        for (let i = 0; i < 2000 && daemonVoiceAgentStart.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
-        for (let i = 0; i < 2000; i++) {
-            await Promise.resolve();
-        }
+        await flushMicrotasks(4000);
 
         expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(1);
         expect(consoleErrorSpy).not.toHaveBeenCalled();
@@ -1048,14 +1054,10 @@ describe('local voice engine agent behavior', () => {
         const { toggleLocalVoiceTurn } = localVoiceEngine;
         await toggleLocalVoiceTurn('s1');
 
-        for (let i = 0; i < 2000 && daemonVoiceAgentWelcome.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
+        await waitForMockCalls(daemonVoiceAgentWelcome, 1);
 
         expect(daemonVoiceAgentWelcome).toHaveBeenCalledTimes(1);
-        for (let i = 0; i < 2000 && expoSpeechSpeak.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
+        await waitForMockCalls(expoSpeechSpeak, 1);
         expect(expoSpeechSpeak).toHaveBeenCalled();
     });
 
@@ -1112,9 +1114,7 @@ describe('local voice engine agent behavior', () => {
         const { toggleLocalVoiceTurn, resetLocalVoiceAgentPersistence } = localVoiceEngine;
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        for (let i = 0; i < 2000 && daemonVoiceAgentStart.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
+        await flushMicrotasks(4000);
 
         await resetLocalVoiceAgentPersistence();
 
@@ -1310,14 +1310,10 @@ describe('local voice engine agent behavior', () => {
         const { sendLocalVoiceAgentTextUpdate } = localVoiceEngine;
 
         const first = sendLocalVoiceAgentTextUpdate('s1', 'Initial coding request');
-        for (let i = 0; i < 2000 && daemonVoiceAgentStartTurnStream.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
+        await waitForMockCalls(daemonVoiceAgentStartTurnStream, 1);
 
         const second = sendLocalVoiceAgentTextUpdate('s1', 'Permission required. Ask the human whether to allow it.');
-        for (let i = 0; i < 2000 && daemonVoiceAgentCancelTurnStream.mock.calls.length < 1; i++) {
-            await Promise.resolve();
-        }
+        await waitForMockCalls(daemonVoiceAgentCancelTurnStream, 1);
 
         resolveFirstRead({
             streamId: 'stream-1',
@@ -1553,9 +1549,8 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        for (let i = 0; i < 2000 && (globalThis.fetch as any).mock.calls.length < 3; i++) {
-            await Promise.resolve();
-        }
+        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
+        await waitForMockCalls(fetchMock, 3);
         await stopPromise;
 
         expect(sessionExecutionRunStart).toHaveBeenCalledWith(
@@ -1650,9 +1645,8 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        for (let i = 0; i < 2000 && (globalThis.fetch as any).mock.calls.length < 3; i++) {
-            await Promise.resolve();
-        }
+        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
+        await waitForMockCalls(fetchMock, 3);
         await stopPromise;
 
         expect(setActiveServerAndSwitch).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'server-b' }));

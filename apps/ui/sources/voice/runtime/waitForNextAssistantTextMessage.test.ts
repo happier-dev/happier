@@ -6,15 +6,18 @@ const state: { current: any } = {
 
 const listeners = new Set<() => void>();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => state.current,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
   },
-}));
+});
+});
 
 import { waitForNextAssistantTextMessage } from './waitForNextAssistantTextMessage';
 

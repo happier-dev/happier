@@ -3,14 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const applyMessages = vi.fn();
 const applyMessagesLoaded = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({
       applyMessages,
       applyMessagesLoaded,
     }),
   },
-}));
+});
+});
 
 describe('voiceConversationTranscript', () => {
   beforeEach(() => {

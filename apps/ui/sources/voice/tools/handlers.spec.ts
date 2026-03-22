@@ -188,11 +188,14 @@ function createBaseState(): any {
 
 let state: any = createBaseState();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({ ...state, applySettingsLocal }),
   },
-}));
+});
+});
 
 vi.mock('@/sync/ops', () => ({
   // Permission RPC is executed via server-scoped session RPC in the action executor.
@@ -251,9 +254,13 @@ vi.mock('@/auth/context/AuthContext', () => ({
   getCurrentAuth: () => ({ refreshFromActiveServer }),
 }));
 
-vi.mock('expo-router', () => ({
-  router: { navigate: (...args: any[]) => routerNavigate(...args) },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { navigate: (...args: any[]) => routerNavigate(...args) },
+    });
+    return expoRouterMock.module;
+});
 
 describe('voice tool handlers', () => {
   beforeEach(() => {
@@ -355,7 +362,11 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
     const res = await tools.sendExecutionRunMessage({ runId: 'run_1', message: 'hello' });
-    expect(executionRunSend).toHaveBeenCalledWith('s1', { runId: 'run_1', message: 'hello', resume: undefined }, undefined);
+    expect(executionRunSend).toHaveBeenCalledWith(
+      's1',
+      { runId: 'run_1', message: 'hello', delivery: 'steer_if_supported' },
+      undefined,
+    );
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 

@@ -1,4 +1,5 @@
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
+import { parseBackendTargetKey } from '@happier-dev/protocol';
 
 function asObject(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -21,6 +22,23 @@ function humanizeIdentifier(value: string | null): string | null {
     const collapsed = normalized.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
     if (!collapsed) return null;
     return collapsed.charAt(0).toUpperCase() + collapsed.slice(1);
+}
+
+function resolveAgentModelsSummaryLabel(input: Record<string, unknown> | null, result: Record<string, unknown> | null): string | null {
+    const backendTargetKey = normalizeText(input?.backendTargetKey);
+    if (backendTargetKey) {
+        try {
+            const target = parseBackendTargetKey(backendTargetKey);
+            if (target.kind === 'configuredAcpBackend') {
+                return humanizeIdentifier(target.backendId);
+            }
+            return humanizeIdentifier(target.agentId);
+        } catch {
+            // Fall back to legacy agent-id labeling when the input is malformed.
+        }
+    }
+
+    return humanizeIdentifier(normalizeText(input?.agentId) ?? normalizeText(result?.agentId));
 }
 
 function collectLabels(
@@ -178,7 +196,7 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
         case 'listAgentModels': {
             const labels = collectLabels(result.items, params.shareFilePaths);
             const input = asObject(params.toolInput);
-            const agentLabel = humanizeIdentifier(normalizeText(input?.agentId) ?? normalizeText(result.agentId));
+            const agentLabel = resolveAgentModelsSummaryLabel(input, result);
             const prefix = agentLabel ? `Available ${agentLabel} models` : 'Available models';
             return summarizeLabelList(prefix, labels);
         }

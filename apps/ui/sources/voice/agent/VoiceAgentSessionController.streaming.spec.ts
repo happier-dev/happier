@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { FeatureDecision } from '@happier-dev/protocol';
+import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { voiceSessionBindingStore } from '@/voice/sessionBinding/voiceSessionBindingStore';
@@ -44,6 +45,113 @@ type TurnStreamReadResult = {
   nextCursor: number;
   done: boolean;
 };
+
+function trackPromise<T>(promise: Promise<T>): Readonly<{
+  isSettled: () => boolean;
+  settled: Promise<
+    | { status: 'resolved'; value: T }
+    | { status: 'rejected'; reason: unknown }
+  >;
+}> {
+  let settled = false;
+  const settledPromise = promise.then(
+    (value) => {
+      settled = true;
+      return { status: 'resolved' as const, value };
+    },
+    (reason) => {
+      settled = true;
+      return { status: 'rejected' as const, reason };
+    },
+  );
+
+  return {
+    isSettled: () => settled,
+    settled: settledPromise,
+  };
+}
+
+function createVoiceControllerState(options: Readonly<{
+  sessions?: Record<string, unknown>;
+  sessionMessages?: Record<string, unknown>;
+  machines?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  voice?: Readonly<{
+    providerId?: string;
+    streaming?: Readonly<{
+      enabled?: boolean;
+      turnReadPollIntervalMs?: number;
+      turnReadMaxEvents?: number;
+      turnStreamTimeoutMs?: number | null;
+    }>;
+    agent?: Record<string, unknown>;
+    networkTimeoutMs?: number;
+  }>;
+}> = {}): {
+  settings: {
+    voice: {
+      providerId: string;
+      adapters: {
+        local_conversation: {
+          streaming: {
+            enabled: boolean;
+            turnReadPollIntervalMs: number;
+            turnReadMaxEvents: number;
+            turnStreamTimeoutMs: number | null;
+          };
+          agent: Record<string, unknown>;
+          networkTimeoutMs: number;
+        };
+      };
+    } & Record<string, unknown>;
+  } & Record<string, unknown>;
+  sessions: Record<string, unknown>;
+  sessionMessages: Record<string, unknown>;
+  machines?: Record<string, unknown>;
+} {
+  const voice = {
+    providerId: options.voice?.providerId ?? 'local_conversation',
+    adapters: {
+      local_conversation: {
+        streaming: {
+          enabled: true,
+          turnReadPollIntervalMs: 50,
+          turnReadMaxEvents: 7,
+          turnStreamTimeoutMs: 1200,
+          ...(options.voice?.streaming ?? {}),
+        },
+        agent: {
+          backend: 'daemon',
+          transcript: { persistenceMode: 'ephemeral', epoch: 0 },
+          ...(options.voice?.agent ?? {}),
+        },
+        networkTimeoutMs: options.voice?.networkTimeoutMs ?? 15_000,
+      },
+    },
+  };
+
+  return {
+    settings: {
+      voice,
+      ...(options.settings ?? {}),
+    },
+    sessions: options.sessions ?? {
+      sys_voice: {
+        id: 'sys_voice',
+        active: true,
+        modelMode: 'default',
+        metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+      },
+      s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+    },
+    sessionMessages: options.sessionMessages ?? {},
+    ...(options.machines ? { machines: options.machines } : {}),
+  };
+}
+
+function setVoiceControllerState(options?: Parameters<typeof createVoiceControllerState>[0]): void {
+  getState.mockImplementation(() => createVoiceControllerState(options));
+}
 
 vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
   DaemonVoiceAgentClient: class {
@@ -120,15 +228,18 @@ const getState = vi.fn((): any => ({
 
 const storageListeners = new Set<() => void>();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => getState(),
     subscribe: (listener: () => void) => {
       storageListeners.add(listener);
       return () => storageListeners.delete(listener);
     },
   },
-}));
+});
+});
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
   isRuntimeFeatureEnabled: (args: any) => isRuntimeFeatureEnabled(args),
@@ -143,31 +254,9 @@ describe('VoiceAgentSessionController (streaming)', () => {
   }, 60_000);
 
   beforeEach(() => {
+    vi.useFakeTimers();
     getState.mockReset();
-	    getState.mockImplementation(() => ({
-	      settings: {
-	        voice: {
-	          providerId: 'local_conversation',
-	          adapters: {
-	            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 1200,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
-          },
-        },
-      },
-      sessions: {
-        sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
-      },
-      sessionMessages: {},
-    }));
+    setVoiceControllerState();
     useVoiceTargetStore.setState({ scope: 'global', primaryActionSessionId: null, trackedSessionIds: [], lastFocusedSessionId: null } as any);
     isRuntimeFeatureEnabled.mockReset();
     isRuntimeFeatureEnabled.mockResolvedValue(true);
@@ -317,29 +406,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('surfaces a clear error when starting local voice on an inactive target session', async () => {
-    getState.mockImplementation(() => ({
-      settings: {
-        voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 1200,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
-          },
-        },
-      },
+    setVoiceControllerState({
       sessions: {
         s1: { id: 's1', active: false, modelMode: 'default', metadata: { flavor: 'claude' } },
       },
-      sessionMessages: {},
-    }));
+    });
 
     const controller = createVoiceAgentSessionController();
 
@@ -351,29 +422,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('surfaces a clear error when starting local voice on an offline target session', async () => {
-    getState.mockImplementation(() => ({
-      settings: {
-        voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 1200,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
-          },
-        },
-      },
+    setVoiceControllerState({
       sessions: {
         s1: { id: 's1', active: true, presence: 'offline', modelMode: 'default', metadata: { flavor: 'claude' } },
       },
-      sessionMessages: {},
-    }));
+    });
 
     const controller = createVoiceAgentSessionController();
 
@@ -385,29 +438,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('surfaces a clear error when starting local voice on a target flavor without local control support', async () => {
-    getState.mockImplementation(() => ({
-      settings: {
-        voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 1200,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
-          },
-        },
-      },
+    setVoiceControllerState({
       sessions: {
         s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'kimi' } },
       },
-      sessionMessages: {},
-    }));
+    });
 
     const controller = createVoiceAgentSessionController();
 
@@ -419,23 +454,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('surfaces a clear error when starting local voice on an OpenCode ACP session without effective local control support', async () => {
-    getState.mockImplementation(() => ({
+    setVoiceControllerState({
       settings: {
-        voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 1200,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
-          },
-        },
         opencodeBackendMode: 'server',
       },
       sessions: {
@@ -447,8 +467,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
           metadata: { flavor: 'opencode', opencodeBackendMode: 'acp' },
         },
       },
-      sessionMessages: {},
-    }));
+    });
 
     const controller = createVoiceAgentSessionController();
 
@@ -460,27 +479,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('always enables daemon transcript persistence for the hidden voice conversation session', async () => {
-    getState.mockImplementation(() => ({
-      settings: {
-        voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 1200,
-              },
-              agent: {
-                backend: 'daemon',
-                transcript: { persistenceMode: 'ephemeral', epoch: 0 },
-              },
-              networkTimeoutMs: 15_000,
-            },
-          },
-        },
-      },
+    setVoiceControllerState({
       sessions: {
         sys_voice: {
           id: 'sys_voice',
@@ -490,8 +489,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
         },
         s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
       },
-      sessionMessages: {},
-    }));
+    });
 
     const controller = createVoiceAgentSessionController();
 
@@ -506,7 +504,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('injects a one-time welcome instruction into the first user turn when welcome is enabled (on_first_turn)', async () => {
-    getState.mockImplementation((): any => ({
+    getState.mockImplementation(() => ({
       settings: {
         voice: {
           providerId: 'local_conversation',
@@ -558,6 +556,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('queues interrupting text updates behind an in-flight turn for the same session', async () => {
+    const firstStartTurn = createDeferred<void>();
+    const firstReadReady = createDeferred<void>();
     const streamReadState: {
       resolveFirstRead: ((value: TurnStreamReadResult) => void) | null;
     } = {
@@ -567,6 +567,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       if (streamId === 'stream-1') {
         return await new Promise<TurnStreamReadResult>((resolve) => {
           streamReadState.resolveFirstRead = resolve;
+          firstReadReady.resolve();
         });
       }
       return {
@@ -576,16 +577,21 @@ describe('VoiceAgentSessionController (streaming)', () => {
         done: true,
       };
     });
-    startTurnStream.mockImplementation(async ({ userText }: any) => ({
-      streamId: userText === 'hello' ? 'stream-1' : 'stream-2',
-    }));
+    startTurnStream.mockImplementation(async ({ userText }: any) => {
+      if (userText === 'hello') {
+        firstStartTurn.resolve();
+      }
+      return {
+        streamId: userText === 'hello' ? 'stream-1' : 'stream-2',
+      };
+    });
 
     const controller: any = createVoiceAgentSessionController();
 
     const firstTurn = controller.sendTurn('s1', 'hello');
-    await vi.waitFor(() => {
-      expect(startTurnStream).toHaveBeenCalledTimes(1);
-    });
+    await firstStartTurn.promise;
+    await firstReadReady.promise;
+    expect(startTurnStream).toHaveBeenCalledTimes(1);
     const textUpdate = controller.sendTextUpdate('s1', 'Permission required. Ask the human whether to allow it.');
 
     expect(startTurnStream).toHaveBeenCalledTimes(1);
@@ -777,7 +783,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
         },
         s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
       },
-      sessionMessages: {},
     }));
 
     const controller = createVoiceAgentSessionController();
@@ -892,7 +897,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('times out using configured turnStreamTimeoutMs (not a hard-coded poll count)', async () => {
-    vi.useFakeTimers();
     readTurnStream.mockImplementation(async () => ({
       streamId: 'stream-1',
       events: [],
@@ -901,30 +905,19 @@ describe('VoiceAgentSessionController (streaming)', () => {
     }));
 
     const controller = createVoiceAgentSessionController();
+    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
-    let settled = false;
-    let rejectedError: unknown = null;
-	    controller.sendTurn('s1', 'hello').then(
-	      () => {
-	        settled = true;
-	      },
-	      (err: unknown) => {
-	        settled = true;
-	        rejectedError = err;
-	      },
-	    );
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 1300 });
 
-    // Advance past the configured 1200ms timeout.
-    await vi.advanceTimersByTimeAsync(2000);
-    await Promise.resolve();
-
-    expect(settled).toBe(true);
-    expect(String((rejectedError as any)?.message ?? rejectedError)).toContain('stream_timeout');
+    const outcome = await sendTurnOutcome.settled;
+    if (outcome.status !== 'rejected') {
+      throw new Error(`Expected rejection outcome, received ${outcome.status}`);
+    }
+    expect(String(outcome.reason)).toContain('stream_timeout');
     expect(cancelTurnStream).toHaveBeenCalledTimes(1);
   });
 
   it('does not fall back to networkTimeoutMs when turnStreamTimeoutMs is null', async () => {
-    vi.useFakeTimers();
     let readCount = 0;
     readTurnStream.mockImplementation(async () => {
       readCount += 1;
@@ -943,49 +936,40 @@ describe('VoiceAgentSessionController (streaming)', () => {
         done: false,
       };
     });
-
-    getState.mockImplementation(() => ({
-      settings: {
+    getState.mockImplementation(() =>
+      createVoiceControllerState({
         voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 250,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: null,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 1000,
-            },
+          streaming: {
+            turnReadPollIntervalMs: 250,
+            turnStreamTimeoutMs: null,
           },
+          networkTimeoutMs: 1000,
         },
-      },
-      sessions: {
-        sys_voice: {
-          id: 'sys_voice',
-          modelMode: 'default',
-          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+        sessions: {
+          sys_voice: {
+            id: 'sys_voice',
+            modelMode: 'default',
+            metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+          },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
-      },
-      sessionMessages: {},
-    }));
+      }),
+    );
 
     const controller = createVoiceAgentSessionController();
-    const sendPromise = controller.sendTurn('s1', 'hello');
+    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
-    await vi.advanceTimersByTimeAsync(2000);
-    await Promise.resolve();
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 1800 });
 
-    await expect(sendPromise).resolves.toMatchObject({ assistantText: 'ok', actions: [] });
+    await expect(sendTurnOutcome.settled).resolves.toMatchObject({
+      status: 'resolved',
+      value: { assistantText: 'ok', actions: [] },
+    });
     expect(readCount).toBeGreaterThanOrEqual(8);
     expect(cancelTurnStream).toHaveBeenCalledTimes(0);
   });
 
   it('supports long streamed turns (does not clamp turnStreamTimeoutMs to 60s)', async () => {
-    vi.useFakeTimers();
     readTurnStream.mockImplementation(async () => ({
       streamId: 'stream-1',
       events: [],
@@ -993,107 +977,75 @@ describe('VoiceAgentSessionController (streaming)', () => {
       done: false,
     }));
 
-    getState.mockImplementation(() => ({
-      settings: {
+    getState.mockImplementation(() =>
+      createVoiceControllerState({
         voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 50,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 65000,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
+          streaming: {
+            turnStreamTimeoutMs: 65_000,
           },
         },
-      },
-      sessions: {
-        sys_voice: {
-          id: 'sys_voice',
-          modelMode: 'default',
-          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+        sessions: {
+          sys_voice: {
+            id: 'sys_voice',
+            modelMode: 'default',
+            metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+          },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
-      },
-      sessionMessages: {},
-    }));
+      }),
+    );
 
     const controller = createVoiceAgentSessionController();
 
-    let settled = false;
-    let rejectedError: unknown = null;
-    controller.sendTurn('s1', 'hello').then(
-      () => {
-        settled = true;
-      },
-      (err: unknown) => {
-        settled = true;
-        rejectedError = err;
-      },
-    );
+    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
-    await vi.advanceTimersByTimeAsync(61_000);
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 61_000 });
+    expect(sendTurnOutcome.isSettled()).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(10_000);
-    await Promise.resolve();
-    expect(settled).toBe(true);
-    expect(String((rejectedError as any)?.message ?? rejectedError)).toContain('stream_timeout');
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 4_000 });
+    const outcome = await sendTurnOutcome.settled;
+    expect(outcome).toMatchObject({ status: 'rejected' });
+    expect(String((outcome.status === 'rejected' ? outcome.reason : null) as any)).toContain('stream_timeout');
   });
 
   it('aborts a streamed turn when the provided abort signal is aborted', async () => {
-    vi.useFakeTimers();
     try {
-      readTurnStream.mockImplementation(async () => ({
-        streamId: 'stream-1',
-        events: [],
-        nextCursor: 1,
-        done: false,
-      }));
+      const readTurnStarted = createDeferred<void>();
+      readTurnStream.mockImplementation(async () => {
+        readTurnStarted.resolve();
+        return {
+          streamId: 'stream-1',
+          events: [],
+          nextCursor: 1,
+          done: false,
+        };
+      });
 
       const controller = createVoiceAgentSessionController();
       const abortController = new AbortController();
 
-      const sendPromise = controller.sendTurn('s1', 'hello', { signal: abortController.signal } as any);
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('__timeout__'), 10));
+      const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello', { signal: abortController.signal } as any));
 
-      for (let i = 0; i < 500 && readTurnStream.mock.calls.length === 0; i++) {
-        await Promise.resolve();
-      }
-      expect(readTurnStream).toHaveBeenCalled();
+      await readTurnStarted.promise;
 
       abortController.abort();
 
-      const outcomePromise = Promise.race([
-        sendPromise.then(
-          () => ({ t: 'resolved' as const, err: null as unknown }),
-          (err: unknown) => ({ t: 'rejected' as const, err }),
-        ),
-        timeoutPromise,
-      ]);
+      await flushHookEffects({ cycles: 1, advanceTimersMs: 10 });
 
-      await vi.advanceTimersByTimeAsync(10);
-      await Promise.resolve();
-
-      const outcome = await outcomePromise;
-      expect(outcome).not.toBe('__timeout__');
-      expect((outcome as any).t).toBe('rejected');
-      expect(String(((outcome as any).err as any)?.message ?? (outcome as any).err)).toContain('turn_aborted');
+      const outcome = await sendTurnOutcome.settled;
+      if (outcome.status !== 'rejected') {
+        throw new Error(`Expected rejected outcome, received ${outcome.status}`);
+      }
+      expect(String(outcome.reason)).toContain('turn_aborted');
       expect(cancelTurnStream).toHaveBeenCalledTimes(1);
     } finally {
       // Ensure we don't leak the in-flight promise if abort isn't implemented yet.
-      await vi.advanceTimersByTimeAsync(2000);
+      await flushHookEffects({ cycles: 1, advanceTimersMs: 10 });
       vi.useRealTimers();
     }
   });
 
   it('supports very long streamed turns (does not clamp turnStreamTimeoutMs to 10min)', async () => {
-    vi.useFakeTimers();
     readTurnStream.mockImplementation(async () => ({
       streamId: 'stream-1',
       events: [],
@@ -1101,91 +1053,63 @@ describe('VoiceAgentSessionController (streaming)', () => {
       done: false,
     }));
 
-    getState.mockImplementation(() => ({
-      settings: {
+    getState.mockImplementation(() =>
+      createVoiceControllerState({
         voice: {
-          providerId: 'local_conversation',
-          adapters: {
-            local_conversation: {
-              streaming: {
-                enabled: true,
-                turnReadPollIntervalMs: 500,
-                turnReadMaxEvents: 7,
-                turnStreamTimeoutMs: 900_000,
-              },
-              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-              networkTimeoutMs: 15_000,
-            },
+          streaming: {
+            turnReadPollIntervalMs: 500,
+            turnStreamTimeoutMs: 900_000,
           },
         },
-      },
-      sessions: {
-        sys_voice: {
-          id: 'sys_voice',
-          modelMode: 'default',
-          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+        sessions: {
+          sys_voice: {
+            id: 'sys_voice',
+            modelMode: 'default',
+            metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+          },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
-      },
-      sessionMessages: {},
-    }));
+      }),
+    );
 
     const controller = createVoiceAgentSessionController();
 
-    let settled = false;
-    let rejectedError: unknown = null;
-    controller.sendTurn('s1', 'hello').then(
-      () => {
-        settled = true;
-      },
-      (err: unknown) => {
-        settled = true;
-        rejectedError = err;
-      },
-    );
+    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
-    await vi.advanceTimersByTimeAsync(650_000);
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 899_000 });
+    expect(sendTurnOutcome.isSettled()).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(300_000);
-    await Promise.resolve();
-    expect(settled).toBe(true);
-    expect(String((rejectedError as any)?.message ?? rejectedError)).toContain('stream_timeout');
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 1_000 });
+    const outcome = await sendTurnOutcome.settled;
+    if (outcome.status !== 'rejected') {
+      throw new Error(`Expected rejection outcome, received ${outcome.status}`);
+    }
+    expect(String(outcome.reason)).toContain('stream_timeout');
     expect(cancelTurnStream).toHaveBeenCalledTimes(1);
   });
 
-	  it('ignores non-finite or invalid streaming config values (does not short-circuit the stream loop)', async () => {
-	    const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
+  it('ignores non-finite or invalid streaming config values (does not short-circuit the stream loop)', async () => {
+    const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
 
-	    getState.mockImplementation(() => ({
-	      settings: {
-	        voice: {
-	          providerId: 'local_conversation',
-	          adapters: {
-	            local_conversation: {
-	              streaming: {
-	                enabled: true,
-	                turnReadPollIntervalMs: -10,
-	                turnReadMaxEvents: Number.NaN,
-	                turnStreamTimeoutMs: Number.NaN,
-	              },
-		              agent: { backend: 'daemon', transcript: { persistenceMode: 'ephemeral', epoch: 0 } },
-		              networkTimeoutMs: 15_000,
-		            },
-		          },
-		        },
-		      },
-		      sessions: {
-		        sys_voice: {
-		          id: 'sys_voice',
-		          modelMode: 'default',
-		          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
-		        },
-		        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
-		      },
-		      sessionMessages: {},
-		    }));
+    getState.mockImplementation(() =>
+      createVoiceControllerState({
+        voice: {
+          streaming: {
+            turnReadPollIntervalMs: -10,
+            turnReadMaxEvents: Number.NaN,
+            turnStreamTimeoutMs: Number.NaN,
+          },
+        },
+        sessions: {
+          sys_voice: {
+            id: 'sys_voice',
+            modelMode: 'default',
+            metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+          },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        },
+      }),
+    );
 
     const controller = createVoiceAgentSessionController();
 
@@ -1195,7 +1119,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
         maxEvents: voiceSettingsDefaults.adapters.local_conversation.streaming.turnReadMaxEvents,
       }),
     );
-    expect(cancelTurnStream).toHaveBeenCalledTimes(0);
+      expect(cancelTurnStream).toHaveBeenCalledTimes(0);
   });
 
   it('uses the hidden voice conversation session id when starting the daemon agent for the global agent session', async () => {

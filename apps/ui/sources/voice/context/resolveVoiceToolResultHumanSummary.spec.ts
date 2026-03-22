@@ -120,6 +120,25 @@ describe('resolveVoiceToolResultHumanSummary', () => {
         expect(modelSummary).not.toContain('model_beta');
     });
 
+    it('uses configured ACP backend ids instead of generic customAcp in model summaries', () => {
+        const modelSummary = resolveVoiceToolResultHumanSummary({
+            toolName: 'listAgentModels',
+            toolInput: { backendTargetKey: 'acpBackend:review-bot' },
+            toolResult: {
+                ok: true,
+                agentId: 'customAcp',
+                items: [
+                    { modelId: 'model_alpha', label: 'Review Alpha' },
+                    { modelId: 'model_beta', label: 'Review Beta' },
+                ],
+            },
+            shareFilePaths: true,
+        });
+
+        expect(modelSummary).toContain('Available Review bot models');
+        expect(modelSummary).not.toContain('custom Acp');
+    });
+
     it('prefers server labels over raw ids', () => {
         const summary = resolveVoiceToolResultHumanSummary({
             toolName: 'listServers',

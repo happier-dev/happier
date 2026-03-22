@@ -25,11 +25,29 @@ const settingsState: { current: any } = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({ settings: settingsState.current }),
   },
-}));
+});
+});
+
+async function advanceTimersAndFlush(ms: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers();
+  try {
+    return await run();
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 describe('DaemonVoiceAgentClient', () => {
   beforeEach(async () => {
@@ -383,177 +401,173 @@ describe('DaemonVoiceAgentClient', () => {
   });
 
   it('sendTurn respects configured turnStreamTimeoutMs (not a hard-coded 30s)', async () => {
-    vi.useFakeTimers();
-    settingsState.current = {
-      voice: {
-        providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
-            streaming: {
-              enabled: false,
-              turnReadPollIntervalMs: 250,
-              turnReadMaxEvents: 64,
-              turnStreamTimeoutMs: 1000,
+    await withFakeTimers(async () => {
+      settingsState.current = {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: false,
+                turnReadPollIntervalMs: 250,
+                turnReadMaxEvents: 64,
+                turnStreamTimeoutMs: 1000,
+              },
+              networkTimeoutMs: 15000,
             },
-            networkTimeoutMs: 15000,
           },
         },
-      },
-    };
+      };
 
-    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
-    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
-    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
-        return { streamId: 'stream-1' } as any;
-      }
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
-        return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
-      }
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
-        return { ok: true } as any;
-      }
-      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+      const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+      const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+      vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+          return { streamId: 'stream-1' } as any;
+        }
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+          return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
+        }
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+          return { ok: true } as any;
+        }
+        throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+      });
+
+      const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+      const client = new DaemonVoiceAgentClient();
+
+      let settled = false;
+      let rejected: unknown = null;
+      client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' }).then(
+        () => {
+          settled = true;
+        },
+        (err: unknown) => {
+          settled = true;
+          rejected = err;
+        },
+      );
+
+      await advanceTimersAndFlush(2_000);
+
+      expect(settled).toBe(true);
+      expect(String((rejected as any)?.message ?? rejected)).toContain('stream_timeout');
     });
-
-    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient();
-
-    let settled = false;
-    let rejected: unknown = null;
-    client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' }).then(
-      () => {
-        settled = true;
-      },
-      (err: unknown) => {
-        settled = true;
-        rejected = err;
-      },
-    );
-
-    await vi.advanceTimersByTimeAsync(2000);
-    await Promise.resolve();
-
-    expect(settled).toBe(true);
-    expect(String((rejected as any)?.message ?? rejected)).toContain('stream_timeout');
-    vi.useRealTimers();
   });
 
   it('sendTurn does not fall back to networkTimeoutMs when turnStreamTimeoutMs is null', async () => {
-    vi.useFakeTimers();
-    settingsState.current = {
-      voice: {
-        providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
-            streaming: {
-              enabled: false,
-              turnReadPollIntervalMs: 250,
-              turnReadMaxEvents: 64,
-              turnStreamTimeoutMs: null,
+    await withFakeTimers(async () => {
+      settingsState.current = {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: false,
+                turnReadPollIntervalMs: 250,
+                turnReadMaxEvents: 64,
+                turnStreamTimeoutMs: null,
+              },
+              networkTimeoutMs: 1000,
             },
-            networkTimeoutMs: 1000,
           },
         },
-      },
-    };
+      };
 
-    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
-    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
-    let readCount = 0;
-    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
-        return { streamId: 'stream-1' } as any;
-      }
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
-        readCount += 1;
-        if (readCount >= 8) {
-          return {
-            streamId: 'stream-1',
-            events: [{ t: 'done', assistantText: 'ok', actions: [] }],
-            nextCursor: readCount,
-            done: true,
-          } as any;
+      const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+      const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+      let readCount = 0;
+      vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+          return { streamId: 'stream-1' } as any;
         }
-        return { streamId: 'stream-1', events: [], nextCursor: readCount, done: false } as any;
-      }
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
-        return { ok: true } as any;
-      }
-      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+          readCount += 1;
+          if (readCount >= 8) {
+            return {
+              streamId: 'stream-1',
+              events: [{ t: 'done', assistantText: 'ok', actions: [] }],
+              nextCursor: readCount,
+              done: true,
+            } as any;
+          }
+          return { streamId: 'stream-1', events: [], nextCursor: readCount, done: false } as any;
+        }
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+          return { ok: true } as any;
+        }
+        throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+      });
+
+      const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+      const client = new DaemonVoiceAgentClient();
+
+      const sendPromise = client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' });
+
+      await advanceTimersAndFlush(2_000);
+
+      await expect(sendPromise).resolves.toEqual({ assistantText: 'ok', actions: [] });
+      expect(readCount).toBeGreaterThanOrEqual(8);
     });
-
-    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient();
-
-    const sendPromise = client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' });
-
-    await vi.advanceTimersByTimeAsync(2000);
-    await Promise.resolve();
-
-    await expect(sendPromise).resolves.toEqual({ assistantText: 'ok', actions: [] });
-    expect(readCount).toBeGreaterThanOrEqual(8);
-    vi.useRealTimers();
   });
 
   it('sendTurn supports very long turnStreamTimeoutMs values (not clamped to 10min)', async () => {
-    vi.useFakeTimers();
-    settingsState.current = {
-      voice: {
-        providerId: 'local_conversation',
-        adapters: {
-          local_conversation: {
-            streaming: {
-              enabled: false,
-              turnReadPollIntervalMs: 500,
-              turnReadMaxEvents: 64,
-              turnStreamTimeoutMs: 900_000,
+    await withFakeTimers(async () => {
+      settingsState.current = {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: false,
+                turnReadPollIntervalMs: 500,
+                turnReadMaxEvents: 64,
+                turnStreamTimeoutMs: 900_000,
+              },
+              networkTimeoutMs: 15000,
             },
-            networkTimeoutMs: 15000,
           },
         },
-      },
-    };
+      };
 
-    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
-    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
-    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
-        return { streamId: 'stream-1' } as any;
-      }
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
-        return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
-      }
-      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
-        return { ok: true } as any;
-      }
-      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+      const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+      const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+      vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+          return { streamId: 'stream-1' } as any;
+        }
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+          return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
+        }
+        if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+          return { ok: true } as any;
+        }
+        throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+      });
+
+      const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+      const client = new DaemonVoiceAgentClient();
+
+      let settled = false;
+      let rejected: unknown = null;
+      client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' }).then(
+        () => {
+          settled = true;
+        },
+        (err: unknown) => {
+          settled = true;
+          rejected = err;
+        },
+      );
+
+      await advanceTimersAndFlush(650_000);
+      expect(settled).toBe(false);
+
+      await advanceTimersAndFlush(300_000);
+      expect(settled).toBe(true);
+      expect(String((rejected as any)?.message ?? rejected)).toContain('stream_timeout');
     });
-
-    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient();
-
-    let settled = false;
-    let rejected: unknown = null;
-    client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' }).then(
-      () => {
-        settled = true;
-      },
-      (err: unknown) => {
-        settled = true;
-        rejected = err;
-      },
-    );
-
-    await vi.advanceTimersByTimeAsync(650_000);
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(300_000);
-    await Promise.resolve();
-    expect(settled).toBe(true);
-    expect(String((rejected as any)?.message ?? rejected)).toContain('stream_timeout');
-    vi.useRealTimers();
   });
 
 });

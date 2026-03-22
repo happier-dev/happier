@@ -37,9 +37,12 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: { getState: () => state },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: { getState: () => state },
+});
+});
 
 describe('teleportVoiceAgentToSessionRoot', () => {
   beforeEach(() => {

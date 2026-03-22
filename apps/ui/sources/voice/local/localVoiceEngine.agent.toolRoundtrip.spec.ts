@@ -204,4 +204,126 @@ describe('local voice engine agent tool roundtrip', () => {
     expect(toolResultsCarrier?.content).not.toContain('supportsModelSelection');
     expect(toolResultsCarrier?.content.length).toBeLessThan(1200);
   });
+
+  it('preserves configured ACP backend target keys in follow-up backend discovery results', async () => {
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        backendEnabledByTargetKey: {
+          'agent:claude': false,
+          'agent:codex': false,
+          'agent:opencode': false,
+          'agent:gemini': false,
+          'agent:auggie': false,
+          'agent:qwen': false,
+          'agent:kimi': false,
+          'agent:kilo': false,
+          'agent:kiro': false,
+          'agent:customAcp': false,
+          'agent:pi': false,
+          'agent:copilot': false,
+        },
+        acpCatalogSettingsV1: {
+          v: 2,
+          backends: [
+            {
+              id: 'review-bot',
+              name: 'review-bot',
+              title: 'Review bot',
+              description: 'Configured ACP backend for review automation',
+              command: 'review-bot',
+              args: ['acp'],
+              env: {},
+              transportProfile: 'generic',
+              capabilities: {
+                supportsLoadSession: false,
+                supportsModes: 'unknown',
+                supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown',
+                promptImageSupport: 'unknown',
+              },
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ],
+        },
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_conversation',
+          adapters: {
+            ...storage.getState().settings.voice.adapters,
+            local_conversation: {
+              ...storage.getState().settings.voice.adapters.local_conversation,
+              conversationMode: 'agent',
+              stt: {
+                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                baseUrl: 'http://localhost:8000',
+              },
+              tts: {
+                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                autoSpeakReplies: false,
+                baseUrl: 'http://localhost:8001',
+              },
+              agent: {
+                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                backend: 'openai_compat',
+                openaiCompat: {
+                  ...storage.getState().settings.voice.adapters.local_conversation.agent.openaiCompat,
+                  chatBaseUrl: 'http://localhost:8002',
+                  chatApiKey: null,
+                  chatModel: 'fast-model',
+                  commitModel: 'commit-model',
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const actionBlock = [
+      '<voice_actions>',
+      JSON.stringify({
+        actions: [{ t: 'listAgentBackends', args: { limit: 10 } }],
+      }),
+      '</voice_actions>',
+    ].join('\n');
+
+    (globalThis.fetch as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ text: 'list the available configured backends' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: `Let me check.\n\n${actionBlock}` } }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'Found them.' } }] }),
+      });
+
+    const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+    await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) =>
+      String(call?.[0] ?? '').includes('/chat/completions'),
+    );
+
+    const toolResultsCarrier = chatCalls
+      .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
+      .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
+      .find(
+        (message: any) =>
+          message?.role === 'user' &&
+          typeof message?.content === 'string' &&
+          message.content.startsWith('VOICE_TOOL_RESULTS_JSON:'),
+      );
+
+    expect(toolResultsCarrier?.content).toContain('"label":"Review bot"');
+    expect(toolResultsCarrier?.content).toContain('"targetKey":"acpBackend:review-bot"');
+  });
 });

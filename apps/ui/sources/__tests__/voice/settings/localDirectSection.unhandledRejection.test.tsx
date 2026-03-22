@@ -2,29 +2,49 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
+type PlatformSelectOptions<T> = {
+    web?: T;
+    default?: T;
+};
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class {} };
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => {
-  type PlatformSelectOptions<T> = { web?: T; default?: T };
-  return {
-    Platform: { OS: 'web', select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default },
-    TurboModuleRegistry: { getEnforcing: () => ({}) },
-    Pressable: 'Pressable',
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+                select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default,
+            },
+            TurboModuleRegistry: {
+                getEnforcing: () => ({}),
+            },
+            Pressable: 'Pressable',
+        }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({ theme: { colors: { textSecondary: '#666' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: { colors: { textSecondary: '#666' } },
+    });
+});
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: any) => React.createElement('Item', props),
@@ -41,11 +61,14 @@ vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({ LocalVoi
 
 const modalPrompt = vi.fn(async (..._args: any[]) => null);
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: modalPrompt as unknown as (...args: any[]) => Promise<string | null>,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: modalPrompt as unknown as (...args: any[]) => Promise<string | null>,
+        },
+    }).module;
+});
 
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 

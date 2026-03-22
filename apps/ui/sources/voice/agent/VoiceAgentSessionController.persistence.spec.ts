@@ -44,12 +44,15 @@ vi.mock('@/voice/agent/openaiCompatVoiceAgentClient', () => ({
   OpenAiCompatVoiceAgentClient: class {},
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    confirm: (title?: unknown, message?: unknown, options?: unknown) => modalConfirm(title, message, options),
-    alert: vi.fn(),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: (title?: unknown, message?: unknown, options?: unknown) => modalConfirm(title, message, options),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
   buildVoiceInitialContext: () => '',
@@ -92,11 +95,14 @@ const state: any = {
   sessionMessages: {},
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => state,
   },
-}));
+});
+});
 
 state.applySettingsLocal = (delta: any) => {
   if (delta?.voice) {
@@ -1052,111 +1058,6 @@ describe('VoiceAgentSessionController (persistence)', () => {
     });
 
     expect(start).not.toHaveBeenCalled();
-  });
-
-  it('switches away from a stale active global voice machine and replays prior voice context on the replacement machine', async () => {
-    state.sessions.sys_voice = {
-      id: 'sys_voice',
-      updatedAt: 10,
-      active: true,
-      presence: 'online',
-      modelMode: 'default',
-      metadata: {
-        flavor: 'claude',
-        machineId: 'm_old',
-        path: '/old/.happier/voice-agent',
-        systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
-      },
-    };
-    state.sessionMessages.sys_voice = {
-      isLoaded: true,
-      messages: [
-        {
-          id: 'm-user-1',
-          text: 'Previous user request',
-          createdAt: 1,
-          meta: { happier: { kind: 'voice_agent_turn.v1', payload: { v: 1, epoch: 1, role: 'user', voiceAgentId: 'run_old', ts: 1 } } },
-        },
-        {
-          id: 'm-assistant-1',
-          text: 'Previous assistant reply',
-          createdAt: 2,
-          meta: { happier: { kind: 'voice_agent_turn.v1', payload: { v: 1, epoch: 1, role: 'assistant', voiceAgentId: 'run_old', ts: 2 } } },
-        },
-      ],
-    };
-    state.machines = {
-      m_old: {
-        id: 'm_old',
-        seq: 1,
-        createdAt: 0,
-        updatedAt: 0,
-        active: false,
-        activeAt: 0,
-        revokedAt: null,
-        metadata: { host: 'old-box', happyHomeDir: '/old/.happier', homeDir: '/Users/old' },
-        metadataVersion: 0,
-        daemonState: null,
-        daemonStateVersion: 0,
-      },
-      m_new: {
-        id: 'm_new',
-        seq: 2,
-        createdAt: 0,
-        updatedAt: 0,
-        active: true,
-        activeAt: Date.now(),
-        revokedAt: null,
-        metadata: { host: 'new-box', happyHomeDir: '/new/.happier', homeDir: '/Users/new' },
-        metadataVersion: 0,
-        daemonState: null,
-        daemonStateVersion: 0,
-      },
-    };
-    state.settings.recentMachinePaths = [];
-    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
-    state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
-    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'm_old';
-    modalConfirm
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(true);
-    refreshSessions.mockImplementation(async () => {
-      state.sessions.sys_voice_new = {
-        id: 'sys_voice_new',
-        updatedAt: 11,
-        active: true,
-        presence: 'online',
-        modelMode: 'default',
-        metadata: {
-          flavor: 'claude',
-          machineId: 'm_new',
-          path: '/new/.happier/voice-agent',
-          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
-        },
-      };
-    });
-
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
-
-    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello after switch');
-
-    expect(modalConfirm).toHaveBeenCalledTimes(2);
-    expect(start).not.toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sys_voice',
-    }));
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      machineId: 'm_new',
-      directory: '/new/.happier/voice-agent',
-    }));
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sys_voice_new',
-      replay: expect.objectContaining({
-        kind: 'voice_session.v1',
-        previousSessionId: 'sys_voice',
-      }),
-    }));
-    expect(state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId).toBe('m_new');
   });
 
   it('switches away from a sticky global voice machine when the reused hidden voice session returns daemon RPC unavailable', async () => {

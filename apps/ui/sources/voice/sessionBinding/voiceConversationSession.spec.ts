@@ -25,11 +25,14 @@ vi.mock('@/sync/domains/session/directSessions/readDirectSessionLink', () => ({
   readDirectSessionLink: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => state,
   },
-}));
+});
+});
 
 vi.mock('@/sync/ops/machines', () => ({
   machineSpawnNewSession: (...args: any[]) => machineSpawnNewSession(...args),

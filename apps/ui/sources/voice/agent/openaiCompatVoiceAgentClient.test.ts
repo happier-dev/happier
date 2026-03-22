@@ -19,13 +19,16 @@ const settingsState: any = {
 };
 const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
     getState: () => ({
       settings: settingsState,
     }),
   },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {

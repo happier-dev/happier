@@ -23,9 +23,16 @@ async function waitForDeleteAsyncCall() {
   throw new Error('Timed out waiting for deleteAsync call');
 }
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'ios',
+            },
+        }
+    );
+});
 
 vi.mock('expo-file-system', () => ({
   Paths: { cache: 'file:///tmp/' },
