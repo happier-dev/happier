@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const fetchSessionByIdMock = vi.fn();
 const tryDecryptSessionMetadataMock = vi.fn();
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById: (...args: unknown[]) => fetchSessionByIdMock(...args),
 }));
 
-vi.mock('@/sessionControl/sessionEncryptionContext', () => ({
+vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
   tryDecryptSessionMetadata: (...args: unknown[]) => tryDecryptSessionMetadataMock(...args),
 }));
 

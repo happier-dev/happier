@@ -12,8 +12,8 @@ import {
 import * as z from 'zod';
 
 import type { Credentials } from '@/persistence';
-import { fetchSessionById, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 
 const DirectSessionMetadataSchema = z
   .object({

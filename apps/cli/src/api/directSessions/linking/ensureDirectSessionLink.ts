@@ -14,9 +14,9 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import { fetchSessionById, fetchSessionsPage, getOrCreateSessionByTag } from '@/sessionControl/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
+import { fetchSessionById, fetchSessionsPage, getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');

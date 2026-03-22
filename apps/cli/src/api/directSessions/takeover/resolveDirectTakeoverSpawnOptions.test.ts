@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { RawSessionRecord } from '@/sessionControl/sessionsHttp';
+import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { LoadedLinkedDirectSession } from './loadLinkedDirectSession';
 import { resolveDirectTakeoverSpawnOptions } from './resolveDirectTakeoverSpawnOptions';
 
@@ -19,39 +20,6 @@ vi.mock('@/configuration', () => ({
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
-}
-
-async function writeFakeCodexAppServerScript(params: Readonly<{
-  dir: string;
-  nonArchivedThreads?: Array<Record<string, unknown>>;
-  archivedThreads?: Array<Record<string, unknown>>;
-}>): Promise<string> {
-  const scriptPath = join(params.dir, 'fake-codex-app-server.mjs');
-  const script = [
-    '#!/usr/bin/env node',
-    'import readline from "node:readline";',
-    `const nonArchivedThreads = ${JSON.stringify(params.nonArchivedThreads ?? [])};`,
-    `const archivedThreads = ${JSON.stringify(params.archivedThreads ?? [])};`,
-    'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
-    'for await (const line of rl) {',
-    '  if (!line.trim()) continue;',
-    '  const msg = JSON.parse(line);',
-    '  if (msg.method === "initialize") {',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake-codex-app-server", version: "0.0.0" } } }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  if (msg.method === "initialized") continue;',
-    '  if (msg.method === "thread/list") {',
-    '    const archived = msg.params?.archived === true;',
-    '    const data = archived ? archivedThreads : nonArchivedThreads;',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { data, nextCursor: null } }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
-    '}',
-  ].join('\n');
-  await writeFile(scriptPath, script, { encoding: 'utf8', mode: 0o755 });
-  return scriptPath;
 }
 
 function createLinkedCodexSessionFixture(params: Readonly<{
@@ -287,7 +255,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-direct-takeover-codex-app-server-cwd-'));
     const codexHome = join(root, '.codex');
     await mkdir(codexHome, { recursive: true });
-    const fakeAppServer = await writeFakeCodexAppServerScript({
+    const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
       dir: root,
       nonArchivedThreads: [{
         id: '22222222-2222-2222-2222-222222222222',

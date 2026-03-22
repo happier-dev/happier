@@ -8,17 +8,17 @@ const getOrCreateSessionByTagMock = vi.fn();
 const tryDecryptSessionMetadataMock = vi.fn();
 const updateSessionMetadataWithRetryMock = vi.fn();
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById: (...args: unknown[]) => fetchSessionByIdMock(...args),
   fetchSessionsPage: (...args: unknown[]) => fetchSessionsPageMock(...args),
   getOrCreateSessionByTag: (...args: unknown[]) => getOrCreateSessionByTagMock(...args),
 }));
 
-vi.mock('@/sessionControl/sessionEncryptionContext', () => ({
+vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
   tryDecryptSessionMetadata: (...args: unknown[]) => tryDecryptSessionMetadataMock(...args),
 }));
 
-vi.mock('@/sessionControl/updateSessionMetadataWithRetry', () => ({
+vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
   updateSessionMetadataWithRetry: (...args: unknown[]) => updateSessionMetadataWithRetryMock(...args),
 }));
 

@@ -3,13 +3,13 @@ import { createHash } from 'node:crypto';
 import type { SessionStoredMessageContent } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import type { RawSessionRecord } from '@/sessionControl/sessionsHttp';
-import { commitSessionStoredMessage } from '@/sessionControl/sessionsHttp';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
 import {
   encryptStoredSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
-} from '@/sessionControl/sessionEncryptionContext';
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import type { LoadedLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { getDirectSessionProviderOps } from '@/backends/catalog';
