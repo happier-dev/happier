@@ -27,6 +27,20 @@ import { createWorkspaceReplicationSourceOffer } from './transport/createWorkspa
 import type { WorkspaceReplicationSourceOffer } from './transport/createWorkspaceReplicationSourceOffer';
 import { listWorkspaceReplicationJobs } from './engine/listWorkspaceReplicationJobs';
 import { executeWorkspaceReplicationJobWithLocalRuntime } from './orchestration/executeWorkspaceReplicationJobWithLocalRuntime';
+import type { WorkspaceManifest } from '@happier-dev/protocol';
+import type { WorkspaceReplicationJobRecord } from './jobs/workspaceReplicationJobStore';
+
+type ReadonlyWorkspaceManifest = Readonly<{
+    entries: readonly WorkspaceManifest['entries'][number][];
+    fingerprint: WorkspaceManifest['fingerprint'];
+}>;
+
+function toMutableWorkspaceManifest(manifest: ReadonlyWorkspaceManifest): WorkspaceManifest {
+    return {
+        entries: manifest.entries.map((entry) => ({ ...entry })),
+        fingerprint: manifest.fingerprint,
+    };
+}
 
 export function createWorkspaceReplicationEngine(
     input: WorkspaceReplicationEngineInput,
@@ -68,16 +82,18 @@ export function createWorkspaceReplicationEngine(
         }>): Promise<WorkspaceReplicationPlanResult> {
             const relationship = await stores.relationships.ensureRelationship(params.scope);
             const baseline = await stores.baselines.load(params.scope);
-            const targetManifest = await scanManifestIntoCasImpl({
+            const scannedTargetManifest = await scanManifestIntoCasImpl({
                 activeServerDir: input.activeServerDir,
                 relationshipId: relationship.relationshipId,
                 workspaceRoot: params.targetWorkspaceRoot,
                 scmRegistry: input.scmRegistry,
             });
+            const targetManifest = toMutableWorkspaceManifest(scannedTargetManifest);
+            const sourceManifest = toMutableWorkspaceManifest(params.sourceManifest);
 
             const comparison = compareWorkspaceManifests({
                 previousManifest: targetManifest,
-                nextManifest: params.sourceManifest,
+                nextManifest: sourceManifest,
             });
             const plannedFileCount = comparison.added.length + comparison.changed.length + comparison.removed.length;
             const plannedByteCount = [
@@ -93,13 +109,13 @@ export function createWorkspaceReplicationEngine(
             if (params.scope.mode === 'one_way_safe' && baseline) {
                 const oneWaySafe = buildOneWaySafeReplicationPlan({
                     baseline,
-                    sourceManifest: params.sourceManifest,
+                    sourceManifest,
                     targetManifest,
                 });
                 return {
                     scope: params.scope,
                     baseline,
-                    sourceManifest: params.sourceManifest,
+                    sourceManifest,
                     targetManifest,
                     preflightSummary: {
                         plannedFileCount,
@@ -116,7 +132,7 @@ export function createWorkspaceReplicationEngine(
             return {
                 scope: params.scope,
                 baseline,
-                sourceManifest: params.sourceManifest,
+                sourceManifest,
                 targetManifest,
                 preflightSummary: {
                     plannedFileCount,
@@ -153,7 +169,8 @@ export function createWorkspaceReplicationEngine(
                 nowMs,
             })}`;
 
-            const initialStatus = {
+            const initialStatus: WorkspaceReplicationJobRecord = {
+                schemaVersion: 1,
                 jobId,
                 ...(params.correlationId ? { correlationId: params.correlationId } : {}),
                 relationshipId: relationship.relationshipId,
@@ -166,11 +183,18 @@ export function createWorkspaceReplicationEngine(
                     status: 'pending',
                     phase: 'planning',
                     checkpoint: 'job_created',
-                    progressCounters: {},
+                    progressCounters: {
+                        plannedFiles: 0,
+                        plannedBytes: 0,
+                        transferredFiles: 0,
+                        transferredBytes: 0,
+                        appliedFiles: 0,
+                        appliedBytes: 0,
+                    },
                     warnings: [],
                     blockingDivergenceCandidates: [],
                 },
-            } as const;
+            };
 
             await stores.jobs.write(initialStatus);
 

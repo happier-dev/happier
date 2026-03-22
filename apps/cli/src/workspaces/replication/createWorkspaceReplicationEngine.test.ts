@@ -179,6 +179,7 @@ describe('createWorkspaceReplicationEngine', () => {
         });
 
         const existingJobRecord: WorkspaceReplicationJobRecord = {
+            schemaVersion: 1,
             jobId: 'job_stub',
             correlationId: 'corr_stub',
             relationshipId: relationshipRecord.relationshipId,
@@ -191,7 +192,14 @@ describe('createWorkspaceReplicationEngine', () => {
                 status: 'pending',
                 phase: 'planning',
                 checkpoint: 'job_created',
-                progressCounters: {},
+                progressCounters: {
+                    plannedFiles: 0,
+                    plannedBytes: 0,
+                    transferredFiles: 0,
+                    transferredBytes: 0,
+                    appliedFiles: 0,
+                    appliedBytes: 0,
+                },
                 warnings: [],
                 blockingDivergenceCandidates: [],
             },
