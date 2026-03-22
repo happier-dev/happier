@@ -12,6 +12,7 @@ import {
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { logger } from '@/ui/logger';
+import { delay } from '@/utils/time';
 import { publishCodexSessionIdMetadata } from '../utils/codexSessionIdMetadata';
 import { resolveApprovalChoiceLabel } from '../runtime/codexRequestUserInputBridge';
 import {
@@ -252,6 +253,19 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (thinking === nextThinking) return;
         thinking = nextThinking;
         params.onThinkingChange(nextThinking);
+    };
+
+    const turnIdWaitTimeoutMs = 150;
+    const turnIdWaitPollMs = 10;
+    const waitForActiveTurnId = async (): Promise<string | null> => {
+        let turnId = pendingTurn?.turnId ?? latestPendingTurnId;
+        if (turnId) return turnId;
+        const waitStartedAt = Date.now();
+        while (!turnId && Date.now() - waitStartedAt < turnIdWaitTimeoutMs) {
+            await delay(turnIdWaitPollMs);
+            turnId = pendingTurn?.turnId ?? latestPendingTurnId;
+        }
+        return turnId ?? null;
     };
 
     const publishThreadId = (): void => {
@@ -921,7 +935,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 return;
             }
             const client = await ensureClient();
-            const interruptTurnId = activeTurn.turnId ?? latestPendingTurnId;
+            const interruptTurnId = (activeTurn.turnId ?? latestPendingTurnId) ?? (await waitForActiveTurnId());
             if (!interruptTurnId) {
                 // If we can't resolve the turn id, fall back to tearing down the runtime; this will
                 // abort the active work without relying on turn-scoped cancellation.
@@ -1023,7 +1037,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 throw new Error('Codex app-server steerPrompt requires an active turn');
             }
             const client = await ensureClient();
-            const expectedTurnId = activeTurn.turnId ?? latestPendingTurnId;
+            const expectedTurnId = (activeTurn.turnId ?? latestPendingTurnId) ?? (await waitForActiveTurnId());
             if (!expectedTurnId) {
                 throw new Error('Codex app-server steerPrompt requires an active turn id');
             }
