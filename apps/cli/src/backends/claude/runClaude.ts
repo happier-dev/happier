@@ -46,13 +46,13 @@ import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { createClaudeShouldTerminateOnUnhandledRejection } from './claudeUnhandledRejectionPolicy';
-    import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-    import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
-    import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
-        import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
-        import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
-        import { writeStartupOverridesCacheForBackend } from '@/agent/runtime/startup/startupOverridesCache';
-        import { createClaudeStartupSpec, type ClaudeStartupArtifacts } from '@/backends/claude/startup/createClaudeStartupSpec';
+import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
+import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
+import { writeStartupOverridesCacheForBackend } from '@/agent/runtime/startup/startupOverridesCache';
+import { createClaudeStartupSpec, type ClaudeStartupArtifacts } from '@/backends/claude/startup/createClaudeStartupSpec';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
@@ -65,6 +65,8 @@ import { resolveInitialClaudeSystemPromptText } from './utils/resolveInitialClau
 import { shouldStartClaudeSessionCaffeinate } from './sessionCaffeinatePolicy';
 import { ensureManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
 import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
+import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -106,7 +108,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.debug(`[CLAUDE] ===== CLAUDE MODE STARTING =====`);
     logger.debug(`[CLAUDE] This is the Claude agent, NOT Gemini`);
     
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveRequestedSessionDirectory();
     const sessionTag = randomUUID();
 
     // Log environment info at startup
@@ -720,27 +722,18 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         try {
             if (session) {
                 if (outcome.archive) {
-                    updateMetadataBestEffort(
-                        session,
-                        (currentMetadata) => ({
-                            ...currentMetadata,
-                            lifecycleState: 'archived',
-                            lifecycleStateSince: Date.now(),
-                            archivedBy: 'cli',
-                            archiveReason: outcome.archiveReason ?? 'User terminated',
-                        }),
-                        '[claude]',
-                        'archive_on_exit',
-                    );
+                    await archiveAndCloseRuntimeSession(session, credentials, outcome.archiveReason);
                 }
 
                 // Cleanup session resources (intervals, callbacks)
                 currentSession?.cleanup();
 
-                // Send session death message
-                session.sendSessionDeath();
-                await session.flush();
-                await session.close();
+                if (!outcome.archive) {
+                    // Send session death message
+                    session.sendSessionDeath();
+                    await session.flush();
+                    await session.close();
+                }
             }
 
             // Stop caffeinate
@@ -865,7 +858,7 @@ function cleanupClaudeSessionBestEffort(session: unknown): void {
 }
 
 async function runClaudeLocalFastStart(credentials: Credentials, options: StartOptions): Promise<void> {
-    const workingDirectory = process.cwd();
+    const workingDirectory = resolveRequestedSessionDirectory();
     const sessionTag = randomUUID();
 
     const startedBy: 'terminal' | 'daemon' = options.startedBy ?? 'terminal';

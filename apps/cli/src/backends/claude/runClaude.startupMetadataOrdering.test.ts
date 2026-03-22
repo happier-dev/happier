@@ -39,6 +39,10 @@ let metadataUpdateDeferred: Deferred<void>;
 let currentMetadataVersion = 1;
 
 const applyStartupMetadataUpdateToSessionMock = vi.fn(() => metadataUpdateDeferred.promise);
+const createSessionMetadataMock = vi.fn(() => ({
+    state: { controlledByUser: false },
+    metadata: { path: '/tmp/project', terminal: null },
+}));
 const initializeRuntimeOverridesSynchronizerMock = vi.fn(async () => ({
     seedFromSession: async () => {
         throw stopAfterSeed;
@@ -93,10 +97,7 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
 }));
 
 vi.mock('@/agent/runtime/createSessionMetadata', () => ({
-    createSessionMetadata: vi.fn(() => ({
-        state: { controlledByUser: false },
-        metadata: { path: '/tmp/project', terminal: null },
-    })),
+    createSessionMetadata: createSessionMetadataMock,
 }));
 
 vi.mock('@/agent/runtime/createBaseSessionForAttach', () => ({
@@ -317,5 +318,40 @@ describe('runClaude startup metadata ordering', () => {
         metadataUpdateDeferred.resolve();
 
         await expect(runPromise).resolves.toBe(stopAfterSeed);
+    });
+
+    it('uses the requested directory seed instead of a canonicalized cwd during remote startup', async () => {
+        currentMetadataVersion = 1;
+        const previousRequestedDirectory = process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
+        process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = '/tmp/requested-remote-directory';
+        try {
+            const { runClaude } = await import('./runClaude');
+
+            const runPromise = runClaude(testCredentials, {
+                startedBy: 'daemon',
+                startingMode: 'remote',
+            }).then(
+                () => 'resolved',
+                (error) => error,
+            );
+
+            await waitFor(() => createSessionMetadataMock.mock.calls.length === 1);
+
+            expect(createSessionMetadataMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    directory: '/tmp/requested-remote-directory',
+                }),
+            );
+
+            metadataUpdateDeferred.resolve();
+
+            await expect(runPromise).resolves.toBe(stopAfterSeed);
+        } finally {
+            if (previousRequestedDirectory === undefined) {
+                delete process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
+            } else {
+                process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = previousRequestedDirectory;
+            }
+        }
     });
 });
