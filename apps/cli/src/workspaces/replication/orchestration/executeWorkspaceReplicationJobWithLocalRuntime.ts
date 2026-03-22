@@ -8,6 +8,7 @@ import type {
     ScmSourceControllerWorkspaceTransferConflictPolicy,
     ScmSourceControllerWorkspaceTransferStrategy,
 } from '@/scm/sourceController/workspaceTransfer';
+import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import { createWorkspaceReplicationBaselineStore } from '../baseline/workspaceReplicationBaselineStore';
 import type { WorkspaceReplicationJobStore } from '../jobs/workspaceReplicationJobStore';
@@ -17,6 +18,7 @@ import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspa
 import { buildWorkspaceReplicationBlobPacks } from '../transport/buildWorkspaceReplicationBlobPacks';
 import { receiveWorkspaceReplicationBlobPack } from '../transport/receiveWorkspaceReplicationBlobPack';
 import { applyWorkspaceReplicationPlan } from '../apply/applyWorkspaceReplicationPlan';
+import { buildOneWaySafeReplicationPlan } from '../planning/buildOneWaySafeReplicationPlan';
 import { assertWorkspaceReplicationJobNotCancelled } from '../safety/assertWorkspaceReplicationJobNotCancelled';
 import { scanWorkspaceManifestIntoCas } from '../scan/scanWorkspaceManifestIntoCas';
 
@@ -40,6 +42,18 @@ function countAppliedFiles(offer: WorkspaceReplicationSourceOffer): number {
     return total;
 }
 
+type ReadonlyWorkspaceManifest = Readonly<{
+    entries: readonly WorkspaceManifest['entries'][number][];
+    fingerprint?: WorkspaceManifest['fingerprint'];
+}>;
+
+function toMutableWorkspaceManifest(manifest: ReadonlyWorkspaceManifest): WorkspaceManifest {
+    return {
+        entries: manifest.entries.map((entry) => ({ ...entry })),
+        ...(manifest.fingerprint ? { fingerprint: manifest.fingerprint } : {}),
+    };
+}
+
 export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Readonly<{
     activeServerDir: string;
     jobStore: WorkspaceReplicationJobStore;
@@ -60,21 +74,71 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
         registry?: ScmBackendRegistry;
     }>;
 }>): Promise<Awaited<ReturnType<typeof executeWorkspaceReplicationJob>>> {
-    const baselineStore = createWorkspaceReplicationBaselineStore({
-        activeServerDir: params.activeServerDir,
-    });
+  const baselineStore = createWorkspaceReplicationBaselineStore({
+    activeServerDir: params.activeServerDir,
+  });
 
-    return await executeWorkspaceReplicationJob({
-        activeServerDir: params.activeServerDir,
-        jobStore: params.jobStore,
-        relationships: params.relationships,
-        jobId: params.jobId,
-        now: params.now,
-        resolveSourceOfferById: params.resolveSourceOfferById,
-        transferMissingBlobsToTargetCas: async ({ job, offer, missingDigests }) => {
-            const missingDigestsSet = new Set(missingDigests);
-            const missingBlobs = offer.blobIndex.filter((blob) => missingDigestsSet.has(blob.digest));
-            const packs = buildWorkspaceReplicationBlobPacks({
+  let cachedScannedTargetManifest:
+    | Awaited<ReturnType<typeof scanWorkspaceManifestIntoCas>>
+    | null = null;
+
+  async function getScannedTargetManifest(offer: WorkspaceReplicationSourceOffer) {
+    if (cachedScannedTargetManifest) {
+      return cachedScannedTargetManifest;
+    }
+    cachedScannedTargetManifest = await scanWorkspaceManifestIntoCas({
+      activeServerDir: params.activeServerDir,
+      relationshipId: offer.relationshipId,
+      workspaceRoot: params.apply.targetPath,
+      scmRegistry: params.apply.registry,
+    });
+    return cachedScannedTargetManifest;
+  }
+
+  return await executeWorkspaceReplicationJob({
+    activeServerDir: params.activeServerDir,
+    jobStore: params.jobStore,
+    relationships: params.relationships,
+    jobId: params.jobId,
+    now: params.now,
+    resolveSourceOfferById: params.resolveSourceOfferById,
+    assertSafeToApply: async ({ offer }) => {
+      if (params.relationshipScope.mode !== 'one_way_safe') {
+        return null;
+      }
+      if (params.apply.strategy !== 'sync_changes') {
+        return null;
+      }
+
+      const baseline = await baselineStore.load(params.relationshipScope);
+      if (!baseline) {
+        return null;
+      }
+
+      const targetManifest = toMutableWorkspaceManifest(await getScannedTargetManifest(offer));
+	      const safePlan = buildOneWaySafeReplicationPlan({
+	        baseline,
+	        sourceManifest: toMutableWorkspaceManifest(offer.manifest),
+	        targetManifest,
+	      });
+	      if (!safePlan.hasTargetDivergence) {
+	        return null;
+	      }
+
+	      const candidates =
+	        safePlan.blockingTargetDivergencePaths.length > 0
+	          ? safePlan.blockingTargetDivergencePaths
+	          : safePlan.targetDivergencePaths;
+	      const count = candidates.length;
+	      return {
+	        blockingDivergenceCandidates: candidates,
+	        lastErrorMessage: `Target workspace diverged since last baseline (${count} paths)`,
+	      };
+	    },
+    transferMissingBlobsToTargetCas: async ({ job, offer, missingDigests }) => {
+      const missingDigestsSet = new Set(missingDigests);
+      const missingBlobs = offer.blobIndex.filter((blob) => missingDigestsSet.has(blob.digest));
+      const packs = buildWorkspaceReplicationBlobPacks({
                 blobs: missingBlobs,
                 blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
                 blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
@@ -125,12 +189,7 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
 
             let currentTargetManifest: { entries: typeof offer.manifest.entries; fingerprint?: string } | undefined;
             if (params.apply.strategy === 'sync_changes') {
-                const scanned = await scanWorkspaceManifestIntoCas({
-                    activeServerDir: params.activeServerDir,
-                    relationshipId: offer.relationshipId,
-                    workspaceRoot: params.apply.targetPath,
-                    scmRegistry: params.apply.registry,
-                });
+                const scanned = await getScannedTargetManifest(offer);
                 currentTargetManifest = {
                     entries: scanned.entries.map((entry) => ({ ...entry })),
                 };
