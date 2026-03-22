@@ -3,7 +3,10 @@ import { cpSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'n
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { bundledWorkspacePackages } from './workspaceBundleManifest.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
+export { bundledWorkspacePackages } from './workspaceBundleManifest.mjs';
 
 function findRepoRoot(startDir) {
   let dir = startDir;
@@ -78,7 +81,8 @@ export function syncBundledWorkspaceDist(opts = {}) {
   const cp = opts.cpSync ?? cpSync;
   const readFile = opts.readFileSync ?? readFileSync;
   const writeFile = opts.writeFileSync ?? writeFileSync;
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'protocol'];
+  const packages =
+    Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : bundledWorkspacePackages;
 
   for (const pkg of packages) {
     const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
@@ -99,6 +103,21 @@ export function syncBundledWorkspaceDist(opts = {}) {
     } catch {
       // Best-effort: keep local bundled deps usable even if package.json sync fails.
     }
+  }
+}
+
+export function resolveBundledWorkspaceBuildEntry(pkg, opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const readFile = opts.readFileSync ?? readFileSync;
+  const packageJsonPath = resolve(repoRoot, 'packages', pkg, 'package.json');
+
+  try {
+    const packageJson = JSON.parse(readFile(packageJsonPath, 'utf8'));
+    const mainEntry = typeof packageJson?.main === 'string' && packageJson.main.trim() ? packageJson.main : './dist/index.js';
+    return resolve(repoRoot, 'packages', pkg, mainEntry);
+  } catch {
+    return resolve(repoRoot, 'packages', pkg, 'dist', 'index.js');
   }
 }
 
@@ -134,13 +153,15 @@ function sanitizeBundledWorkspacePackageJson(raw) {
 }
 
 export function main() {
-  runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+  for (const pkg of bundledWorkspacePackages) {
+    runTsc(resolve(repoRoot, 'packages', pkg, 'tsconfig.json'));
+  }
 
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
-    throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
+  for (const pkg of bundledWorkspacePackages) {
+    const distEntry = resolveBundledWorkspaceBuildEntry(pkg, { repoRoot });
+    if (!existsSync(distEntry)) {
+      throw new Error(`Expected @happier-dev/${pkg} build output missing: ${distEntry}`);
+    }
   }
 
   // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
