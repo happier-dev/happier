@@ -1,7 +1,6 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -9,6 +8,7 @@ import {
   cleanupRegisteredOpenCodeManagedServerHomesBestEffort,
   registerOpenCodeManagedServerHomeForCleanup,
 } from './opencodeManagedServerCleanupRegistry';
+import { spawnDetachedInlineNodeTestProcess } from '../../process/testSpawn';
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -42,12 +42,10 @@ describe('opencodeManagedServerCleanupRegistry', () => {
     const opencodeDir = join(homeDir, 'opencode');
     await mkdir(opencodeDir, { recursive: true });
 
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    const child = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
       stdio: 'ignore',
-      detached: true,
     });
     if (!child.pid) throw new Error('Failed to spawn child process');
-    child.unref();
     childPids.push(child.pid);
 
     await writeFile(

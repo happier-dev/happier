@@ -6,10 +6,9 @@ import { randomUUID } from 'node:crypto';
 import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from '../types';
 import { hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
 import { shapeOf, stableStringifyShape } from '../shape';
-import { fetchMessagesSince, fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
+import { fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
 import { sleep } from '../../timing';
-import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
 import { repoRootDir } from '../../paths';
 import {
   resolveAcpOutsideWorkspaceWriteAllowed,
@@ -19,10 +18,25 @@ import {
   yoloFlagForPermissionMode,
 } from '../permissions/acpPermissionPrompts';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createUserScopedSocketCollector } from '../../socketClient';
 import { withCapabilityProbeRetry } from '../harness/capabilityRetry';
 import { enrichCapabilityProbeError } from '../harness/capabilityProbeFailure';
-import { withTimeoutMs } from '../../timing/withTimeout';
+import {
+  callSessionScopedRpc,
+  enqueueSessionPromptForScenario,
+  invokeCapabilitiesMethod,
+  waitForAssistantMessageContaining,
+  waitForSessionActive,
+} from './sessionRuntime';
+import {
+  abortContinuationFollowupSubstrings,
+  acpProviderId,
+  acpResumeMetadataKey,
+  assertProviderId,
+  claudeAgentTeamsCreateAndSpawnPrompt,
+  isOpenCodeFamilyProvider,
+  tuneResumeScenarioForProvider,
+  withKimiUnknownToolFixtureAliases,
+} from './scenarioCatalogSupport';
 import {
   makeAcpEditResultIncludesDiffScenario,
   makeAcpGlobListFilesScenario,
@@ -47,11 +61,12 @@ import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harnes
 
 type ScenarioFactory = (provider: ProviderUnderTest) => ProviderScenario;
 
-function nonEmptyTrimmedString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+export { abortContinuationFollowupSubstrings } from './scenarioCatalogSupport';
+export {
+  invokeRpcAcrossMachineIds,
+  resolveMachineIdCandidatesFromSettings,
+  resolveMachineIdsFromSettings,
+} from './runtimeHelpers';
 
 function capabilityProbePostSatisfyTimeoutMs(providerId: string): number {
   return providerId === 'gemini' ? 180_000 : 120_000;
@@ -66,550 +81,6 @@ function capabilityProbeRetryOptions(providerId: string): { attempts: number; de
     return { attempts: 1, delayMs: 500 };
   }
   return { attempts: 3, delayMs: 500 };
-}
-
-export function resolveMachineIdCandidatesFromSettings(settingsLike: unknown): string[] {
-  if (!settingsLike || typeof settingsLike !== 'object') return [];
-  const settings = settingsLike as Record<string, unknown>;
-  const out: string[] = [];
-
-  const push = (value: unknown) => {
-    const next = nonEmptyTrimmedString(value);
-    if (!next) return;
-    if (!out.includes(next)) out.push(next);
-  };
-
-  push(settings.machineId);
-
-  const activeServerId = nonEmptyTrimmedString(settings.activeServerId);
-  const byServerRaw = settings.machineIdByServerId;
-  const byServer = byServerRaw && typeof byServerRaw === 'object' && !Array.isArray(byServerRaw)
-    ? (byServerRaw as Record<string, unknown>)
-    : null;
-  if (activeServerId && byServer) {
-    push(byServer[activeServerId]);
-  }
-  if (byServer) {
-    for (const value of Object.values(byServer)) {
-      push(value);
-    }
-  }
-
-  return out;
-}
-
-async function waitForSessionActive(params: {
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-  timeoutMs: number;
-}): Promise<void> {
-  const deadline = Date.now() + params.timeoutMs;
-  while (Date.now() < deadline) {
-    const snap = await fetchSessionV2(params.baseUrl, params.token, params.sessionId).catch(() => null);
-    if (snap?.active === true) return;
-    await sleep(250);
-  }
-  throw new Error(`Timed out waiting for session active (${params.sessionId})`);
-}
-
-async function resolveMachineIdsFromSettings(params: {
-  settingsPath: string;
-  timeoutMs: number;
-}): Promise<string[]> {
-  const deadline = Date.now() + params.timeoutMs;
-  while (Date.now() < deadline) {
-    const raw = await readFile(params.settingsPath, 'utf8').catch(() => '');
-    if (raw) {
-      try {
-        const json = JSON.parse(raw);
-        const ids = resolveMachineIdCandidatesFromSettings(json);
-        if (ids.length > 0) return ids;
-      } catch {
-        // ignore and retry
-      }
-    }
-    await sleep(100);
-  }
-  return [];
-}
-
-export async function invokeRpcAcrossMachineIds(params: {
-  ui: ReturnType<typeof createUserScopedSocketCollector>;
-  machineIds: string[];
-  method: string;
-  payload: unknown;
-  secret: Uint8Array;
-  timeoutMs: number;
-}): Promise<unknown> {
-  const encrypted = encryptLegacyBase64(params.payload, params.secret);
-  const deadline = Date.now() + params.timeoutMs;
-  let lastMethodUnavailable: unknown = null;
-
-  while (Date.now() < deadline) {
-    const remainingMs = deadline - Date.now();
-    // Bound each rpcCall attempt by the remaining overall time budget so probes can't hang.
-    const rpcAckTimeoutMs = Math.max(1, Math.min(remainingMs, 300_000));
-    let unresolvedForAllCandidates = true;
-
-    for (const machineId of params.machineIds) {
-      const rpcMethod = `${machineId}:${params.method}`;
-      try {
-        const candidate = await withTimeoutMs({
-          promise: params.ui.rpcCall<any>(rpcMethod, encrypted, rpcAckTimeoutMs),
-          timeoutMs: rpcAckTimeoutMs,
-          label: `rpcCall ${rpcMethod}`,
-        });
-        if (candidate && typeof candidate === 'object' && candidate.ok === true) {
-          const decrypted = decryptLegacyBase64(String((candidate as any).result ?? ''), params.secret);
-          return decrypted;
-        }
-
-        const errorCode =
-          candidate && typeof candidate === 'object' && typeof (candidate as any).errorCode === 'string'
-            ? String((candidate as any).errorCode)
-            : '';
-        if (errorCode === 'RPC_METHOD_NOT_AVAILABLE') {
-          lastMethodUnavailable = { machineId, candidate };
-          continue;
-        }
-
-        throw new Error(
-          `rpc ${params.method} failed: ${JSON.stringify(
-            candidate && typeof candidate === 'object' ? candidate : { candidate },
-            null,
-            2,
-          )}`,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const normalized = message.toLowerCase();
-        if (normalized.includes('timed out') || normalized.includes('timeout')) {
-          lastMethodUnavailable = { machineId, error: message };
-          continue;
-        }
-        if (message.includes('RPC_METHOD_NOT_AVAILABLE')) {
-          lastMethodUnavailable = { machineId, error: message };
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    if (unresolvedForAllCandidates) {
-      const pauseMs = Math.min(250, Math.max(0, deadline - Date.now()));
-      if (pauseMs > 0) await sleep(pauseMs);
-    }
-  }
-
-  throw new Error(
-    `rpc ${params.method} unavailable after wait (${JSON.stringify(
-      lastMethodUnavailable ?? { errorCode: 'RPC_METHOD_NOT_AVAILABLE' },
-      null,
-      2,
-    )})`,
-  );
-}
-
-async function invokeCapabilitiesMethod(params: {
-  baseUrl: string;
-  token: string;
-  cliHome: string;
-  secret: Uint8Array;
-  rpcMethod: typeof RPC_METHODS.CAPABILITIES_INVOKE | typeof RPC_METHODS.CAPABILITIES_DETECT;
-  payload: unknown;
-  timeoutMs?: number;
-}): Promise<unknown> {
-  const settingsPath = join(params.cliHome, 'settings.json');
-  const machineIds = await resolveMachineIdsFromSettings({ settingsPath, timeoutMs: 15_000 });
-  if (machineIds.length === 0) {
-    throw new Error(`machineId not found in settings.json (${settingsPath})`);
-  }
-
-  const ui = createUserScopedSocketCollector(params.baseUrl, params.token);
-  ui.connect();
-  const startedConnectAt = Date.now();
-  while (!ui.isConnected() && Date.now() - startedConnectAt < 15_000) {
-    await sleep(50);
-  }
-  if (!ui.isConnected()) {
-    ui.close();
-    throw await enrichCapabilityProbeError({
-      error: new Error('timed out connecting user socket'),
-      cliHome: params.cliHome,
-      context: params.rpcMethod,
-    });
-  }
-
-  try {
-    try {
-      return await invokeRpcAcrossMachineIds({
-        ui,
-        machineIds,
-        method: params.rpcMethod,
-        payload: params.payload,
-        secret: params.secret,
-        timeoutMs: params.timeoutMs ?? 90_000,
-      });
-    } catch (error) {
-      throw await enrichCapabilityProbeError({
-        error,
-        cliHome: params.cliHome,
-        context: params.rpcMethod,
-      });
-    }
-  } finally {
-    ui.close();
-  }
-}
-
-async function callSessionScopedRpc(params: {
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-  method: string;
-  payload: unknown;
-  secret: Uint8Array;
-  timeoutMs?: number;
-}): Promise<unknown> {
-  const ui = createUserScopedSocketCollector(params.baseUrl, params.token);
-  ui.connect();
-  const startedConnectAt = Date.now();
-  while (!ui.isConnected() && Date.now() - startedConnectAt < 15_000) {
-    await sleep(50);
-  }
-  if (!ui.isConnected()) {
-    ui.close();
-    throw new Error(`timed out connecting user socket for ${params.sessionId}:${params.method}`);
-  }
-
-  try {
-    const encrypted = encryptLegacyBase64(params.payload, params.secret);
-    const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 30_000;
-    const response = await ui.rpcCall<any>(`${params.sessionId}:${params.method}`, encrypted, timeoutMs);
-    if (!response || typeof response !== 'object' || response.ok !== true) {
-      throw new Error(`session rpc ${params.method} returned non-ok response`);
-    }
-    const resultRaw = (response as any).result;
-    if (typeof resultRaw !== 'string' || resultRaw.length === 0) return null;
-    return decryptLegacyBase64(resultRaw, params.secret);
-  } finally {
-    ui.close();
-  }
-}
-
-async function enqueueSessionPromptForScenario(params: {
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-  secret: Uint8Array;
-  text: string;
-  meta?: Record<string, unknown>;
-}): Promise<void> {
-  const localId = randomUUID();
-  const payload = {
-    role: 'user',
-    content: { type: 'text', text: params.text },
-    localId,
-    meta: {
-      source: 'ui',
-      sentFrom: 'e2e',
-      ...(params.meta ?? {}),
-    },
-  };
-  const ciphertext = encryptLegacyBase64(payload, params.secret);
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 30_000) {
-    const res = await enqueuePendingQueueV2({
-      baseUrl: params.baseUrl,
-      token: params.token,
-      sessionId: params.sessionId,
-      localId,
-      ciphertext,
-      timeoutMs: 20_000,
-    }).catch(() => null);
-    if (res?.status === 200) return;
-    await sleep(100);
-  }
-  throw new Error(`timed out enqueueing prompt for ${params.sessionId}`);
-}
-
-async function waitForAssistantMessageContaining(params: {
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-  secret: Uint8Array;
-  requiredSubstring?: string;
-  requiredSubstrings?: string[];
-  afterSeqStart?: number;
-  allowAnyAssistantMessage?: boolean;
-  timeoutMs: number;
-}): Promise<void> {
-  const deadline = Date.now() + params.timeoutMs;
-  let afterSeq = typeof params.afterSeqStart === 'number' ? params.afterSeqStart : 0;
-  const streamedTextByKey = new Map<string, string>();
-  const requiredSubstring = typeof params.requiredSubstring === 'string' && params.requiredSubstring.length > 0
-    ? params.requiredSubstring
-    : null;
-  const requiredSubstrings = Array.isArray(params.requiredSubstrings)
-    ? params.requiredSubstrings
-      .filter((value): value is string => typeof value === 'string')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-    : [];
-  while (Date.now() < deadline) {
-    const rows = await fetchMessagesSince({
-      baseUrl: params.baseUrl,
-      token: params.token,
-      sessionId: params.sessionId,
-      afterSeq,
-    }).catch(() => []);
-
-    if (rows.length > 0) {
-      afterSeq = Math.max(afterSeq, ...rows.map((row) => row.seq));
-    }
-
-    for (const row of rows) {
-      try {
-        const decrypted = decryptLegacyBase64(row.content.c, params.secret) as any;
-        if (!decrypted || typeof decrypted !== 'object') continue;
-        const role = typeof decrypted.role === 'string' ? decrypted.role : '';
-        if (params.allowAnyAssistantMessage === true) return;
-
-        const candidateTexts: string[] = [];
-        const meta = decrypted.meta && typeof decrypted.meta === 'object' ? (decrypted.meta as Record<string, unknown>) : null;
-        const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
-        const sidechainStreamKey =
-          meta && typeof meta.happierSidechainStreamKey === 'string' ? String(meta.happierSidechainStreamKey) : null;
-        const anyStreamKey = streamKey ?? sidechainStreamKey;
-
-        if (role === 'assistant') {
-          if (typeof decrypted.content === 'string') {
-            candidateTexts.push(decrypted.content);
-          } else if (decrypted.content && typeof decrypted.content === 'object') {
-            const content = decrypted.content as Record<string, unknown>;
-            const text = typeof content.text === 'string' ? content.text : '';
-            if (text) candidateTexts.push(text);
-            const parts = Array.isArray(content.parts) ? content.parts : [];
-            for (const part of parts) {
-              if (!part || typeof part !== 'object') continue;
-              const partText = typeof (part as Record<string, unknown>).text === 'string' ? String((part as Record<string, unknown>).text) : '';
-              if (partText) candidateTexts.push(partText);
-            }
-          }
-        }
-
-        if (role === 'agent') {
-          const content = decrypted.content && typeof decrypted.content === 'object'
-            ? (decrypted.content as Record<string, unknown>)
-            : null;
-          if (content?.type === 'acp') {
-            const data = content.data && typeof content.data === 'object'
-              ? (content.data as Record<string, unknown>)
-              : null;
-            if (data?.type === 'message' && typeof data.message === 'string') {
-              candidateTexts.push(data.message);
-              if (anyStreamKey) {
-                const prev = streamedTextByKey.get(anyStreamKey) ?? '';
-                const next = prev + data.message;
-                streamedTextByKey.set(anyStreamKey, next);
-                candidateTexts.push(next);
-              }
-            }
-          }
-        }
-
-        const raw = JSON.stringify(decrypted);
-        const haystacks = [...candidateTexts, raw];
-        if (requiredSubstring && haystacks.some((value) => value.includes(requiredSubstring))) return;
-        if (requiredSubstrings.length > 0 && requiredSubstrings.every((needle) => haystacks.some((value) => value.includes(needle)))) return;
-      } catch {
-        // ignore malformed row
-      }
-    }
-
-    await sleep(250);
-  }
-  if (requiredSubstring) {
-    throw new Error(`Timed out waiting for assistant message containing ${requiredSubstring}`);
-  }
-  if (requiredSubstrings.length > 0) {
-    throw new Error(`Timed out waiting for assistant message containing all required substrings (${requiredSubstrings.join(', ')})`);
-  }
-  throw new Error('Timed out waiting for assistant message');
-}
-
-function assertProviderId(provider: ProviderUnderTest, expected: ProviderUnderTest['id']): void {
-  if (provider.id !== expected) throw new Error(`Scenario is only supported for provider ${expected} (got ${provider.id})`);
-}
-
-function isOpenCodeFamilyProvider(provider: ProviderUnderTest): boolean {
-  return provider.id === 'opencode' || provider.id === 'opencode_server';
-}
-
-function acpProviderId(provider: ProviderUnderTest): string {
-  return provider.traceProvider ?? provider.id;
-}
-
-function acpResumeMetadataKey(providerId: ProviderUnderTest['id']): string {
-  if (providerId === 'codex') return 'codexSessionId';
-  if (providerId === 'kilo') return 'kiloSessionId';
-  if (providerId === 'gemini') return 'geminiSessionId';
-  if (providerId === 'qwen') return 'qwenSessionId';
-  if (providerId === 'kimi') return 'kimiSessionId';
-  if (providerId === 'auggie') return 'auggieSessionId';
-  return 'opencodeSessionId';
-}
-
-function claudeAgentTeamsCreateAndSpawnPrompt(teamId: string): string {
-  return [
-    'This is an automated E2E test for Claude Code Agent Teams.',
-    'You MUST execute the following tool calls, in order:',
-    '',
-    `1) TeamCreate: create a team with team_name="${teamId}".`,
-    '2) Task: spawn teammate Alpha (run_in_background=true).',
-    '3) Task: spawn teammate Beta (run_in_background=true).',
-    '',
-    'Rules:',
-    '- Do not use Bash.',
-    '- Do not read or write files.',
-    '- Do not answer until steps 1–3 are complete.',
-    '- Then reply DONE.',
-    '',
-    'If you do not see the TeamCreate tool available, reply ONLY: NO_AGENT_TEAMS.',
-  ].join('\n');
-}
-
-export function abortContinuationFollowupSubstrings(
-  providerId: ProviderUnderTest['id'],
-  followupSentinel: string,
-  memorySentinel: string,
-): string[] {
-  if (providerId === 'kimi' || providerId === 'auggie' || providerId === 'kilo' || providerId === 'pi') return [followupSentinel];
-  return [followupSentinel, memorySentinel];
-}
-
-function relaxAuggieResumeScenario(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
-  if (provider.id !== 'auggie') return scenario;
-  return {
-    ...scenario,
-    requiredAnyFixtureKeys: undefined,
-    requiredTraceSubstrings: undefined,
-  };
-}
-
-function tuneResumeScenarioForProvider(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
-  const auggieRelaxed = relaxAuggieResumeScenario(provider, scenario);
-  if (provider.id !== 'codex') return auggieRelaxed;
-  return {
-    ...auggieRelaxed,
-    inactivityTimeoutMs: 240_000,
-  };
-}
-
-function appendKimiUnknownFixtureAlias(key: string): string[] {
-  const normalized = key.trim();
-  if (!normalized.startsWith('acp/kimi/')) return [key];
-  const parts = normalized.split('/');
-  if (parts.length !== 4) return [key];
-  const kind = parts[2];
-  const toolName = parts[3];
-  if (toolName === 'unknown') return [key];
-  if (kind !== 'tool-call' && kind !== 'tool-result' && kind !== 'permission-request') return [key];
-  return [key, `acp/kimi/${kind}/unknown`];
-}
-
-function withKimiUnknownToolFixtureAliases(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
-  if (provider.id !== 'kimi') return scenario;
-
-  const dedupeKeys = (keys: string[] | undefined): string[] | undefined => {
-    if (!Array.isArray(keys) || keys.length === 0) return keys;
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const key of keys) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(key);
-    }
-    return out;
-  };
-
-  const dedupeAliasBucket = (bucket: string[]): string[] => {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const key of bucket) {
-      for (const alias of appendKimiUnknownFixtureAlias(key)) {
-        if (seen.has(alias)) continue;
-        seen.add(alias);
-        out.push(alias);
-      }
-    }
-    return out;
-  };
-
-  const dedupeBuckets = (buckets: string[][] | undefined): string[][] | undefined => {
-    if (!Array.isArray(buckets) || buckets.length === 0) return buckets;
-    return buckets.map((bucket) => dedupeAliasBucket(bucket));
-  };
-
-  const aliasRequiredKeysIntoAnyBuckets = (
-    keys: string[] | undefined,
-  ): { requiredFixtureKeys: string[] | undefined; requiredAnyFixtureKeys: string[][] | undefined } => {
-    if (!Array.isArray(keys) || keys.length === 0) {
-      return { requiredFixtureKeys: keys, requiredAnyFixtureKeys: undefined };
-    }
-
-    const requiredFixtureKeys: string[] = [];
-    const requiredAnyFixtureKeys: string[][] = [];
-    for (const key of keys) {
-      const aliases = dedupeKeys(appendKimiUnknownFixtureAlias(key)) ?? [key];
-      if (aliases.length <= 1) {
-        requiredFixtureKeys.push(key);
-        continue;
-      }
-      requiredAnyFixtureKeys.push(aliases);
-    }
-
-    return {
-      requiredFixtureKeys: dedupeKeys(requiredFixtureKeys),
-      requiredAnyFixtureKeys: dedupeBuckets(requiredAnyFixtureKeys),
-    };
-  };
-
-  const mergeAnyBuckets = (left: string[][] | undefined, right: string[][] | undefined): string[][] | undefined => {
-    if (!left && !right) return undefined;
-    return dedupeBuckets([...(left ?? []), ...(right ?? [])]);
-  };
-
-  const steps = Array.isArray(scenario.steps)
-    ? scenario.steps.map((step) => {
-      if (!step?.satisfaction) return step;
-      const split = aliasRequiredKeysIntoAnyBuckets(step.satisfaction.requiredFixtureKeys);
-      return {
-        ...step,
-        satisfaction: {
-          ...step.satisfaction,
-          requiredFixtureKeys: split.requiredFixtureKeys,
-          requiredAnyFixtureKeys: mergeAnyBuckets(
-            split.requiredAnyFixtureKeys,
-            dedupeBuckets(step.satisfaction.requiredAnyFixtureKeys),
-          ),
-        },
-      };
-    })
-    : scenario.steps;
-
-  const split = aliasRequiredKeysIntoAnyBuckets(scenario.requiredFixtureKeys);
-  return {
-    ...scenario,
-    requiredFixtureKeys: split.requiredFixtureKeys,
-    requiredAnyFixtureKeys: mergeAnyBuckets(
-      split.requiredAnyFixtureKeys,
-      dedupeBuckets(scenario.requiredAnyFixtureKeys),
-    ),
-    steps,
-  };
 }
 
 function outsideWorkspaceScenarioIdByMode(mode: Exclude<AcpPermissionMode, 'plan'>): string {
@@ -2634,6 +2105,7 @@ await server.connect(new StdioServerTransport());
       throw new Error(`task_subagent_reply only supports OpenCode-family providers (got ${provider.id})`);
     }
     const pid = acpProviderId(provider);
+    const sidechainToolName = provider.id === 'opencode_server' ? 'Task' : 'SubAgent';
     return {
       id: 'task_subagent_reply',
       title: 'subagent: returns a child session id in tool-result metadata',
@@ -2643,7 +2115,7 @@ await server.connect(new StdioServerTransport());
       // Also allow a small number of extra tool results in case the provider emits summary/metadata updates.
       maxTraceEvents: { toolCalls: 25, toolResults: 4 },
       // Sidechain import is asynchronous; wait for it while the CLI is still alive (pre-stop).
-      postSatisfy: { waitForAcpSidechainFromToolName: 'SubAgent', timeoutMs: 120_000 },
+      postSatisfy: { waitForAcpSidechainFromToolName: sidechainToolName, timeoutMs: 120_000 },
       prompt: ({ workspaceDir }) =>
         [
           'Run exactly one tool call:',

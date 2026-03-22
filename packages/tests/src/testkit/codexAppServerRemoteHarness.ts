@@ -6,7 +6,6 @@ import { join, resolve } from 'node:path';
 import { createTestAuth, type TestAuth } from './auth';
 import { seedCliAuthForServer } from './cliAuth';
 import { writeCliSessionAttachFile } from './cliAttachFile';
-import { decryptLegacyBase64Normalized } from './decryptLegacyBase64Normalized';
 import { stopDaemonFromHomeDir } from './daemon/daemon';
 import { writeTestManifestForServer } from './manifestForServer';
 import { encryptLegacyBase64 } from './messageCrypto';
@@ -15,7 +14,6 @@ import { startServerLight, type StartedServer } from './process/serverLight';
 import { spawnLoggedProcess, type SpawnedProcess } from './process/spawnProcess';
 import { yarnCommand } from './process/commands';
 import { createSessionWithCiphertexts, fetchSessionV2, type SessionV2 } from './sessions';
-import { waitFor } from './timing';
 
 export type FakeCodexAppServerRequest = Readonly<{
   method?: string;
@@ -132,6 +130,7 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
   cliEnvOverrides?: NodeJS.ProcessEnv;
   manifestEnv?: Record<string, string>;
   metadataOverrides?: Record<string, unknown>;
+  waitForPublishedMetadata?: boolean;
 }>): Promise<StartedCodexAppServerRemoteHarness> {
   const startedAt = new Date().toISOString();
   const server = await startServerLight({
@@ -229,20 +228,6 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
   };
 
   try {
-    const baseline = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-    const baselineAgentStateVersion = baseline.agentStateVersion;
-
-    await waitFor(async () => {
-      const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      const metadata = decryptLegacyBase64Normalized(snap.metadata, secret) as Record<string, unknown> | null;
-      return Boolean(
-        (snap.active === true || (typeof snap.agentStateVersion === 'number' && snap.agentStateVersion > baselineAgentStateVersion))
-        && metadata
-        && metadata.codexBackendMode === 'appServer'
-        && metadata.codexSessionId === sessionId,
-      );
-    }, { timeoutMs: 45_000, context: `${params.testName} session starts and publishes metadata` });
-
     return {
       server,
       serverBaseUrl,

@@ -20,7 +20,7 @@ export async function callLegacyEncryptedSessionRpc<TReq, TRes>(params: {
   schema: ParseSchema<TRes>;
   timeoutMs?: number;
 }): Promise<TRes> {
-  let out: TRes | null = null;
+  let out: TRes | undefined;
   let lastAck: unknown = null;
   let lastDecrypted: unknown = null;
 
@@ -62,7 +62,7 @@ export async function callLegacyEncryptedSessionRpc<TReq, TRes>(params: {
     );
   }
 
-  if (!out) {
+  if (out === undefined) {
     throw new Error(
       `RPC call did not return a valid response: ${params.method}; ack=${JSON.stringify(lastAck)} decrypted=${JSON.stringify(lastDecrypted)}`,
     );

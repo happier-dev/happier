@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createRunDirs } from '../../runDir';
 import { startServerLight, type StartedServer } from '../../process/serverLight';
 import { createTestAuth } from '../../auth';
-import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesSince, fetchSessionV2 } from '../../sessions';
+import { createSessionWithCiphertexts, fetchMessagesSince, fetchSessionV2 } from '../../sessions';
 import { envFlag } from '../../env';
 import { writeTestManifestForServer } from '../../manifestForServer';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from '../../process/spawnProcess';
@@ -15,11 +15,9 @@ import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
 import { writeCliSessionAttachFile } from '../../cliAttachFile';
 import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../../daemon/daemon';
 import { sleep } from '../../timing';
-import { createUserScopedSocketCollector, type CapturedEvent } from '../../socketClient';
-import { parsePositiveInt } from '../../numbers';
+import { createUserScopedSocketCollector } from '../../socketClient';
 import { which, yarnCommand } from '../../process/commands';
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt } from '../../process/cliDist';
-import { fetchJson } from '../../http';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2';
 import { seedCliAuthForServer } from '../../cliAuth';
 
@@ -45,13 +43,29 @@ import { checkMaxTraceEvents, filterImportedTraceEvents, scenarioSatisfiedByTrac
 import { scenarioSatisfiedByMessages } from '../satisfaction/messageSatisfaction';
 import { loadProvidersFromCliSpecs } from '../specs/providerSpecs';
 import { waitForAcpSidechainMessages } from '../assertions';
-import { scenarioCatalog } from '../scenarios/scenarioCatalog';
 import { resolveProviderAuthOverlay } from './providerAuthOverlay';
 import { applyCliDevTsxTsconfigEnv, applyHomeIsolationEnv } from './harnessEnv';
 import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPermissionPrompts';
 import { stopOpenCodeManagedServerFromHomeDir } from '../opencode/stopOpenCodeManagedServerFromHomeDir';
 import { normalizeDecodedTranscriptValue } from '../normalizeDecodedTranscriptValue';
 import { registerOpenCodeManagedServerHomeForCleanup } from './opencodeManagedServerCleanupRegistry';
+import {
+  buildProviderDevCommandArgs,
+  resolveAllowPermissionAutoApproveInYolo as resolveAllowPermissionAutoApproveInYoloFromCommandArgs,
+  resolveCodexCliPermissionArgs,
+  resolveProviderModelCliArgs,
+  resolveYoloCliArgs,
+  resolveYoloForScenario,
+} from './commandArgs';
+import { formatProviderSkipWarning, resetProviderFailureReport, writeProviderFailureReport } from './failureReports';
+import { parseScenarioFilter, resolveScenarioById, resolveScenariosForProvider, selectScenariosFromRegistry } from './scenarioSelection';
+import {
+  appendProviderTokenTelemetryEntries,
+  ensureProviderTokenTelemetryEntries,
+  extractProviderTokenTelemetryEntries,
+  resolveProviderTokenLedgerPath,
+  type ProviderTokenTelemetryEntryV1,
+} from './tokenLedger';
 import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
@@ -73,32 +87,32 @@ import {
   waitForSessionActiveBestEffort,
 } from './harnessSignals';
 
-export function buildProviderDevCommandArgs(params: Readonly<{
-  providerSubcommand: string;
-  sessionId: string;
-  yoloCliArgs: readonly string[];
-  permissionCliArgs: readonly string[];
-  modelCliArgs: readonly string[];
-  extraCliArgs: readonly string[];
-  scenarioCliArgs: readonly string[];
-  providerCliExtraArgs: readonly string[];
-}>): string[] {
-  return [
-    '-s',
-    'workspace',
-    '@happier-dev/cli',
-    'dev',
-    params.providerSubcommand,
-    '--existing-session',
-    params.sessionId,
-    ...params.yoloCliArgs,
-    ...params.permissionCliArgs,
-    ...params.modelCliArgs,
-    ...params.extraCliArgs,
-    ...params.scenarioCliArgs,
-    ...params.providerCliExtraArgs,
-  ];
-}
+export {
+  buildProviderDevCommandArgs,
+  resolveCodexCliPermissionArgs,
+  resolveProviderModelCliArgs,
+  resolveYoloCliArgs,
+  resolveYoloForScenario,
+} from './commandArgs';
+
+export {
+  formatProviderSkipWarning,
+  resetProviderFailureReport,
+  writeProviderFailureReport,
+} from './failureReports';
+
+export {
+  parseScenarioFilter,
+  resolveScenarioById,
+  resolveScenariosForProvider,
+  selectScenariosFromRegistry,
+} from './scenarioSelection';
+
+export {
+  ensureProviderTokenTelemetryEntries,
+  extractProviderTokenTelemetryEntries,
+  type ProviderTokenTelemetryEntryV1,
+} from './tokenLedger';
 
 export {
   extractFatalAgentErrorMessage,
@@ -120,371 +134,8 @@ export {
 
 type ToolTraceEventV1 = ProviderTraceEvent;
 
-export type ProviderTokenTelemetryEntryV1 = {
-  v: 1;
-  providerId: string;
-  scenarioId: string;
-  phase: 'single' | 'phase1' | 'phase2';
-  sessionId: string;
-  key: string;
-  timestamp: number;
-  tokens: Record<string, number>;
-  modelId: string | null;
-  source:
-    | 'socket-ephemeral-usage'
-    | 'socket-update-token-count'
-    | 'session-message-token-count'
-    | 'missing-usage';
-};
-
-type ProviderTokenTelemetryReportV1 = {
-  v: 1;
-  runId: string;
-  generatedAt: number;
-  entries: ProviderTokenTelemetryEntryV1[];
-};
-
 const run = createRunDirs({ runLabel: 'providers' });
 const shouldLogProviderProgress = envFlag('HAPPIER_E2E_PROVIDER_LOG_PROGRESS', false);
-
-function formatProviderSkipWarning(params: { providerId: string; reason: string }): string {
-  const cleaned = params.reason.replace(/\s+/g, ' ').trim();
-  const compact = cleaned.length > 240 ? `${cleaned.slice(0, 237)}...` : cleaned;
-  return `[providers] skipping ${params.providerId}: ${compact}`;
-}
-
-type ProviderFailureReportV1 = {
-  v: 1;
-  providerId: string;
-  scenarioId: string;
-  error: string;
-  ts: number;
-};
-
-function providerFailureReportPathFromEnv(): string | null {
-  const raw = (
-    process.env.HAPPIER_E2E_PROVIDER_FAILURE_REPORT_PATH ??
-    process.env.HAPPY_E2E_PROVIDER_FAILURE_REPORT_PATH ??
-    ''
-  ).trim();
-  return raw.length > 0 ? raw : null;
-}
-
-async function resetProviderFailureReport(): Promise<void> {
-  const reportPath = providerFailureReportPathFromEnv();
-  if (!reportPath) return;
-  await rm(reportPath, { force: true }).catch(() => undefined);
-}
-
-async function writeProviderFailureReport(params: {
-  providerId: string;
-  scenarioId: string;
-  error: string;
-}): Promise<void> {
-  const reportPath = providerFailureReportPathFromEnv();
-  if (!reportPath) return;
-  const payload: ProviderFailureReportV1 = {
-    v: 1,
-    providerId: params.providerId,
-    scenarioId: params.scenarioId,
-    error: params.error,
-    ts: Date.now(),
-  };
-  await writeFile(reportPath, JSON.stringify(payload, null, 2), 'utf8').catch(() => undefined);
-}
-
-function providerTokenTelemetryReportPath(): string {
-  const raw = (
-    process.env.HAPPIER_E2E_PROVIDER_TOKEN_LEDGER_PATH ??
-    process.env.HAPPY_E2E_PROVIDER_TOKEN_LEDGER_PATH ??
-    ''
-  ).trim();
-  if (raw.length > 0) return resolve(raw);
-  return resolve(join(run.runDir, 'provider-token-ledger.v1.json'));
-}
-
-function normalizeTokenNumberMap(raw: unknown): Record<string, number> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const out: Record<string, number> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
-    out[key] = value;
-  }
-  return out;
-}
-
-export async function extractProviderTokenTelemetryEntries(params: {
-  providerId: string;
-  scenarioId: string;
-  phase: 'single' | 'phase1' | 'phase2';
-  sessionId: string;
-  modelId: string | null;
-  events: CapturedEvent[];
-  secret?: Uint8Array;
-  baseUrl?: string;
-  token?: string;
-  allowSessionMessageTokenCountFallback?: boolean;
-}): Promise<ProviderTokenTelemetryEntryV1[]> {
-  const out: ProviderTokenTelemetryEntryV1[] = [];
-  for (const event of params.events) {
-    if (event.kind !== 'ephemeral') continue;
-    const payload = event.payload as Record<string, unknown> | undefined;
-    if (!payload || payload.type !== 'usage') continue;
-
-    const keyRaw = typeof payload.key === 'string' ? payload.key.trim() : '';
-    const key = keyRaw.length > 0 ? keyRaw : 'unknown';
-    const timestamp = typeof payload.timestamp === 'number' && Number.isFinite(payload.timestamp) ? payload.timestamp : event.at;
-    const tokens = normalizeTokenNumberMap(payload.tokens);
-    if (Object.keys(tokens).length === 0) continue;
-
-    out.push({
-      v: 1,
-      providerId: params.providerId,
-      scenarioId: params.scenarioId,
-      phase: params.phase,
-      sessionId: params.sessionId,
-      key,
-      timestamp,
-      tokens,
-      modelId: params.modelId,
-      source: 'socket-ephemeral-usage',
-    });
-  }
-  if (out.length > 0) return out;
-
-  if (!params.secret) return out;
-
-  const tokenCountEntries: ProviderTokenTelemetryEntryV1[] = [];
-  for (const event of params.events) {
-    if (event.kind !== 'update') continue;
-    const body = event.payload?.body;
-    if (!body || typeof body !== 'object') continue;
-    const typedBody = body as { t?: unknown; message?: unknown };
-    if (typedBody.t !== 'new-message') continue;
-    const message = typedBody.message;
-    if (!message || typeof message !== 'object') continue;
-    const content = (message as { content?: unknown }).content;
-    if (!content || typeof content !== 'object') continue;
-    const encrypted = (content as { c?: unknown }).c;
-    if (typeof encrypted !== 'string' || encrypted.trim().length === 0) continue;
-
-    const decrypted = decryptLegacyBase64(encrypted, params.secret);
-    if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) continue;
-    const envelope = decrypted as Record<string, unknown>;
-    let record: Record<string, unknown> | null = null;
-    if (envelope.type === 'token_count') {
-      record = envelope;
-    } else {
-      const content = envelope.content;
-      if (content && typeof content === 'object' && !Array.isArray(content)) {
-        const contentRecord = content as Record<string, unknown>;
-        if (contentRecord.type === 'acp') {
-          const data = contentRecord.data;
-          if (data && typeof data === 'object' && !Array.isArray(data)) {
-            const dataRecord = data as Record<string, unknown>;
-            if (dataRecord.type === 'token_count') {
-              record = dataRecord;
-            }
-          }
-        }
-      }
-    }
-    if (!record) continue;
-
-    const keyRaw = typeof record.key === 'string' ? record.key.trim() : '';
-    const key = keyRaw.length > 0 ? keyRaw : 'unknown';
-
-    const modelRaw = typeof record.model === 'string'
-      ? record.model.trim()
-      : typeof record.modelId === 'string'
-        ? record.modelId.trim()
-        : '';
-    const modelId = modelRaw.length > 0 ? modelRaw : params.modelId;
-
-    const nestedTokens = normalizeTokenNumberMap(record.tokens);
-    const topLevelTokens = normalizeTokenNumberMap({
-      input: record.input_tokens ?? record.input ?? record.prompt_tokens,
-      output: record.output_tokens ?? record.output ?? record.completion_tokens,
-      cache_creation: record.cache_creation_input_tokens ?? record.cache_creation,
-      cache_read: record.cache_read_input_tokens ?? record.cache_read,
-      thought: record.thought_tokens ?? record.thought,
-      total: record.total_tokens ?? record.total,
-    });
-
-    const tokens = Object.keys(nestedTokens).length > 0 ? nestedTokens : topLevelTokens;
-    if (Object.keys(tokens).length === 0) continue;
-
-    if (tokens.total == null) {
-      const total =
-        (tokens.input ?? 0) +
-        (tokens.output ?? 0) +
-        (tokens.cache_creation ?? 0) +
-        (tokens.cache_read ?? 0) +
-        (tokens.thought ?? 0);
-      tokens.total = total;
-    }
-
-    tokenCountEntries.push({
-      v: 1,
-      providerId: params.providerId,
-      scenarioId: params.scenarioId,
-      phase: params.phase,
-      sessionId: params.sessionId,
-      key,
-      timestamp: event.at,
-      tokens,
-      modelId,
-      source: 'socket-update-token-count',
-    });
-  }
-
-  if (tokenCountEntries.length > 0) return tokenCountEntries;
-
-  const baseUrl = typeof params.baseUrl === 'string' ? params.baseUrl.trim() : '';
-  const token = typeof params.token === 'string' ? params.token.trim() : '';
-  const allowFallback = params.allowSessionMessageTokenCountFallback === true;
-  if (!allowFallback || !baseUrl || !token) return tokenCountEntries;
-
-  // Some providers commit ACP token_count as a normal session message but do not always
-  // broadcast it to all user-scoped sockets. As a fallback, scan committed session messages.
-  try {
-    // Intentionally fetch all messages: provider scenarios are short, and this is only used
-    // when the socket path yields no token telemetry.
-    const rows = (await fetchAllMessages(baseUrl, token, params.sessionId)) as Array<{
-      id: string;
-      createdAt: number;
-      content: { t: 'encrypted'; c: string };
-    }>;
-
-    const fromMessages: ProviderTokenTelemetryEntryV1[] = [];
-    for (const row of rows) {
-      const encrypted = row?.content?.c;
-      if (typeof encrypted !== 'string' || encrypted.trim().length === 0) continue;
-      const decrypted = decryptLegacyBase64(encrypted, params.secret);
-      if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) continue;
-
-      const envelope = decrypted as Record<string, unknown>;
-      let record: Record<string, unknown> | null = null;
-      if (envelope.type === 'token_count') {
-        record = envelope;
-      } else {
-        const content = envelope.content;
-        if (content && typeof content === 'object' && !Array.isArray(content)) {
-          const contentRecord = content as Record<string, unknown>;
-          if (contentRecord.type === 'acp') {
-            const data = contentRecord.data;
-            if (data && typeof data === 'object' && !Array.isArray(data)) {
-              const dataRecord = data as Record<string, unknown>;
-              if (dataRecord.type === 'token_count') {
-                record = dataRecord;
-              }
-            }
-          }
-        }
-      }
-      if (!record) continue;
-
-      const nestedTokens = normalizeTokenNumberMap(record.tokens);
-      const topLevelTokens = normalizeTokenNumberMap({
-        input: record.input_tokens ?? record.input ?? record.prompt_tokens,
-        output: record.output_tokens ?? record.output ?? record.completion_tokens,
-        cache_creation: record.cache_creation_input_tokens ?? record.cache_creation,
-        cache_read: record.cache_read_input_tokens ?? record.cache_read,
-        thought: record.thought_tokens ?? record.thought,
-        total: record.total_tokens ?? record.total,
-      });
-
-      const tokens = Object.keys(nestedTokens).length > 0 ? nestedTokens : topLevelTokens;
-      if (Object.keys(tokens).length === 0) continue;
-      if (tokens.total == null) {
-        const total =
-          (tokens.input ?? 0) +
-          (tokens.output ?? 0) +
-          (tokens.cache_creation ?? 0) +
-          (tokens.cache_read ?? 0) +
-          (tokens.thought ?? 0);
-        tokens.total = total;
-      }
-
-      const keyRaw = typeof record.key === 'string' ? record.key.trim() : '';
-      const key = keyRaw.length > 0 ? keyRaw : typeof row.id === 'string' ? row.id : 'unknown';
-
-      const modelRaw = typeof record.model === 'string'
-        ? record.model.trim()
-        : typeof record.modelId === 'string'
-          ? record.modelId.trim()
-          : '';
-      const modelId = modelRaw.length > 0 ? modelRaw : params.modelId;
-
-      const createdAt = typeof row.createdAt === 'number' && Number.isFinite(row.createdAt) ? row.createdAt : Date.now();
-
-      fromMessages.push({
-        v: 1,
-        providerId: params.providerId,
-        scenarioId: params.scenarioId,
-        phase: params.phase,
-        sessionId: params.sessionId,
-        key,
-        timestamp: createdAt,
-        tokens,
-        modelId,
-        source: 'session-message-token-count',
-      });
-    }
-
-    return fromMessages;
-  } catch {
-    return tokenCountEntries;
-  }
-}
-
-export function ensureProviderTokenTelemetryEntries(params: {
-  providerId: string;
-  scenarioId: string;
-  phase: 'single' | 'phase1' | 'phase2';
-  sessionId: string;
-  modelId: string | null;
-  extracted: ProviderTokenTelemetryEntryV1[];
-}): ProviderTokenTelemetryEntryV1[] {
-  if (Array.isArray(params.extracted) && params.extracted.length > 0) return params.extracted;
-  return [
-    {
-      v: 1,
-      providerId: params.providerId,
-      scenarioId: params.scenarioId,
-      phase: params.phase,
-      sessionId: params.sessionId,
-      key: 'missing-usage',
-      timestamp: Date.now(),
-      tokens: {},
-      modelId: params.modelId,
-      source: 'missing-usage',
-    },
-  ];
-}
-
-async function appendProviderTokenTelemetryEntries(entries: ProviderTokenTelemetryEntryV1[]): Promise<void> {
-  if (!Array.isArray(entries) || entries.length === 0) return;
-  const reportPath = providerTokenTelemetryReportPath();
-  let existingEntries: ProviderTokenTelemetryEntryV1[] = [];
-  try {
-    const raw = await readFileText(reportPath);
-    const parsed = JSON.parse(raw) as Partial<ProviderTokenTelemetryReportV1>;
-    if (parsed && parsed.v === 1 && Array.isArray(parsed.entries)) {
-      existingEntries = parsed.entries as ProviderTokenTelemetryEntryV1[];
-    }
-  } catch {
-    // Best-effort merge.
-  }
-
-  const next: ProviderTokenTelemetryReportV1 = {
-    v: 1,
-    runId: run.runId,
-    generatedAt: Date.now(),
-    entries: [...existingEntries, ...entries],
-  };
-  await writeFile(reportPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
-}
 
 export function findFirstToolCallIdByName(events: Array<Pick<ToolTraceEventV1, 'kind' | 'payload'>>, toolName: string): string | null {
   for (const e of events) {
@@ -579,11 +230,6 @@ export async function autoResolvePendingPermissionRequests(params: {
   return { blockedInYolo, approvedIds };
 }
 
-function resolveYoloForScenario(scenario: ProviderScenario): boolean {
-  if (typeof scenario.yolo === 'boolean') return scenario.yolo;
-  return envFlag('HAPPIER_E2E_PROVIDER_YOLO_DEFAULT', true);
-}
-
 function normalizeAcpPermissionMode(raw: unknown): 'default' | 'safe-yolo' | 'read-only' | 'yolo' | 'plan' | null {
   if (typeof raw !== 'string') return null;
   const value = raw.trim();
@@ -606,16 +252,15 @@ export function resolveAllowPermissionAutoApproveInYolo(params: {
   scenarioMeta: Record<string, unknown>;
   yolo: boolean;
 }): boolean {
-  if (params.scenario.allowPermissionAutoApproveInYolo === true) return true;
-  if (!params.yolo || params.provider.protocol !== 'acp') return false;
-
-  const mode = resolveScenarioPermissionMode({
+  return resolveAllowPermissionAutoApproveInYoloFromCommandArgs({
+    provider: params.provider,
+    scenario: params.scenario,
     scenarioMeta: params.scenarioMeta,
     yolo: params.yolo,
-  });
-  return resolveAcpToolPermissionPromptExpectation({
-    acpPermissions: params.provider.permissions?.acp,
-    mode,
+    resolvePromptExpectation: ({ acpPermissions, mode }) => resolveAcpToolPermissionPromptExpectation({
+      acpPermissions,
+      mode,
+    }),
   });
 }
 
@@ -632,92 +277,6 @@ export async function mirrorHostAuthStateForProvider(params: {
   void params.mode;
   void params.hostHomeDir;
   void params.cliHome;
-}
-
-export function resolveCodexCliPermissionArgs(params: {
-  providerSubcommand: string;
-  yolo: boolean;
-  scenarioMeta: Record<string, unknown>;
-}): string[] {
-  if (params.providerSubcommand !== 'codex') return [];
-
-  const raw = params.scenarioMeta.permissionMode;
-  const modeFromMeta = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
-  const mode = modeFromMeta ?? (params.yolo ? 'yolo' : null);
-  if (!mode) return [];
-
-  const updatedAtRaw = params.scenarioMeta.permissionModeUpdatedAt;
-  const updatedAt = typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw > 0
-    ? Math.floor(updatedAtRaw)
-    : Date.now();
-
-  return ['--permission-mode', mode, '--permission-mode-updated-at', String(updatedAt)];
-}
-
-export function resolveYoloCliArgs(params: {
-  providerSubcommand: string;
-  yolo: boolean;
-  hasExplicitPermissionModeArgs: boolean;
-}): string[] {
-  if (!params.yolo) return [];
-  if (params.hasExplicitPermissionModeArgs && params.providerSubcommand === 'codex') {
-    return [];
-  }
-  return ['--yolo'];
-}
-
-function normalizeProviderModelEnvSuffix(providerId: string): string {
-  return providerId
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-function parseProviderModelOverridesMap(raw: string | undefined, providerId: string): string | null {
-  const source = typeof raw === 'string' ? raw.trim() : '';
-  if (!source) return null;
-  const target = providerId.trim().toLowerCase();
-  if (!target) return null;
-
-  const entries = source
-    .split(/[\n,]/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  for (const entry of entries) {
-    const splitIndex = entry.indexOf('=');
-    if (splitIndex <= 0) continue;
-    const key = entry.slice(0, splitIndex).trim().toLowerCase();
-    const value = entry.slice(splitIndex + 1).trim();
-    if (key === target && value.length > 0) return value;
-  }
-  return null;
-}
-
-export function resolveProviderModelCliArgs(params: {
-  providerId: string;
-  env?: NodeJS.ProcessEnv;
-  nowMs?: () => number;
-}): string[] {
-  const env = params.env ?? process.env;
-  const providerSuffix = normalizeProviderModelEnvSuffix(params.providerId);
-  const providerModel =
-    env[`HAPPIER_E2E_PROVIDER_MODEL_${providerSuffix}`] ??
-    env[`HAPPY_E2E_PROVIDER_MODEL_${providerSuffix}`] ??
-    null;
-  const mappedModel =
-    parseProviderModelOverridesMap(
-      env.HAPPIER_E2E_PROVIDER_MODELS ?? env.HAPPY_E2E_PROVIDER_MODELS,
-      params.providerId,
-    ) ?? null;
-  const globalModel = env.HAPPIER_E2E_PROVIDER_MODEL ?? env.HAPPY_E2E_PROVIDER_MODEL ?? null;
-  const model = [providerModel, mappedModel, globalModel]
-    .find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0)
-    ?.trim();
-  if (!model) return [];
-
-  const now = Math.floor((params.nowMs ?? Date.now)());
-  return ['--model', model, '--model-updated-at', String(now)];
 }
 
 function resolveModelIdFromCliArgs(args: string[]): string | null {
@@ -920,93 +479,6 @@ async function waitForPendingQueueV2Drain(params: {
 async function readFileText(filePath: string): Promise<string> {
   const { readFile } = await import('node:fs/promises');
   return await readFile(filePath, 'utf8');
-}
-
-function resolveScenarioById(params: { provider: ProviderUnderTest; id: string; expectedTier?: 'smoke' | 'extended' }): ProviderScenario {
-  const factory = scenarioCatalog[params.id];
-  if (!factory) throw new Error(`Unknown scenario id: ${params.id}`);
-  const scenario = factory(params.provider);
-  if (!scenario || typeof scenario !== 'object') throw new Error(`Scenario factory returned invalid scenario: ${params.id}`);
-  if (scenario.id !== params.id) throw new Error(`Scenario factory returned mismatched id: expected ${params.id}, got ${scenario.id}`);
-  if (params.expectedTier) {
-    // If the scenario explicitly declares a tier, enforce it. Otherwise allow tierless scenarios
-    // (shared utilities like ACP capability probes) to be referenced from either tier.
-    const tier = scenario.tier as 'smoke' | 'extended' | undefined;
-    if (tier && tier !== params.expectedTier) {
-      throw new Error(`Scenario tier mismatch (${params.id}): expected ${params.expectedTier}, got ${tier}`);
-    }
-  }
-  return scenario;
-}
-
-export function resolveScenariosForProvider(params: { provider: ProviderUnderTest; tier: 'smoke' | 'extended' }): ProviderScenario[] {
-  const ids = (() => {
-    const registry = params.provider.scenarioRegistry as any;
-    const tiersByAuthMode = registry?.tiersByAuthMode as
-      | { host?: { smoke: string[]; extended: string[] }; env?: { smoke: string[]; extended: string[] } }
-      | undefined;
-    if (!tiersByAuthMode) return params.provider.scenarioRegistry.tiers[params.tier] ?? [];
-
-    // Best-effort: select the auth mode using the same overlay selection logic as the harness
-    // uses later when spawning the provider. This keeps scenario selection consistent with the
-    // chosen authentication mechanism (API key vs host-local CLI auth).
-    const baseEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...(params.provider.cli.env ?? {}),
-      ...Object.fromEntries(
-        Object.entries(params.provider.cli.envFrom ?? {}).flatMap(([dest, src]) => {
-          const value = typeof process.env[src] === 'string' ? process.env[src]!.trim() : '';
-          return value ? [[dest, value]] : [];
-        }),
-      ),
-    };
-    const { mode } = resolveProviderAuthOverlay({ auth: params.provider.auth, baseEnv });
-
-    const override = (tiersByAuthMode as any)?.[mode]?.[params.tier] as string[] | undefined;
-    return override ?? params.provider.scenarioRegistry.tiers[params.tier] ?? [];
-  })();
-  return ids.map((id) => resolveScenarioById({ provider: params.provider, id, expectedTier: params.tier }));
-}
-
-export function selectScenariosFromRegistry(params: {
-  scenarios: ProviderScenario[];
-  registry: ProviderUnderTest['scenarioRegistry'];
-  tier: 'smoke' | 'extended';
-}): ProviderScenario[] {
-  const ids = params.registry.tiers[params.tier] ?? [];
-  const byId = new Map(params.scenarios.map((s) => [s.id, s] as const));
-  const selected: ProviderScenario[] = [];
-
-  for (const id of ids) {
-    const s = byId.get(id);
-    if (!s) throw new Error(`Scenario registry references unknown scenario id: ${id}`);
-    const t = (s.tier ?? 'extended') as 'smoke' | 'extended';
-    if (t !== params.tier) {
-      throw new Error(`Scenario registry references scenario with mismatched tier (${id}): expected ${params.tier}, got ${t}`);
-    }
-    selected.push(s);
-  }
-
-  return selected;
-}
-
-function parseScenarioFilter(): { ids: Set<string> | null; tier: 'smoke' | 'extended' | null } {
-  const rawIds =
-    typeof (process.env.HAPPIER_E2E_PROVIDER_SCENARIOS ?? process.env.HAPPY_E2E_PROVIDER_SCENARIOS) === 'string'
-      ? (process.env.HAPPIER_E2E_PROVIDER_SCENARIOS ?? process.env.HAPPY_E2E_PROVIDER_SCENARIOS)?.trim() ?? ''
-      : '';
-  if (rawIds) {
-    const ids = new Set(rawIds.split(',').map((s) => s.trim()).filter((s) => s.length > 0));
-    return { ids: ids.size ? ids : null, tier: null };
-  }
-
-  const rawTier =
-    typeof (process.env.HAPPIER_E2E_PROVIDER_SCENARIO_TIER ?? process.env.HAPPY_E2E_PROVIDER_SCENARIO_TIER) === 'string'
-      ? (process.env.HAPPIER_E2E_PROVIDER_SCENARIO_TIER ?? process.env.HAPPY_E2E_PROVIDER_SCENARIO_TIER)?.trim() ?? ''
-      : '';
-  if (!rawTier) return { ids: null, tier: null };
-  const tier = rawTier === 'smoke' || rawTier === 'extended' ? rawTier : null;
-  return { ids: null, tier };
 }
 
 async function runOneScenario(params: {
@@ -1761,14 +1233,22 @@ async function runOneScenario(params: {
     // Merge tool traces from both phases for fixture extraction + baseline drift checks.
     mergedTraceFile = traceFileMerged;
     mergedTraceRaw = `${phase1.traceRaw.trimEnd()}\n${phase2.traceRaw.trimEnd()}\n`;
-    await (await import('node:fs/promises')).writeFile(mergedTraceFile, mergedTraceRaw, 'utf8');
+    await writeFile(mergedTraceFile, mergedTraceRaw, 'utf8');
 
-    await appendProviderTokenTelemetryEntries([
-      ...phase1.tokenTelemetryEntries,
-      ...phase2.tokenTelemetryEntries,
-    ]);
+    await appendProviderTokenTelemetryEntries({
+      entries: [
+        ...phase1.tokenTelemetryEntries,
+        ...phase2.tokenTelemetryEntries,
+      ],
+      reportPath: resolveProviderTokenLedgerPath(run.runDir),
+      runId: run.runId,
+    });
   } else {
-    await appendProviderTokenTelemetryEntries([...phase1.tokenTelemetryEntries]);
+    await appendProviderTokenTelemetryEntries({
+      entries: [...phase1.tokenTelemetryEntries],
+      reportPath: resolveProviderTokenLedgerPath(run.runDir),
+      runId: run.runId,
+    });
   }
 
   if (!existsSync(mergedTraceFile)) {
