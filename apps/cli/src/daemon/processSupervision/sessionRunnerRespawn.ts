@@ -55,7 +55,6 @@ function buildRespawnOptions(params: Readonly<{
     ...(effectiveResume ? { resume: effectiveResume } : {}),
     existingSessionId: params.sessionId,
     sessionId: undefined,
-    initialPrompt: undefined,
     approvedNewDirectoryCreation: true,
   };
 }

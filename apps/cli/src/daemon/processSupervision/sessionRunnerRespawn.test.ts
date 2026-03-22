@@ -115,6 +115,47 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(spawnSession).toHaveBeenCalledWith(expect.not.objectContaining({ resume: expect.anything() }));
   });
 
+  it('preserves daemon initialPrompt across respawn so startup delivery can recover after a crash', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 1,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-initial-prompt',
+      spawnOptions: {
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        initialPrompt: 'Recover this startup prompt after respawn.',
+      } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        existingSessionId: 'sess-initial-prompt',
+        initialPrompt: 'Recover this startup prompt after respawn.',
+        approvedNewDirectoryCreation: true,
+      }),
+    );
+  });
+
   it('does not respawn sessions that were not started by the daemon', async () => {
     vi.useFakeTimers();
     const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));

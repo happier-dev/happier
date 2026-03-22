@@ -262,7 +262,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(restored).not.toHaveProperty('workspaceCheckoutId');
   });
 
-  it('round-trips environment variables and connected-services bindings through the respawn descriptor', () => {
+  it('does not persist environment variables in the respawn descriptor but keeps connected-services bindings', () => {
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
       directory: '/tmp/repo',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -279,23 +279,16 @@ describe('sessionRunnerRespawnDescriptor', () => {
     } satisfies SpawnSessionOptions);
 
     expect(descriptor).toMatchObject({
-      environmentVariables: {
-        CODEX_HOME: '/tmp/codex-home',
-        OPENAI_API_KEY: 'test-key',
-      },
       connectedServices: {
         bindings: {
           codex: { profileId: 'work' },
         },
       },
     });
+    expect(descriptor).not.toHaveProperty('environmentVariables');
 
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
     expect(restored).toMatchObject({
-      environmentVariables: {
-        CODEX_HOME: '/tmp/codex-home',
-        OPENAI_API_KEY: 'test-key',
-      },
       connectedServices: {
         bindings: {
           codex: { profileId: 'work' },
@@ -303,5 +296,6 @@ describe('sessionRunnerRespawnDescriptor', () => {
       },
       approvedNewDirectoryCreation: true,
     });
+    expect(restored).not.toHaveProperty('environmentVariables');
   });
 });
