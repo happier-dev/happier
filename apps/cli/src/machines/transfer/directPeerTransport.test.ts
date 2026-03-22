@@ -145,11 +145,16 @@ describe('direct peer machine transfer', () => {
       now: () => 2_100,
     });
 
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-oversized-'));
+    const sourcePath = join(tempDir, 'payload.bin');
+
     try {
       const payload = Buffer.from('payload-too-large', 'utf8'); // > 8 bytes
+      await writeFile(sourcePath, payload);
+      const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
       const published = registry.publishTransfer({
         transferId: 'transfer_oversized',
-        payload,
+        payloadSource: createFileTransferPayloadSource({ filePath: sourcePath }),
       });
 
       await expect(requestDirectPeerTransferPayload({
@@ -159,7 +164,46 @@ describe('direct peer machine transfer', () => {
       })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
     } finally {
       await server.stop();
+      await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects publishing buffer-backed payloads larger than the in-memory max-bytes limit', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
+    const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 2_200,
+    });
+
+    expect(() => registry.publishTransfer({
+      transferId: 'transfer_publish_oversized',
+      payload: Buffer.from('payload-too-large', 'utf8'), // > 8 bytes
+    })).toThrow('Transfer exceeds the in-memory transfer size limit');
+  });
+
+  it('rejects publishing typed payloads larger than the in-memory max-bytes limit', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
+    const { createTypedDirectPeerTransferRegistry } = await import('./directPeerTransport');
+
+    const registry = createTypedDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      codec: {
+        encode: (value: unknown) => Buffer.from(JSON.stringify(value), 'utf8'),
+        decode: ({ payload }) => JSON.parse(payload.toString('utf8')) as unknown,
+      },
+      now: () => 2_300,
+    });
+
+    expect(() => registry.publishTransfer({
+      transferId: 'transfer_publish_typed_oversized',
+      payload: { value: 'payload-too-large' }, // JSON > 8 bytes
+    })).toThrow('Transfer exceeds the in-memory transfer size limit');
   });
 
   it('fetches a live published payload directly into a destination file with verified manifest metadata', async () => {
@@ -375,6 +419,49 @@ describe('direct peer machine transfer', () => {
     });
 
     expect(loaded.equals(payload)).toBe(true);
+  });
+
+  it('fails closed before decrypting when a peer returns an oversized chunk envelope for an in-memory transfer request', async () => {
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
+    const { requestDirectPeerTransferPayload } = await import('./directPeerTransport');
+
+    const fetchFn = async (input: string | URL | Request) => {
+      if (String(input).endsWith('/open')) {
+        return new Response(JSON.stringify({
+          transferId: 'transfer_chunk_oversized',
+          manifestHash: 'sha256:ignored',
+          totalChunks: 1,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        transferId: 'transfer_chunk_oversized',
+        kind: 'chunk',
+        sequence: 0,
+        payloadBase64: 'A'.repeat(128),
+        encryptedDataKeyEnvelopeBase64: 'AA==',
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    await expect(requestDirectPeerTransferPayload({
+      transferId: 'transfer_chunk_oversized',
+      endpointCandidates: [
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_chunk_oversized',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        },
+      ],
+      fetchFn: fetchFn as typeof fetch,
+      now: () => 5_000,
+    })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
   });
 
   it('roundtrips a handoff transferred-bundles payload through the typed direct-peer carrier', async () => {

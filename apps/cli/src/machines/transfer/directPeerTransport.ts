@@ -33,6 +33,8 @@ const DEFAULT_DIRECT_PEER_BIND_HOST = '0.0.0.0';
 const DIRECT_PEER_AUTH_SCHEME = 'Bearer';
 const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER = 'x-happier-transfer-recipient-public-key';
 
+const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce + auth tag
+
 function encodeDirectPeerTransferPathKey(transferId: string): string {
   return Buffer.from(transferId, 'utf8').toString('base64url');
 }
@@ -205,6 +207,10 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     if (!payloadSource) {
       throw new Error(`Direct peer transfer ${input.transferId} is missing a payload source`);
     }
+    const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
+    if (payloadSource.kind === 'buffer' && payloadSource.payload.length > inMemoryMaxBytes) {
+      throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
+    }
     const transferToken = randomBytes(24).toString('base64url');
     const expiresAt = now() + readDirectPeerTtlMs();
     const transferPathKey = encodeDirectPeerTransferPathKey(input.transferId);
@@ -311,6 +317,13 @@ function isDirectPeerTransferProtocolError(error: unknown): boolean {
     error.message.startsWith('Invalid direct peer transfer response for ')
     || error.message.startsWith('Direct peer transfer manifest mismatch for ')
   );
+}
+
+function estimateBase64DecodedBytes(value: string): number {
+  const raw = value.trim();
+  if (raw.length === 0) return 0;
+  const paddingBytes = raw.endsWith('==') ? 2 : raw.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((raw.length * 3) / 4) - paddingBytes);
 }
 
 export function createDirectPeerTransferApp(params: Readonly<{
@@ -478,6 +491,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   endpointCandidates: readonly TransferEndpointCandidate[];
   fetchFn?: typeof fetch;
   now?: () => number;
+  maxInMemoryPayloadBytes?: number;
   onChunk: (chunk: Buffer) => Promise<void> | void;
   onFinish: (manifestHash: string) => Promise<TPayload>;
   onAbort?: () => Promise<void> | void;
@@ -553,6 +567,16 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
         ) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
+        if (typeof params.maxInMemoryPayloadBytes === 'number' && params.maxInMemoryPayloadBytes > 0) {
+          const rawBase64 = parsedChunk.data.payloadBase64.trim();
+          const estimatedEncryptedBytes = estimateBase64DecodedBytes(rawBase64);
+          const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
+          // Fail closed before decrypting so untrusted peers can't force huge base64 decodes in "small-only" paths.
+          const maxEncodedChars = Math.ceil(maxEncryptedBytes / 3) * 4;
+          if (rawBase64.length > maxEncodedChars || estimatedEncryptedBytes > maxEncryptedBytes) {
+            throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
+          }
+        }
         await params.onChunk(decryptEncryptedTransferChunkEnvelope({
           transferId: params.transferId,
           sequence,
@@ -585,6 +609,7 @@ export async function requestDirectPeerTransferPayload(params: Readonly<{
   const chunks: Buffer[] = [];
   return await requestDirectPeerTransfer({
     ...params,
+    maxInMemoryPayloadBytes: maxBytes,
     onChunk: async (chunk) => {
       receivedBytes += chunk.length;
       if (receivedBytes > maxBytes) {

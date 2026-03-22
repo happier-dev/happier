@@ -91,6 +91,15 @@ describe('server routed machine transfer', () => {
     delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
   });
 
+  it('hard-clamps the in-memory transfer max-bytes env override to a bounded ceiling', async () => {
+    const { resolveInMemoryTransferMaxBytes, IN_MEMORY_TRANSFER_HARD_MAX_BYTES } = await import('./inMemoryTransferSizeLimit');
+
+    expect(resolveInMemoryTransferMaxBytes({
+      ...process.env,
+      HAPPIER_FILES_READ_MAX_BYTES: String(IN_MEMORY_TRANSFER_HARD_MAX_BYTES * 10),
+    })).toBe(IN_MEMORY_TRANSFER_HARD_MAX_BYTES);
+  });
+
   it('streams a payload across the machine channel and uses ack envelopes to advance chunk delivery', async () => {
     const { source, target, sentEnvelopes } = createLoopbackChannels();
     const payload = Buffer.from('handoff-payload-'.repeat(64), 'utf8');
@@ -369,6 +378,52 @@ describe('server routed machine transfer', () => {
     } finally {
       unregister();
     }
+  });
+
+  it('fails closed before decrypting when a source sends an oversized chunk envelope for an in-memory transfer request', async () => {
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
+    type Listener = (payload: MachineTransferReceiveEnvelope) => void;
+    const listeners = new Set<Listener>();
+
+    const target = {
+      onEnvelope(listener: Listener) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      sendEnvelope(payload: MachineTransferSendEnvelope) {
+        if (payload.targetMachineId !== 'machine_source' || payload.envelope.kind !== 'open') {
+          return;
+        }
+        void (async () => {
+          for (const listener of listeners) {
+            listener({
+              sourceMachineId: 'machine_source',
+              targetMachineId: 'machine_target',
+              envelope: {
+                transferId: 'transfer_chunk_oversized',
+                kind: 'chunk',
+                sequence: 0,
+                payloadBase64: 'A'.repeat(128),
+                encryptedDataKeyEnvelopeBase64: 'AA==',
+              },
+            });
+          }
+        })();
+      },
+    };
+
+    const { requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+
+    await expect(
+      requestServerRoutedTransferPayload({
+        transferId: 'transfer_chunk_oversized',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+      }),
+    ).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
   });
 
   it('ignores stale ack envelopes instead of rewinding chunk delivery', async () => {

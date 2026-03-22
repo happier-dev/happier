@@ -1,5 +1,10 @@
 import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
 
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   isServerRoutedTransferOverSizeLimit,
   resolveServerRoutedTransferMaxBytes,
@@ -8,7 +13,6 @@ import {
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 import {
   createEncryptedTransferChunkEnvelope,
-  createTransferManifestHash,
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
 } from './transferChunkEncryption';
@@ -25,6 +29,7 @@ import { readPositiveIntEnv } from '../../utils/readPositiveIntEnv';
 
 const DEFAULT_TRANSFER_TIMEOUT_MS = 90_000;
 const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
+const ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES = 1 + 12 + 16; // version + nonce + auth tag
 
 export type MachineTransferChannel = Readonly<{
   onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
@@ -52,6 +57,13 @@ function readTransferTimeoutMs(): number {
 
 function readTransferChunkBytes(): number {
   return readPositiveIntEnv('HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES', DEFAULT_TRANSFER_CHUNK_BYTES);
+}
+
+function estimateBase64DecodedBytes(value: string): number {
+  const raw = value.trim();
+  if (raw.length === 0) return 0;
+  const paddingBytes = raw.endsWith('==') ? 2 : raw.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((raw.length * 3) / 4) - paddingBytes);
 }
 
 function isReceiveOpenEnvelope(
@@ -273,6 +285,7 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
   sourceMachineId: string;
   machineTransferChannel: MachineTransferChannel;
   timeoutMs?: number;
+  maxInMemoryPayloadBytes?: number;
   onChunk: (chunk: Buffer, info: Readonly<{ sequence: number }>) => Promise<void> | void;
   onFinish: (manifestHash: string) => Promise<TPayload>;
   onAbort?: () => Promise<void> | void;
@@ -340,6 +353,13 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
             if (!encryptedDataKeyEnvelopeBase64) {
               throw new Error(`Machine transfer missing encrypted chunk key for ${params.transferId}`);
             }
+            if (typeof params.maxInMemoryPayloadBytes === 'number' && params.maxInMemoryPayloadBytes > 0) {
+              const estimatedEncryptedBytes = estimateBase64DecodedBytes(chunkEnvelope.payloadBase64);
+              const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
+              if (estimatedEncryptedBytes > maxEncryptedBytes) {
+                throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
+              }
+            }
             await params.onChunk(decryptEncryptedTransferChunkEnvelope({
               transferId: params.transferId,
               sequence: chunkEnvelope.sequence,
@@ -401,14 +421,15 @@ export async function requestServerRoutedTransferPayload(params: Readonly<{
 }>): Promise<Buffer> {
   const maxBytes = resolveServerRoutedTransferMaxBytes();
   const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
-  const chunks = new Map<number, Buffer>();
+  const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-payload-'));
+  const destinationPath = join(tempDir, `payload-${randomUUID()}.bin`);
+  const sink = await createTransferPayloadFileSink({ destinationPath });
   let receivedBytes = 0;
-  const payload = await requestServerRoutedTransfer({
+
+  return await requestServerRoutedTransfer({
     ...params,
-    onChunk: async (chunk, info) => {
-      if (chunks.has(info.sequence)) {
-        return;
-      }
+    maxInMemoryPayloadBytes: inMemoryMaxBytes,
+    onChunk: async (chunk, _info) => {
       receivedBytes += chunk.length;
       if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(receivedBytes, maxBytes)) {
         throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
@@ -416,27 +437,31 @@ export async function requestServerRoutedTransferPayload(params: Readonly<{
       if (receivedBytes > inMemoryMaxBytes) {
         throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
       }
-      chunks.set(info.sequence, chunk);
+      await sink.appendChunk(chunk);
     },
     onFinish: async (manifestHash) => {
-      const transferPayload = Buffer.concat(
-        [...chunks.entries()]
-          .sort(([left], [right]) => left - right)
-          .map(([, chunk]) => chunk),
-      );
-      if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(transferPayload.length, maxBytes)) {
-        throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      try {
+        const received = await sink.finalize(manifestHash);
+        if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(received.sizeBytes, maxBytes)) {
+          throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+        }
+        if (received.sizeBytes > inMemoryMaxBytes) {
+          throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
+        }
+
+        const payload = await readFile(received.destinationPath);
+        await rm(tempDir, { recursive: true, force: true });
+        return payload;
+      } catch (error) {
+        await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+        throw error;
       }
-      if (transferPayload.length > inMemoryMaxBytes) {
-        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
-      }
-      if (createTransferManifestHash(transferPayload) !== manifestHash) {
-        throw new Error(`Machine transfer manifest mismatch for ${params.transferId}`);
-      }
-      return transferPayload;
+    },
+    onAbort: async () => {
+      await sink.abort();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     },
   });
-  return payload;
 }
 
 export async function requestServerRoutedTransferToFile(params: Readonly<{
