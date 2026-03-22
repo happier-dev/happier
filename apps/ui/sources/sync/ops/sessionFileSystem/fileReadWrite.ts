@@ -1,146 +1,75 @@
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { encodeBase64 } from '@/encryption/base64';
-import { downloadBulkPayloadToFile } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
-import { mergeTransferChunks } from '@/sync/domains/transfers/runtime/mergeTransferChunks';
-import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
-import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { digest } from '@/platform/digest';
 import { canUseSessionRpc, readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import {
+    callDaemonSessionWriteFileRpc,
+    downloadDaemonSessionFileToBase64,
+    uploadDaemonSessionFileFromReader,
+} from '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles';
 
 import { readRpcErrorCode } from '../../runtime/rpcErrors';
 import {
-    INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-    callSessionMachineRpcWithFallback,
-  createSessionMachineRpcFallbackCaller,
-  rebasePathRequestToMachineTarget,
-  resolveDefaultSessionRpcFallbackRoute,
+  INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
 } from '../../runtime/sessionMachineRpcFallback';
 
-const SESSION_FILES_DOWNLOAD_INIT = 'daemon.sessionFiles.download.init';
-const SESSION_FILES_DOWNLOAD_CHUNK = 'daemon.sessionFiles.download.chunk';
-const SESSION_FILES_DOWNLOAD_FINALIZE = 'daemon.sessionFiles.download.finalize';
-const SESSION_FILES_DOWNLOAD_ABORT = 'daemon.sessionFiles.download.abort';
+const SESSION_FILE_INLINE_MAX_BYTES_ENV_KEY = 'EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES';
+const DEFAULT_SESSION_FILE_INLINE_MAX_BYTES = 256 * 1024;
+const SESSION_READ_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file read size limit';
+const SESSION_WRITE_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file write size limit';
 
-type SessionReadFileRequest = Readonly<{ path: string }>;
+function resolveSessionFileInlineMaxBytes(): number {
+    const raw = String(process.env[SESSION_FILE_INLINE_MAX_BYTES_ENV_KEY] ?? '').trim();
+    if (!raw) {
+        return DEFAULT_SESSION_FILE_INLINE_MAX_BYTES;
+    }
 
-type SessionFileDownloadInitResponse = Readonly<{
-  success: true;
-  downloadId: string;
-  chunkSizeBytes: number;
-  sizeBytes: number;
-  name: string;
-}> | Readonly<{ success: false; error: string; errorCode?: string }>;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return DEFAULT_SESSION_FILE_INLINE_MAX_BYTES;
+    }
 
-type SessionFileDownloadChunkResponse = Readonly<{
-  success: true;
-  payloadBase64?: string;
-  encryptedDataKeyEnvelopeBase64?: string;
-  contentBase64?: string;
-  isLast: boolean;
-}> | Readonly<{ success: false; error: string; errorCode?: string }>;
+    return parsed;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes)
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('');
+}
 
 export type SessionReadFileResponse =
   | Readonly<{ success: true; content: string }>
   | Readonly<{ success: false; error: string }>;
 
 export async function sessionReadFile(sessionId: string, path: string): Promise<SessionReadFileResponse> {
-  if (!readMachineTargetForSession(sessionId) && !canUseSessionRpc(sessionId)) {
-    return {
-      success: false,
-      error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-    };
-  }
-
-  const request: SessionReadFileRequest = { path };
-  const caller = createSessionMachineRpcFallbackCaller<Extract<SessionReadFileResponse, { success: false }>>({
-    sessionId,
-    resolveFallbackRoute: async () => resolveDefaultSessionRpcFallbackRoute({
-      sessionId,
-      inactiveResponse: {
-        success: false,
-        error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-      },
-    }),
-    callSessionRoute: async <TResponse extends Readonly<{ success: boolean }>, TRequest>({
-      sessionId: activeSessionId,
-      route,
-      callParams,
-    }: Readonly<{
-      sessionId: string;
-      route: Readonly<{ kind: 'server_routed_stream'; serverId: string | undefined }>;
-      callParams: Readonly<{
-        request: TRequest;
-        machineMethod: string;
-        sessionMethod: string;
-        toMachineRequest?: ((input: Readonly<{
-          request: TRequest;
-          machineTarget: Readonly<{ machineId: string; basePath: string }>;
-        }>) => TRequest) | null;
-      }>;
-    }>): Promise<TResponse> => {
-      const readRequest = callParams.request as SessionReadFileRequest;
-      const chunks: Uint8Array[] = [];
-      const download = await downloadBulkPayloadToFile({
-        destination: {
-          writeBytes: async (bytes) => {
-            chunks.push(new Uint8Array(bytes));
-          },
-          close: async () => {},
-          cleanup: async () => {
-            chunks.length = 0;
-          },
-        },
-        init: async (request) => await assertRpcResponseWithSuccess<SessionFileDownloadInitResponse>(await sessionRpcWithServerScope({
-          sessionId: activeSessionId,
-          serverId: route.serverId,
-          method: SESSION_FILES_DOWNLOAD_INIT,
-          payload: {
-            path: readRequest.path,
-            recipientPublicKeyBase64: request.recipientPublicKeyBase64,
-          },
-        })) as SessionFileDownloadInitResponse,
-        readChunk: async (request) => await assertRpcResponseWithSuccess<SessionFileDownloadChunkResponse>(await sessionRpcWithServerScope({
-          sessionId: activeSessionId,
-          serverId: route.serverId,
-          method: SESSION_FILES_DOWNLOAD_CHUNK,
-          payload: request,
-        })) as SessionFileDownloadChunkResponse,
-        finalize: async (request) => await assertRpcResponseWithSuccess(await sessionRpcWithServerScope({
-          sessionId: activeSessionId,
-          serverId: route.serverId,
-          method: SESSION_FILES_DOWNLOAD_FINALIZE,
-          payload: request,
-        })),
-        abort: async (request) => await assertRpcResponseWithSuccess(await sessionRpcWithServerScope({
-          sessionId: activeSessionId,
-          serverId: route.serverId,
-          method: SESSION_FILES_DOWNLOAD_ABORT,
-          payload: request,
-        })),
-      });
-      if (!download.ok) {
+    if (!readMachineTargetForSession(sessionId) && !canUseSessionRpc(sessionId)) {
         return {
-          success: false,
-          error: download.error,
-        } as unknown as TResponse;
-      }
-      return {
-        success: true,
-        content: encodeBase64(mergeTransferChunks(chunks), 'base64'),
-      } as unknown as TResponse;
-    },
-    errorResponse: (error) => ({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    }),
-  });
+            success: false,
+            error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+        };
+    }
 
-  return await caller.call<SessionReadFileResponse, SessionReadFileRequest>({
-    request,
-    machineMethod: RPC_METHODS.READ_FILE,
-    sessionMethod: RPC_METHODS.READ_FILE,
-    toMachineRequest: rebasePathRequestToMachineTarget,
-  });
+    const inlineMaxBytes = resolveSessionFileInlineMaxBytes();
+    const download = await downloadDaemonSessionFileToBase64({
+        sessionId,
+        path,
+        maxBytes: inlineMaxBytes,
+    });
+    if (!download.ok) {
+        return {
+            success: false,
+            error: download.error === SESSION_READ_FILE_TOO_LARGE_ERROR
+                ? SESSION_READ_FILE_TOO_LARGE_ERROR
+                : download.error,
+        };
+    }
+
+    return {
+        success: true,
+        content: download.contentBase64,
+    };
 }
 
 type SessionWriteFileRequest = Readonly<{
@@ -159,30 +88,65 @@ export async function sessionWriteFile(
   content: string,
   expectedHash?: string | null,
 ): Promise<SessionWriteFileResponse> {
-  const contentBase64 = encodeBase64(new TextEncoder().encode(content), 'base64');
-  const request: SessionWriteFileRequest =
-    expectedHash === undefined
-      ? { path, content: contentBase64 }
-      : { path, content: contentBase64, expectedHash };
+    const contentBytes = new TextEncoder().encode(content);
+    const inlineMaxBytes = resolveSessionFileInlineMaxBytes();
+    const guardedWrite = typeof expectedHash === 'string' && expectedHash.trim().length > 0;
 
-  return await callSessionMachineRpcWithFallback<SessionWriteFileResponse, SessionWriteFileRequest, Extract<SessionWriteFileResponse, { success: false }>>({
-    sessionId,
-    request,
-    machineMethod: RPC_METHODS.WRITE_FILE,
-    sessionMethod: RPC_METHODS.WRITE_FILE,
-    toMachineRequest: rebasePathRequestToMachineTarget,
-    resolveFallbackRoute: async () => resolveDefaultSessionRpcFallbackRoute({
-      sessionId,
-      inactiveResponse: {
-        success: false,
-        error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-      },
-    }),
-    errorResponse: (error: unknown) => ({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      errorCode: readRpcErrorCode(error),
-    }),
-  });
+    if (guardedWrite && contentBytes.byteLength > inlineMaxBytes) {
+        return {
+            success: false,
+            error: SESSION_WRITE_FILE_TOO_LARGE_ERROR,
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        };
+    }
+
+    if (contentBytes.byteLength <= inlineMaxBytes || guardedWrite) {
+        const request: SessionWriteFileRequest =
+            expectedHash === undefined
+                ? { path, content: encodeBase64(contentBytes, 'base64') }
+                : { path, content: encodeBase64(contentBytes, 'base64'), expectedHash };
+
+        return await callDaemonSessionWriteFileRpc({
+            sessionId,
+            request,
+            contentSizeBytes: contentBytes.byteLength,
+        });
+    }
+
+    try {
+        const sha256 = bytesToHex(await digest('SHA-256', contentBytes));
+        const upload = await uploadDaemonSessionFileFromReader({
+            sessionId,
+            fileReader: {
+                sizeBytes: contentBytes.byteLength,
+                readBytes: async (offset, length) => contentBytes.slice(offset, offset + length),
+                close: async () => {},
+            },
+            request: {
+                path,
+                sizeBytes: contentBytes.byteLength,
+                overwrite: expectedHash === undefined,
+                sha256,
+            },
+        });
+
+        if (upload.success !== true) {
+            return {
+                success: false,
+                error: upload.error,
+                errorCode: upload.errorCode,
+            };
+        }
+
+        return {
+            success: true,
+            hash: upload.sha256,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorCode: readRpcErrorCode(error),
+        };
+    }
 }

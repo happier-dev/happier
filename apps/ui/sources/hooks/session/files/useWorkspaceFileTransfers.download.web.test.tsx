@@ -5,12 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const downloadBulkPayloadToFileMock = vi.hoisted(() => vi.fn());
-const createSessionFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
-const SESSION_FILES_DOWNLOAD_INIT = 'daemon.sessionFiles.download.init';
-const SESSION_FILES_DOWNLOAD_CHUNK = 'daemon.sessionFiles.download.chunk';
-const SESSION_FILES_DOWNLOAD_FINALIZE = 'daemon.sessionFiles.download.finalize';
-const SESSION_FILES_DOWNLOAD_ABORT = 'daemon.sessionFiles.download.abort';
+const downloadDaemonSessionFileToDestinationMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -24,11 +19,10 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
-    downloadBulkPayloadToFile: (...args: unknown[]) => downloadBulkPayloadToFileMock(...args),
-}));
-
-vi.mock('@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller', () => ({
-    createSessionFileTransferRpcCaller: (...args: unknown[]) => createSessionFileTransferRpcCallerMock(...args),
+    downloadBulkPayloadToFile: () => {
+        throw new Error('legacy downloadBulkPayloadToFile helper should not be used');
+    },
+    downloadDaemonSessionFileToDestination: (...args: unknown[]) => downloadDaemonSessionFileToDestinationMock(...args),
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -38,8 +32,7 @@ vi.mock('@/sync/ops', () => ({
 describe('useWorkspaceFileTransfers web download cleanup', () => {
     beforeEach(() => {
         vi.useFakeTimers();
-        downloadBulkPayloadToFileMock.mockReset();
-        createSessionFileTransferRpcCallerMock.mockReset();
+        downloadDaemonSessionFileToDestinationMock.mockReset();
     });
 
     afterEach(() => {
@@ -64,51 +57,24 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
             constructor(_parts?: unknown[], _options?: Record<string, unknown>) {}
         });
 
-        let downloadRpcCallCount = 0;
-        createSessionFileTransferRpcCallerMock.mockReturnValue({
-            call: async ({ machineMethod }: { machineMethod: string }) => {
-                downloadRpcCallCount += 1;
-                if (downloadRpcCallCount === 1) {
-                    expect(machineMethod).toBe(SESSION_FILES_DOWNLOAD_INIT);
-                    return {
-                        success: true,
-                        downloadId: 'download-1',
-                        chunkSizeBytes: 4,
-                        sizeBytes: 4,
-                        name: 'report.txt',
-                    };
-                }
-                expect([SESSION_FILES_DOWNLOAD_CHUNK, SESSION_FILES_DOWNLOAD_FINALIZE, SESSION_FILES_DOWNLOAD_ABORT]).toContain(machineMethod);
-                return { success: true };
-            },
-        });
-
-        downloadBulkPayloadToFileMock.mockImplementation(async (params: {
+        downloadDaemonSessionFileToDestinationMock.mockImplementation(async (params: {
+            sessionId: string;
+            request: { path: string; asZip: boolean };
             destination: {
                 writeBytes: (bytes: Uint8Array) => Promise<void>;
                 close: () => Promise<void>;
                 cleanup?: (() => Promise<void>) | null;
             };
-            init: (request: { recipientPublicKeyBase64: string }) => Promise<{
-                success: true;
-                downloadId: string;
-                chunkSizeBytes: number;
-                sizeBytes: number;
-                name: string;
-            } | {
-                success: false;
-                error: string;
-            }>;
-            readChunk: (request: { downloadId: string; index: number }) => Promise<{ success: boolean; error?: string }>;
-            finalize: (request: { downloadId: string }) => Promise<{ success: boolean; error?: string }>;
+            onInit?: ((init: { name: string; sizeBytes: number }) => Promise<void | { success: false; error: string }>) | null;
+            signal?: AbortSignal | null;
+            onProgress?: ((progress: { downloadedBytes: number; totalBytes: number }) => void) | null;
         }) => {
-            const init = await params.init({ recipientPublicKeyBase64: 'recipient-public-key' });
-            if (!init.success) {
-                return init;
-            }
+            expect(params.sessionId).toBe('session-1');
+            expect(params.request).toEqual({ path: 'report.txt', asZip: false });
+            await params.onInit?.({ name: 'report.txt', sizeBytes: 4 });
             await params.destination.writeBytes(new Uint8Array([1, 2, 3, 4]));
-            await params.readChunk({ downloadId: init.downloadId, index: 0 });
-            await params.finalize({ downloadId: init.downloadId });
+            params.onProgress?.({ downloadedBytes: 4, totalBytes: 4 });
+            await params.destination.close();
             return { ok: true, name: 'report.txt', sizeBytes: 4 };
         });
 
@@ -130,10 +96,7 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
 
         expect(click).toHaveBeenCalledTimes(1);
         expect(revokeObjectURL).not.toHaveBeenCalled();
-        expect(downloadBulkPayloadToFileMock).toHaveBeenCalledTimes(1);
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledWith({
-            sessionId: 'session-1',
-        });
+        expect(downloadDaemonSessionFileToDestinationMock).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             await vi.runAllTimersAsync();

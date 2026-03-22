@@ -3,12 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
-const uploadBulkPayloadFromFileMock = vi.hoisted(() => vi.fn());
-const createSessionFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
-const SESSION_FILES_UPLOAD_INIT = 'daemon.sessionFiles.upload.init';
-const SESSION_FILES_UPLOAD_CHUNK = 'daemon.sessionFiles.upload.chunk';
-const SESSION_FILES_UPLOAD_FINALIZE = 'daemon.sessionFiles.upload.finalize';
-const SESSION_FILES_UPLOAD_ABORT = 'daemon.sessionFiles.upload.abort';
+const uploadDaemonSessionFileFromReaderMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -20,11 +15,10 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
-    uploadBulkPayloadFromFile: (...args: unknown[]) => uploadBulkPayloadFromFileMock(...args),
-}));
-
-vi.mock('@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller', () => ({
-    createSessionFileTransferRpcCaller: (...args: unknown[]) => createSessionFileTransferRpcCallerMock(...args),
+    uploadBulkPayloadFromFile: () => {
+        throw new Error('legacy uploadBulkPayloadFromFile helper should not be used');
+    },
+    uploadDaemonSessionFileFromReader: (...args: unknown[]) => uploadDaemonSessionFileFromReaderMock(...args),
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -33,8 +27,7 @@ vi.mock('@/sync/ops', () => ({
 
 describe('useWorkspaceFileTransfers upload pipeline', () => {
     beforeEach(() => {
-        uploadBulkPayloadFromFileMock.mockReset();
-        createSessionFileTransferRpcCallerMock.mockReset();
+        uploadDaemonSessionFileFromReaderMock.mockReset();
     });
 
     afterEach(() => {
@@ -42,70 +35,38 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
     });
 
     it('uploads files through the canonical bulk pipeline helper', async () => {
-        createSessionFileTransferRpcCallerMock.mockReturnValue({
-            call: async ({ machineMethod }: { machineMethod: string }) => {
-                if (machineMethod === SESSION_FILES_UPLOAD_INIT) {
-                    return {
-                        success: true,
-                        uploadId: 'upload-1',
-                        chunkSizeBytes: 4,
-                        recipientPublicKeyBase64: 'recipient-public-key',
-                    };
-                }
-                if (machineMethod === SESSION_FILES_UPLOAD_CHUNK) {
-                    return { success: true };
-                }
-                if (machineMethod === SESSION_FILES_UPLOAD_FINALIZE) {
-                    return {
-                        success: true,
-                        path: 'workspace/files/hello.txt',
-                        sizeBytes: 5,
-                        sha256: 'sha256',
-                    };
-                }
-                if (machineMethod === SESSION_FILES_UPLOAD_ABORT) {
-                    return { success: true };
-                }
-                throw new Error(`unexpected method ${machineMethod}`);
-            },
-        });
-
-        uploadBulkPayloadFromFileMock.mockImplementation(async (params: {
+        uploadDaemonSessionFileFromReaderMock.mockImplementation(async (params: {
+            sessionId: string;
             fileReader: {
                 sizeBytes: number;
                 readBytes: (offset: number, length: number) => Promise<Uint8Array>;
                 close: () => Promise<void>;
             };
-            init: () => Promise<{
-                success: true;
-                uploadId: string;
-                chunkSizeBytes: number;
-                recipientPublicKeyBase64: string;
-            } | {
-                success: false;
-                error: string;
-            }>;
-            sendChunk: (request: {
-                uploadId: string;
-                index: number;
-                payloadBase64: string;
-                encryptedDataKeyEnvelopeBase64: string;
-            }) => Promise<{ success: boolean; error?: string }>;
-            finalize: (request: { uploadId: string }) => Promise<{ success: true; path: string; sizeBytes: number; sha256: string } | { success: false; error: string }>;
+            request: {
+                path: string;
+                sizeBytes: number;
+                overwrite?: boolean;
+                sha256?: string;
+            };
+            onProgress?: ((progress: { uploadedBytes: number; totalBytes: number }) => void) | null;
+            signal?: AbortSignal | null;
         }) => {
+            expect(params.sessionId).toBe('session-1');
             expect(params.fileReader.sizeBytes).toBe(5);
-            await params.fileReader.readBytes(0, 5);
-            const init = await params.init();
-            if (!init.success) {
-                return init;
-            }
-            await params.sendChunk({
-                uploadId: init.uploadId,
-                index: 0,
-                payloadBase64: Buffer.from('hello').toString('base64'),
-                encryptedDataKeyEnvelopeBase64: Buffer.from('envelope').toString('base64'),
+            expect(params.request).toEqual({
+                path: 'workspace/files/hello.txt',
+                sizeBytes: 5,
+                overwrite: false,
             });
-            return await params.finalize({ uploadId: init.uploadId });
+            await params.fileReader.readBytes(0, 5);
+            params.onProgress?.({ uploadedBytes: 5, totalBytes: 5 });
+            await params.fileReader.close();
+            return {
+                success: true,
+                path: 'workspace/files/hello.txt',
+                sizeBytes: 5,
+                sha256: 'sha256',
+            };
         });
 
         const { useWorkspaceFileTransfers } = await import('./useWorkspaceFileTransfers');
@@ -135,10 +96,6 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             });
         });
 
-        expect(uploadBulkPayloadFromFileMock).toHaveBeenCalledTimes(1);
-        expect(createSessionFileTransferRpcCallerMock).toHaveBeenCalledWith({
-            sessionId: 'session-1',
-            sessionRpcTransferSizeBytes: 5,
-        });
+        expect(uploadDaemonSessionFileFromReaderMock).toHaveBeenCalledTimes(1);
     });
 });

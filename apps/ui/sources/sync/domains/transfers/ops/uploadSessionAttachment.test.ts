@@ -13,6 +13,8 @@ const sessionRPCSpy = vi.fn(async (_sessionId: string, _method: string, _payload
 }));
 const getReadyServerFeaturesSpy = vi.fn();
 const uploadBulkPayloadFromFileSpy = vi.fn();
+const uploadDaemonSessionAttachmentFromReaderSpy = vi.fn();
+const resolveBulkTransferPolicyAndRouteSpy = vi.fn();
 const randomUUIDSpy = vi.fn(() => '12345678-0000-4000-8000-123456789abc');
 const isRuntimeFeatureEnabledSpy = vi.fn<(params: unknown) => Promise<boolean>>(async (_params) => true);
 const recipientPublicKeyBase64 = Buffer.alloc(32, 7).toString('base64');
@@ -82,14 +84,30 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: (...args: unknown[]) => getReadyServerFeaturesSpy(...args),
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline')>(
-        '@/sync/domains/transfers/runtime/bulkTransferPipeline',
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkPayloadFromFile', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkPayloadFromFile')>(
+        '@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkPayloadFromFile',
     );
 
     return {
         ...actual,
         uploadBulkPayloadFromFile: (...args: unknown[]) => uploadBulkPayloadFromFileSpy(...args),
+    };
+});
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async () => {
+    const daemonSessionAttachments = await import('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments');
+    const resolvePolicy = await import('@/sync/domains/transfers/runtime/bulkTransferPipeline/resolveBulkTransferPolicyAndRoute');
+
+    return {
+        resolveBulkTransferPolicyAndRoute: (...args: unknown[]) => {
+            resolveBulkTransferPolicyAndRouteSpy(...args);
+            return (resolvePolicy as any).resolveBulkTransferPolicyAndRoute(...args);
+        },
+        uploadDaemonSessionAttachmentFromReader: (params: unknown) => {
+            uploadDaemonSessionAttachmentFromReaderSpy(params);
+            return (daemonSessionAttachments as any).uploadDaemonSessionAttachmentFromReader(params);
+        },
     };
 });
 
@@ -161,6 +179,8 @@ afterEach(() => {
     sessionRPCSpy.mockReset();
     getReadyServerFeaturesSpy.mockReset();
     uploadBulkPayloadFromFileSpy.mockReset();
+    uploadDaemonSessionAttachmentFromReaderSpy.mockReset();
+    resolveBulkTransferPolicyAndRouteSpy.mockReset();
     nativeOpenSpy.mockReset();
     nativeCloseSpy.mockReset();
     randomUUIDSpy.mockClear();
@@ -266,7 +286,20 @@ describe('uploadSessionAttachment', () => {
             },
         });
 
-        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
+        expect(resolveBulkTransferPolicyAndRouteSpy).not.toHaveBeenCalled();
+        expect(uploadDaemonSessionAttachmentFromReaderSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 's1',
+            request: expect.objectContaining({
+                messageLocalId: 'm1',
+                fileName: 'hello.txt',
+                sizeBytes: 5,
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+            }),
+        }));
         expect(sessionRPCSpy).toHaveBeenCalledWith(
             'm1',
             SESSION_ATTACHMENTS_UPLOAD_INIT,
