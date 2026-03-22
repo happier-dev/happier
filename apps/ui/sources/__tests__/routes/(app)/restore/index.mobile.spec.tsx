@@ -9,19 +9,29 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-    Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Text: 'Text',
+                                    ScrollView: 'ScrollView',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    Pressable: 'Pressable',
+                                    Dimensions: {
+                                        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+                                    },
+                                    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
@@ -44,10 +54,14 @@ vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+        params: {},
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'enabled' }),
@@ -63,19 +77,24 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
 
 const modalAlertSpy = vi.fn(async () => {});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlertSpy,
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -91,9 +110,8 @@ vi.mock('react-native-unistyles', () => ({
                 input: { background: '#fff', placeholder: '#999', text: '#000' },
             },
         },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
+    });
+});
 
 vi.mock('@/auth/flows/qrStart', () => ({
     generateAuthKeyPair: () => ({ publicKey: new Uint8Array([1]), secretKey: new Uint8Array([2]) }),

@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -14,26 +16,22 @@ const normalizeSecretKeySpy = vi.hoisted(() => vi.fn((input: string) => input.tr
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TextInput: 'TextInput',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    AppState: {
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({
     default: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: routerBackSpy, push: vi.fn(), replace: routerReplaceSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: routerBackSpy, replace: routerReplaceSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ login: authLoginSpy }),
@@ -59,112 +57,71 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(async () => {}),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                textSecondary: '#666',
-                input: { background: '#fff', text: '#000', placeholder: '#999' },
-            },
-        },
-    }),
-    StyleSheet: { create: (styles: any) => styles },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 afterEach(() => {
     vi.restoreAllMocks();
+    standardCleanup();
 });
+
+async function renderManualRestoreScreen() {
+    vi.resetModules();
+    const { default: Screen } = await import('@/app/(app)/restore/manual');
+    return renderScreen(<Screen />);
+}
 
 describe('/restore/manual', () => {
     it('does not auto-capitalize secret key input (supports case-sensitive base64url input)', async () => {
-        vi.resetModules();
-        const { default: Screen } = await import('@/app/(app)/restore/manual');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected renderer');
-
-            const inputs = tree.root.findAll((node) => (node.type as unknown) === 'TextInput');
-            expect(inputs.length).toBeGreaterThan(0);
-            expect(inputs[0]?.props?.autoCapitalize).toBe('none');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const screen = await renderManualRestoreScreen();
+        const input = screen.findByTestId('restore-manual-secret-input');
+        expect(input).not.toBeNull();
+        expect(input?.props?.autoCapitalize).toBe('none');
     });
 
     it('masks the secret key input by default and allows toggling visibility', async () => {
-        vi.resetModules();
-        const { default: Screen } = await import('@/app/(app)/restore/manual');
+        const screen = await renderManualRestoreScreen();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected renderer');
+        const input = screen.findByTestId('restore-manual-secret-input');
+        expect(input).not.toBeNull();
+        expect(input?.props?.secureTextEntry).toBe(true);
+        expect(input?.props?.multiline).toBe(false);
 
-            const input = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-input');
-            expect((input.props as any)?.secureTextEntry).toBe(true);
-            expect((input.props as any)?.multiline).toBe(false);
+        await screen.pressByTestIdAsync('restore-manual-secret-reveal');
 
-            const reveal = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-reveal');
-            await act(async () => {
-                reveal.props.onPress?.();
-            });
-            const revealedInput = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-input');
-            expect((revealedInput.props as any)?.secureTextEntry).toBe(false);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const revealedInput = screen.findByTestId('restore-manual-secret-input');
+        expect(revealedInput?.props?.secureTextEntry).toBe(false);
     });
 
     it('replaces navigation to home after a successful restore (does not return to link-new-device QR screen)', async () => {
-        vi.resetModules();
-        const { default: Screen } = await import('@/app/(app)/restore/manual');
+        const screen = await renderManualRestoreScreen();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected renderer');
+        const submit = screen.findByTestId('restore-manual-submit');
+        expect(submit).not.toBeNull();
 
-            const input = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-input');
-            await act(async () => {
-                input.props.onChangeText?.('secret-key');
-            });
+        await act(async () => {
+            screen.changeTextByTestId('restore-manual-secret-input', 'secret-key');
+        });
 
-            const submit = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-submit');
-            await act(async () => {
-                await submit.props.action?.();
-            });
+        await act(async () => {
+            await submit?.props?.action?.();
+        });
 
-            expect(authLoginSpy).toHaveBeenCalled();
-            expect(normalizeSecretKeySpy).toHaveBeenCalled();
-            expect(routerBackSpy).not.toHaveBeenCalled();
-            expect(routerReplaceSpy).toHaveBeenCalledWith('/');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(authLoginSpy).toHaveBeenCalled();
+        expect(normalizeSecretKeySpy).toHaveBeenCalled();
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
     });
 });

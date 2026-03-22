@@ -7,16 +7,21 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-    Dimensions: {
-        get: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                                    },
+                                    Dimensions: {
+                                        get: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
+                                    },
+                                    useWindowDimensions: () => ({ width: 1400, height: 900, scale: 2, fontScale: 1 }),
+                                }
+    );
+});
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
