@@ -15,6 +15,10 @@ function buildUserTextMessage(id: string, createdAt: number): NormalizedMessage 
     };
 }
 
+function flushPendingTimers(): void {
+    vi.runOnlyPendingTimers();
+}
+
 describe('createSessionMessageApplyCoalescer', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -40,7 +44,7 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(applyBatch).not.toHaveBeenCalled();
 
-        vi.advanceTimersByTime(16);
+        flushPendingTimers();
 
         expect(applyBatch).toHaveBeenCalledTimes(1);
         expect(applied).toEqual([{ sessionId: 's1', messageIds: ['m1', 'm2'] }]);
@@ -77,7 +81,7 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(batches).toEqual([['m1', 'm2']]);
 
-        vi.advanceTimersByTime(16);
+        flushPendingTimers();
         expect(batches).toEqual([['m1', 'm2'], ['m3']]);
     });
 
@@ -95,7 +99,7 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(coalescer.getQueuedMaxSeq('s1')).toBe(5);
 
-        vi.advanceTimersByTime(16);
+        flushPendingTimers();
 
         expect(coalescer.getQueuedMaxSeq('s1')).toBe(0);
     });
@@ -113,7 +117,7 @@ describe('createSessionMessageApplyCoalescer', () => {
         ]);
 
         coalescer.dropQueuedMessageIds('s1', ['m1']);
-        vi.advanceTimersByTime(16);
+        flushPendingTimers();
 
         expect(applyBatch).toHaveBeenCalledTimes(1);
         expect((applyBatch.mock.calls[0]?.[1] as NormalizedMessage[]).map((message) => message.id)).toEqual(['m2']);

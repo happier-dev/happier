@@ -545,10 +545,8 @@ describe('ChatList (FlashList v2)', () => {
                 await act(async () => {
                     capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
                     capturedFlashListProps.onContentSizeChange?.(0, 100);
-                    await Promise.resolve();
                     scrollEl.scrollHeight = 1600;
-                    await Promise.resolve();
-                    await Promise.resolve();
+                    await flushFlashListEffects({ turns: 3 });
                 });
 
                 expect(loadOlderMessagesMock).not.toHaveBeenCalled();

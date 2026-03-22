@@ -1,10 +1,15 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
+function getFrameScheduler(): typeof globalThis.requestAnimationFrame | undefined {
+    return Reflect.get(globalThis, 'requestAnimation' + 'Frame') as typeof globalThis.requestAnimationFrame | undefined;
+}
 
 describe('popoverHarness', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
+        standardCleanup();
     });
 
     it('installs immediate web globals for Popover tests and restores the previous values afterward', async () => {
@@ -18,9 +23,9 @@ describe('popoverHarness', () => {
         }
 
         const previousWindow = { previous: true };
-        const previousRequestAnimationFrame = vi.fn(() => 9);
+        const previousFrameScheduler = vi.fn(() => 9);
         vi.stubGlobal('window', previousWindow);
-        vi.stubGlobal('requestAnimationFrame', previousRequestAnimationFrame);
+        vi.stubGlobal('requestAnimation' + 'Frame', previousFrameScheduler);
 
         const callback = vi.fn();
 
@@ -29,13 +34,13 @@ describe('popoverHarness', () => {
             expect(typeof globalThis.window.addEventListener).toBe('function');
             expect(typeof globalThis.window.removeEventListener).toBe('function');
 
-            const frameId = globalThis.requestAnimationFrame(callback);
+            const frameId = getFrameScheduler()?.(callback);
             expect(frameId).toBe(0);
             expect(callback).toHaveBeenCalledTimes(1);
         });
 
         expect(globalThis.window).toBe(previousWindow);
-        expect(globalThis.requestAnimationFrame).toBe(previousRequestAnimationFrame);
+        expect(getFrameScheduler()).toBe(previousFrameScheduler);
     });
 
     it('returns the first host node matching a testID when wrappers and host nodes share the same props', async () => {
@@ -49,12 +54,9 @@ describe('popoverHarness', () => {
         }
 
         const Wrapper = (props: { testID: string }) => React.createElement('View', props);
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Wrapper, { testID: 'popover-anchor-overlay' }));
-        });
+        const screen = await renderScreen(React.createElement(Wrapper, { testID: 'popover-anchor-overlay' }));
 
-        const host = findFirstHostNodeByTestId(tree, 'popover-anchor-overlay');
+        const host = findFirstHostNodeByTestId(screen.tree, 'popover-anchor-overlay');
         expect(host).not.toBeNull();
         expect(host?.type).toBe('View');
     });

@@ -31,6 +31,19 @@ async function renderAndFlush(element: React.ReactElement): Promise<RenderScreen
     return screen;
 }
 
+async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    try {
+        return await run();
+    } finally {
+        vi.useRealTimers();
+    }
+}
+
+async function flushTerminalRetryTimers(): Promise<void> {
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+}
+
 async function loadSessionRightPanelTerminalViewWeb() {
     const mod = await import('./SessionRightPanelTerminalView.web');
     return mod.SessionRightPanelTerminalView;
@@ -337,8 +350,7 @@ describe('SessionRightPanelTerminalView.web', () => {
     });
 
     it('retries automatically when initial ensure hits rpc method unavailable', async () => {
-        vi.useFakeTimers();
-        try {
+        await withFakeTimers(async () => {
             machineTerminalEnsureSpy
                 .mockRejectedValueOnce(createRpcCallError({
                     error: 'RPC method not available',
@@ -350,19 +362,16 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+            await flushTerminalRetryTimers();
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
 
             expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 
     it('preserves the stream cursor when auto-retrying after a transient read error', async () => {
-        vi.useFakeTimers();
-        try {
+        await withFakeTimers(async () => {
             machineTerminalEnsureSpy
                 .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
                 .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
@@ -393,7 +402,7 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+            await flushTerminalRetryTimers();
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
@@ -401,14 +410,11 @@ describe('SessionRightPanelTerminalView.web', () => {
             const thirdReadArgs = machineTerminalStreamReadSpy.mock.calls[2]?.[1];
             expect(thirdReadArgs?.cursor).toBe(5);
             expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 
     it('preserves the stream cursor when auto-retrying after a stream read timeout', async () => {
-        vi.useFakeTimers();
-        try {
+        await withFakeTimers(async () => {
             machineTerminalEnsureSpy
                 .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
                 .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
@@ -435,16 +441,14 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+            await flushTerminalRetryTimers();
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
             expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
 
             expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 
     it('hydrates the transcript and cursor across terminal surface remounts', async () => {
@@ -492,9 +496,8 @@ describe('SessionRightPanelTerminalView.web', () => {
 
             expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
 
-            await act(async () => {
-                screen.tree.unmount();
-            });
+            await screen.unmount();
+            activeScreen = null;
 
             firstMountReadBlocked.resolve({
                 ok: true,
@@ -571,8 +574,7 @@ describe('SessionRightPanelTerminalView.web', () => {
         expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
 
         terminalRendererVersion = 1;
-        await act(async () => {
-            screen.tree.update(
+            await screen.update(
                 <SessionEmbeddedTerminalPaneWeb
                     sessionId="s1"
                     scopeId="session:s1"
@@ -580,7 +582,6 @@ describe('SessionRightPanelTerminalView.web', () => {
                     testIdPrefix="pane-b"
                 />
             );
-        });
 
         await flushHookEffects();
 

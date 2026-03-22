@@ -191,7 +191,15 @@ function createDeferred<T>() {
 
 async function advanceFakeTimersAndFlush(ms: number): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
-  await Promise.resolve();
+}
+
+async function withFakeTimers(testFn: () => Promise<void>): Promise<void> {
+  vi.useFakeTimers();
+  try {
+    await testFn();
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 describe('Realtime voice modes', () => {
@@ -265,8 +273,7 @@ describe('Realtime voice modes', () => {
 
   describe('happier voice lifecycle', () => {
     it('records the session limit and announces when the server-minted lease is near expiry', async () => {
-      vi.useFakeTimers();
-      try {
+      await withFakeTimers(async () => {
         fetchHappierVoiceToken.mockResolvedValueOnce({
           allowed: true,
           token: 'conv_token',
@@ -303,9 +310,7 @@ describe('Realtime voice modes', () => {
         );
 
         await stopRealtimeSession();
-      } finally {
-        vi.useRealTimers();
-      }
+      });
     });
 
     it('appends welcome instructions to the initial context when enabled (immediate)', async () => {
@@ -467,8 +472,7 @@ describe('Realtime voice modes', () => {
     });
 
     it('retries after paywall purchase without deadlocking', async () => {
-      vi.useFakeTimers();
-      try {
+      await withFakeTimers(async () => {
         fetchHappierVoiceToken
           .mockResolvedValueOnce({ allowed: false, reason: 'subscription_required' })
           .mockResolvedValueOnce({
@@ -492,9 +496,7 @@ describe('Realtime voice modes', () => {
         expect(await race).toBe('resolved');
         expect(presentPaywall).toHaveBeenCalledTimes(1);
         expect(startSession).toHaveBeenCalledTimes(1);
-      } finally {
-        vi.useRealTimers();
-      }
+      });
     });
   });
 
@@ -562,8 +564,7 @@ describe('Realtime voice modes', () => {
     });
 
     it('stop does not hang when a start attempt is stuck in token minting', async () => {
-      vi.useFakeTimers();
-      try {
+      await withFakeTimers(async () => {
         const fetchStarted = createDeferred<void>();
         fetchHappierVoiceToken.mockImplementationOnce(async (_credentials, options) => {
           fetchStarted.resolve();
@@ -595,9 +596,7 @@ describe('Realtime voice modes', () => {
         expect(await race).toBe('stopped');
         expect(endSession).toHaveBeenCalledTimes(1);
         expect(startSession).not.toHaveBeenCalled();
-      } finally {
-        vi.useRealTimers();
-      }
+      });
     });
   });
 });

@@ -24,6 +24,16 @@ function buildMissingCodexAcpResults() {
     };
 }
 
+async function withFrozenTime<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+        return await run();
+    } finally {
+        vi.useRealTimers();
+    }
+}
+
 describe('ensureAgentInstallablesBackground', () => {
     it('prefetches missing dep status before planning background installs', async () => {
         const settings = settingsParse({ codexBackendMode: 'acp' } as any);
@@ -146,10 +156,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('suppresses duplicate retries during the success cooldown window', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-
-        try {
+        await withFrozenTime(async () => {
             const settings = settingsParse({ codexBackendMode: 'acp' } as any);
             const prefetchMachineCapabilities = vi.fn(async () => {});
             const machineCapabilitiesInvoke = vi.fn(
@@ -174,9 +181,7 @@ describe('ensureAgentInstallablesBackground', () => {
             );
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 
     it('includes invoke params in the cooldown key', () => {
@@ -258,10 +263,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('retries after a successful invoke if the dep is still missing later', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-
-        try {
+        await withFrozenTime(async () => {
             const settings = settingsParse({ codexBackendMode: 'acp' } as any);
 
             const prefetchMachineCapabilities = vi.fn(async () => {});
@@ -289,16 +291,11 @@ describe('ensureAgentInstallablesBackground', () => {
             );
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 
     it('retries after an in-flight block ages out', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-
-        try {
+        await withFrozenTime(async () => {
             const settings = settingsParse({ codexBackendMode: 'acp' } as any);
             const prefetchMachineCapabilities = vi.fn(async () => {});
             let resolveInvoke: (() => void) | null = null;
@@ -339,8 +336,6 @@ describe('ensureAgentInstallablesBackground', () => {
             await firstCall;
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
-        } finally {
-            vi.useRealTimers();
-        }
+        });
     });
 });

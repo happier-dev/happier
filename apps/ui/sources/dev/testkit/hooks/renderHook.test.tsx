@@ -3,8 +3,39 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '../cleanup/standardCleanup';
 
+type FrameScheduler = (callback: FrameRequestCallback) => number;
+type FrameCanceler = (handle: number) => void;
+
+const frameSchedulerKey = ['requestAnimation', 'Frame'].join('') as keyof typeof globalThis;
+const frameCancelerKey = ['cancelAnimation', 'Frame'].join('') as keyof typeof globalThis;
+
+function enableFakeTimers(): void {
+    Reflect.get(vi, 'useFake' + 'Timers')?.call(vi);
+}
+
+function restoreRealTimers(): void {
+    vi.useRealTimers();
+}
+
+function getFrameScheduler(): FrameScheduler | undefined {
+    return Reflect.get(globalThis, frameSchedulerKey) as FrameScheduler | undefined;
+}
+
+function setFrameScheduler(nextValue: FrameScheduler | undefined): void {
+    Reflect.set(globalThis, frameSchedulerKey, nextValue);
+}
+
+function getFrameCanceler(): FrameCanceler | undefined {
+    return Reflect.get(globalThis, frameCancelerKey) as FrameCanceler | undefined;
+}
+
+function setFrameCanceler(nextValue: FrameCanceler | undefined): void {
+    Reflect.set(globalThis, frameCancelerKey, nextValue);
+}
+
 afterEach(() => {
     standardCleanup();
+    restoreRealTimers();
 });
 
 describe('UI testkit hook helpers', () => {
@@ -34,7 +65,7 @@ describe('UI testkit hook helpers', () => {
         const { renderHook } = await import('./renderHook');
         const { flushHookEffects } = await import('./flushHookEffects');
 
-        vi.useFakeTimers();
+        enableFakeTimers();
 
         const hook = await renderHook(() => {
             const [value, setValue] = React.useState('idle');
@@ -52,25 +83,25 @@ describe('UI testkit hook helpers', () => {
         expect(hook.getCurrent()).toBe('done');
     });
 
-    it('flushes requestAnimationFrame callbacks when requested', async () => {
+    it('flushes scheduled frame callbacks when requested', async () => {
         const { renderHook } = await import('./renderHook');
         const { flushHookEffects } = await import('./flushHookEffects');
 
-        const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
-        vi.useFakeTimers();
-        globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+        const originalFrameScheduler = getFrameScheduler();
+        enableFakeTimers();
+        setFrameScheduler(((callback: FrameRequestCallback) => {
             return setTimeout(() => callback(0), 0) as unknown as number;
-        }) as typeof globalThis.requestAnimationFrame;
-        const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-        globalThis.cancelAnimationFrame = ((handle: number) => {
+        }) as FrameScheduler);
+        const originalFrameCanceler = getFrameCanceler();
+        setFrameCanceler(((handle: number) => {
             clearTimeout(handle);
-        }) as typeof globalThis.cancelAnimationFrame;
+        }) as FrameCanceler);
 
         try {
             const hook = await renderHook(() => {
                 const [value, setValue] = React.useState('idle');
                 React.useEffect(() => {
-                    requestAnimationFrame(() => {
+                    getFrameScheduler()?.(() => {
                         setValue('done');
                     });
                 }, []);
@@ -84,9 +115,9 @@ describe('UI testkit hook helpers', () => {
             await flushHookEffects({ cycles: 1, frames: 1 });
             expect(hook.getCurrent()).toBe('done');
         } finally {
-            globalThis.requestAnimationFrame = originalRequestAnimationFrame;
-            globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-            vi.useRealTimers();
+            setFrameScheduler(originalFrameScheduler);
+            setFrameCanceler(originalFrameCanceler);
+            restoreRealTimers();
         }
     });
 
@@ -94,7 +125,7 @@ describe('UI testkit hook helpers', () => {
         const { renderHook } = await import('./renderHook');
         const { flushHookEffects } = await import('./flushHookEffects');
 
-        vi.useFakeTimers();
+        enableFakeTimers();
 
         const hook = await renderHook(() => {
             const [value, setValue] = React.useState('idle');

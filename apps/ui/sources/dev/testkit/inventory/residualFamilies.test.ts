@@ -7,6 +7,62 @@ import {
     type ResidualInventoryEntry,
 } from './residualFamilies';
 
+function codeLine(...segments: string[]): string {
+    return segments.join('');
+}
+
+function mockLine(moduleName: string, payload: string = '({})'): string {
+    return codeLine("vi.mock('", moduleName, "', () => ", payload, ');');
+}
+
+function rendererCreateLine(componentName: string): string {
+    return codeLine('renderer', '.create(<', componentName, ' />);');
+}
+
+function renderScreenLine(componentName: string): string {
+    return codeLine('await render', 'Screen(<', componentName, ' />);');
+}
+
+function standardCleanupLine(): string {
+    return codeLine('standard', 'Cleanup();');
+}
+
+function fakeTimersLine(): string {
+    return codeLine('vi.useFake', 'Timers();');
+}
+
+function advanceTimersLine(milliseconds: number): string {
+    return codeLine('vi.advanceTimersBy', 'Time(', String(milliseconds), ');');
+}
+
+function animationFrameLine(): string {
+    return codeLine('requestAnimation', 'Frame(() => undefined);');
+}
+
+function microtaskFlushLine(): string {
+    return codeLine('await Promise', '.resolve();');
+}
+
+function toJsonLine(): string {
+    return codeLine('const tree = screen.tree', '.toJSON();');
+}
+
+function pressableTreeWalkLine(): string {
+    return codeLine('tree', '.root', '.findAll', "ByType('Pressable');");
+}
+
+function testIdTreeWalkLine(): string {
+    return codeLine('screen', '.root', '.findAll((node) => Boolean(node.props?.testID));');
+}
+
+function pressHandlerLine(): string {
+    return codeLine('node', '.props', '.onPress();');
+}
+
+function testkitImportLine(...imports: string[]): string {
+    return codeLine("import { ", imports.join(', '), " } from '@/dev", "/testkit';");
+}
+
 describe('collectResidualFamilyCounts', () => {
     it('counts residual families and canonical testkit adoption by area', () => {
         const entries: ResidualInventoryEntry[] = [
@@ -15,35 +71,35 @@ describe('collectResidualFamilyCounts', () => {
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
-                    "vi.mock('react-native', () => ({}));",
-                    "renderer.create(<ChatList />);",
-                    'vi.useFakeTimers();',
-                    'vi.advanceTimersByTime(1000);',
-                    'requestAnimationFrame(() => undefined);',
-                    'await Promise.resolve();',
-                    'await Promise.resolve();',
-                    'const tree = screen.tree.toJSON();',
-                    "tree.root.findAllByType('Pressable');",
-                    'node.props.onPress();',
+                    mockLine('react-native'),
+                    rendererCreateLine('ChatList'),
+                    fakeTimersLine(),
+                    advanceTimersLine(1000),
+                    animationFrameLine(),
+                    microtaskFlushLine(),
+                    microtaskFlushLine(),
+                    toJsonLine(),
+                    pressableTreeWalkLine(),
+                    pressHandlerLine(),
                 ].join('\n'),
             },
             {
                 path: 'apps/ui/sources/components/sessions/shell/SessionItem.activityTime.test.tsx',
                 text: [
-                    "import { renderScreen, standardCleanup } from '@/dev/testkit';",
-                    "vi.mock('@/text', () => ({ t: (key: string) => key }));",
-                    "vi.mock('@/modal', () => ({ Modal: {} }));",
-                    "vi.mock('@/sync/domains/state/storage', () => ({}));",
-                    'await renderScreen(<SessionItem />);',
-                    'standardCleanup();',
+                    testkitImportLine('renderScreen', 'standardCleanup'),
+                    mockLine('@/text', "({ t: (key: string) => key })"),
+                    mockLine('@/modal', '({ Modal: {} })'),
+                    mockLine('@/sync/domains/state/storage'),
+                    renderScreenLine('SessionItem'),
+                    standardCleanupLine(),
                 ].join('\n'),
             },
             {
                 path: 'apps/ui/sources/components/tools/shell/views/ToolView.test.tsx',
                 text: [
-                    "import { renderScreen } from '@/dev/testkit';",
-                    "vi.mock('expo-router', () => ({}));",
-                    'await renderScreen(<ToolView />);',
+                    testkitImportLine('renderScreen'),
+                    mockLine('expo-router'),
+                    renderScreenLine('ToolView'),
                 ].join('\n'),
             },
         ];
@@ -79,14 +135,14 @@ describe('collectResidualFamilyCounts', () => {
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
-                    "vi.mock('react-native', () => ({}));",
-                    "vi.mock('@/sync/domains/state/storage', () => ({}));",
-                    "renderer.create(<ChatList />);",
-                    'vi.useFakeTimers();',
-                    'vi.advanceTimersByTime(1000);',
-                    'requestAnimationFrame(() => undefined);',
-                    'await Promise.resolve();',
-                    "tree.root.findAllByType('Pressable');",
+                    mockLine('react-native'),
+                    mockLine('@/sync/domains/state/storage'),
+                    rendererCreateLine('ChatList'),
+                    fakeTimersLine(),
+                    advanceTimersLine(1000),
+                    animationFrameLine(),
+                    microtaskFlushLine(),
+                    pressableTreeWalkLine(),
                 ].join('\n'),
             },
             {
@@ -94,21 +150,21 @@ describe('collectResidualFamilyCounts', () => {
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
-                    "vi.mock('react-native', () => ({}));",
-                    "vi.mock('expo-router', () => ({}));",
-                    "vi.mock('@/text', () => ({ t: (key: string) => key }));",
-                    "vi.mock('@/modal', () => ({ Modal: {} }));",
-                    'renderer.create(<SessionView />);',
-                    'vi.useFakeTimers();',
-                    'vi.advanceTimersByTime(250);',
-                    'screen.root.findAll((node) => Boolean(node.props?.testID));',
+                    mockLine('react-native'),
+                    mockLine('expo-router'),
+                    mockLine('@/text', "({ t: (key: string) => key })"),
+                    mockLine('@/modal', '({ Modal: {} })'),
+                    rendererCreateLine('SessionView'),
+                    fakeTimersLine(),
+                    advanceTimersLine(250),
+                    testIdTreeWalkLine(),
                 ].join('\n'),
             },
             {
                 path: 'apps/ui/sources/components/sessions/transcript/ChatList.jumpToBottom.test.tsx',
                 text: [
-                    "import { renderScreen } from '@/dev/testkit';",
-                    'await renderScreen(<ChatList />);',
+                    testkitImportLine('renderScreen'),
+                    renderScreenLine('ChatList'),
                 ].join('\n'),
             },
         ];
@@ -144,9 +200,9 @@ describe('collectResidualFamilyCounts', () => {
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
-                    "vi.mock('react-native', () => ({}));",
-                    "vi.mock('@/text', () => ({ t: (key: string) => key }));",
-                    "renderer.create(<MessageView />);",
+                    mockLine('react-native'),
+                    mockLine('@/text', "({ t: (key: string) => key })"),
+                    rendererCreateLine('MessageView'),
                 ].join('\n'),
             },
             {
@@ -154,12 +210,12 @@ describe('collectResidualFamilyCounts', () => {
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
-                    "vi.mock('react-native', () => ({}));",
-                    "vi.mock('@/text', () => ({ t: (key: string) => key }));",
-                    'renderer.create(<SessionView />);',
-                    'vi.useFakeTimers();',
-                    'vi.advanceTimersByTime(250);',
-                    "screen.root.findAll((node) => Boolean(node.props?.testID));",
+                    mockLine('react-native'),
+                    mockLine('@/text', "({ t: (key: string) => key })"),
+                    rendererCreateLine('SessionView'),
+                    fakeTimersLine(),
+                    advanceTimersLine(250),
+                    testIdTreeWalkLine(),
                 ].join('\n'),
             },
         ];

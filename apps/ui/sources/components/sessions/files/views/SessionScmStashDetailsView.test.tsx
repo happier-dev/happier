@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createModalModuleMock,
     createPartialStorageModuleMock,
+    flushHookEffects,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -189,6 +189,15 @@ describe('SessionScmStashDetailsView', () => {
         return screen;
     }
 
+    async function withFakeTimers(body: () => Promise<void>): Promise<void> {
+        vi.useFakeTimers();
+        try {
+            await body();
+        } finally {
+            vi.useRealTimers();
+        }
+    }
+
     it('loads managed stashes and renders the diff for the first stash', async () => {
         await renderStashDetailsView();
 
@@ -199,91 +208,88 @@ describe('SessionScmStashDetailsView', () => {
     });
 
     it('retries the selected stash diff when the backend is transiently unavailable', async () => {
-        vi.useFakeTimers();
-        sessionScmStashListSpy.mockResolvedValue({
-            success: true,
-            managedCount: 1,
-            managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
-            totalCount: 1,
-        });
-        sessionScmStashShowSpy
-            .mockResolvedValueOnce({
-                success: false,
-                error: 'RPC method not available',
-                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-            })
-            .mockResolvedValueOnce({
+        await withFakeTimers(async () => {
+            sessionScmStashListSpy.mockResolvedValue({
                 success: true,
-                diff: [
-                    'diff --git a/src/retry.ts b/src/retry.ts',
-                    'index 0000000..1111111 100644',
-                    '--- a/src/retry.ts',
-                    '+++ b/src/retry.ts',
-                    '@@ -1,1 +1,1 @@',
-                    '-export const retry = 1;',
-                    '+export const retry = 2;',
-                    '',
-                ].join('\n'),
-                truncated: false,
+                managedCount: 1,
+                managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+                totalCount: 1,
+            });
+            sessionScmStashShowSpy
+                .mockResolvedValueOnce({
+                    success: false,
+                    error: 'RPC method not available',
+                    errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                })
+                .mockResolvedValueOnce({
+                    success: true,
+                    diff: [
+                        'diff --git a/src/retry.ts b/src/retry.ts',
+                        'index 0000000..1111111 100644',
+                        '--- a/src/retry.ts',
+                        '+++ b/src/retry.ts',
+                        '@@ -1,1 +1,1 @@',
+                        '-export const retry = 1;',
+                        '+export const retry = 2;',
+                        '',
+                    ].join('\n'),
+                    truncated: false,
+                });
+
+            await renderStashDetailsView();
+
+            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
+
+            await flushHookEffects({ cycles: 1, advanceTimersMs: managedStashRetryDelayMs });
+
+            await vi.waitFor(() => {
+                expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
             });
 
-        await renderStashDetailsView();
-
-        expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
-
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(managedStashRetryDelayMs);
+            expect(diffFilesListSpy).toHaveBeenCalled();
         });
-
-        await vi.waitFor(() => {
-            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
-        });
-
-        expect(diffFilesListSpy).toHaveBeenCalled();
     });
 
     it('stops retrying the stash list when the backend stays unavailable and surfaces the error', async () => {
-        vi.useFakeTimers();
-        sessionScmStashListSpy.mockResolvedValue({
-            success: false,
-            error: 'RPC method not available',
-            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-        });
+        await withFakeTimers(async () => {
+            sessionScmStashListSpy.mockResolvedValue({
+                success: false,
+                error: 'RPC method not available',
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+            });
 
-        const screen = await renderStashDetailsView();
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(managedStashRetryMaxIntervalMs);
-        });
-        await vi.waitFor(() => {
-            expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
-        });
+            const screen = await renderStashDetailsView();
+            await flushHookEffects({ cycles: 1, advanceTimersMs: managedStashRetryMaxIntervalMs });
+            await vi.waitFor(() => {
+                expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
+            });
 
-        expect(screen.getTextContent()).toContain('RPC method not available');
+            expect(screen.getTextContent()).toContain('RPC method not available');
+        });
     });
 
     it('stops retrying the selected stash diff when the backend stays unavailable and surfaces the error', async () => {
-        vi.useFakeTimers();
-        sessionScmStashListSpy.mockResolvedValue({
-            success: true,
-            managedCount: 1,
-            managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
-            totalCount: 1,
-        });
-        sessionScmStashShowSpy.mockResolvedValue({
-            success: false,
-            error: 'RPC method not available',
-            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-        });
+        await withFakeTimers(async () => {
+            sessionScmStashListSpy.mockResolvedValue({
+                success: true,
+                managedCount: 1,
+                managedStashes: [{ stashRef: 'stash@{0}', kind: 'branch', branch: 'main', createdAt: Date.now() }],
+                totalCount: 1,
+            });
+            sessionScmStashShowSpy.mockResolvedValue({
+                success: false,
+                error: 'RPC method not available',
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+            });
 
-        const screen = await renderStashDetailsView();
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(managedStashRetryMaxIntervalMs);
-        });
-        await vi.waitFor(() => {
-            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
-        });
+            const screen = await renderStashDetailsView();
+            await flushHookEffects({ cycles: 1, advanceTimersMs: managedStashRetryMaxIntervalMs });
+            await vi.waitFor(() => {
+                expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
+            });
 
-        expect(screen.getTextContent()).toContain('RPC method not available');
+            expect(screen.getTextContent()).toContain('RPC method not available');
+        });
     });
 
     it('loads the clicked stash when switching between managed stash pills', async () => {
