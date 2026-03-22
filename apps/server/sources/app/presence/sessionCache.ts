@@ -261,6 +261,15 @@ class ActivityCache {
         cached.active = true;
     }
 
+    markSessionInactive(sessionId: string, userId: string, timestamp: number): void {
+        const cacheKey = `${sessionId}:${userId}`;
+        this.sessionCache.delete(cacheKey);
+        for (const [entryKey, entry] of this.sessionCache.entries()) {
+            if (entry.sessionId !== sessionId) continue;
+            this.sessionCache.delete(entryKey);
+        }
+    }
+
     markMachineUpdateSent(machineId: string, timestamp: number): void {
         const cached = this.machineCache.get(machineId);
         if (!cached) return;

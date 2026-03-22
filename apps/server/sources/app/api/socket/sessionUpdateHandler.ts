@@ -346,7 +346,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             const runRaw = data?.run;
             if (!sid) return;
 
-            if (!canPublishFromSessionScopedSocket({
+            if (!await canPublishFromSessionScopedSocket({
                 socket,
                 connection,
                 sessionId: sid,
@@ -702,6 +702,8 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             if (!session) {
                 return;
             }
+
+            activityCache.markSessionInactive(sid, userId, t);
 
             // Update last active at
             await db.session.update({

@@ -2,6 +2,7 @@ import { RPC_ERROR_CODES } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { Server, Socket } from "socket.io";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeSocket, triggerSocketHandler } from "../testkit/socketHarness";
 
 const createRpcRedisRegistryCoordinatorMock = vi.fn();
 const resolveRpcCallTargetMock = vi.fn();
@@ -31,16 +32,6 @@ vi.mock("./rpcRedisRegistryCoordinator", () => ({
 
 import { rpcHandler } from "./rpcHandler";
 
-interface FakeSocket {
-    id: string;
-    connected: boolean;
-    data?: Record<string, unknown>;
-    on: (event: string, handler: (...args: any[]) => unknown) => void;
-    emit: ReturnType<typeof vi.fn>;
-    timeout: ReturnType<typeof vi.fn>;
-    trigger: (event: string, ...args: any[]) => Promise<void>;
-}
-
 function createRedisCoordinator(overrides: Record<string, unknown> = {}) {
     return {
         enabled: false,
@@ -54,29 +45,16 @@ function createRedisCoordinator(overrides: Record<string, unknown> = {}) {
     };
 }
 
-function createSocket(params: { id: string; emitWithAck?: ReturnType<typeof vi.fn>; data?: Record<string, unknown> }): FakeSocket {
-    const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
+function createSocket(params: { id: string; emitWithAck?: ReturnType<typeof vi.fn>; data?: Record<string, unknown> }) {
     const emitWithAck = params.emitWithAck ?? vi.fn().mockResolvedValue(undefined);
-
-    return {
+    return createFakeSocket({
         id: params.id,
-        connected: true,
         data: params.data,
-        on(event, handler) {
-            const existing = handlers.get(event) ?? [];
-            existing.push(handler);
-            handlers.set(event, existing);
-        },
         emit: vi.fn(),
         timeout: vi.fn(() => ({
             emitWithAck,
         })),
-        async trigger(event, ...args) {
-            for (const handler of handlers.get(event) ?? []) {
-                await handler(...args);
-            }
-        },
-    };
+    });
 }
 
 describe("rpcHandler", () => {
@@ -114,7 +92,7 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await socket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:execution.run.stream.start" });
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:execution.run.stream.start" });
 
         expect(userRpcListeners.size).toBe(0);
         expect(redisCoordinator.registerMethod).not.toHaveBeenCalled();
@@ -147,7 +125,7 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await socket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "sess_2:execution.run.stream.start" });
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_2:execution.run.stream.start" });
 
         expect(userRpcListeners.size).toBe(0);
         expect(redisCoordinator.registerMethod).not.toHaveBeenCalled();
@@ -189,7 +167,7 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: true, instanceId: "instance-1" },
         });
 
-        await socket.trigger(SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
 
         expect(redisCoordinator.removeSocketRegistration).toHaveBeenCalledTimes(1);
         expect(redisCoordinator.removeSocketRegistration).toHaveBeenCalledWith("target-user", "agent.run", "stale-socket");
@@ -241,7 +219,7 @@ describe("rpcHandler", () => {
             targetListeners?.set("agent.run", reconnectingTargetSocket as unknown as Socket);
         }, 5);
 
-        const callPromise = callerSocket.trigger(SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
+        const callPromise = triggerSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
 
         await vi.advanceTimersByTimeAsync(5);
         await callPromise;
@@ -267,15 +245,15 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await socket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
         expect(allRpcListeners.get("user-1")).toBe(userRpcListeners);
 
-        await socket.trigger(SOCKET_RPC_EVENTS.UNREGISTER, { method: "agent.run" });
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.UNREGISTER, { method: "agent.run" });
 
         expect(userRpcListeners.size).toBe(0);
         expect(allRpcListeners.has("user-1")).toBe(false);
 
-        await socket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
 
         expect(allRpcListeners.get("user-1")).toBe(userRpcListeners);
         expect(userRpcListeners.get("agent.run")).toBe(socket);
@@ -296,8 +274,8 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
-        await firstSocket.trigger(SOCKET_RPC_EVENTS.UNREGISTER, { method: "agent.run" });
+        await triggerSocketHandler(firstSocket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
+        await triggerSocketHandler(firstSocket, SOCKET_RPC_EVENTS.UNREGISTER, { method: "agent.run" });
 
         const secondSocket = createSocket({
             id: "socket-2",
@@ -310,7 +288,7 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
+        await triggerSocketHandler(secondSocket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
 
         resolveRpcCallTargetMock.mockResolvedValue({
             targetUserId: "user-1",
@@ -318,7 +296,7 @@ describe("rpcHandler", () => {
         });
 
         const callback = vi.fn();
-        await firstSocket.trigger(SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
+        await triggerSocketHandler(firstSocket, SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
 
         expect(secondSocket.timeout).toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
@@ -339,8 +317,8 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.old" });
-        await firstSocket.trigger(SOCKET_RPC_EVENTS.UNREGISTER, { method: "agent.old" });
+        await triggerSocketHandler(firstSocket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.old" });
+        await triggerSocketHandler(firstSocket, SOCKET_RPC_EVENTS.UNREGISTER, { method: "agent.old" });
 
         const secondSocket = createSocket({ id: "socket-2" });
         const secondUserRpcListeners = new Map<string, Socket>();
@@ -349,8 +327,8 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.new" });
-        await firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.old" });
+        await triggerSocketHandler(secondSocket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.new" });
+        await triggerSocketHandler(firstSocket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.old" });
 
         const activeMap = allRpcListeners.get("user-1");
         expect(activeMap).toBeTruthy();
@@ -371,8 +349,8 @@ describe("rpcHandler", () => {
             redisRegistry: { enabled: false },
         });
 
-        await socket.trigger(SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
-        await socket.trigger("disconnect");
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "agent.run" });
+        await triggerSocketHandler(socket, "disconnect");
 
         expect(userRpcListeners.size).toBe(0);
         expect(allRpcListeners.has("user-1")).toBe(false);

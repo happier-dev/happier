@@ -1,24 +1,29 @@
 import { describe, it, expect, vi } from "vitest";
 import { RPC_ERROR_CODES } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
+import { createDbMocks, installDbModuleMock } from "../testkit/dbMocks";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import { createEnvReset } from "../testkit/env";
 
 describe("rpcHandler", () => {
+  const resetRpcAvailabilityEnv = createEnvReset();
+  const setRpcAvailabilityEnv = () => {
+    resetRpcAvailabilityEnv({
+      HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS: "100",
+      HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS: "10",
+    });
+  };
+
   it("waits for the owner listener map during delegated permission RPC grace fallback", async () => {
     vi.useFakeTimers();
     vi.resetModules();
-    const previousGrace = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-    const previousPoll = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = "100";
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = "10";
+    setRpcAvailabilityEnv();
 
-    vi.doMock("@/storage/db", () => ({
-      db: {
-        session: {
-          findUnique: vi.fn().mockResolvedValue({ accountId: "owner-1" }),
-        },
-      },
-    }));
+    const dbMocks = createDbMocks({
+      session: ["findUnique"],
+    } as const);
+    dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "owner-1" });
+    installDbModuleMock({ db: dbMocks.db });
     vi.doMock("@/app/share/accessControl", () => ({
       canApprovePermissions: vi.fn().mockResolvedValue(true),
     }));
@@ -74,10 +79,7 @@ describe("rpcHandler", () => {
     } finally {
       vi.doUnmock("@/storage/db");
       vi.doUnmock("@/app/share/accessControl");
-      if (previousGrace === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = previousGrace;
-      if (previousPoll === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = previousPoll;
+      resetRpcAvailabilityEnv();
       vi.useRealTimers();
     }
   });
@@ -85,10 +87,7 @@ describe("rpcHandler", () => {
   it("waits briefly for late session RPC registration before returning method unavailable", async () => {
     vi.useFakeTimers();
     vi.resetModules();
-    const previousGrace = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-    const previousPoll = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = "100";
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = "10";
+    setRpcAvailabilityEnv();
 
     try {
       const { rpcHandler } = await import("./rpcHandler");
@@ -128,10 +127,7 @@ describe("rpcHandler", () => {
         }),
       );
     } finally {
-      if (previousGrace === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = previousGrace;
-      if (previousPoll === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = previousPoll;
+      resetRpcAvailabilityEnv();
       vi.useRealTimers();
     }
   });
@@ -139,10 +135,7 @@ describe("rpcHandler", () => {
   it("retries redis lookup briefly for late session RPC registration before returning method unavailable", async () => {
     vi.useFakeTimers();
     vi.resetModules();
-    const previousGrace = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-    const previousPoll = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = "100";
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = "10";
+    setRpcAvailabilityEnv();
 
     try {
       const targetSocketId = "target-socket";
@@ -193,10 +186,7 @@ describe("rpcHandler", () => {
         }),
       );
     } finally {
-      if (previousGrace === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = previousGrace;
-      if (previousPoll === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = previousPoll;
+      resetRpcAvailabilityEnv();
       vi.useRealTimers();
     }
   });
@@ -204,10 +194,7 @@ describe("rpcHandler", () => {
   it("does not fall back to the caller listener map for delegated permission RPCs when redis is missing a mapping", async () => {
     vi.useFakeTimers();
     vi.resetModules();
-    const previousGrace = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-    const previousPoll = process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = "100";
-    process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = "10";
+    setRpcAvailabilityEnv();
 
     const hmget = vi.fn().mockResolvedValue([null]);
     const evalFn = vi.fn();
@@ -216,13 +203,11 @@ describe("rpcHandler", () => {
     vi.doMock("@/storage/redis/redis", () => ({
       getRedisClient: () => ({ hmget, eval: evalFn, multi }),
     }));
-    vi.doMock("@/storage/db", () => ({
-      db: {
-        session: {
-          findUnique: vi.fn().mockResolvedValue({ accountId: "owner-1" }),
-        },
-      },
-    }));
+    const dbMocks = createDbMocks({
+      session: ["findUnique"],
+    } as const);
+    dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "owner-1" });
+    installDbModuleMock({ db: dbMocks.db });
     vi.doMock("@/app/share/accessControl", () => ({
       canApprovePermissions: vi.fn().mockResolvedValue(true),
     }));
@@ -279,10 +264,7 @@ describe("rpcHandler", () => {
       vi.doUnmock("@/storage/redis/redis");
       vi.doUnmock("@/storage/db");
       vi.doUnmock("@/app/share/accessControl");
-      if (previousGrace === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS = previousGrace;
-      if (previousPoll === undefined) delete process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS;
-      else process.env.HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS = previousPoll;
+      resetRpcAvailabilityEnv();
       vi.useRealTimers();
     }
   });

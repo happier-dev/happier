@@ -4,12 +4,40 @@ import { Server, Socket } from 'socket.io';
 
 const MACHINE_TRANSFER_MAX_BYTES_ERROR = 'Server-routed machine transfer exceeds the configured max-bytes limit';
 
-function getEncodedMachineTransferEnvelopeSize(raw: unknown): number | null {
+function getServerRoutedChunkPayloadSizeBytes(raw: unknown): number | null {
   try {
-    return Buffer.byteLength(JSON.stringify(raw), 'utf8');
+    const payloadBase64 = typeof raw === 'object' && raw !== null && 'payloadBase64' in raw
+      ? (raw as { payloadBase64?: unknown }).payloadBase64
+      : null;
+    if (typeof payloadBase64 !== 'string') {
+      return null;
+    }
+    return Buffer.byteLength(payloadBase64, 'base64');
   } catch {
     return null;
   }
+}
+
+function emitMachineTransferAbort(params: Readonly<{
+  io: Server;
+  userId: string;
+  deliverToMachineId: string;
+  sourceMachineId: string;
+  targetMachineId: string;
+  transferId: string;
+  reason: string;
+}>): void {
+  params.io
+    .to(`machine:${params.deliverToMachineId}:${params.userId}`)
+    .emit(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+      sourceMachineId: params.sourceMachineId,
+      targetMachineId: params.targetMachineId,
+      envelope: {
+        transferId: params.transferId,
+        kind: 'abort',
+        reason: params.reason,
+      },
+    });
 }
 
 export function machineTransferHandler(
@@ -38,6 +66,15 @@ export function machineTransferHandler(
     }
 
     if (ctx.serverRoutedTransferEnabled === false) {
+      emitMachineTransferAbort({
+        io: ctx.io,
+        userId,
+        deliverToMachineId: sourceMachineId,
+        sourceMachineId: parsed.data.targetMachineId,
+        targetMachineId: sourceMachineId,
+        transferId: parsed.data.envelope.transferId,
+        reason: 'Server-routed machine transfer is disabled on this server',
+      });
       socket.emit(SOCKET_RPC_EVENTS.ERROR, {
         type: 'machine-transfer',
         error: 'Server-routed machine transfer is disabled on this server',
@@ -45,13 +82,23 @@ export function machineTransferHandler(
       return;
     }
 
-    const encodedSize = getEncodedMachineTransferEnvelopeSize(parsed.data);
+    const payloadSizeBytes = parsed.data.envelope.kind === 'chunk'
+      ? getServerRoutedChunkPayloadSizeBytes(parsed.data.envelope)
+      : null;
     if (
       typeof ctx.serverRoutedTransferMaxBytes === 'number'
-      && Number.isFinite(ctx.serverRoutedTransferMaxBytes)
-      && encodedSize !== null
-      && encodedSize > ctx.serverRoutedTransferMaxBytes
+      && payloadSizeBytes !== null
+      && payloadSizeBytes > ctx.serverRoutedTransferMaxBytes
     ) {
+      emitMachineTransferAbort({
+        io: ctx.io,
+        userId,
+        deliverToMachineId: parsed.data.targetMachineId,
+        sourceMachineId,
+        targetMachineId: parsed.data.targetMachineId,
+        transferId: parsed.data.envelope.transferId,
+        reason: MACHINE_TRANSFER_MAX_BYTES_ERROR,
+      });
       socket.emit(SOCKET_RPC_EVENTS.ERROR, {
         type: 'machine-transfer',
         error: MACHINE_TRANSFER_MAX_BYTES_ERROR,

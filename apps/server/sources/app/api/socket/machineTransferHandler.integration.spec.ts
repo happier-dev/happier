@@ -72,7 +72,8 @@ describe('machineTransferHandler', () => {
     const { machineTransferHandler } = await import('./machineTransferHandler');
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
-    const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' }) as any;
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' }) as any;
     socket.data = {
       clientType: 'machine-scoped',
       machineId: 'machine-source',
@@ -93,18 +94,28 @@ describe('machineTransferHandler', () => {
       },
     });
 
-    expect(to).not.toHaveBeenCalled();
-    expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1');
+    expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+      sourceMachineId: 'machine-target',
+      targetMachineId: 'machine-source',
+      envelope: {
+        transferId: 'transfer_2',
+        kind: 'abort',
+        reason: 'Server-routed machine transfer is disabled on this server',
+      },
+    });
+    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-transfer',
       error: 'Server-routed machine transfer is disabled on this server',
     });
   });
 
-  it('rejects server-routed transfer envelopes that exceed the advertised max-bytes limit', async () => {
+  it('does not reject open control envelopes when the advertised max-bytes policy is lower than the encoded envelope overhead', async () => {
     const { machineTransferHandler } = await import('./machineTransferHandler');
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
-    const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' }) as any;
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' }) as any;
     socket.data = {
       clientType: 'machine-scoped',
       machineId: 'machine-source',
@@ -112,7 +123,48 @@ describe('machineTransferHandler', () => {
 
     machineTransferHandler('user-1', socket, {
       io: { to } as any,
-      serverRoutedTransferMaxBytes: 32,
+      serverRoutedTransferMaxBytes: 8,
+    } as any);
+
+    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    await handler({
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_control',
+        kind: 'open',
+        manifestHash: 'transfer_control',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+
+    expect(to).toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_control',
+        kind: 'open',
+        manifestHash: 'transfer_control',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+    expect(socketEmit).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized server-routed chunk envelopes with a synthetic abort for the waiting target machine', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const socketEmit = vi.fn();
+    const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' }) as any;
+    socket.data = {
+      clientType: 'machine-scoped',
+      machineId: 'machine-source',
+    };
+
+    machineTransferHandler('user-1', socket, {
+      io: { to } as any,
+      serverRoutedTransferMaxBytes: 8,
     } as any);
 
     const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
@@ -126,8 +178,17 @@ describe('machineTransferHandler', () => {
       },
     });
 
-    expect(to).not.toHaveBeenCalled();
-    expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+    expect(to).toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      envelope: {
+        transferId: 'transfer_oversized',
+        kind: 'abort',
+        reason: 'Server-routed machine transfer exceeds the configured max-bytes limit',
+      },
+    });
+    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-transfer',
       error: 'Server-routed machine transfer exceeds the configured max-bytes limit',
     });

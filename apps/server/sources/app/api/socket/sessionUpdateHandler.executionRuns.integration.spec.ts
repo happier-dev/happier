@@ -8,7 +8,6 @@ type GetSessionParticipantUserIdsFn = typeof import("@/app/share/sessionParticip
 
 const emitEphemeral = vi.fn();
 const websocketEventsCounterInc = vi.fn();
-const sessionFindUnique = vi.fn();
 
 vi.mock("@/app/monitoring/metrics2", () => ({
     sessionAliveEventsCounter: { inc: vi.fn() },
@@ -19,12 +18,6 @@ vi.mock("@/app/monitoring/metrics2", () => ({
 vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: {
         isSessionValid: vi.fn(async () => true),
-    },
-}));
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: { findUnique: sessionFindUnique },
     },
 }));
 
@@ -46,6 +39,14 @@ vi.mock("@/app/presence/presenceRecorder", () => ({
     recordSessionAlive: vi.fn(async () => {}),
 }));
 
+vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
+    refreshSessionParticipantBadgePushes: vi.fn(async () => {}),
+}));
+
+vi.mock("@/app/activity/accountActivityBadge", () => ({
+    didSessionActivityBadgeContributionChange: vi.fn(() => false),
+}));
+
 const checkSessionAccess = vi.fn<CheckSessionAccessFn>();
 const requireAccessLevel = vi.fn<RequireAccessLevelFn>();
 vi.mock("@/app/share/accessControl", () => ({
@@ -56,6 +57,15 @@ vi.mock("@/app/share/accessControl", () => ({
 const getSessionParticipantUserIds = vi.fn<GetSessionParticipantUserIdsFn>();
 vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
+}));
+
+const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<{ machineId: string } | null> => ({ machineId: "m1" })));
+vi.mock("@/storage/db", () => ({
+    db: {
+        accessKey: {
+            findUnique: accessKeyFindUnique,
+        },
+    },
 }));
 
 vi.mock("@/config/env", () => ({
@@ -95,7 +105,8 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         checkSessionAccess.mockReset();
         requireAccessLevel.mockReset();
         getSessionParticipantUserIds.mockReset();
-        sessionFindUnique.mockReset();
+        accessKeyFindUnique.mockReset();
+        accessKeyFindUnique.mockResolvedValue({ machineId: "m1" });
         checkSessionAccess.mockImplementation(async (userId, sessionId) => ({
             userId,
             sessionId,
@@ -104,7 +115,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         }));
         requireAccessLevel.mockReturnValue(true);
         getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
-        sessionFindUnique.mockResolvedValue({ accountId: "u1" });
     });
 
     it("broadcasts execution-run-updated ephemeral updates from a daemon session socket to all session participants", async () => {
@@ -183,6 +193,65 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
 
         expect(ownerCall?.skipSenderConnection).toBe(connection);
         expect(collaboratorCall?.skipSenderConnection).toBeUndefined();
+    });
+
+    it("does not broadcast execution-run-updated when the machine access key binding has been revoked", async () => {
+        accessKeyFindUnique.mockResolvedValueOnce(null);
+        checkSessionAccess.mockResolvedValue({
+            userId: "u1",
+            sessionId: "s1",
+            level: "edit",
+            isOwner: true,
+        } as any);
+
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        (socket as any).data = {
+            machineId: "m1",
+            sessionScopedBinding: {
+                sessionId: "s1",
+                machineId: "m1",
+                proof: "machine-access-key",
+            },
+        };
+        sessionUpdateHandler(
+            "u1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "execution-run-updated");
+        await handler({
+            sid: "s1",
+            run: {
+                runId: "run_1",
+                callId: "call_1",
+                sidechainId: "call_1",
+                intent: "review",
+                backendTarget: { kind: "builtInAgent", agentId: "claude" },
+                permissionMode: "read_only",
+                retentionPolicy: "ephemeral",
+                runClass: "bounded",
+                ioMode: "request_response",
+                status: "running",
+                startedAtMs: 123,
+            },
+        });
+
+        expect(accessKeyFindUnique).toHaveBeenCalledWith({
+            where: {
+                accountId_machineId_sessionId: {
+                    accountId: "u1",
+                    machineId: "m1",
+                    sessionId: "s1",
+                },
+            },
+            select: { machineId: true },
+        });
+        expect(checkSessionAccess).not.toHaveBeenCalled();
+        expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
+        expect(emitEphemeral).not.toHaveBeenCalled();
     });
 
     it("does not broadcast execution-run-updated without machine-bound session proof even when the sender owns the session", async () => {

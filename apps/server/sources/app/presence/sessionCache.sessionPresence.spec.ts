@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../api/testkit/dbMocks";
+
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 vi.mock("@/app/monitoring/metrics2", () => ({
@@ -19,51 +21,23 @@ vi.mock("@/app/share/accessControl", () => ({
 let sessionLastActiveAtMs = 0;
 let sessionActive = false;
 let machineLastActiveAtMs = 0;
-const sessionFindUnique = vi.fn(async () => ({
-    id: "s1",
-    lastActiveAt: new Date(sessionLastActiveAtMs),
-    active: sessionActive,
-}));
-const sessionUpdateMany = vi.fn(async (_args: any) => ({ count: 1 }));
-const machineFindUnique = vi.fn(async () => ({
-    id: "m1",
-    accountId: "u1",
-    lastActiveAt: new Date(machineLastActiveAtMs),
-    active: false,
-    revokedAt: null,
-}));
-const machineUpdateMany = vi.fn(async (_args: any) => ({ count: 1 }));
-const dbTransaction = vi.fn(async (ops: any) => {
-    if (typeof ops === "function") {
-        return ops({
-            session: {
-                findUnique: sessionFindUnique,
-                updateMany: sessionUpdateMany,
-            },
-            machine: {
-                findUnique: machineFindUnique,
-                updateMany: machineUpdateMany,
-            },
-        });
-    }
-    const out: unknown[] = [];
-    for (const op of ops) out.push(await op);
-    return out;
-});
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        $transaction: dbTransaction,
-        session: {
-            findUnique: sessionFindUnique,
-            updateMany: sessionUpdateMany,
-        },
-        machine: {
-            findUnique: vi.fn(),
-            updateMany: vi.fn(),
-        },
+const dbMocks = createDbMocks({
+    session: ["findUnique", "updateMany"],
+    machine: ["findUnique", "updateMany"],
+} as const);
+const transactionMock = createDbTransactionMock(() => ({
+    session: {
+        findUnique: dbMocks.db.session.findUnique,
+        updateMany: dbMocks.db.session.updateMany,
+    },
+    machine: {
+        findUnique: dbMocks.db.machine.findUnique,
+        updateMany: dbMocks.db.machine.updateMany,
     },
 }));
+installDbModuleMock({
+    db: transactionMock.wrapDb(dbMocks.db),
+});
 
 describe("ActivityCache session presence", () => {
     let activityCache: any | null = null;
@@ -75,20 +49,22 @@ describe("ActivityCache session presence", () => {
         sessionLastActiveAtMs = Date.now();
         sessionActive = false;
         machineLastActiveAtMs = Date.now();
-        sessionFindUnique.mockImplementation(async () => ({
+        dbMocks.reset();
+        transactionMock.transaction.mockClear();
+        dbMocks.db.session.findUnique.mockImplementation(async () => ({
             id: "s1",
             lastActiveAt: new Date(sessionLastActiveAtMs),
             active: sessionActive,
         }));
-        sessionUpdateMany.mockImplementation(async () => ({ count: 1 }));
-        machineFindUnique.mockImplementation(async () => ({
+        dbMocks.db.session.updateMany.mockImplementation(async () => ({ count: 1 }));
+        dbMocks.db.machine.findUnique.mockImplementation(async () => ({
             id: "m1",
             accountId: "u1",
             lastActiveAt: new Date(machineLastActiveAtMs),
             active: false,
             revokedAt: null,
         }));
-        machineUpdateMany.mockImplementation(async () => ({ count: 1 }));
+        dbMocks.db.machine.updateMany.mockImplementation(async () => ({ count: 1 }));
     });
 
     afterEach(() => {
@@ -109,8 +85,8 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
-        expect(sessionUpdateMany).toHaveBeenCalledWith(
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({ id: "s1" }),
                 data: expect.objectContaining({ active: true, lastActiveAt: expect.any(Date) }),
@@ -124,7 +100,7 @@ describe("ActivityCache session presence", () => {
     it("does not issue concurrent session update queries while flushing pending updates", async () => {
         const { log } = await import("@/utils/logging/log");
         let inFlight = 0;
-        sessionUpdateMany.mockImplementation(async () => {
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
             inFlight += 1;
             if (inFlight > 1) {
                 throw new Error("concurrent_session_update");
@@ -155,7 +131,7 @@ describe("ActivityCache session presence", () => {
         const { log } = await import("@/utils/logging/log");
 
         let sawFailure = false;
-        sessionUpdateMany.mockImplementation(async (args: any) => {
+        dbMocks.db.session.updateMany.mockImplementation(async (args: any) => {
             if (args?.where?.id === "s1" && !sawFailure) {
                 sawFailure = true;
                 throw new Error("sqlite_busy");
@@ -175,7 +151,7 @@ describe("ActivityCache session presence", () => {
         await (activityCache as any).flushPendingUpdates();
 
         // First flush attempts both sessions (even though the first fails).
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
 
         // It should log the error, but not abort the full flush.
         expect(log).toHaveBeenCalledWith(
@@ -185,12 +161,12 @@ describe("ActivityCache session presence", () => {
 
         // Second flush retries s1 (now succeeds).
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(3);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(3);
     });
 
     it("backs off the entire flush when a session update hits a DB-busy error", async () => {
         let callCount = 0;
-        sessionUpdateMany.mockImplementation(async () => {
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
             callCount += 1;
             if (callCount === 1) {
                 throw Object.assign(new Error("database busy"), { code: "SQLITE_BUSY" });
@@ -215,19 +191,19 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
-        expect(machineUpdateMany).not.toHaveBeenCalled();
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
 
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
-        expect(machineUpdateMany).not.toHaveBeenCalled();
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
 
         await vi.advanceTimersByTimeAsync(30_000);
 
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
     });
 
     it("does not start an overlapping timer-driven flush while a previous flush is still in-flight", async () => {
@@ -239,7 +215,7 @@ describe("ActivityCache session presence", () => {
         });
 
         let callCount = 0;
-        sessionUpdateMany.mockImplementation(async () => {
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
             callCount += 1;
             if (callCount === 1) {
                 await firstWriteBarrier;
@@ -258,7 +234,7 @@ describe("ActivityCache session presence", () => {
         await vi.advanceTimersByTimeAsync(5_000);
 
         // The second timer tick should not start a new flush (no overlapping DB queries).
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
 
         const inFlightFlush = (activityCache as any).flushInFlight;
         resolveFirstWrite();
@@ -267,7 +243,7 @@ describe("ActivityCache session presence", () => {
 
     it("backs off on socket timeouts to avoid hammering the DB with repeated presence writes", async () => {
         let callCount = 0;
-        sessionUpdateMany.mockImplementation(async () => {
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
             callCount += 1;
             if (callCount === 1) {
                 throw new Error("Socket timeout (the database failed to respond to a query within the configured timeout)");
@@ -281,15 +257,15 @@ describe("ActivityCache session presence", () => {
         expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
 
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
 
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
 
         await vi.advanceTimersByTimeAsync(30_000);
 
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
     });
 
     it("does not drop a newer queued session update that arrives while a flush is awaiting the DB", async () => {
@@ -301,7 +277,7 @@ describe("ActivityCache session presence", () => {
         });
 
         let callCount = 0;
-        sessionUpdateMany.mockImplementation(async () => {
+        dbMocks.db.session.updateMany.mockImplementation(async () => {
             callCount += 1;
             if (callCount === 1) {
                 await firstWriteBarrier;
@@ -327,8 +303,8 @@ describe("ActivityCache session presence", () => {
         await flush;
 
         await (activityCache as any).flushPendingUpdates();
-        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
-        expect(sessionUpdateMany.mock.calls[1]?.[0]?.data?.lastActiveAt).toEqual(new Date(t2));
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(2);
+        expect(dbMocks.db.session.updateMany.mock.calls[1]?.[0]?.data?.lastActiveAt).toEqual(new Date(t2));
     });
 
     it("uses the caller-provided clock when cleaning up before session activity checks", async () => {
@@ -346,5 +322,40 @@ describe("ActivityCache session presence", () => {
 
         expect(activityCache.isSessionObservedActive("s1", now + 60_000)).toBe(false);
         expect((activityCache as any).sessionCache.size).toBe(0);
+    });
+
+    it("clears queued alive updates when a session is marked inactive", async () => {
+        ({ activityCache } = await import("./sessionCache"));
+
+        await activityCache.isSessionValid("s1", "u1");
+        const t1 = Date.now();
+        expect(activityCache.queueSessionUpdate("s1", "u1", t1)).toBe(true);
+
+        activityCache.markSessionInactive("s1", "u1", t1 + 1_000);
+
+        expect(activityCache.isSessionObservedActive("s1")).toBe(false);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(dbMocks.db.session.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("marks every cached participant entry for a session inactive", async () => {
+        ({ activityCache } = await import("./sessionCache"));
+
+        await activityCache.isSessionValid("s1", "u1");
+        await activityCache.isSessionValid("s1", "u2");
+
+        const t1 = Date.now();
+        expect(activityCache.queueSessionUpdate("s1", "u1", t1)).toBe(true);
+        expect(activityCache.queueSessionUpdate("s1", "u2", t1)).toBe(true);
+
+        activityCache.markSessionInactive("s1", "u1", t1 + 1_000);
+
+        expect(activityCache.isSessionObservedActive("s1")).toBe(false);
+        expect((activityCache as any).sessionCache.size).toBe(0);
+        expect(activityCache.queueSessionUpdate("s1", "u2", t1 + 2_000)).toBe(false);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(dbMocks.db.session.updateMany).not.toHaveBeenCalled();
     });
 });
