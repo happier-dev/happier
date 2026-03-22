@@ -1,7 +1,7 @@
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
-import { canUseSessionRpc } from '@/sync/ops/sessionMachineTarget';
+import { canUseSessionRpc, readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import {
     readCachedMachineRpcDirectRoute,
     recordCachedMachineRpcDirectRouteUnavailable,
@@ -14,6 +14,7 @@ import {
 } from '@/sync/runtime/sessionMachineRpcFallback';
 import {
     INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+    resolveSessionFileTransferRouteAvailability,
     resolveSessionRelayTransferAvailability,
     SERVER_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
 } from '@/sync/domains/transfers/runtime/resolveTransferAvailability';
@@ -46,57 +47,97 @@ export function createSessionFileTransferRpcCaller(params: Readonly<{
     sessionId: string;
     sessionRpcTransferSizeBytes?: number | null;
 }>): SessionFileTransferRpcCaller {
-    async function resolveSessionRoute(): Promise<
-        | Readonly<{ kind: 'selected'; route: Readonly<{ kind: 'server_routed_stream'; serverId: string | undefined }> }>
-        | Readonly<{ kind: 'unavailable'; response: TransferRpcFailure }>
-    > {
-        const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
-        const features = await getReadyServerFeatures({
-            timeoutMs: 500,
-            serverId,
-        });
+    function resolveSessionRouteFromSharedPolicy(input: Readonly<{
+        serverId: string | undefined;
+        sessionRpcAvailable: boolean;
+        serverFeatures: Awaited<ReturnType<typeof getReadyServerFeatures>>;
+    }>): ReturnType<typeof resolveSessionRelayTransferAvailability> {
         return resolveSessionRelayTransferAvailability({
-            serverId,
-            sessionRpcAvailable: canUseSessionRpc(params.sessionId),
+            serverId: input.serverId,
+            sessionRpcAvailable: input.sessionRpcAvailable,
             sessionRpcTransferSizeBytes: params.sessionRpcTransferSizeBytes,
-            serverFeatures: features,
+            serverFeatures: input.serverFeatures,
         });
     }
-
-    const caller = createSessionMachineRpcFallbackCaller<TransferRpcFailure>({
-        sessionId: params.sessionId,
-        resolveFallbackRoute: resolveSessionRoute,
-        reuseResolvedRoute: true,
-        fallbackOnLockedDirectRouteFailure: false,
-        shouldAttemptDirectRoute: (machineTarget) => {
-            const preferredServerId = resolvePreferredServerIdForSessionId(params.sessionId);
-            const machineRouteCache = readCachedMachineRpcDirectRoute({
-                serverId: preferredServerId,
-                remoteMachineId: machineTarget.machineId,
-            });
-            return machineRouteCache.status !== 'unavailable';
-        },
-        onDirectRouteViable: (machineTarget) => {
-            recordCachedMachineRpcDirectRouteViable({
-                serverId: resolvePreferredServerIdForSessionId(params.sessionId),
-                remoteMachineId: machineTarget.machineId,
-            });
-        },
-        onDirectRouteUnavailable: ({ machineTarget, error }) => {
-            recordCachedMachineRpcDirectRouteUnavailable(
-                {
-                    serverId: resolvePreferredServerIdForSessionId(params.sessionId),
-                    remoteMachineId: machineTarget.machineId,
-                },
-                readRpcErrorCode(error) ?? 'machine_rpc_direct_unavailable',
-            );
-        },
-    });
 
     return {
         call: async <TResponse extends TransferRpcSuccess | TransferRpcFailure, TRequest>(
             callParams: SessionFileTransferRpcCallParams<TRequest>,
-        ): Promise<TResponse> => await caller.call<TResponse, TRequest>(callParams),
+        ): Promise<TResponse> => {
+            const machineTarget = readMachineTargetForSession(params.sessionId);
+            const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
+            const serverFeatures = await getReadyServerFeatures({
+                timeoutMs: 500,
+                serverId,
+            });
+            const sessionRpcAvailable = canUseSessionRpc(params.sessionId);
+
+            const preferredRoute = resolveSessionFileTransferRouteAvailability({
+                serverId,
+                machineTargetAvailable: machineTarget !== null,
+                sessionRpcAvailable,
+                sessionRpcTransferSizeBytes: params.sessionRpcTransferSizeBytes,
+                serverFeatures,
+            });
+
+            const caller = createSessionMachineRpcFallbackCaller<TransferRpcFailure>({
+                sessionId: params.sessionId,
+                resolveFallbackRoute: async (): Promise<
+        | Readonly<{ kind: 'selected'; route: Readonly<{ kind: 'server_routed_stream'; serverId: string | undefined }> }>
+        | Readonly<{ kind: 'unavailable'; response: TransferRpcFailure }>
+                > => {
+                    if (preferredRoute.kind === 'selected' && preferredRoute.route.kind === 'server_routed_stream') {
+                        const serverRoute = preferredRoute.route;
+                        return {
+                            kind: 'selected',
+                            route: serverRoute,
+                        };
+                    }
+                    if (preferredRoute.kind === 'unavailable') {
+                        return preferredRoute;
+                    }
+
+                    return resolveSessionRouteFromSharedPolicy({
+                        serverId,
+                        sessionRpcAvailable,
+                        serverFeatures,
+                    });
+                },
+                reuseResolvedRoute: true,
+                fallbackOnLockedDirectRouteFailure: false,
+                shouldAttemptDirectRoute: (target) => {
+                    if (preferredRoute.kind !== 'selected' || preferredRoute.route.kind !== 'machine_rpc_direct') {
+                        return false;
+                    }
+                    if (!machineTarget || machineTarget.machineId !== target.machineId) {
+                        return false;
+                    }
+
+                    const machineRouteCache = readCachedMachineRpcDirectRoute({
+                        serverId,
+                        remoteMachineId: target.machineId,
+                    });
+                    return machineRouteCache.status !== 'unavailable';
+                },
+                onDirectRouteViable: (target) => {
+                    recordCachedMachineRpcDirectRouteViable({
+                        serverId,
+                        remoteMachineId: target.machineId,
+                    });
+                },
+                onDirectRouteUnavailable: ({ machineTarget: target, error }) => {
+                    recordCachedMachineRpcDirectRouteUnavailable(
+                        {
+                            serverId,
+                            remoteMachineId: target.machineId,
+                        },
+                        readRpcErrorCode(error) ?? 'machine_rpc_direct_unavailable',
+                    );
+                },
+            });
+
+            return await caller.call<TResponse, TRequest>(callParams);
+        },
     };
 }
 

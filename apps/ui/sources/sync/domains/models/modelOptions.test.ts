@@ -75,6 +75,33 @@ describe('modelOptions', () => {
         expect(out[2]?.description).toBe('Accurate');
     });
 
+    it('preserves dynamic session model ids, labels, and descriptions from metadata', () => {
+        const out = getModelOptionsForSession(
+            'codex',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 1,
+                    currentModelId: 'gpt-5.4',
+                    availableModels: [
+                        {
+                            id: 'gpt-5.4',
+                            name: 'GPT-5.4',
+                            description: 'Latest frontier coding model.',
+                        },
+                    ],
+                },
+            }),
+        );
+
+        expect(out[1]).toEqual({
+            value: 'gpt-5.4',
+            label: 'GPT-5.4',
+            description: 'Latest frontier coding model.',
+        });
+    });
+
     it('treats ACP session models as selectable', () => {
         const metadata = withMetadata({
             sessionModelsV1: {

@@ -1,24 +1,114 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type RpcResponse = any;
+const SESSION_ATTACHMENTS_UPLOAD_INIT = 'daemon.sessionAttachments.upload.init';
+const SESSION_ATTACHMENTS_UPLOAD_CHUNK = 'daemon.sessionAttachments.upload.chunk';
+const SESSION_ATTACHMENTS_UPLOAD_FINALIZE = 'daemon.sessionAttachments.upload.finalize';
 const nativeOpenSpy = vi.fn();
 const nativeCloseSpy = vi.fn();
 const sessionRPCSpy = vi.fn(async (_sessionId: string, _method: string, _payload: unknown): Promise<RpcResponse> => ({
     success: false,
     error: 'unconfigured',
 }));
+const getReadyServerFeaturesSpy = vi.fn();
+const uploadBulkPayloadFromFileSpy = vi.fn();
 const randomUUIDSpy = vi.fn(() => '12345678-0000-4000-8000-123456789abc');
 const isRuntimeFeatureEnabledSpy = vi.fn<(params: unknown) => Promise<boolean>>(async (_params) => true);
+const recipientPublicKeyBase64 = Buffer.alloc(32, 7).toString('base64');
+
+async function driveMockBulkUpload(params: Readonly<{
+    fileReader: Readonly<{
+        sizeBytes: number;
+        readBytes: (offset: number, length: number) => Promise<Uint8Array>;
+        close: () => Promise<void>;
+    }>;
+    init: () => Promise<
+        | Readonly<{ success: true; uploadId: string; chunkSizeBytes: number; recipientPublicKeyBase64: string }>
+        | Readonly<{ success: false; error: string; errorCode?: string }>
+    >;
+    sendChunk: (request: Readonly<{
+        uploadId: string;
+        index: number;
+        payloadBase64: string;
+        encryptedDataKeyEnvelopeBase64: string;
+    }>) => Promise<{ success: boolean; error?: string }>;
+    finalize: (request: Readonly<{ uploadId: string }>) => Promise<Readonly<{ success: boolean; error?: string }>>;
+    onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
+}>): Promise<Readonly<{ success: boolean; error?: string }>> {
+    const initResponse = await params.init();
+    if (!initResponse.success) {
+        return initResponse;
+    }
+
+    try {
+        let offset = 0;
+        let index = 0;
+        while (offset < params.fileReader.sizeBytes) {
+            const length = Math.min(initResponse.chunkSizeBytes, params.fileReader.sizeBytes - offset);
+            const bytes = await params.fileReader.readBytes(offset, length);
+            await params.sendChunk({
+                uploadId: initResponse.uploadId,
+                index,
+                payloadBase64: Buffer.from(bytes).toString('base64'),
+                encryptedDataKeyEnvelopeBase64: `envelope-${index}`,
+            });
+            offset += bytes.byteLength;
+            index += 1;
+            params.onProgress?.({
+                uploadedBytes: offset,
+                totalBytes: params.fileReader.sizeBytes,
+            });
+        }
+
+        return await params.finalize({ uploadId: initResponse.uploadId });
+    } finally {
+        await params.fileReader.close();
+    }
+}
 
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
+        machineRPC: (sessionId: string, method: string, payload: any) => sessionRPCSpy(sessionId, method, payload),
         sessionRPC: (sessionId: string, method: string, payload: any) => sessionRPCSpy(sessionId, method, payload),
     },
 }));
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
     isRuntimeFeatureEnabled: (params: unknown) => isRuntimeFeatureEnabledSpy(params),
+}));
+
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: (...args: unknown[]) => getReadyServerFeaturesSpy(...args),
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline')>(
+        '@/sync/domains/transfers/runtime/bulkTransferPipeline',
+    );
+
+    return {
+        ...actual,
+        uploadBulkPayloadFromFile: (...args: unknown[]) => uploadBulkPayloadFromFileSpy(...args),
+    };
+});
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: () => 'server-owned',
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
+    readCachedMachineRpcDirectRoute: () => ({ status: 'unknown' }),
+    recordCachedMachineRpcDirectRouteViable: () => {},
+    recordCachedMachineRpcDirectRouteUnavailable: () => {},
+}));
+
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: () => ({ machineId: 'm1', basePath: '/tmp' }),
+    canUseSessionRpc: () => true,
+    resolveMachinePathFromSessionBase: ({ basePath, requestPath }: { basePath: string; requestPath?: string }) =>
+        requestPath && requestPath !== '.' ? `${basePath}/${requestPath}` : basePath,
+    shouldFallbackToSessionRpc: () => true,
 }));
 
 vi.mock('@/platform/randomUUID', () => ({
@@ -69,6 +159,8 @@ vi.mock('expo-file-system', () => {
 
 afterEach(() => {
     sessionRPCSpy.mockReset();
+    getReadyServerFeaturesSpy.mockReset();
+    uploadBulkPayloadFromFileSpy.mockReset();
     nativeOpenSpy.mockReset();
     nativeCloseSpy.mockReset();
     randomUUIDSpy.mockClear();
@@ -77,29 +169,76 @@ afterEach(() => {
 });
 
 describe('uploadSessionAttachment', () => {
-    it('uploads a file through files.upload.* and returns the finalized path', async () => {
+    beforeEach(() => {
+        getReadyServerFeaturesSpy.mockResolvedValue(FeaturesResponseSchema.parse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: { enabled: true },
+                        serverRouted: { enabled: true },
+                    },
+                },
+            },
+            capabilities: {},
+        }));
+        uploadBulkPayloadFromFileSpy.mockImplementation(async (params: any) => await driveMockBulkUpload(params));
+    });
+
+    it('uploads a file through the canonical attachment upload init and returns the finalized path', async () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
+        uploadBulkPayloadFromFileSpy.mockImplementation(async (params: any) => {
+            expect(params.fileReader.sizeBytes).toBe(5);
+            expect(await params.fileReader.readBytes(0, 5)).toEqual(new TextEncoder().encode('hello'));
+            await params.fileReader.close();
+
+            const initResponse = await params.init();
+            expect(initResponse).toMatchObject({
+                success: true,
+                uploadId: 'u1',
+                chunkSizeBytes: 2,
+                recipientPublicKeyBase64,
+            });
+
+            await params.sendChunk({
+                uploadId: 'u1',
+                index: 0,
+                payloadBase64: 'payload-1',
+                encryptedDataKeyEnvelopeBase64: 'envelope-1',
+            });
+            await params.sendChunk({
+                uploadId: 'u1',
+                index: 1,
+                payloadBase64: 'payload-2',
+                encryptedDataKeyEnvelopeBase64: 'envelope-2',
+            });
+            await params.sendChunk({
+                uploadId: 'u1',
+                index: 2,
+                payloadBase64: 'payload-3',
+                encryptedDataKeyEnvelopeBase64: 'envelope-3',
+            });
+
+            return await params.finalize({ uploadId: 'u1' });
+        });
+
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string, payload: any) => {
-            if (method === RPC_METHODS.ATTACHMENTS_CONFIGURE) {
+            if (method === SESSION_ATTACHMENTS_UPLOAD_INIT) {
                 expect(payload).toMatchObject({
+                    messageLocalId: 'm1',
+                    fileName: 'hello.txt',
+                    sizeBytes: 5,
                     uploadLocation: 'workspace',
                     workspaceRelativeDir: '.happier/uploads',
                     vcsIgnoreStrategy: 'git_info_exclude',
                     vcsIgnoreWritesEnabled: true,
                 });
-                return { success: true, uploadLocation: 'workspace', uploadBasePath: '.happier/uploads/messages' };
+                return { success: true, uploadId: 'u1', chunkSizeBytes: 2, recipientPublicKeyBase64 };
             }
-            if (method === RPC_METHODS.FILES_UPLOAD_INIT) {
-                expect(payload).toMatchObject({
-                    path: '.happier/uploads/messages/m1/12345678-hello.txt',
-                    sizeBytes: 5,
-                    overwrite: false,
-                });
-                return { success: true, uploadId: 'u1', chunkSizeBytes: 2 };
-            }
-            if (method === RPC_METHODS.FILES_UPLOAD_CHUNK) return { success: true };
-            if (method === RPC_METHODS.FILES_UPLOAD_FINALIZE) {
+            if (method === SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
+            if (method === SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
                 return {
                     success: true,
                     path: '.happier/uploads/messages/m1/12345678-hello.txt',
@@ -127,32 +266,70 @@ describe('uploadSessionAttachment', () => {
             },
         });
 
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
+        expect(sessionRPCSpy).toHaveBeenCalledWith(
+            'm1',
+            SESSION_ATTACHMENTS_UPLOAD_INIT,
+            expect.objectContaining({
+                messageLocalId: 'm1',
+                fileName: 'hello.txt',
+                sizeBytes: 5,
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+            }),
+        );
+        expect(sessionRPCSpy).toHaveBeenCalled();
+        expect(uploadBulkPayloadFromFileSpy).toHaveBeenCalledTimes(1);
         expect(res).toMatchObject({ success: true });
         expect((res as any).path).toBe('.happier/uploads/messages/m1/12345678-hello.txt');
 
         const calls = sessionRPCSpy.mock.calls.map((c) => ({ method: c[1], payload: c[2] }));
-        expect(calls[0]?.method).toBe(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-        expect(calls[1]?.method).toBe(RPC_METHODS.FILES_UPLOAD_INIT);
-        expect(calls[2]?.method).toBe(RPC_METHODS.FILES_UPLOAD_CHUNK);
-        expect(calls[3]?.method).toBe(RPC_METHODS.FILES_UPLOAD_CHUNK);
-        expect(calls[4]?.method).toBe(RPC_METHODS.FILES_UPLOAD_CHUNK);
-        expect(calls[5]?.method).toBe(RPC_METHODS.FILES_UPLOAD_FINALIZE);
+        expect(calls[0]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_INIT);
+        expect(calls[1]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+        expect(calls[2]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+        expect(calls[3]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+        expect(calls[4]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
 
-        expect(calls[2]?.payload).toMatchObject({ uploadId: 'u1', index: 0, contentBase64: 'aGU=' });
-        expect(calls[3]?.payload).toMatchObject({ uploadId: 'u1', index: 1, contentBase64: 'bGw=' });
-        expect(calls[4]?.payload).toMatchObject({ uploadId: 'u1', index: 2, contentBase64: 'bw==' });
+        expect(calls[0]?.payload).toMatchObject({
+            messageLocalId: 'm1',
+            fileName: 'hello.txt',
+            sizeBytes: 5,
+            uploadLocation: 'workspace',
+            workspaceRelativeDir: '.happier/uploads',
+            vcsIgnoreStrategy: 'git_info_exclude',
+            vcsIgnoreWritesEnabled: true,
+        });
+        expect(calls[1]?.payload).toMatchObject({
+            uploadId: 'u1',
+            index: 0,
+            payloadBase64: expect.any(String),
+            encryptedDataKeyEnvelopeBase64: expect.any(String),
+        });
+        expect(calls[2]?.payload).toMatchObject({
+            uploadId: 'u1',
+            index: 1,
+            payloadBase64: expect.any(String),
+            encryptedDataKeyEnvelopeBase64: expect.any(String),
+        });
+        expect(calls[3]?.payload).toMatchObject({
+            uploadId: 'u1',
+            index: 2,
+            payloadBase64: expect.any(String),
+            encryptedDataKeyEnvelopeBase64: expect.any(String),
+        });
     });
 
     it('calls onProgress after each uploaded chunk', async () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string) => {
-            if (method === RPC_METHODS.ATTACHMENTS_CONFIGURE) {
-                return { success: true, uploadLocation: 'workspace', uploadBasePath: '.happier/uploads/messages' };
+            if (method === SESSION_ATTACHMENTS_UPLOAD_INIT) {
+                return { success: true, uploadId: 'u1', chunkSizeBytes: 2, recipientPublicKeyBase64 };
             }
-            if (method === RPC_METHODS.FILES_UPLOAD_INIT) return { success: true, uploadId: 'u1', chunkSizeBytes: 2 };
-            if (method === RPC_METHODS.FILES_UPLOAD_CHUNK) return { success: true };
-            if (method === RPC_METHODS.FILES_UPLOAD_FINALIZE) {
+            if (method === SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
+            if (method === SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
                 return { success: true, path: '.happier/uploads/messages/m1/12345678-hello.txt', sizeBytes: 5, sha256: 'h1' };
             }
             return { success: false, error: `unexpected method ${method}` };
@@ -185,16 +362,15 @@ describe('uploadSessionAttachment', () => {
         expect(last).toMatchObject({ uploadedBytes: 5, totalBytes: 5 });
     });
 
-    it('uploads a native file by reading bytes from an expo-file-system FileHandle', async () => {
+    it('uploads a native file through the canonical attachment upload init and closes the native handle', async () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string) => {
-            if (method === RPC_METHODS.ATTACHMENTS_CONFIGURE) {
-                return { success: true, uploadLocation: 'workspace', uploadBasePath: '.happier/uploads/messages' };
+            if (method === SESSION_ATTACHMENTS_UPLOAD_INIT) {
+                return { success: true, uploadId: 'u1', chunkSizeBytes: 2, recipientPublicKeyBase64 };
             }
-            if (method === RPC_METHODS.FILES_UPLOAD_INIT) return { success: true, uploadId: 'u1', chunkSizeBytes: 2 };
-            if (method === RPC_METHODS.FILES_UPLOAD_CHUNK) return { success: true };
-            if (method === RPC_METHODS.FILES_UPLOAD_FINALIZE) {
+            if (method === SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
+            if (method === SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
                 return { success: true, path: '.happier/uploads/messages/m1/12345678-hello.txt', sizeBytes: 5, sha256: 'h1' };
             }
             return { success: false, error: `unexpected method ${method}` };
@@ -219,15 +395,24 @@ describe('uploadSessionAttachment', () => {
         expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
 
         const calls = sessionRPCSpy.mock.calls.map((c) => ({ method: c[1], payload: c[2] }));
-        expect(calls[1]?.method).toBe(RPC_METHODS.FILES_UPLOAD_INIT);
+        expect(calls[0]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_INIT);
+        expect(calls[0]?.payload).toMatchObject({
+            messageLocalId: 'm1',
+            fileName: 'hello.txt',
+            sizeBytes: 5,
+            uploadLocation: 'workspace',
+            workspaceRelativeDir: '.happier/uploads',
+            vcsIgnoreStrategy: 'git_info_exclude',
+            vcsIgnoreWritesEnabled: true,
+        });
     });
 
-    it('fails when the file size is unknown', async () => {
+    it('fails when the attachment size cannot be resolved', async () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
         const res = await sessionAttachmentsUploadFile({
             sessionId: 's1',
-            file: { kind: 'native', uri: 'file:///tmp/unknown.txt', name: 'hello.txt', sizeBytes: null, mimeType: 'text/plain' },
+            file: { kind: 'native', uri: 'file:///tmp/unknown.txt', name: 'unknown.txt', sizeBytes: null, mimeType: 'text/plain' },
             messageLocalId: 'm1',
             config: {
                 uploadLocation: 'workspace',
@@ -239,9 +424,11 @@ describe('uploadSessionAttachment', () => {
         });
 
         expect(res).toEqual({ success: false, error: 'Unknown attachment size' });
+        expect(sessionRPCSpy).not.toHaveBeenCalled();
+        expect(uploadBulkPayloadFromFileSpy).not.toHaveBeenCalled();
     });
 
-    it('fails when the file exceeds the configured size limit', async () => {
+    it('fails when the attachment exceeds the configured maximum size', async () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
         const file = typeof File === 'function'
@@ -262,5 +449,7 @@ describe('uploadSessionAttachment', () => {
         });
 
         expect(res).toEqual({ success: false, error: 'File exceeds maximum allowed size' });
+        expect(sessionRPCSpy).not.toHaveBeenCalled();
+        expect(uploadBulkPayloadFromFileSpy).not.toHaveBeenCalled();
     });
 });

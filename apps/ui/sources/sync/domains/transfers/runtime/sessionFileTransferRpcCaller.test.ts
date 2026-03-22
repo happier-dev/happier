@@ -47,6 +47,29 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 
 import { createSessionFileTransferRpcCaller, INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from './sessionFileTransferRpcCaller';
 
+function createServerFeatures(partial?: Readonly<{
+    features?: unknown;
+    capabilities?: unknown;
+}>): FeaturesResponse {
+    return {
+        features: {
+            machines: {
+                enabled: true,
+                transfer: {
+                    enabled: true,
+                    serverRouted: {
+                        enabled: true,
+                    },
+                },
+            },
+            ...(partial?.features as object | undefined ?? {}),
+        },
+        capabilities: {
+            ...(partial?.capabilities as object | undefined ?? {}),
+        },
+    } as FeaturesResponse;
+}
+
 afterEach(() => {
     machineRPC.mockReset();
     sessionRpcWithServerScopeMock.mockReset();
@@ -64,8 +87,10 @@ afterEach(() => {
 });
 
 describe('sessionFileTransferRpcCaller', () => {
-    it('locks a successful direct machine route and reuses it without consulting session fallback state', async () => {
+    it('consults shared transfer policy before each allowed direct machine rpc attempt', async () => {
         readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(null);
         machineRPC.mockResolvedValue({ success: true, value: 'ok' });
 
         const caller = createSessionFileTransferRpcCaller({ sessionId: 'session-1' });
@@ -97,7 +122,9 @@ describe('sessionFileTransferRpcCaller', () => {
         expect(machineRPC).toHaveBeenCalledTimes(2);
         expect(machineRPC).toHaveBeenNthCalledWith(1, 'machine-1', 'machine.upload', { path: '/repo/first.txt' });
         expect(machineRPC).toHaveBeenNthCalledWith(2, 'machine-1', 'machine.upload', { path: '/repo/second.txt' });
-        expect(getReadyServerFeaturesMock).not.toHaveBeenCalled();
+        expect(getReadyServerFeaturesMock).toHaveBeenCalledTimes(2);
+        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(1, { timeoutMs: 500, serverId: 'server-owned' });
+        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(2, { timeoutMs: 500, serverId: 'server-owned' });
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
@@ -129,6 +156,8 @@ describe('sessionFileTransferRpcCaller', () => {
 
     it('returns non-fallback machine errors instead of relaying through session RPC', async () => {
         readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(null);
         shouldFallbackToSessionRpcMock.mockReturnValue(false);
         machineRPC.mockRejectedValue({ message: 'machine exploded', rpcErrorCode: 'custom_error' });
 
@@ -146,7 +175,7 @@ describe('sessionFileTransferRpcCaller', () => {
             errorCode: 'custom_error',
         });
 
-        expect(getReadyServerFeaturesMock).not.toHaveBeenCalled();
+        expect(getReadyServerFeaturesMock).toHaveBeenCalledWith({ timeoutMs: 500, serverId: 'server-owned' });
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
@@ -170,6 +199,77 @@ describe('sessionFileTransferRpcCaller', () => {
             errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
         });
 
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('does not attempt machine rpc when shared transfer policy disables machine transfer', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: false,
+                        serverRouted: {
+                            enabled: true,
+                        },
+                    },
+                },
+            },
+        }));
+
+        const caller = createSessionFileTransferRpcCaller({ sessionId: 'session-1' });
+
+        await expect(
+            caller.call({
+                request: { path: 'blocked.txt' },
+                machineMethod: 'machine.upload',
+                sessionMethod: 'session.upload',
+            }),
+        ).resolves.toEqual({
+            success: false,
+            error: 'Server-routed transfer is disabled on the selected server',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+
+        expect(machineRPC).not.toHaveBeenCalled();
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('does not attempt machine rpc when shared transfer policy rejects the payload as too large', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures({
+            capabilities: {
+                machines: {
+                    transfer: {
+                        serverRouted: {
+                            maxBytes: 4,
+                        },
+                    },
+                },
+            },
+        }));
+
+        const caller = createSessionFileTransferRpcCaller({
+            sessionId: 'session-1',
+            sessionRpcTransferSizeBytes: 5,
+        });
+
+        await expect(
+            caller.call({
+                request: { path: 'oversized.txt' },
+                machineMethod: 'machine.upload',
+                sessionMethod: 'session.upload',
+            }),
+        ).resolves.toEqual({
+            success: false,
+            error: 'File exceeds the server-routed transfer size limit',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+
+        expect(machineRPC).not.toHaveBeenCalled();
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 

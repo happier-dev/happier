@@ -2,6 +2,7 @@ import type { ModelMode } from '../permissions/permissionTypes';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '../state/storageTypes';
+import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import {
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     readMetadataAliasValue,
@@ -14,10 +15,16 @@ export type ModelOption = Readonly<{
     value: ModelMode;
     label: string;
     description: string;
+    modelOptions?: readonly AcpConfigOption[];
 }>;
 
 export type PreflightModelList = Readonly<{
-    availableModels: ReadonlyArray<Readonly<{ id: string; name: string; description?: string }>>;
+    availableModels: ReadonlyArray<Readonly<{
+        id: string;
+        name: string;
+        description?: string;
+        modelOptions?: readonly AcpConfigOption[];
+    }>>;
     supportsFreeform: boolean;
 }>;
 
@@ -28,6 +35,7 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
             value: String(m.id),
             label: String(m.name),
             description: typeof m.description === 'string' ? m.description : '',
+            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions } : {}),
         }));
 
     const withDefault: ModelOption[] = [
@@ -157,7 +165,15 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
 }
 
 export function getModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
-    const state = readMetadataAliasValue<{ provider?: string; availableModels?: Array<{ id?: unknown; name?: unknown; description?: unknown }> }>(
+    const state = readMetadataAliasValue<{
+        provider?: string;
+        availableModels?: Array<{
+            id?: unknown;
+            name?: unknown;
+            description?: unknown;
+            modelOptions?: unknown;
+        }>;
+    }>(
         (metadata as any) ?? {},
         SESSION_MODELS_STATE_KEY,
         LEGACY_ACP_SESSION_MODELS_STATE_KEY,
@@ -169,6 +185,7 @@ export function getModelOptionsForSession(agentType: AgentType, metadata: Metada
                 value: String(m.id),
                 label: String(m.name),
                 description: typeof m.description === 'string' ? m.description : '',
+                ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0 ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] } : {}),
             }));
 
         const metadataModelOverrideRaw = (metadata as any)?.modelOverrideV1 as { modelId?: unknown } | undefined;

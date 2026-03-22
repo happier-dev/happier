@@ -16,8 +16,20 @@ describe('buildDynamicModelProbeCacheKey', () => {
     });
 
     it('normalizes empty server id to active-scope key segment', () => {
+    expect(
+        buildDynamicModelProbeCacheKey({ machineId: 'machine-1', targetKey: 'agent:codex', serverId: '   ', cwd: '/repo' }),
+    ).toBe(JSON.stringify(['dynamicModelProbe', 'active', 'machine-1', 'agent:codex', '/repo']));
+  });
+
+    it('includes the Codex backend mode override when present', () => {
         expect(
-            buildDynamicModelProbeCacheKey({ machineId: 'machine-1', targetKey: 'agent:codex', serverId: '   ', cwd: '/repo' }),
-        ).toBe(JSON.stringify(['dynamicModelProbe', 'active', 'machine-1', 'agent:codex', '/repo']));
+            buildDynamicModelProbeCacheKey({
+                machineId: 'machine-1',
+                targetKey: 'agent:codex',
+                serverId: 'server-a',
+                cwd: '/repo',
+                codexBackendModeOverride: 'appServer',
+            } as any),
+        ).toBe(JSON.stringify(['dynamicModelProbe', 'server-a', 'machine-1', 'agent:codex', '/repo', 'appServer']));
     });
 });

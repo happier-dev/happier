@@ -124,6 +124,39 @@ describe('resolveTransferAvailability', () => {
         });
     });
 
+    it('fails closed for session relay when server-routed transfer is explicitly disabled', async () => {
+        const { SERVER_ROUTED_TRANSFER_DISABLED_ERROR, resolveSessionRelayTransferAvailability } = await import('./resolveTransferAvailability');
+
+        expect(resolveSessionRelayTransferAvailability({
+            serverId: 'server-1',
+            sessionRpcAvailable: true,
+            sessionRpcTransferSizeBytes: 128,
+            serverFeatures: createServerFeaturesResponse({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: {
+                                enabled: false,
+                            },
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: SERVER_ROUTED_TRANSFER_DISABLED_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        });
+    });
+
     it('returns direct-peer handoff selection details without speculative seam flags', async () => {
         const { resolveMachineTransferAvailability } = await import('./resolveTransferAvailability');
 

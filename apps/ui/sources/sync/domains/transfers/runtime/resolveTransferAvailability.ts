@@ -8,9 +8,32 @@ import {
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
 } from '@happier-dev/transfers';
 export { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcFallback';
+
+const SERVER_ROUTED_TRANSFER_DISABLED_ERROR = 'Server-routed transfer is disabled on the selected server';
+
+export { SERVER_ROUTED_TRANSFER_DISABLED_ERROR };
 export const SERVER_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR = SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR;
 
 type TransferRpcFailure = Readonly<{ success: false; error: string; errorCode?: string }>;
+
+type SessionFileTransferRouteSelection =
+    | Readonly<{
+        kind: 'machine_rpc_direct';
+    }>
+    | Readonly<{
+        kind: 'server_routed_stream';
+        serverId: string | undefined;
+    }>;
+
+type SessionFileTransferRouteAvailability =
+    | Readonly<{
+        kind: 'selected';
+        route: SessionFileTransferRouteSelection;
+    }>
+    | Readonly<{
+        kind: 'unavailable';
+        response: TransferRpcFailure;
+    }>;
 
 type SessionRelayTransferAvailability =
     | Readonly<{
@@ -44,35 +67,53 @@ function resolveServerFeaturesPayload(serverFeatures: unknown): ServerFeatures |
     return payload as ServerFeatures;
 }
 
-export function resolveSessionRelayTransferAvailability(input: Readonly<{
+function mapUnavailableSessionTransferAvailabilityToFailure(
+    route: Readonly<{
+        kind: 'unavailable';
+        reasonCode: 'inactive_session_rpc_unavailable' | 'transfer_disabled' | 'transfer_too_large';
+        errorMessage: string;
+    }>,
+): TransferRpcFailure {
+    if (route.reasonCode === 'inactive_session_rpc_unavailable' || route.reasonCode === 'transfer_too_large') {
+        return {
+            success: false,
+            error: route.errorMessage,
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        };
+    }
+
+    return {
+        success: false,
+        error: SERVER_ROUTED_TRANSFER_DISABLED_ERROR,
+        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    };
+}
+
+export function resolveSessionFileTransferRouteAvailability(input: Readonly<{
     serverId?: string | null;
+    machineTargetAvailable: boolean;
     sessionRpcAvailable: boolean;
     sessionRpcTransferSizeBytes?: number | null;
     serverFeatures?: ServerFeatures | null;
-}>): SessionRelayTransferAvailability {
+}>): SessionFileTransferRouteAvailability {
     const route = resolveAppSessionTransferAvailability({
-        machineTargetAvailable: false,
+        machineTargetAvailable: input.machineTargetAvailable,
         sessionRpcAvailable: input.sessionRpcAvailable,
         serverFeatures: input.serverFeatures,
         sessionRpcTransferSizeBytes: input.sessionRpcTransferSizeBytes,
     });
-    if (route.kind === 'unavailable' && route.reasonCode === 'inactive_session_rpc_unavailable') {
+    if (route.kind === 'unavailable') {
         return {
             kind: 'unavailable',
-            response: {
-                success: false,
-                error: route.errorMessage,
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-            },
+            response: mapUnavailableSessionTransferAvailabilityToFailure(route),
         };
     }
-    if (route.kind === 'unavailable' && route.reasonCode === 'server_routed_transfer_too_large') {
+
+    if (route.route === 'machine_rpc_direct') {
         return {
-            kind: 'unavailable',
-            response: {
-                success: false,
-                error: route.errorMessage,
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            kind: 'selected',
+            route: {
+                kind: 'machine_rpc_direct',
             },
         };
     }
@@ -82,6 +123,41 @@ export function resolveSessionRelayTransferAvailability(input: Readonly<{
         route: {
             kind: 'server_routed_stream',
             serverId: typeof input.serverId === 'string' ? input.serverId : undefined,
+        },
+    };
+}
+
+export function resolveSessionRelayTransferAvailability(input: Readonly<{
+    serverId?: string | null;
+    sessionRpcAvailable: boolean;
+    sessionRpcTransferSizeBytes?: number | null;
+    serverFeatures?: ServerFeatures | null;
+}>): SessionRelayTransferAvailability {
+    const route = resolveSessionFileTransferRouteAvailability({
+        ...input,
+        machineTargetAvailable: false,
+    });
+    if (route.kind === 'unavailable') {
+        return route;
+    }
+    if (route.route.kind !== 'server_routed_stream') {
+        return {
+            kind: 'unavailable',
+            response: {
+                success: false,
+                error: SERVER_ROUTED_TRANSFER_DISABLED_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            },
+        };
+    }
+
+    const serverRoute = route.route;
+
+    return {
+        kind: 'selected',
+        route: {
+            kind: 'server_routed_stream',
+            serverId: serverRoute.serverId,
         },
     };
 }
