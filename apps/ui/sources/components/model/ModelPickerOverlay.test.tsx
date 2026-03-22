@@ -1,62 +1,24 @@
 import React from 'react';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-function nodeContainsExactText(node: ReactTestInstance, value: string): boolean {
-    return node.children.some((child) => {
-        if (typeof child === 'string') return child === value;
-        return nodeContainsExactText(child, value);
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
     });
-}
-
-function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string): ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.props?.onPress === 'function' &&
-        nodeContainsExactText(node, label)
-    ))[0];
-}
-
-function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.props?.onPress === 'function' &&
-        typeof node.props?.accessibilityLabel === 'string' &&
-        node.props.accessibilityLabel === label
-    ))[0];
-}
-
-function findSearchInput(tree: renderer.ReactTestRenderer): ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.props?.onChangeText === 'function' &&
-        typeof node.props?.placeholder === 'string' &&
-        node.props.placeholder === 'modelPickerOverlay.searchPlaceholder'
-    ))[0];
-}
-
-function findTextNode(tree: renderer.ReactTestRenderer, value: string): ReactTestInstance | undefined {
-    return tree.root.findAll((node) => nodeContainsExactText(node, value))[0];
-}
-
-function findNodeByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.props?.accessibilityLabel === 'string' && node.props.accessibilityLabel === label
-    ))[0];
-}
+});
 
 describe('ModelPickerOverlay', () => {
     it('selects a named option', async () => {
         const onSelect = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={['note']}
@@ -68,18 +30,12 @@ describe('ModelPickerOverlay', () => {
                     emptyText="empty"
                     canEnterCustomModel={false}
                     onSelect={onSelect}
-                />,
-            );
-        });
+                />);
 
-        const fastOption = findPressableByLabel(tree!, 'Fast');
-        expect(fastOption).toBeTruthy();
-        expect(fastOption?.props?.testID).toBe('model-picker-overlay-option:fast');
-        expect(() => tree!.root.findByProps({ testID: 'model-picker-overlay-summary' })).not.toThrow();
+        expect(screen.findByTestId('model-picker-overlay-option:fast')).toBeTruthy();
+        expect(screen.findByTestId('model-picker-overlay-summary')).toBeTruthy();
 
-        act(() => {
-            fastOption?.props?.onPress?.();
-        });
+        await screen.pressByTestIdAsync('model-picker-overlay-option:fast');
 
         expect(onSelect).toHaveBeenCalledWith('fast');
     });
@@ -88,10 +44,7 @@ describe('ModelPickerOverlay', () => {
         const onSelect = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={[]}
@@ -103,11 +56,9 @@ describe('ModelPickerOverlay', () => {
                     emptyText="empty"
                     canEnterCustomModel={false}
                     onSelect={onSelect}
-                />,
-            );
-        });
+                />);
 
-        expect(findSearchInput(tree!)).toBeUndefined();
+        expect(screen.findByTestId('model-picker-overlay-search')).toBeNull();
     });
 
     it('filters options through the search input and selects the filtered match', async () => {
@@ -123,10 +74,7 @@ describe('ModelPickerOverlay', () => {
             })),
         ];
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={[]}
@@ -135,23 +83,15 @@ describe('ModelPickerOverlay', () => {
                     emptyText="empty"
                     canEnterCustomModel={false}
                     onSelect={onSelect}
-                />,
-            );
+                />);
+
+        expect(screen.findByTestId('model-picker-overlay-search')).toBeTruthy();
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-search', 'gpt');
         });
 
-        const searchInput = findSearchInput(tree!);
-        expect(searchInput).toBeTruthy();
-
-        act(() => {
-            searchInput?.props?.onChangeText?.('gpt');
-        });
-
-        const gptOption = findPressableByLabel(tree!, 'GPT-5.2');
-        expect(gptOption).toBeTruthy();
-
-        act(() => {
-            gptOption?.props?.onPress?.();
-        });
+        expect(screen.findByTestId('model-picker-overlay-option:model-7')).toBeTruthy();
+        await screen.pressByTestIdAsync('model-picker-overlay-option:model-7');
 
         expect(onSelect).toHaveBeenCalledWith('model-7');
     });
@@ -159,10 +99,7 @@ describe('ModelPickerOverlay', () => {
     it('renders empty text when there are no options', async () => {
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={[]}
@@ -171,21 +108,16 @@ describe('ModelPickerOverlay', () => {
                     emptyText="No models available"
                     canEnterCustomModel={false}
                     onSelect={() => {}}
-                />,
-            );
-        });
+                />);
 
-        expect(findTextNode(tree!, 'No models available')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('No models available');
     });
 
-    it('calls custom-model handler when custom option is enabled', async () => {
-        const onRequestCustomModel = vi.fn();
+    it('captures and submits a trimmed inline custom model when enabled', async () => {
+        const onSubmitCustomModel = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={[]}
@@ -196,29 +128,26 @@ describe('ModelPickerOverlay', () => {
                     emptyText="empty"
                     canEnterCustomModel
                     customLabel="Custom model"
-                    onRequestCustomModel={onRequestCustomModel}
+                    onSubmitCustomModel={onSubmitCustomModel}
                     onSelect={() => {}}
-                />,
-            );
+                />);
+
+        expect(screen.findByTestId('model-picker-overlay-custom')).toBeTruthy();
+        await screen.pressByTestIdAsync('model-picker-overlay-custom');
+        expect(screen.findByTestId('model-picker-overlay-custom-input')).toBeTruthy();
+        await act(async () => {
+            screen.changeTextByTestId('model-picker-overlay-custom-input', '  custom-model  ');
         });
+        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeTruthy();
+        await screen.pressByTestIdAsync('model-picker-overlay-custom-save');
 
-        const customOption = findPressableByLabel(tree!, 'Custom model');
-        expect(customOption).toBeTruthy();
-
-        act(() => {
-            customOption?.props?.onPress?.();
-        });
-
-        expect(onRequestCustomModel).toHaveBeenCalledTimes(1);
+        expect(onSubmitCustomModel).toHaveBeenCalledWith('custom-model');
     });
 
     it('shows a loading indicator when models are being probed', async () => {
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={[]}
@@ -228,21 +157,16 @@ describe('ModelPickerOverlay', () => {
                     canEnterCustomModel={false}
                     onSelect={() => {}}
                     probe={{ phase: 'loading' }}
-                />,
-            );
-        });
+                />);
 
-        expect(findNodeByAccessibilityLabel(tree!, 'modelPickerOverlay.loadingModelsA11y')).toBeTruthy();
+        expect(screen.findByProps({ accessibilityLabel: 'modelPickerOverlay.loadingModelsA11y' })).toBeTruthy();
     });
 
     it('calls refresh handler from the picker when provided', async () => {
         const onRefresh = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Model"
                     effectiveLabel="Default"
                     notes={[]}
@@ -252,29 +176,103 @@ describe('ModelPickerOverlay', () => {
                     canEnterCustomModel={false}
                     onSelect={() => {}}
                     probe={{ phase: 'idle', onRefresh }}
-                />,
-            );
-        });
+                />);
 
-        const refreshButton = findPressableByAccessibilityLabel(tree!, 'modelPickerOverlay.refreshModelsA11y');
-        expect(refreshButton).toBeTruthy();
-        expect(refreshButton?.props?.testID).toBe('model-picker-overlay-refresh');
-
-        act(() => {
-            refreshButton?.props?.onPress?.();
-        });
+        expect(screen.findByTestId('model-picker-overlay-refresh')).toBeTruthy();
+        expect(screen.findByProps({ accessibilityLabel: 'modelPickerOverlay.refreshModelsA11y' })).toBeTruthy();
+        await screen.pressByTestIdAsync('model-picker-overlay-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders selected model controls inside the selected model card and routes option changes', async () => {
+        const onSelectOptionControlValue = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
+
+        const screen = await renderScreen(<ModelPickerOverlay
+                    title="Model"
+                    effectiveLabel="gpt-5.4"
+                    notes={[]}
+                    options={[
+                        { value: 'gpt-5.4', label: 'gpt-5.4', description: 'Latest frontier model.' },
+                        { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini', description: 'Smaller model.' },
+                    ]}
+                    selectedValue="gpt-5.4"
+                    emptyText="empty"
+                    canEnterCustomModel={false}
+                    selectedOptionControls={[
+                        {
+                            option: {
+                                id: 'reasoning_effort',
+                                name: 'Thinking',
+                                type: 'select',
+                                currentValue: 'medium',
+                                options: [
+                                    { value: 'low', name: 'Low' },
+                                    { value: 'medium', name: 'Medium' },
+                                    { value: 'high', name: 'High' },
+                                ],
+                            },
+                            effectiveValue: 'medium',
+                            isPending: false,
+                        },
+                        {
+                            option: {
+                                id: 'speed',
+                                name: 'Fast',
+                                type: 'boolean',
+                                currentValue: 'standard',
+                                options: [
+                                    { value: 'standard', name: 'Standard' },
+                                    { value: 'fast', name: 'Fast' },
+                                ],
+                            },
+                            effectiveValue: 'standard',
+                            isPending: false,
+                        },
+                    ]}
+                    onSelectOptionControlValue={onSelectOptionControlValue}
+                    onSelect={() => {}}
+                />);
+
+        const selectedCard = screen.findByTestId('model-picker-overlay-option:gpt-5.4');
+        expect(selectedCard).not.toBeNull();
+        expect(
+            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:reasoning_effort'),
+        ).not.toHaveLength(0);
+        expect(
+            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control:speed'),
+        ).not.toHaveLength(0);
+
+        await screen.pressByTestIdAsync('model-picker-overlay-selected-option-control-option:reasoning_effort:high');
+
+        expect(onSelectOptionControlValue).toHaveBeenCalledWith('reasoning_effort', 'high');
+
+        const speedControl = selectedCard?.findAll((node) => (
+            node.props?.testID === 'model-picker-overlay-selected-option-control:speed'
+        ))[0];
+        const speedSwitch = speedControl?.findAll((node) => (
+            typeof node.props?.onValueChange === 'function'
+            && Object.prototype.hasOwnProperty.call(node.props, 'value')
+        ))[0];
+
+        expect(speedSwitch).toBeTruthy();
+        expect(
+            selectedCard?.findAll((node) => node.props?.testID === 'model-picker-overlay-selected-option-control-switch:speed'),
+        ).toHaveLength(1);
+
+        await act(async () => {
+            speedSwitch?.props.onValueChange?.(true);
+        });
+
+        expect(onSelectOptionControlValue).toHaveBeenCalledWith('speed', 'fast');
     });
 
     it('uses caller-provided search and refresh copy when supplied', async () => {
         const onRefresh = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                <ModelPickerOverlay
+        const screen = await renderScreen(<ModelPickerOverlay
                     title="Branches"
                     effectiveLabel="Current branch"
                     notes={[]}
@@ -293,14 +291,10 @@ describe('ModelPickerOverlay', () => {
                         onRefresh,
                         refreshAccessibilityLabel: 'Refresh branches',
                     }}
-                />,
-            );
-        });
+                />);
 
-        const searchInput = tree!.root.findByProps({ testID: 'model-picker-overlay-search' });
-        expect(searchInput.props.placeholder).toBe('Search branches…');
+        expect(screen.findByProps({ testID: 'model-picker-overlay-search' }).props.placeholder).toBe('Search branches…');
 
-        const refreshButton = tree!.root.findByProps({ testID: 'model-picker-overlay-refresh' });
-        expect(refreshButton.props.accessibilityLabel).toBe('Refresh branches');
+        expect(screen.findByProps({ testID: 'model-picker-overlay-refresh' }).props.accessibilityLabel).toBe('Refresh branches');
     });
 });
