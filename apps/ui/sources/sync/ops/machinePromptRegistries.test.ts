@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { TransferRouteViabilityRecord } from '@happier-dev/transfers';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
-const readCachedMachineRpcDirectRouteMock = vi.hoisted(() => vi.fn(() => ({ status: 'unknown' as const })));
+const readCachedMachineRpcDirectRouteMock = vi.hoisted(() =>
+    vi.fn((_input: unknown): TransferRouteViabilityRecord => ({ status: 'unknown' })),
+);
 const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
     throw new Error('legacy downloadMachineTransferJsonPayload helper should not be used');
@@ -42,7 +45,12 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
     });
 
     it('downloads fetched registry item payloads through the canonical bulk transfer pipeline', async () => {
-        readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({ status: 'unavailable' });
+        readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({
+            status: 'unavailable',
+            checkedAt: 1,
+            expiresAt: 2,
+            failureReason: 'unavailable',
+        });
         const payload = {
             sourceId: 'skills_sh:featured',
             itemId: 'skills_sh:featured:item-1',

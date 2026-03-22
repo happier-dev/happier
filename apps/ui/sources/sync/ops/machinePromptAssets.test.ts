@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { TransferRouteViabilityRecord } from '@happier-dev/transfers';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
-const readCachedMachineRpcDirectRouteMock = vi.hoisted(() => vi.fn(() => ({ status: 'unknown' as const })));
+const readCachedMachineRpcDirectRouteMock = vi.hoisted(() =>
+    vi.fn((_input: unknown): TransferRouteViabilityRecord => ({ status: 'unknown' })),
+);
 const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const uploadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
@@ -87,7 +90,12 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
     });
 
     it('downloads prompt asset payloads through the canonical bulk pipeline', async () => {
-        readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({ status: 'unavailable' });
+        readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({
+            status: 'unavailable',
+            checkedAt: 1,
+            expiresAt: 2,
+            failureReason: 'unavailable',
+        });
         const payload = {
             assetTypeId: 'agents.skill',
             scope: 'user',
