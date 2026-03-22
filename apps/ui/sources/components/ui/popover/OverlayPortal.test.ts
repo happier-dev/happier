@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -22,6 +22,7 @@ describe('OverlayPortalProvider', () => {
 
         let renderCount = 0;
         let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
+        const portalTestId = 'overlay-portal-node';
 
         function RenderCountChild() {
             renderCount += 1;
@@ -33,23 +34,22 @@ describe('OverlayPortalProvider', () => {
             return React.createElement('CaptureDispatch');
         }
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(React.createElement(
-                    OverlayPortalProvider,
-                    null,
-                    React.createElement(RenderCountChild),
-                    React.createElement(CaptureDispatch),
-                    React.createElement(OverlayPortalHost),
-                ))).tree;
+        const screen = await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(RenderCountChild),
+            React.createElement(CaptureDispatch),
+            React.createElement(OverlayPortalHost),
+        ));
 
         expect(renderCount).toBe(1);
         expect(dispatch).toBeTruthy();
 
         act(() => {
-            dispatch?.setPortalNode('test-node', React.createElement('PortalContent'));
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContent', { testID: portalTestId }));
         });
 
-        expect(tree?.root.findAllByType('PortalContent' as any).length).toBe(1);
+        expect(screen.findByTestId(portalTestId)).toBeTruthy();
         expect(renderCount).toBe(1);
     });
 
@@ -58,6 +58,8 @@ describe('OverlayPortalProvider', () => {
 
         let renderCount = 0;
         let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
+        const portalTestIdA = 'overlay-portal-node-a';
+        const portalTestIdB = 'overlay-portal-node-b';
 
         function RenderCountChild() {
             renderCount += 1;
@@ -69,36 +71,35 @@ describe('OverlayPortalProvider', () => {
             return React.createElement('CaptureDispatch');
         }
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(React.createElement(
-                    OverlayPortalProvider,
-                    null,
-                    React.createElement(RenderCountChild),
-                    React.createElement(CaptureDispatch),
-                    React.createElement(OverlayPortalHost),
-                ))).tree;
+        const screen = await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(RenderCountChild),
+            React.createElement(CaptureDispatch),
+            React.createElement(OverlayPortalHost),
+        ));
 
         expect(renderCount).toBe(1);
         expect(dispatch).toBeTruthy();
 
         act(() => {
-            dispatch?.setPortalNode('test-node', React.createElement('PortalContentA'));
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContentA', { testID: portalTestIdA }));
         });
-        expect(tree?.root.findAllByType('PortalContentA' as any).length).toBe(1);
+        expect(screen.findByTestId(portalTestIdA)).toBeTruthy();
         expect(renderCount).toBe(1);
 
         act(() => {
-            dispatch?.setPortalNode('test-node', React.createElement('PortalContentB'));
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContentB', { testID: portalTestIdB }));
         });
-        expect(tree?.root.findAllByType('PortalContentA' as any).length).toBe(0);
-        expect(tree?.root.findAllByType('PortalContentB' as any).length).toBe(1);
+        expect(screen.findByTestId(portalTestIdA)).toBeNull();
+        expect(screen.findByTestId(portalTestIdB)).toBeTruthy();
         expect(renderCount).toBe(1);
 
         act(() => {
             dispatch?.removePortalNode('test-node');
             dispatch?.removePortalNode('missing-node');
         });
-        expect(tree?.root.findAllByType('PortalContentB' as any).length).toBe(0);
+        expect(screen.findByTestId(portalTestIdB)).toBeNull();
         expect(renderCount).toBe(1);
     });
 });

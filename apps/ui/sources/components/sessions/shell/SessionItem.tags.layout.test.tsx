@@ -178,14 +178,10 @@ describe('SessionItem tags (layout)', () => {
             />,
         );
 
-        const pressables = screen.root.findAllByType('Pressable');
-        const rowPressable = pressables.find((node: any) => typeof node.props?.onPress === 'function' && typeof node.props?.onPressIn === 'function');
-        expect(rowPressable).toBeTruthy();
-        if (!rowPressable) {
-            throw new Error('Row pressable not found');
-        }
+        const row = screen.findByTestId('session-list-item-sess_1');
+        expect(row).toBeTruthy();
 
-        const styleArray = Array.isArray(rowPressable.props.style) ? rowPressable.props.style.filter(Boolean) : [rowPressable.props.style].filter(Boolean);
+        const styleArray = Array.isArray(row?.props.style) ? row?.props.style.filter(Boolean) : [row?.props.style].filter(Boolean);
         expect(styleArray.some((s: any) => typeof s === 'object' && s?.paddingVertical === 10)).toBe(false);
     });
 
@@ -212,7 +208,6 @@ describe('SessionItem tags (layout)', () => {
             />,
         );
 
-        const texts = screen.root.findAllByType('Text').map((n: any) => n.props?.children);
-        expect(texts).toContain('tag-a');
+        expect(screen.getTextContent()).toContain('tag-a');
     });
 });

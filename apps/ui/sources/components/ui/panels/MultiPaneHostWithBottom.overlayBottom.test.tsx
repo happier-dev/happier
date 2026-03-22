@@ -10,13 +10,11 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 describe('MultiPaneHostWithBottom (overlayBottom)', () => {
     const originalWindow = (globalThis as any).window;
-    const originalKeyboardEvent = (globalThis as any).KeyboardEvent;
 
     afterEach(() => {
         standardCleanup();
         vi.useRealTimers();
         (globalThis as any).window = originalWindow;
-        (globalThis as any).KeyboardEvent = originalKeyboardEvent;
     });
 
     it('renders a scrim for overlay bottom and closes on scrim press', async () => {
@@ -43,17 +41,11 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
                     onCommitBottomDockHeightPx={() => {}}
                 />);
 
-        const scrim = screen.findByTestId('multi-pane-bottom-scrim');
-        if (!scrim) {
-            throw new Error('Expected bottom scrim to be present');
-        }
-
-        act(() => {
-            scrim.props.onPress();
-        });
+        expect(screen.findByTestId('multi-pane-bottom-scrim')).toBeTruthy();
+        await screen.pressByTestIdAsync('multi-pane-bottom-scrim');
         expect(onCloseBottom).toHaveBeenCalledTimes(0);
-        act(() => {
-            vi.runAllTimers();
+        await act(async () => {
+            await vi.advanceTimersToNextTimerAsync();
         });
         expect(onCloseBottom).toHaveBeenCalledTimes(1);
     });
@@ -65,13 +57,6 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
 
         const fakeWindow = new (globalThis as any).EventTarget();
         (globalThis as any).window = fakeWindow;
-        (globalThis as any).KeyboardEvent = class KeyboardEvent extends Event {
-            key: string;
-            constructor(type: string, init: { key: string }) {
-                super(type);
-                this.key = init.key;
-            }
-        };
 
         const screen = await renderScreen(<MultiPaneHostWithBottom
                     main={<Main />}
@@ -95,12 +80,12 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
 
         expect(screen.findByTestId('multi-pane-bottom-scrim')).toBeTruthy();
         act(() => {
-            (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
+            dispatchEscapeKeyDown(fakeWindow);
         });
         expect(onCloseBottom).toHaveBeenCalledTimes(0);
         expect(onCloseRight).toHaveBeenCalledTimes(0);
-        act(() => {
-            vi.runAllTimers();
+        await act(async () => {
+            await vi.advanceTimersToNextTimerAsync();
         });
         expect(onCloseBottom).toHaveBeenCalledTimes(1);
         expect(onCloseRight).toHaveBeenCalledTimes(0);
@@ -142,4 +127,14 @@ function Right() {
 
 function Bottom() {
     return React.createElement('Bottom');
+}
+
+function dispatchEscapeKeyDown(target: EventTarget) {
+    const event = new Event('keydown');
+    Object.defineProperty(event, 'key', {
+        configurable: true,
+        enumerable: true,
+        value: 'Escape',
+    });
+    target.dispatchEvent(event);
 }

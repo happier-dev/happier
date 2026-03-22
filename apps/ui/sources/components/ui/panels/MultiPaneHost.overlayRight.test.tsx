@@ -1,17 +1,32 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
 import { MultiPaneHost } from './MultiPaneHost';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const RIGHT_OVERLAY_TEST_ID = 'multi-pane-right-overlay';
+const RIGHT_SCRIM_TEST_ID = 'multi-pane-right-scrim';
+const OVERLAY_CLOSE_DURATION_MS = motionTokens.durationMs.base;
+
 describe('MultiPaneHost (overlayRight)', () => {
+    const originalWindow = (globalThis as any).window;
+    const originalKeyboardEvent = (globalThis as any).KeyboardEvent;
+
+    afterEach(() => {
+        standardCleanup();
+        vi.useRealTimers();
+        (globalThis as any).window = originalWindow;
+        (globalThis as any).KeyboardEvent = originalKeyboardEvent;
+    });
+
     it('renders a scrim for overlay right and closes on scrim press', async () => {
         vi.useFakeTimers();
         const onCloseRight = vi.fn();
-        const screen = await renderScreen(<MultiPaneHost
+        const tree = (await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={null}
@@ -22,16 +37,19 @@ describe('MultiPaneHost (overlayRight)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />);
+                />)).tree;
 
-        const overlay = screen.findByTestId('multi-pane-right-overlay');
+        const overlay = tree.findByTestId(RIGHT_OVERLAY_TEST_ID);
         if (!overlay) {
             throw new Error('Expected right overlay to be present');
         }
-        const overlayWrapper = overlay.parent?.parent;
+        const overlayWrapper = findAncestorWithPositiveZIndex(overlay);
+        if (!overlayWrapper) {
+            throw new Error('Expected right overlay wrapper to be present');
+        }
         expect(readZIndex(overlayWrapper?.props?.style)).toBeGreaterThan(0);
 
-        const scrim = screen.findByTestId('multi-pane-right-scrim');
+        const scrim = tree.findByTestId(RIGHT_SCRIM_TEST_ID);
         if (!scrim) {
             throw new Error('Expected right scrim to be present');
         }
@@ -39,9 +57,7 @@ describe('MultiPaneHost (overlayRight)', () => {
             scrim.props.onPress();
         });
         expect(onCloseRight).toHaveBeenCalledTimes(0);
-        act(() => {
-            vi.runAllTimers();
-        });
+        await flushHookEffects({ advanceTimersMs: OVERLAY_CLOSE_DURATION_MS });
         expect(onCloseRight).toHaveBeenCalledTimes(1);
     });
 
@@ -58,7 +74,7 @@ describe('MultiPaneHost (overlayRight)', () => {
             }
         };
 
-        const screen = await renderScreen(<MultiPaneHost
+        const tree = (await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={null}
@@ -69,16 +85,14 @@ describe('MultiPaneHost (overlayRight)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />);
+                />)).tree;
 
-        expect(screen.findByTestId('multi-pane-right-scrim')).toBeTruthy();
+        expect(tree.findByTestId(RIGHT_SCRIM_TEST_ID)).toBeTruthy();
         act(() => {
             (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
         });
         expect(onCloseRight).toHaveBeenCalledTimes(0);
-        act(() => {
-            vi.runAllTimers();
-        });
+        await flushHookEffects({ advanceTimersMs: OVERLAY_CLOSE_DURATION_MS });
         expect(onCloseRight).toHaveBeenCalledTimes(1);
     });
 });
@@ -89,6 +103,17 @@ function readZIndex(style: unknown): number {
     const asAny = style as any;
     const value = asAny?.zIndex;
     return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function findAncestorWithPositiveZIndex(node: { parent?: { parent?: unknown; props?: { style?: unknown } } | null } | null | undefined) {
+    let current = node?.parent ?? null;
+    while (current) {
+        if (readZIndex(current.props?.style) > 0) {
+            return current;
+        }
+        current = current.parent ?? null;
+    }
+    return null;
 }
 
 function Main() {

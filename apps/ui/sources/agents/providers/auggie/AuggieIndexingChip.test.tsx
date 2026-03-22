@@ -1,20 +1,28 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 
 type CollapsedActionItem = Readonly<{
     label: string;
     onPress?: () => void;
 }>;
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true);
+
+const PRESSABLE_TEST_ID = 'auggie-indexing-chip.pressable';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                    React.createElement('Pressable', props, props.children),
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode; testID?: string }) =>
+                React.createElement(
+                    'Pressable',
+                    {
+                        ...props,
+                        testID: props.testID ?? PRESSABLE_TEST_ID,
+                    },
+                    props.children,
+                ),
         }
     );
 });
@@ -37,6 +45,7 @@ vi.mock('@/text', async () => {
 describe('createAuggieAllowIndexingChip', () => {
     it('registers as a provider-option control and exposes a collapsed toggle action', async () => {
         const { createAuggieAllowIndexingChip } = await import('./AuggieIndexingChip');
+        const { renderScreen } = await import('@/dev/testkit');
         const setAllowIndexing = vi.fn();
         const chip = createAuggieAllowIndexingChip({
             allowIndexing: false,
@@ -55,26 +64,20 @@ describe('createAuggieAllowIndexingChip', () => {
         const collapsedActionItem = collapsedAction as CollapsedActionItem | undefined;
         expect(collapsedActionItem?.label).toBe('agentInput.auggieIndexingChip.off');
 
-        await act(async () => {
-            collapsedActionItem?.onPress?.();
-        });
+        collapsedActionItem?.onPress?.();
         expect(setAllowIndexing).toHaveBeenCalledWith(true);
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(chip.render({
-                chipStyle: () => ({}),
-                showLabel: true,
-                iconColor: '#fff',
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null } as any,
-            }) as React.ReactElement);
-        });
+        const screen = await renderScreen(chip.render({
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#fff',
+            textStyle: {},
+            countTextStyle: {},
+            popoverAnchorRef: { current: null },
+        }) as React.ReactElement);
 
-        await act(async () => {
-            tree!.root.findByType('Pressable').props.onPress();
-        });
+        expect(screen.findByTestId(PRESSABLE_TEST_ID)).toBeTruthy();
+        screen.pressByTestId(PRESSABLE_TEST_ID);
         expect(setAllowIndexing).toHaveBeenCalledWith(true);
     });
 });

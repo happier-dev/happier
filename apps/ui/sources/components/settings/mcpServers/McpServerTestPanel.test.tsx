@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { act, ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { McpServerBindingV1, McpServerCatalogEntryV1 } from '@happier-dev/protocol';
@@ -111,21 +111,18 @@ describe('McpServerTestPanel', () => {
         };
         const bindings: McpServerBindingV1[] = [];
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(<McpServerTestPanel
-                    server={server}
-                    bindings={bindings}
-                    machines={[{ id: 'machine-1', serverId: 'server-1', metadata: { displayName: 'Machine 1', host: 'machine-1.local' } } as any]}
-                />)).tree;
+        const screen = await renderScreen(<McpServerTestPanel
+            server={server}
+            bindings={bindings}
+            machines={[{ id: 'machine-1', serverId: 'server-1', metadata: { displayName: 'Machine 1', host: 'machine-1.local' } } as any]}
+        />);
 
-        const input = tree.root.findAll((node) => node.props?.testID === 'mcp.server.test.directory.input')[0];
         await act(async () => {
-            input.props.onChangeText('/repo/current');
+            screen.changeTextByTestId('mcp.server.test.directory.input', '/repo/current');
         });
 
-        const browseButton = tree.root.findAll((node) => node.props?.testID === 'path-browser-trigger')[0];
         await act(async () => {
-            await browseButton.props.onPress();
+            await screen.findByTestId('path-browser-trigger')?.props.onPress?.();
         });
 
         expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith({
@@ -135,7 +132,6 @@ describe('McpServerTestPanel', () => {
             title: 'settings.mcpServersTestDirectoryTitle',
         });
 
-        const updatedInput = tree.root.findAll((node) => node.props?.testID === 'mcp.server.test.directory.input')[0];
-        expect(updatedInput.props.value).toBe('/repo/from-browser');
+        expect(screen.findByTestId('mcp.server.test.directory.input')?.props.value).toBe('/repo/from-browser');
     });
 });

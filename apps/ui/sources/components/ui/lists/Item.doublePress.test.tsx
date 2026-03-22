@@ -16,6 +16,20 @@ function requireTestIdNode(node: ReactTestInstance | null): ReactTestInstance {
     return node;
 }
 
+function getItemPressable(screen: { findByTestId: (testID: string) => ReactTestInstance | null }): ReactTestInstance {
+    return requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
+}
+
+async function invokeItemHandler(
+    pressable: ReactTestInstance,
+    handlerName: 'onPress' | 'onDoubleClick',
+    event: Record<string, unknown>,
+): Promise<void> {
+    await act(async () => {
+        invokeTestInstanceHandler(pressable, handlerName, event);
+    });
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -113,12 +127,10 @@ describe('Item (double press)', () => {
                 showChevron={false}
             />,
         );
-        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
+        const pressable = getItemPressable(screen);
         expect(typeof pressable.props.onDoubleClick).toBe('function');
 
-        await act(async () => {
-            invokeTestInstanceHandler(pressable, 'onDoubleClick', {});
-        });
+        await invokeItemHandler(pressable, 'onDoubleClick', {});
 
         expect(onDoublePress).toHaveBeenCalledTimes(1);
         expect(onPress).toHaveBeenCalledTimes(0);
@@ -138,19 +150,15 @@ describe('Item (double press)', () => {
                 showChevron={false}
             />,
         );
-        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
+        const pressable = getItemPressable(screen);
         expect(typeof pressable.props.onPress).toBe('function');
 
-        await act(async () => {
-            pressable.props.onPress({ nativeEvent: { detail: 1 } });
-        });
+        await invokeItemHandler(pressable, 'onPress', { nativeEvent: { detail: 1 } });
 
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onDoublePress).toHaveBeenCalledTimes(0);
 
-        await act(async () => {
-            pressable.props.onPress({ nativeEvent: { detail: 1 } });
-        });
+        await invokeItemHandler(pressable, 'onPress', { nativeEvent: { detail: 1 } });
 
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onDoublePress).toHaveBeenCalledTimes(1);
@@ -170,18 +178,18 @@ describe('Item (double press)', () => {
                 showChevron={false}
             />,
         );
-        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
+        const pressable = getItemPressable(screen);
         expect(typeof pressable.props.onDoubleClick).toBe('function');
         expect(typeof pressable.props.onPress).toBe('function');
 
-        await act(async () => {
-            invokeTestInstanceHandler(pressable, 'onDoubleClick', { preventDefault: vi.fn(), stopPropagation: vi.fn() });
-        });
+        await invokeItemHandler(pressable, 'onDoubleClick', { preventDefault: vi.fn(), stopPropagation: vi.fn() });
 
         // Some RN web builds dispatch an onPress after onDoubleClick; ensure we ignore it so a pinned-open
         // is not immediately overwritten by a preview-open.
-        await act(async () => {
-            pressable.props.onPress({ nativeEvent: { detail: 1 }, preventDefault: vi.fn(), stopPropagation: vi.fn() });
+        await invokeItemHandler(pressable, 'onPress', {
+            nativeEvent: { detail: 1 },
+            preventDefault: vi.fn(),
+            stopPropagation: vi.fn(),
         });
 
         expect(onDoublePress).toHaveBeenCalledTimes(1);
@@ -202,11 +210,9 @@ describe('Item (double press)', () => {
                 showChevron={false}
             />,
         );
-        const pressable = requireTestIdNode(screen.findByTestId(ITEM_TEST_ID));
+        const pressable = getItemPressable(screen);
 
-        await act(async () => {
-            pressable.props.onPress({ nativeEvent: { detail: 1 } });
-        });
+        await invokeItemHandler(pressable, 'onPress', { nativeEvent: { detail: 1 } });
 
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onDoublePress).toHaveBeenCalledTimes(0);

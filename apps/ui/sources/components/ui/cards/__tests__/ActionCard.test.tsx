@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -41,56 +40,71 @@ describe('ActionCard', () => {
     it('renders primary button with correct label', async () => {
         const { ActionCard } = await import('../ActionCard');
         const onPress = vi.fn();
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ActionCard title="Install CLI" primaryAction={{ label: 'Install', onPress }} />)).tree;
-        const buttons = tree.root.findAllByType('RoundButton' as any);
-        expect(buttons).toHaveLength(1);
-        expect(buttons[0].props.title).toBe('Install');
+        const screen = await renderScreen(
+            <ActionCard
+                testID="action-card"
+                title="Install CLI"
+                primaryAction={{ label: 'Install', onPress }}
+            />,
+        );
+
+        expect(screen.findByTestId('action-card-primary')?.props.title).toBe('Install');
     });
 
     it('renders secondary button when provided', async () => {
         const { ActionCard } = await import('../ActionCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ActionCard
-                    title="Install"
-                    primaryAction={{ label: 'Install', onPress: () => {} }}
-                    secondaryAction={{ label: 'Skip', onPress: () => {} }}
-                />)).tree;
-        const buttons = tree.root.findAllByType('RoundButton' as any);
-        expect(buttons).toHaveLength(2);
-        expect(buttons[1].props.title).toBe('Skip');
-        expect(buttons[1].props.display).toBe('inverted');
+        const screen = await renderScreen(
+            <ActionCard
+                testID="action-card"
+                title="Install"
+                primaryAction={{ label: 'Install', onPress: () => {} }}
+                secondaryAction={{ label: 'Skip', onPress: () => {} }}
+            />,
+        );
+
+        expect(screen.findByTestId('action-card-secondary')?.props.title).toBe('Skip');
+        expect(screen.findByTestId('action-card-secondary')?.props.display).toBe('inverted');
     });
 
     it('does not render secondary button when omitted', async () => {
         const { ActionCard } = await import('../ActionCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ActionCard title="Install" primaryAction={{ label: 'Go', onPress: () => {} }} />)).tree;
-        const buttons = tree.root.findAllByType('RoundButton' as any);
-        expect(buttons).toHaveLength(1);
+        const screen = await renderScreen(
+            <ActionCard
+                testID="action-card"
+                title="Install"
+                primaryAction={{ label: 'Go', onPress: () => {} }}
+            />,
+        );
+
+        expect(screen.findByTestId('action-card-secondary')).toBeNull();
     });
 
     it('disables buttons when loading', async () => {
         const { ActionCard } = await import('../ActionCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ActionCard
-                    title="Install"
-                    primaryAction={{ label: 'Go', onPress: () => {} }}
-                    secondaryAction={{ label: 'Skip', onPress: () => {} }}
-                    loading
-                />)).tree;
-        const buttons = tree.root.findAllByType('RoundButton' as any);
-        expect(buttons[0].props.disabled).toBe(true);
-        expect(buttons[1].props.disabled).toBe(true);
+        const screen = await renderScreen(
+            <ActionCard
+                testID="action-card"
+                title="Install"
+                primaryAction={{ label: 'Go', onPress: () => {} }}
+                secondaryAction={{ label: 'Skip', onPress: () => {} }}
+                loading
+            />,
+        );
+
+        expect(screen.findByTestId('action-card-primary')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('action-card-secondary')?.props.disabled).toBe(true);
     });
 
     it('description is optional', async () => {
         const { ActionCard } = await import('../ActionCard');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ActionCard title="No Desc" primaryAction={{ label: 'Go', onPress: () => {} }} />)).tree;
-        const texts = tree.root.findAllByType('Text' as any);
-        const textContents = texts.map((t) => t.children.join(''));
-        expect(textContents).toContain('No Desc');
-        expect(textContents).toHaveLength(1); // Only title
+        const screen = await renderScreen(
+            <ActionCard
+                testID="action-card"
+                title="No Desc"
+                primaryAction={{ label: 'Go', onPress: () => {} }}
+            />,
+        );
+
+        expect(screen.getTextContent()).toBe('No Desc');
     });
 });

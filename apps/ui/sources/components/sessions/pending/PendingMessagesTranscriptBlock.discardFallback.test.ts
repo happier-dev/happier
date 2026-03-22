@@ -1,7 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act, ReactTestInstance } from 'react-test-renderer';
-import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { createPartialStorageModuleMock, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -167,19 +167,11 @@ describe('PendingMessagesTranscriptBlock discard fallback', () => {
         modalAlert.mockReset();
     });
 
-    function findPressableByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
-        return tree.root.findAllByType('Pressable').find((node) => node.props.testID === testID);
-    }
-
-    function findNodeByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
-        return tree.root.findAll((node) => (node.props as any)?.testID === testID)[0];
-    }
-
-    async function hoverPendingMessageRow(tree: renderer.ReactTestRenderer, messageId: string) {
-        const row = findNodeByTestId(tree, `pendingMessages.row:${messageId}`);
+    async function hoverPendingMessageRow(screen: Awaited<ReturnType<typeof renderScreen>>, messageId: string) {
+        const row = screen.findByTestId(`pendingMessages.row:${messageId}`);
         expect(row).toBeTruthy();
         await act(async () => {
-            row!.props.onPointerEnter?.();
+            invokeTestInstanceHandler(row, 'onPointerEnter', undefined, `pendingMessages.row:${messageId}`);
         });
     }
 
@@ -191,20 +183,19 @@ describe('PendingMessagesTranscriptBlock discard fallback', () => {
         deletePendingMessage.mockRejectedValueOnce(new Error('delete failed'));
         discardPendingMessage.mockResolvedValueOnce(undefined);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        tree = (await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                     sessionId: 's1',
                     pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
                     discardedMessages: [],
-                }))).tree;
+                }));
 
-        await hoverPendingMessageRow(tree!, 'p1');
+        await hoverPendingMessageRow(screen, 'p1');
 
-        const sendNow = findPressableByTestId(tree!, 'pendingMessages.sendNow:p1');
+        const sendNow = screen.findByTestId('pendingMessages.sendNow:p1');
         expect(sendNow).toBeTruthy();
 
         await act(async () => {
-            await sendNow!.props.onPress();
+            await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
         });
 
         expect(deletePendingMessage).toHaveBeenCalledTimes(1);

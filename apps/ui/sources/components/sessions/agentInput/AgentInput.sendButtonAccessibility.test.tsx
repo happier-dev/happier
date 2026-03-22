@@ -7,11 +7,10 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 function findSendPressable(tree: renderer.ReactTestRenderer) {
-    const pressables = tree.root.findAllByType('Pressable' as any);
-    const matches = pressables.filter((node) => {
-        const hitSlop = node.props?.hitSlop;
-        return Boolean(hitSlop && hitSlop.top === 5 && hitSlop.bottom === 10 && typeof node.props?.onPress === 'function');
-    });
+    const sendTestIds = ['session-composer-send', 'new-session-composer-send'] as const;
+    const matches = tree.root.findAllByType('Pressable' as any).filter((node) =>
+        sendTestIds.includes(node.props?.testID) && typeof node.props?.onPress === 'function'
+    );
     expect(matches.length).toBe(1);
     return matches[0]!;
 }

@@ -1,18 +1,31 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildExistingSessionAutomationAuthoringContext } from '@/components/sessions/authoring/context/buildExistingSessionAutomationAuthoringContext';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import { renderScreen } from '@/dev/testkit';
+import { createCapturingComponent } from '@/dev/testkit/mocks/components';
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+type CapturedItemProps = Readonly<{
+    title?: unknown;
+    subtitle?: unknown;
+}>;
+
+const capturedItems: CapturedItemProps[] = [];
+
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
+    ItemGroup: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.children),
+    Item: createCapturingComponent('Item', (props: Record<string, unknown> & { title?: unknown; subtitle?: unknown }) => {
+        capturedItems.push({
+            title: props.title,
+            subtitle: props.subtitle,
+        });
+    }),
 }));
 
 vi.mock('@/text', async () => {
@@ -82,49 +95,42 @@ const BASE_DRAFT: SessionAuthoringDraft = {
 
 describe('ExistingSessionAutomationContextSection', () => {
     it('renders the inherited machine, path, profile, and resume rows for a resumable session', async () => {
+        capturedItems.length = 0;
         const { ExistingSessionAutomationContextSection } = await import('./ExistingSessionAutomationContextSection');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ExistingSessionAutomationContextSection
-                    context={buildExistingSessionAutomationAuthoringContext({
-                        draft: BASE_DRAFT,
-                        session: {
-                            id: 'session-1',
-                            encryptionMode: 'e2ee',
-                            permissionMode: 'acceptEdits',
-                            permissionModeUpdatedAt: 123,
-                            modelMode: 'gpt-5',
-                            modelModeUpdatedAt: 456,
-                            metadata: {
-                                path: '/repo/project',
-                                displayName: 'Leeroy Mac',
-                                host: 'leeroy.local',
-                                machineId: 'machine-1',
-                            },
-                        },
-                        sessionDekBase64: 'secret',
-                        availability: {
-                            kind: 'ready',
+        await renderScreen(
+            <ExistingSessionAutomationContextSection
+                context={buildExistingSessionAutomationAuthoringContext({
+                    draft: BASE_DRAFT,
+                    session: {
+                        id: 'session-1',
+                        encryptionMode: 'e2ee',
+                        permissionMode: 'acceptEdits',
+                        permissionModeUpdatedAt: 123,
+                        modelMode: 'gpt-5',
+                        modelModeUpdatedAt: 456,
+                        metadata: {
+                            path: '/repo/project',
+                            displayName: 'Leeroy Mac',
+                            host: 'leeroy.local',
                             machineId: 'machine-1',
-                            eligibility: {
-                                eligible: true,
-                                agentId: 'codex',
-                                strategy: 'vendor_resume',
-                            },
                         },
-                    })}
-                />,
-            );
-        });
+                    },
+                    sessionDekBase64: 'secret',
+                    availability: {
+                        kind: 'ready',
+                        machineId: 'machine-1',
+                        eligibility: {
+                            eligible: true,
+                            agentId: 'codex',
+                            strategy: 'vendor_resume',
+                        },
+                    },
+                })}
+            />,
+        );
 
-        const rows = tree!.root.findAllByType('Item').map((node) => ({
-            title: node.props.title,
-            subtitle: node.props.subtitle,
-        }));
-
-        expect(rows).toEqual([
+        expect(capturedItems).toEqual([
             { title: 'Backend', subtitle: 'codex' },
             { title: 'Encryption', subtitle: 'End-to-end encrypted' },
             { title: 'Transcript', subtitle: 'Direct' },
@@ -138,52 +144,49 @@ describe('ExistingSessionAutomationContextSection', () => {
     });
 
     it('hides the optional profile row when the automation draft does not carry one', async () => {
+        capturedItems.length = 0;
         const { ExistingSessionAutomationContextSection } = await import('./ExistingSessionAutomationContextSection');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ExistingSessionAutomationContextSection
-                    context={buildExistingSessionAutomationAuthoringContext({
-                        draft: {
-                            ...BASE_DRAFT,
-                            backendTarget: null,
-                            sessionEncryptionMode: 'plain',
-                            transcriptStorage: null,
-                            profileId: null,
-                            mcpSelection: null,
-                            connectedServices: null,
-                        },
-                        session: {
-                            id: 'session-1',
-                            encryptionMode: 'plain',
-                            permissionMode: 'acceptEdits',
-                            permissionModeUpdatedAt: 123,
-                            modelMode: 'gpt-5',
-                            modelModeUpdatedAt: 456,
-                            metadata: {
-                                path: '/repo/project',
-                                host: 'leeroy.local',
-                                machineId: 'machine-1',
-                            },
-                        },
-                        sessionDekBase64: null,
-                        availability: {
-                            kind: 'ready',
+        await renderScreen(
+            <ExistingSessionAutomationContextSection
+                context={buildExistingSessionAutomationAuthoringContext({
+                    draft: {
+                        ...BASE_DRAFT,
+                        backendTarget: null,
+                        sessionEncryptionMode: 'plain',
+                        transcriptStorage: null,
+                        profileId: null,
+                        mcpSelection: null,
+                        connectedServices: null,
+                    },
+                    session: {
+                        id: 'session-1',
+                        encryptionMode: 'plain',
+                        permissionMode: 'acceptEdits',
+                        permissionModeUpdatedAt: 123,
+                        modelMode: 'gpt-5',
+                        modelModeUpdatedAt: 456,
+                        metadata: {
+                            path: '/repo/project',
+                            host: 'leeroy.local',
                             machineId: 'machine-1',
-                            eligibility: {
-                                eligible: true,
-                                agentId: 'codex',
-                                strategy: 'happy_attach',
-                            },
                         },
-                    })}
-                />,
-            );
-        });
+                    },
+                    sessionDekBase64: null,
+                    availability: {
+                        kind: 'ready',
+                        machineId: 'machine-1',
+                        eligibility: {
+                            eligible: true,
+                            agentId: 'codex',
+                            strategy: 'happy_attach',
+                        },
+                    },
+                })}
+            />,
+        );
 
-        const rows = tree!.root.findAllByType('Item').map((node) => node.props.title);
-        expect(rows).toEqual([
+        expect(capturedItems.map((item) => item.title)).toEqual([
             'Backend',
             'Encryption',
             'Machine',

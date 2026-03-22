@@ -341,16 +341,15 @@ describe('DirectSessionsBrowseScreen', () => {
     it('links the selected provider session and navigates to the Happier session', async () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
+        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        tree = screen.tree;
 
         await act(async () => {});
 
         const candidateItem = tree.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();
 
-        await act(async () => {
-            await candidateItem!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
 
         expect(linkEnsureSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
@@ -367,7 +366,8 @@ describe('DirectSessionsBrowseScreen', () => {
     it('switches to the codex connected-service source before linking', async () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
+        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        tree = screen.tree;
 
         await act(async () => {});
         candidatesListSpy.mockClear();
@@ -420,9 +420,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const candidateItem = tree.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();
 
-        await act(async () => {
-            await candidateItem!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
 
         expect(linkEnsureSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',

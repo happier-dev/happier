@@ -71,27 +71,27 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-// Keep the bespoke renderer harness because the portal-host probe still needs createNodeMock.
-function renderBaseModal(
+async function renderBaseModalScreen(
     BaseModal: React.ComponentType<any>,
     props: Record<string, unknown> = {},
-    options?: Parameters<typeof renderer.create>[1],
+    options?: Parameters<typeof renderScreen>[1],
 ) {
-    let tree: ReturnType<typeof renderer.create> | undefined;
-    act(() => {
+    return renderScreen(React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }), options);
+}
+
+async function renderBaseModalTree(
+    BaseModal: React.ComponentType<any>,
+    props: Record<string, unknown> = {},
+    options?: renderer.TestRendererOptions,
+) {
+    let tree: renderer.ReactTestRenderer | undefined;
+    await act(async () => {
         tree = renderer.create(
             React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }),
             options,
         );
     });
     return tree;
-}
-
-async function renderBaseModalScreen(
-    BaseModal: React.ComponentType<any>,
-    props: Record<string, unknown> = {},
-) {
-    return renderScreen(React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }));
 }
 
 describe('BaseModal (web)', () => {
@@ -241,7 +241,7 @@ describe('BaseModal (web)', () => {
         (globalThis as any).MutationObserver = FakeMutationObserver;
 
         try {
-            const tree = renderBaseModal(BaseModal);
+            const tree = await renderBaseModalTree(BaseModal);
 
             expect(bodyStyle.pointerEvents).toBe('auto');
 
@@ -265,10 +265,10 @@ describe('BaseModal (web)', () => {
 
     it('applies zIndexBase to the overlay and content so stacked modals layer correctly', async () => {
         const { BaseModal } = await import('./BaseModal');
-        const tree = renderBaseModal(BaseModal, { zIndexBase: 1234 });
+        const screen = await renderBaseModalScreen(BaseModal, { zIndexBase: 1234 });
 
-        const overlay = tree?.root.findAllByType('DialogOverlay' as any)?.[0];
-        const content = tree?.root.findAllByType('DialogContent' as any)?.[0];
+        const overlay = screen.findAllByType('DialogOverlay' as any)?.[0];
+        const content = screen.findAllByType('DialogContent' as any)?.[0];
 
         expect(overlay?.props.style?.zIndex).toBe(1234);
         expect(content?.props.style?.zIndex).toBe(1235);
@@ -285,7 +285,7 @@ describe('BaseModal (web)', () => {
             return React.createElement('Probe');
         }
 
-        renderBaseModal(
+        await renderBaseModalTree(
             BaseModal,
             { children: React.createElement(Probe) },
             {

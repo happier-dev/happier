@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -160,15 +160,15 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
+    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab', { testID: 'session-right-panel-git-commit-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab'),
+    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab', { testID: 'session-right-panel-git-update-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
+    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab', { testID: 'session-right-panel-git-history-tab' }),
 }));
 
 describe('SessionRightPanelGitView (snapshot SWR)', () => {
@@ -236,19 +236,18 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
             return React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: `session:s1:${props.tick}` });
         }
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(Wrapper, { tick: 0 }))).tree;
+        const screen = await renderScreen(React.createElement(Wrapper, { tick: 0 }));
 
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
+        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
         expect(lastScmOperationsInput?.scmSnapshot).toBe(validSnapshot);
 
         mockSnapshot = null;
         await act(async () => {
-            tree.update(React.createElement(Wrapper, { tick: 1 }));
+            screen.tree.update(React.createElement(Wrapper, { tick: 1 }));
         });
 
         // Should keep the commit surface mounted, rather than falling back to the empty loading state.
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
+        expect(screen.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
         expect(lastScmOperationsInput?.scmSnapshot).toBe(validSnapshot);
     });
 });

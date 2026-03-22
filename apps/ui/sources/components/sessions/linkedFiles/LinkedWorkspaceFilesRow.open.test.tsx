@@ -1,8 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -78,20 +78,15 @@ describe('LinkedWorkspaceFilesRow', () => {
       return null;
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <AppPaneProvider>
-          <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} />
-          <Probe />
-        </AppPaneProvider>
-      );
-    });
+    const screen = await renderScreen(
+      <AppPaneProvider>
+        <LinkedWorkspaceFilesRow sessionId="s1" paths={['src/api.ts']} />
+        <Probe />
+      </AppPaneProvider>,
+    );
 
-    const chip = tree.root.findByProps({ testID: 'linked-workspace-file:src/api.ts' });
-    await act(async () => {
-      chip.props.onPress();
-    });
+    expect(screen.findByTestId('linked-workspace-file:src/api.ts')).toBeTruthy();
+    await screen.pressByTestIdAsync('linked-workspace-file:src/api.ts');
 
     expect(routerPushSpy).not.toHaveBeenCalled();
     const scope = observedState?.scopes?.['session:s1'];

@@ -271,7 +271,7 @@ describe('Session message route hydration', () => {
     };
 
     const screen = await renderMessageScreen(MessageScreen);
-    expect(screen.root.findAllByType('ToolFullView' as any)).toHaveLength(1);
+    expect(screen.findAllByTestId('tool-full-view')).toHaveLength(1);
     expect(routerReplaceSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).not.toHaveBeenCalled();
   });

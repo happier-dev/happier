@@ -1,6 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -66,7 +66,7 @@ import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
 
 describe('EmbeddedTerminalPaneFrame', () => {
-    it('keeps the disconnected overlay inside the terminal surface so toolbar actions remain accessible', () => {
+    it('keeps the disconnected overlay inside the terminal surface so toolbar actions remain accessible', async () => {
         const controller: EmbeddedTerminalPaneController = {
             status: 'exited',
             error: null,
@@ -80,22 +80,20 @@ describe('EmbeddedTerminalPaneFrame', () => {
             dismissDetectedUrl: () => {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <EmbeddedTerminalPaneFrame
-                    title="Provider login terminal"
-                    controller={controller}
-                    onRequestClose={() => {}}
-                    surface={React.createElement('TerminalSurface')}
-                    testIdPrefix="provider-auth-terminal"
-                    platformOS="web"
-                />
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(EmbeddedTerminalPaneFrame, {
+                title: 'Provider login terminal',
+                controller,
+                onRequestClose: () => {},
+                surface: React.createElement('TerminalSurface'),
+                testIdPrefix: 'provider-auth-terminal',
+                platformOS: 'web',
+            }),
+        );
 
-        const overlay = tree!.root.findByProps({ testID: 'provider-auth-terminal-overlay' });
-        expect(overlay.parent?.props.style).toBe(embeddedTerminalPaneStyles.terminalSurface);
-        expect(tree!.root.findByProps({ testID: 'provider-auth-terminal-close' })).toBeTruthy();
+        const overlay = screen.findByTestId('provider-auth-terminal-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay?.parent?.parent?.props.style).toBe(embeddedTerminalPaneStyles.terminalSurface);
+        expect(screen.findByTestId('provider-auth-terminal-close')).toBeTruthy();
     });
 });

@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderSettingsView } from '@/dev/testkit';
 
 type PlatformSelectOptions<T> = {
     web?: T;
@@ -84,23 +84,11 @@ describe('LocalDirectSection', () => {
 
     try {
       const voice = voiceSettingsParse({ providerId: 'local_direct' });
-      let tree: renderer.ReactTestRenderer;
-      await act(async () => {
-        tree = renderer.create(React.createElement(LocalDirectSection, { voice, setVoice: vi.fn() }));
-        await Promise.resolve();
-      });
+      const screen = await renderSettingsView(React.createElement(LocalDirectSection, { voice, setVoice: vi.fn() }));
 
-      // @ts-expect-error assigned in act() above
-      const networkTimeoutRow = tree.root.find(
-        (node) =>
-          (node.type as any) === 'Item' &&
-          node.props?.title === 'settingsVoice.local.conversation.network.timeoutTitle',
-      );
+      expect(screen.findRowByTitle('settingsVoice.local.conversation.network.timeoutTitle')).toBeTruthy();
 
-      await act(async () => {
-        networkTimeoutRow.props.onPress?.();
-        await Promise.resolve();
-      });
+      screen.pressRowByTitle('settingsVoice.local.conversation.network.timeoutTitle');
 
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {

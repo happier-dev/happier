@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -148,7 +147,7 @@ describe('Session settings (Replay summary runner controls)', () => {
         const SessionSettingsScreen = mod.default;
 
         const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const texts = screen.root.findAllByType('Text' as any).map((n: any) => n?.props?.children).flat();
+        const texts = screen.getTextContent();
 
         expect(texts).toContain('settingsSession.replayResume.maxSeedCharsTitle');
         expect(screen.findAllByTestId('settings-session-replay-maxSeedChars-input')).toHaveLength(1);
@@ -163,7 +162,7 @@ describe('Session settings (Replay summary runner controls)', () => {
         const SessionSettingsScreen = mod.default;
 
         const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const texts = screen.root.findAllByType('Text' as any).map((n: any) => n?.props?.children).flat();
+        const texts = screen.getTextContent();
 
         expect(texts).toContain('settingsSession.replayResume.summaryRunner.title');
         expect(texts).toContain('settingsSession.replayResume.summaryRunner.backendTitle');
@@ -182,7 +181,7 @@ describe('Session settings (Replay summary runner controls)', () => {
         const SessionSettingsScreen = mod.default;
 
         const screen = await renderScreen(React.createElement(SessionSettingsScreen));
-        const texts = screen.root.findAllByType('Text' as any).map((n: any) => n?.props?.children).flat();
+        const texts = screen.getTextContent();
 
         expect(texts).not.toContain('settingsSession.replayResume.summaryRunner.title');
     });

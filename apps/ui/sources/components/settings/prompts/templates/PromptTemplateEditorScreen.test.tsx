@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -69,7 +68,10 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', {
+        ...props,
+        testID: 'promptTemplate.target',
+    }),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -78,7 +80,10 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/components/ui/settingsSurface/SettingsActionFooter', () => ({
-    SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', props),
+    SettingsActionFooter: (props: any) => React.createElement('SettingsActionFooter', {
+        ...props,
+        testID: 'promptTemplate.footer',
+    }),
 }));
 
 vi.mock('@/modal', async () => {
@@ -119,19 +124,17 @@ describe('PromptTemplateEditorScreen', () => {
     it('uses a dropdown selector for the target prompt and exposes create/edit prompt actions', async () => {
         const { PromptTemplateEditorScreen } = await import('./PromptTemplateEditorScreen');
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptTemplateEditorScreen, { invocationId: null }))).tree;
+        const screen = await renderScreen(React.createElement(PromptTemplateEditorScreen, { invocationId: null }));
 
-        const dropdown = tree.root.findByType('DropdownMenu');
-        expect(dropdown.props?.selectedId).toBe('');
-        expect(dropdown.props?.items?.map((item: any) => item.id)).toEqual(['doc-1', 'doc-2']);
+        const dropdown = screen.findByTestId('promptTemplate.target');
+        expect(dropdown?.props?.selectedId).toBe('');
+        expect(dropdown?.props?.items?.map((item: any) => item.id)).toEqual(['doc-1', 'doc-2']);
 
-        const items = tree.root.findAllByType('Item');
-        expect(items.map((node) => node.props?.testID)).toContain('promptTemplate.target.edit');
-        expect(items.map((node) => node.props?.testID)).toContain('promptTemplate.target.new');
+        expect(screen.findByTestId('promptTemplate.target.edit')).toBeTruthy();
+        expect(screen.findByTestId('promptTemplate.target.new')).toBeTruthy();
 
-        const footer = tree.root.findByType('SettingsActionFooter');
-        expect(footer.props.primaryTestID).toBe('promptTemplate.save');
-        expect(footer.props.secondaryTestID).toBe('promptTemplate.cancel');
+        const footer = screen.findByTestId('promptTemplate.footer');
+        expect(footer?.props.primaryTestID).toBe('promptTemplate.save');
+        expect(footer?.props.secondaryTestID).toBe('promptTemplate.cancel');
     });
 });

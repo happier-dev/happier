@@ -25,17 +25,26 @@ const storageFixture = vi.hoisted(() => ({
 }));
 
 const codeLinesSpy = vi.fn();
+const diffFilesListSpy = vi.fn();
 const syntaxHookSpy = vi.fn();
+const loadingIndicatorSpy = vi.fn();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                        ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
-                                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-                                        useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
-                                    }
+            ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            ActivityIndicator: (props: any) => {
+                loadingIndicatorSpy(props);
+                return React.createElement('ActivityIndicator', {
+                    ...props,
+                    testID: 'scm-commit-loading-indicator',
+                });
+            },
+            Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+            useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
+        }
     );
 });
 
@@ -104,7 +113,13 @@ vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
 }));
 
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
-    DiffFilesListView: (props: any) => React.createElement('DiffFilesListView', props),
+    DiffFilesListView: (props: any) => {
+        diffFilesListSpy(props);
+        return React.createElement('DiffFilesListView', {
+            ...props,
+            testID: 'scm-commit-diff-files-list',
+        });
+    },
 }));
 
 vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () => ({
@@ -236,7 +251,9 @@ describe('CommitScreen', () => {
             },
         };
         codeLinesSpy.mockClear();
+        diffFilesListSpy.mockClear();
         syntaxHookSpy.mockClear();
+        loadingIndicatorSpy.mockClear();
         vi.clearAllMocks();
     });
 
@@ -280,9 +297,10 @@ describe('CommitScreen', () => {
         const Screen = (await import('@/app/(app)/session/[id]/commit')).default;
         const screen = await renderCommitScreen(Screen);
 
-        const list = screen.root.findByType('DiffFilesListView' as any);
-        expect(list.props.files).toHaveLength(2);
-        const filePaths = (list.props.files ?? []).map((f: any) => String(f.filePath ?? ''));
+        expect(diffFilesListSpy).toHaveBeenCalled();
+        const [list] = diffFilesListSpy.mock.calls.at(-1)!;
+        expect(list.files).toHaveLength(2);
+        const filePaths = (list.files ?? []).map((f: any) => String(f.filePath ?? ''));
         expect(filePaths).toContain('foo.ts');
         expect(filePaths).toContain('bar.ts');
     });
@@ -298,7 +316,8 @@ describe('CommitScreen', () => {
         const screen = await renderCommitScreen(Screen);
 
         // Still loading; no diff call yet.
-        expect(screen.root.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('scm-commit-loading-indicator')).toBeTruthy();
+        expect(loadingIndicatorSpy).toHaveBeenCalled();
         expect(vi.mocked(sessionScmDiffCommit)).not.toHaveBeenCalled();
 
         // Storage rehydrates.

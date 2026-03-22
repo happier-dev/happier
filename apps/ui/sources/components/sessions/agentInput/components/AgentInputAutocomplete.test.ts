@@ -1,22 +1,30 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act, ReactTestInstance } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentInputAutocomplete } from './AgentInputAutocomplete';
 import { renderScreen } from '@/dev/testkit';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+let pressableIndex = 0;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                    Pressable: 'Pressable',
-                                    Platform: {
-                                    OS: 'web',
-                                },
-                                    View: 'View',
-                                }
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode; testID?: string }) =>
+                React.createElement(
+                    'Pressable',
+                    {
+                        ...props,
+                        testID: props.testID ?? `agent-input-autocomplete.option:${pressableIndex++}`,
+                    },
+                    props.children,
+                ),
+            Platform: {
+                OS: 'web',
+            },
+            View: 'View',
+        },
     );
 });
 
@@ -29,55 +37,48 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('FloatingOverlay', props, props.children),
+        React.createElement('FloatingOverlay', { ...props, testID: 'agent-input-autocomplete.overlay' }, props.children),
 }));
 
-function renderAutocomplete(props: {
+async function renderAutocomplete(props: {
     suggestions: React.ReactElement[];
     onSelect: (index: number) => void;
     itemHeight: number;
     selectedIndex?: number;
     maxHeight?: number;
-}): renderer.ReactTestRenderer {
-    let tree: renderer.ReactTestRenderer | undefined;
-    act(() => {
-        tree = renderer.create(React.createElement(AgentInputAutocomplete, props));
-    });
-    return tree!;
-}
-
-function findOverlay(tree: renderer.ReactTestRenderer): ReactTestInstance | undefined {
-    return tree.root.findAllByType('FloatingOverlay')[0];
-}
-
-function findPressables(tree: renderer.ReactTestRenderer): ReactTestInstance[] {
-    return tree.root.findAllByType('Pressable');
+}) {
+    return renderScreen(React.createElement(AgentInputAutocomplete, props));
 }
 
 describe('AgentInputAutocomplete', () => {
-    it('returns null when suggestions are empty', () => {
-        const tree = renderAutocomplete({
+    beforeEach(() => {
+        pressableIndex = 0;
+    });
+
+    it('returns null when suggestions are empty', async () => {
+        const screen = await renderAutocomplete({
             suggestions: [],
             onSelect: () => {},
             itemHeight: 48,
         });
-        expect(tree.toJSON()).toBe(null);
+
+        expect(screen.tree.toJSON()).toBe(null);
     });
 
-    it('passes maxHeight through to FloatingOverlay', () => {
-        const tree = renderAutocomplete({
+    it('passes maxHeight through to FloatingOverlay', async () => {
+        const screen = await renderAutocomplete({
             suggestions: [React.createElement('Suggestion', { key: 's1' })],
             onSelect: () => {},
             itemHeight: 48,
             maxHeight: 123,
         });
 
-        expect(findOverlay(tree)?.props.maxHeight).toBe(123);
+        expect(screen.findByTestId('agent-input-autocomplete.overlay')?.props.maxHeight).toBe(123);
     });
 
     it('calls onSelect with the pressed index', async () => {
         const onSelect = vi.fn<(index: number) => void>();
-        const tree = renderAutocomplete({
+        const screen = await renderAutocomplete({
             suggestions: [
                 React.createElement('Suggestion', { key: 's1' }),
                 React.createElement('Suggestion', { key: 's2' }),
@@ -86,12 +87,10 @@ describe('AgentInputAutocomplete', () => {
             itemHeight: 48,
         });
 
-        const pressables = findPressables(tree);
-        expect(pressables).toHaveLength(2);
+        expect(screen.findByTestId('agent-input-autocomplete.option:0')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-autocomplete.option:1')).toBeTruthy();
 
-        act(() => {
-            pressables[1]?.props?.onPress?.();
-        });
+        await screen.pressByTestIdAsync('agent-input-autocomplete.option:1');
 
         expect(onSelect).toHaveBeenCalledTimes(1);
         expect(onSelect).toHaveBeenCalledWith(1);
