@@ -274,7 +274,7 @@ describe('executeWorkspaceReplicationJob', () => {
         transferMissingBlobsToTargetCas: async () => {
           throw new Error('boom');
         },
-        applyPlan: async () => ({ appliedFiles: 0, appliedBytes: 0 }),
+        applyPlan: async () => ({ appliedFiles: 0, appliedBytes: 0, targetPath: '/target' }),
         commitBaseline: async () => undefined,
       })).rejects.toThrow('boom');
 

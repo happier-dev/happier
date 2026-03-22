@@ -18,6 +18,7 @@ import { buildWorkspaceReplicationBlobPacks } from '../transport/buildWorkspaceR
 import { receiveWorkspaceReplicationBlobPack } from '../transport/receiveWorkspaceReplicationBlobPack';
 import { applyWorkspaceReplicationPlan } from '../apply/applyWorkspaceReplicationPlan';
 import { assertWorkspaceReplicationJobNotCancelled } from '../safety/assertWorkspaceReplicationJobNotCancelled';
+import { scanWorkspaceManifestIntoCas } from '../scan/scanWorkspaceManifestIntoCas';
 
 import { executeWorkspaceReplicationJob } from './executeWorkspaceReplicationJob';
 
@@ -121,12 +122,26 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
                 jobStore: params.jobStore,
                 jobId: job.jobId,
             });
+
+            let currentTargetManifest: { entries: typeof offer.manifest.entries; fingerprint?: string } | undefined;
+            if (params.apply.strategy === 'sync_changes') {
+                const scanned = await scanWorkspaceManifestIntoCas({
+                    activeServerDir: params.activeServerDir,
+                    relationshipId: offer.relationshipId,
+                    workspaceRoot: params.apply.targetPath,
+                    scmRegistry: params.apply.registry,
+                });
+                currentTargetManifest = {
+                    entries: scanned.entries.map((entry) => ({ ...entry })),
+                };
+            }
             const applied = await applyWorkspaceReplicationPlan({
                 activeServerDir: params.activeServerDir,
                 sourceOffer: offer,
                 targetPath: params.apply.targetPath,
                 strategy: params.apply.strategy,
                 conflictPolicy: params.apply.conflictPolicy,
+                ...(currentTargetManifest ? { currentTargetManifest } : {}),
                 registry: params.apply.registry,
                 assertCanContinue: async () => {
                     await assertWorkspaceReplicationJobNotCancelled({

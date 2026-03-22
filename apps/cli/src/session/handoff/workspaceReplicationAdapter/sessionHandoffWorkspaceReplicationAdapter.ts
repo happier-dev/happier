@@ -13,6 +13,7 @@ import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadS
 import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
 import { applyWorkspaceReplicationPlan } from '@/workspaces/replication/apply/applyWorkspaceReplicationPlan';
+import { createWorkspaceReplicationEngine } from '@/workspaces/replication/createWorkspaceReplicationEngine';
 import {
   createWorkspaceReplicationTransfers,
   type WorkspaceReplicationTransfers,
@@ -23,6 +24,7 @@ import { buildOneWaySafeReplicationPlan } from '@/workspaces/replication/plannin
 
 import {
   buildSessionHandoffWorkspaceExportArtifacts,
+  buildSessionHandoffWorkspaceExportPayload,
   importSessionHandoffWorkspaceArtifacts,
 } from '../workspace/sessionHandoffWorkspaceArtifacts';
 import {
@@ -39,6 +41,7 @@ import {
 import {
   createSessionHandoffWorkspaceReplicationBlobPackPayloadSource,
   createSessionHandoffWorkspaceReplicationSourceOfferPayloadSource,
+  buildSessionHandoffWorkspaceBlobPackTransferId,
   parseSessionHandoffWorkspaceBlobPackTransferId,
   parseSessionHandoffWorkspaceSourceOfferTransferId,
   receiveServerRoutedSessionHandoffWorkspaceReplication,
@@ -88,23 +91,50 @@ function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
+const TERMINAL_WORKSPACE_REPLICATION_JOB_STATUSES = new Set<string>([
+  'completed',
+  'aborted',
+  'failed',
+  'awaiting_recovery',
+]);
+
+async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
+  engine: ReturnType<typeof createWorkspaceReplicationEngine>;
+  jobId: string;
+  assertCanContinue?: () => Promise<void>;
+}>): Promise<Awaited<ReturnType<ReturnType<typeof createWorkspaceReplicationEngine>['getJobStatus']>>> {
+  // Short polling loop; job runner persists progress frequently so this converges quickly.
+  while (true) {
+    await params.assertCanContinue?.();
+    const record = await params.engine.getJobStatus(params.jobId);
+    if (TERMINAL_WORKSPACE_REPLICATION_JOB_STATUSES.has(record.status.status)) {
+      return record;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+  }
+}
+
 async function defaultLoadCurrentTargetManifest(input: Readonly<{
+  activeServerDir: string;
   targetPath: string;
   workspaceTransfer: SessionHandoffWorkspaceTransfer;
-  buildWorkspaceExportArtifacts?: typeof buildSessionHandoffWorkspaceExportArtifacts;
+  buildWorkspaceExportPayload?: typeof buildSessionHandoffWorkspaceExportPayload;
 }>): Promise<WorkspaceManifest> {
   try {
-    const workspaceExportArtifacts = await (input.buildWorkspaceExportArtifacts ?? buildSessionHandoffWorkspaceExportArtifacts)({
+    const workspaceExport = await (input.buildWorkspaceExportPayload ?? buildSessionHandoffWorkspaceExportPayload)({
+      activeServerDir: input.activeServerDir,
       sourcePath: input.targetPath,
       workspaceTransfer: input.workspaceTransfer,
     });
-    if (!workspaceExportArtifacts) {
+    if (!workspaceExport.workspaceExportArtifacts) {
       return { entries: [] };
     }
     return {
-      entries: workspaceExportArtifacts.manifest.entries.map((entry) => ({ ...entry })),
-      ...(workspaceExportArtifacts.manifest.fingerprint
-        ? { fingerprint: workspaceExportArtifacts.manifest.fingerprint }
+      entries: workspaceExport.workspaceExportArtifacts.manifest.entries.map((entry) => ({ ...entry })),
+      ...(workspaceExport.workspaceExportArtifacts.manifest.fingerprint
+        ? { fingerprint: workspaceExport.workspaceExportArtifacts.manifest.fingerprint }
         : {}),
     };
   } catch (error) {
@@ -241,7 +271,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   blobPackMaxSingleBlobBytes: number;
   persistedTransferredBundles: SessionHandoffTransferredBundles;
   assertCanContinue?: () => Promise<void>;
-  buildWorkspaceExportArtifacts?: typeof buildSessionHandoffWorkspaceExportArtifacts;
+  buildWorkspaceExportPayload?: typeof buildSessionHandoffWorkspaceExportPayload;
   loadCurrentTargetManifest?: (params: Readonly<{
     targetPath: string;
     workspaceTransfer: SessionHandoffWorkspaceTransfer;
@@ -281,9 +311,10 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
         targetPath: string;
         workspaceTransfer: SessionHandoffWorkspaceTransfer;
       }>) => await defaultLoadCurrentTargetManifest({
+        activeServerDir: input.activeServerDir,
         ...params,
-        ...(input.buildWorkspaceExportArtifacts
-          ? { buildWorkspaceExportArtifacts: input.buildWorkspaceExportArtifacts }
+        ...(input.buildWorkspaceExportPayload
+          ? { buildWorkspaceExportPayload: input.buildWorkspaceExportPayload }
           : {}),
       })))({
         targetPath: input.targetPath,
@@ -379,7 +410,76 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   }
 
   const importedWorkspace =
-    input.workspaceTransfer?.enabled && sourceOffer
+    input.workspaceTransfer?.enabled && sourceOffer && (
+      (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel)
+      || (input.actualTransportStrategy === 'direct_peer' && input.directPeerPublication && !input.persistedBlobProvider)
+    )
+      ? await (async () => {
+        const engine = createWorkspaceReplicationEngine({
+          activeServerDir: input.activeServerDir,
+          localMachineId: input.targetMachineId,
+          transfers: input.transfers,
+        });
+
+        const metadata = input.metadata;
+        const workspaceTransfer = input.workspaceTransfer;
+        if (!metadata || !workspaceTransfer) {
+          throw new Error('Missing workspace replication metadata or transfer configuration');
+        }
+
+        const scope = {
+          sourceMachineId: input.sourceMachineId,
+          sourceWorkspaceRoot: metadata.sourceRootPath,
+          targetMachineId: input.targetMachineId,
+          targetWorkspaceRoot: input.targetPath,
+          mode: 'one_way_safe' as const,
+        };
+
+        const { jobId } = await engine.startJobFromOffer({
+          scope,
+          sourceOffer,
+          correlationId,
+          apply: {
+            targetPath: input.targetPath,
+            strategy: workspaceTransfer.strategy,
+            conflictPolicy: workspaceTransfer.conflictPolicy,
+          },
+          requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
+            if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {
+              await input.transfers.requestServerRoutedBlobPackToFile({
+                transferId: buildSessionHandoffWorkspaceBlobPackTransferId({
+                  handoffId: input.handoffId,
+                  packId,
+                  digests,
+                }),
+                sourceMachineId: input.sourceMachineId,
+                machineTransferChannel: input.machineTransferChannel,
+                destinationPath,
+              });
+              return;
+            }
+            throw new Error(`Unexpected workspace blob-pack request for ${packId} (direct_peer packs should already be staged)`);
+          },
+        });
+
+        const completed = await waitForTerminalWorkspaceReplicationJob({
+          engine,
+          jobId,
+          assertCanContinue: input.assertCanContinue,
+        });
+
+        if (completed.status.status !== 'completed') {
+          throw new Error(`Workspace replication job did not complete successfully: ${completed.status.status}`);
+        }
+        if (!completed.result?.targetPath) {
+          throw new Error(`Workspace replication job completed without a target path: ${jobId}`);
+        }
+
+        return {
+          targetPath: completed.result.targetPath,
+        };
+      })()
+      : input.workspaceTransfer?.enabled && sourceOffer
       ? await (input.applyReplicationPlan ?? applyWorkspaceReplicationPlan)({
         activeServerDir: input.activeServerDir,
         sourceOffer,
