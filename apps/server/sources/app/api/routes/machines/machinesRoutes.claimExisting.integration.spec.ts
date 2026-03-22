@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { createInTxHarness } from "../../testkit/txHarness";
 
 const markAccountChanged = vi.fn(async () => 123);
@@ -15,46 +16,23 @@ vi.mock("@/app/events/eventRouter", () => ({
 }));
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd") }));
 
-const dbMachineFindFirst = vi.fn(async () => null);
+const dbMocks = createDbMocks({
+    machine: ["findFirst"],
+    accessKey: ["deleteMany"],
+} as const);
+const txDbMocks = createDbMocks({
+    accessKey: ["deleteMany"],
+    machine: ["create", "update"],
+} as const);
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        machine: {
-            findFirst: dbMachineFindFirst,
-        },
-        accessKey: {
-            deleteMany: vi.fn(async () => ({ count: 0 })),
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
     isPrismaErrorCode: (e: any, code: string) => e?.code === code,
 }));
 
-const txMachineCreate = vi.fn(async () => {
-    throw new Error("unexpected create");
-});
-
-const txMachineUpdate = vi.fn(async (args: any) => ({
-    id: args.where.id,
-    accountId: args.data.accountId,
-    metadata: args.data.metadata,
-    metadataVersion: args.data.metadataVersion ?? 1,
-    daemonState: args.data.daemonState ?? null,
-    daemonStateVersion: args.data.daemonStateVersion ?? 0,
-    dataEncryptionKey: args.data.dataEncryptionKey ?? null,
-    active: args.data.active ?? true,
-    lastActiveAt: new Date(),
-    createdAt: new Date(1),
-    updatedAt: new Date(),
-}));
-
 const harness = createInTxHarness(() => ({
-    accessKey: {
-        deleteMany: vi.fn(async () => ({ count: 0 })),
-    },
-    machine: {
-        create: txMachineCreate,
-        update: txMachineUpdate,
-    },
+    accessKey: txDbMocks.db.accessKey,
+    machine: txDbMocks.db.machine,
 }));
 
 vi.mock("@/storage/inTx", () => ({
@@ -63,27 +41,47 @@ vi.mock("@/storage/inTx", () => ({
 }));
 
 describe("machinesRoutes (machine id conflict)", () => {
-    afterEach(() => {
-        // no-op
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dbMocks.reset();
+        txDbMocks.reset();
+        dbMocks.db.machine.findFirst.mockResolvedValue(null);
+        dbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.machine.create.mockImplementation(async () => {
+            throw new Error("unexpected create");
+        });
+        txDbMocks.db.machine.update.mockImplementation(async (args: any) => ({
+            id: args.where.id,
+            accountId: args.data.accountId,
+            metadata: args.data.metadata,
+            metadataVersion: args.data.metadataVersion ?? 1,
+            daemonState: args.data.daemonState ?? null,
+            daemonStateVersion: args.data.daemonStateVersion ?? 0,
+            dataEncryptionKey: args.data.dataEncryptionKey ?? null,
+            active: args.data.active ?? true,
+            lastActiveAt: new Date(),
+            createdAt: new Date(1),
+            updatedAt: new Date(),
+        }));
     });
 
     it("returns 409 when create races (P2002) and the machine id belongs to a different account", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
 
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-        txMachineCreate.mockRejectedValueOnce(Object.assign(new Error("P2002"), { code: "P2002" }));
-        const response = await handler(
+        txDbMocks.db.machine.create.mockRejectedValueOnce(Object.assign(new Error("P2002"), { code: "P2002" }));
+        const { response, reply } = await route.invoke(
             {
                 userId: "u_new",
                 body: { id: "m1", metadata: "meta-new", daemonState: "state-new", dataEncryptionKey: null },
             },
-            reply,
         );
 
         expect(reply.code).toHaveBeenCalledWith(409);
@@ -93,17 +91,18 @@ describe("machinesRoutes (machine id conflict)", () => {
         });
 
         expect(markAccountChanged).not.toHaveBeenCalled();
-        expect(txMachineUpdate).not.toHaveBeenCalled();
+        expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
     });
 
     it("returns the existing machine when create races (P2002) and the machine id belongs to the same account", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
-
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        const reply = createReplyStub();
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
 
         const existingSameAccount = {
             id: "m1",
@@ -120,13 +119,12 @@ describe("machinesRoutes (machine id conflict)", () => {
             updatedAt: new Date(1),
         };
         // First lookup misses, then the P2002 handler finds the row for this account.
-        dbMachineFindFirst.mockResolvedValueOnce(null as any);
-        dbMachineFindFirst.mockResolvedValueOnce(existingSameAccount as any);
-        txMachineCreate.mockRejectedValueOnce(Object.assign(new Error("P2002"), { code: "P2002" }));
+        dbMocks.db.machine.findFirst.mockResolvedValueOnce(null as any);
+        dbMocks.db.machine.findFirst.mockResolvedValueOnce(existingSameAccount as any);
+        txDbMocks.db.machine.create.mockRejectedValueOnce(Object.assign(new Error("P2002"), { code: "P2002" }));
 
-        const response = await handler(
+        const { response, reply } = await route.invoke(
             { userId: "u_new", body: { id: "m1", metadata: "meta-new", daemonState: undefined, dataEncryptionKey: null } },
-            reply,
         );
 
         expect(reply.code).not.toHaveBeenCalledWith(409);

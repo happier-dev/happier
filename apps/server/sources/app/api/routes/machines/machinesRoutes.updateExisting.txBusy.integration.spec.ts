@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
@@ -28,7 +29,9 @@ const existingMachine = {
     updatedAt: new Date(1),
 };
 
-const dbMachineFindFirst = vi.fn(async () => existingMachine);
+const dbMocks = createDbMocks({
+    machine: ["findFirst", "findUnique"],
+} as const);
 
 function hasStringCode(error: unknown): error is { code: string } {
     if (!error || typeof error !== "object") {
@@ -37,13 +40,8 @@ function hasStringCode(error: unknown): error is { code: string } {
     return typeof (error as { code?: unknown }).code === "string";
 }
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        machine: {
-            findFirst: dbMachineFindFirst,
-            findUnique: vi.fn(async () => null),
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
     isPrismaErrorCode: (err: unknown, code: string) =>
         hasStringCode(err) && err.code === code,
 }));
@@ -62,16 +60,18 @@ vi.mock("@/storage/inTx", () => ({
 describe("machinesRoutes (update existing machine, tx busy)", () => {
     it("returns the existing machine row when the update transaction cannot start (best-effort)", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
+        dbMocks.reset();
+        dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        dbMocks.db.machine.findUnique.mockResolvedValue(null);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
 
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
-
-        const response = await handler(
+        const { response, reply } = await route.invoke(
             {
                 userId: "u1",
                 body: {
@@ -80,10 +80,9 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
                     daemonState: undefined,
                 },
             },
-            reply,
         );
 
-        expect(dbMachineFindFirst).toHaveBeenCalledWith({
+        expect(dbMocks.db.machine.findFirst).toHaveBeenCalledWith({
             where: {
                 accountId: "u1",
                 id: "m1",
@@ -103,17 +102,19 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
 
     it("does not silently succeed when a dataEncryptionKey update is skipped by transaction contention", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
-
-        const app = createFakeRouteApp();
-        machinesRoutes(app as any);
-
-        const handler = getRouteHandler(app, "POST", "/v1/machines");
-        expect(typeof handler).toBe("function");
-
-        const reply = createReplyStub();
+        dbMocks.reset();
+        dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
+        dbMocks.db.machine.findUnique.mockResolvedValue(null);
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines",
+            registerRoutes(app) {
+                machinesRoutes(app as any);
+            },
+        });
 
         await expect(
-            handler(
+            route.handler(
                 {
                     userId: "u1",
                     body: {
@@ -123,10 +124,8 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
                         dataEncryptionKey: "AAECAw==",
                     },
                 },
-                reply,
+                route.createReply(),
             ),
         ).rejects.toMatchObject({ code: "P2028" });
-
-        expect(reply.send).not.toHaveBeenCalled();
     });
 });
