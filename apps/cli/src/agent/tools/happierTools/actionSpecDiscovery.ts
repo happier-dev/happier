@@ -84,8 +84,9 @@ type GetActionSpecPayload = Readonly<{
   actionSpec: NonNullable<ReturnType<typeof getSerializedActionSpecForSurface>>;
 }>;
 
-export async function searchActionSpecsForMcpSurface(
+export async function searchActionSpecsForSurface(
   args: unknown,
+  surface: 'mcp' | 'cli',
   isActionEnabled: (id: ActionId) => boolean,
 ): Promise<ActionSpecDiscoveryResult<SearchActionSpecsPayload>> {
   const parsed = actionSpecSearchSchema.safeParse(args ?? {});
@@ -95,7 +96,7 @@ export async function searchActionSpecsForMcpSurface(
     ok: true,
     result: {
       actionSpecs: searchSerializedActionSpecsForSurface({
-        surface: 'mcp',
+        surface,
         query: parsed.data.query ?? '',
         limit: parsed.data.limit,
         isActionEnabled,
@@ -104,8 +105,9 @@ export async function searchActionSpecsForMcpSurface(
   };
 }
 
-export async function getActionSpecForMcpSurface(
+export async function getActionSpecForSurface(
   args: unknown,
+  surface: 'mcp' | 'cli',
   isActionEnabled: (id: ActionId) => boolean,
 ): Promise<ActionSpecDiscoveryResult<GetActionSpecPayload>> {
   const parsed = actionSpecGetSchema.safeParse(args);
@@ -114,7 +116,7 @@ export async function getActionSpecForMcpSurface(
   try {
     const actionSpec = getSerializedActionSpecForSurface({
       id: parsed.data.id as ActionId,
-      surface: 'mcp',
+      surface,
       isActionEnabled,
     });
     if (!actionSpec) {
@@ -126,8 +128,9 @@ export async function getActionSpecForMcpSurface(
   }
 }
 
-export async function resolveActionOptionsForMcpSurface(
+export async function resolveActionOptionsForSurface(
   args: unknown,
+  surface: 'mcp' | 'cli',
   isActionEnabled: (id: ActionId) => boolean,
   resolveActionOptions: ResolveActionOptions,
 ): Promise<ActionSpecDiscoveryResult<ResolveActionOptionsPayload>> {
@@ -146,7 +149,7 @@ export async function resolveActionOptionsForMcpSurface(
     try {
       const actionSpec = getSerializedActionSpecForSurface({
         id: actionId,
-        surface: 'mcp',
+        surface,
         isActionEnabled,
       });
       if (!actionSpec) {
@@ -155,7 +158,7 @@ export async function resolveActionOptionsForMcpSurface(
 
       const spec = getActionSpecForCatalogSurface({
         id: actionId,
-        surface: 'mcp',
+        surface,
         isActionEnabled,
       });
       if (!spec) {

@@ -133,6 +133,35 @@ describe('built-in Happier tools', () => {
     });
   });
 
+  it('rejects action_options_resolve on the CLI surface', async () => {
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_options_resolve',
+      args: { optionsSourceId: 'session.modes.available' },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName: async () => unsupported(),
+        resolveActionOptions: async () => ({
+          ok: true,
+          result: {
+            actionId: null,
+            fieldPath: null,
+            optionsSourceId: 'session.modes.available',
+            options: [{ value: 'plan', label: 'Plan' }],
+          },
+        }),
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+  });
+
   it('resolves action options directly from an optionsSourceId', async () => {
     const result = await dispatchBuiltInHappierTool({
       toolName: 'action_options_resolve',
@@ -251,6 +280,29 @@ describe('built-in Happier tools', () => {
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
+  it('rejects action-backed tools when the action is unavailable on the current surface', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'memory_search',
+      args: { machineId: 'machine-1', query: { q: 'needle' } },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
   it('rejects disabled action_execute calls before execution', async () => {
     const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
 
@@ -263,6 +315,29 @@ describe('built-in Happier tools', () => {
         startExecutionRun: async () => unsupported(),
         executeActionByToolName,
         isActionEnabled: (id) => id !== 'review.start',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(executeActionByToolName).not.toHaveBeenCalled();
+  });
+
+  it('rejects action_execute when the action is unavailable on the current surface', async () => {
+    const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'action_execute',
+      args: { actionId: 'session.mode.set', input: { sessionId: 'sess-1', modeId: 'plan' } },
+      sessionId: 'sess-1',
+      surface: 'cli',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName,
       },
     });
 
@@ -345,5 +420,114 @@ describe('built-in Happier tools', () => {
         ioMode: 'request_response',
       },
     });
+  });
+
+  it('defaults delegate execution_run_start to workspace_write permission mode', async () => {
+    const startExecutionRun = vi.fn(async (_sessionId: string, request: unknown) => ok(request));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Delegate.',
+      },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun,
+        executeActionByToolName: async () => unsupported(),
+      },
+    });
+
+    expect(startExecutionRun).toHaveBeenCalledWith('sess-1', {
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Delegate.',
+      permissionMode: 'workspace_write',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Delegate.',
+        permissionMode: 'workspace_write',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      },
+    });
+  });
+
+  it('defaults voice_agent execution_run_start to long_lived streaming mode', async () => {
+    const startExecutionRun = vi.fn(async (_sessionId: string, request: unknown) => ok(request));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'voice_agent',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Start voice agent.',
+      },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun,
+        executeActionByToolName: async () => unsupported(),
+      },
+    });
+
+    expect(startExecutionRun).toHaveBeenCalledWith('sess-1', {
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Start voice agent.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+    });
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        intent: 'voice_agent',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Start voice agent.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'long_lived',
+        ioMode: 'streaming',
+      },
+    });
+  });
+
+  it('rejects execution_run_start when the equivalent action is disabled by policy', async () => {
+    const startExecutionRun = vi.fn(async () => ok({ unreachable: true }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'execution_run_start',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review this task.',
+      },
+      sessionId: 'sess-1',
+      deps: {
+        changeTitle: async () => ({ success: true }),
+        startExecutionRun,
+        executeActionByToolName: async () => unsupported(),
+        isActionEnabled: (id) => id !== 'review.start',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'Action is disabled',
+    });
+    expect(startExecutionRun).not.toHaveBeenCalled();
   });
 });

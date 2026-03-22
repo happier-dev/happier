@@ -2,7 +2,8 @@ import {
   type ActionId,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
-import { createMcpActionToolNameToIdMap } from './mcpActionToolCatalog';
+import { createActionToolNameToIdMap } from './actionToolCatalog';
+import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
 
 type ActionExecutorResult = Readonly<
   | { ok: true; result: unknown }
@@ -13,7 +14,7 @@ type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' }>,
+    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' }>,
   ) => Promise<ActionExecutorResult>;
 }>;
 
@@ -38,9 +39,22 @@ function normalizeActionExecutorResult(result: ActionExecutorResult): ActionTool
     : { ok: false, errorCode: result.errorCode, error: result.error };
 }
 
+function normalizeActionToolResult(actionId: ActionId, result: ActionExecutorResult): ActionToolBridgeResult {
+  if (!actionId.startsWith('execution.run.')) {
+    return normalizeActionExecutorResult(result);
+  }
+
+  if (!result.ok) {
+    return { ok: false, errorCode: result.errorCode, error: result.error };
+  }
+
+  return normalizeExecutionRunToolResult(result.result as Parameters<typeof normalizeExecutionRunToolResult>[0]);
+}
+
 export function createActionToolExecutorBridge(params: Readonly<{
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
+  surface?: 'mcp' | 'cli';
 }>): Readonly<{
   executeActionByToolName: (toolName: string, toolArgs: unknown, defaultSessionId: string) => Promise<ActionToolBridgeResult>;
   resolveActionOptions: (args: Readonly<{
@@ -54,7 +68,8 @@ export function createActionToolExecutorBridge(params: Readonly<{
   isActionEnabled: (id: ActionId) => boolean;
 }> {
   const isActionEnabled = params.isActionEnabled ?? (() => true);
-  const actionToolNameToId = createMcpActionToolNameToIdMap(isActionEnabled);
+  const surface = params.surface ?? 'mcp';
+  const actionToolNameToId = createActionToolNameToIdMap({ surface, isActionEnabled });
 
   return {
     executeActionByToolName: async (toolName, toolArgs, defaultSessionId) => {
@@ -63,10 +78,10 @@ export function createActionToolExecutorBridge(params: Readonly<{
         if (!actionId) {
           return { ok: false, errorCode: 'invalid_action_input', error: 'Missing actionId' };
         }
-        return normalizeActionExecutorResult(await params.executor.execute(
+        return normalizeActionToolResult(actionId as ActionId, await params.executor.execute(
           actionId as ActionId,
           Object.prototype.hasOwnProperty.call(toolArgs ?? {}, 'input') ? (toolArgs as any).input : {},
-          { defaultSessionId, surface: 'mcp' },
+          { defaultSessionId, surface },
         ));
       }
 
@@ -75,10 +90,10 @@ export function createActionToolExecutorBridge(params: Readonly<{
         return { ok: false, errorCode: 'unknown_tool', error: `Unknown action-backed tool: ${toolName}` };
       }
 
-      return normalizeActionExecutorResult(await params.executor.execute(
+      return normalizeActionToolResult(actionId, await params.executor.execute(
         actionId,
         toolArgs,
-        { defaultSessionId, surface: 'mcp' },
+        { defaultSessionId, surface },
       ));
     },
     resolveActionOptions: async (args, defaultSessionId) => {
@@ -93,7 +108,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       const result = await params.executor.execute(
         'action.options.resolve',
         input,
-        { defaultSessionId, surface: 'mcp' },
+        { defaultSessionId, surface },
       );
       if (!result.ok) {
         return { ok: false, errorCode: result.errorCode, error: result.error };

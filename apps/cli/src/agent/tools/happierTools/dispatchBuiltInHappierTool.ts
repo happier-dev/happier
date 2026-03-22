@@ -1,47 +1,21 @@
 import { z } from 'zod';
 import {
-  BackendTargetRefSchema,
-  ExecutionRunStartRequestSchema,
   listActionSpecs,
   type ActionId,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
+import { isActionAvailableOnToolSurface } from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
 import {
-  getActionSpecForMcpSurface,
-  resolveActionOptionsForMcpSurface,
-  searchActionSpecsForMcpSurface,
+  getActionSpecForSurface,
+  resolveActionOptionsForSurface,
+  searchActionSpecsForSurface,
 } from './actionSpecDiscovery';
-const actionExecuteSchema = z.object({
-  actionId: z.string().min(1),
-  input: z.unknown().optional(),
-}).passthrough();
-const executionRunStartSchema = z.object({
-  sessionId: z.string().min(1).optional(),
-  intent: z.string().min(1),
-  backendTarget: BackendTargetRefSchema.optional(),
-  backendId: z.string().min(1).optional(),
-  instructions: z.string().optional(),
-  display: z.unknown().optional(),
-  intentInput: z.unknown().optional(),
-  initialContextMode: z.enum(['bootstrap', 'first_turn']).optional(),
-  resumeHandle: z.unknown().optional(),
-  replay: z.unknown().optional(),
-  permissionMode: z.string().min(1).optional(),
-  retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
-  runClass: z.enum(['bounded', 'long_lived']).optional(),
-  ioMode: z.enum(['request_response', 'streaming']).optional(),
-}).passthrough().superRefine((value, ctx) => {
-  const hasBackendTarget = typeof value.backendTarget !== 'undefined';
-  const backendId = typeof value.backendId === 'string' ? value.backendId.trim() : '';
-  if (!hasBackendTarget && !backendId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['backendTarget'],
-      message: 'backendTarget is required (or provide legacy backendId)',
-    });
-  }
-});
+import {
+  actionExecuteToolInputSchema,
+  changeTitleToolInputSchema,
+  normalizeExecutionRunStartToolInput,
+} from './manualToolContracts';
 
 type DispatchDeps = Readonly<{
   changeTitle: (sessionId: string, title: string) => Promise<unknown>;
@@ -84,6 +58,30 @@ const ACTION_ID_BY_TOOL_NAME = new Map(
     .filter(([toolName]) => toolName.length > 0),
 );
 
+const SURFACE_GATED_MANUAL_TOOL_ACTION_IDS = new Map<string, ActionId>([
+  ['action_spec_search', 'action.spec.search'],
+  ['action_spec_get', 'action.spec.get'],
+  ['action_options_resolve', 'action.options.resolve'],
+]);
+
+function getExecutionRunStartEquivalentActionId(args: unknown): ActionId | null {
+  const intent = typeof (args as { intent?: unknown } | null)?.intent === 'string'
+    ? String((args as { intent?: unknown }).intent).trim()
+    : '';
+  switch (intent) {
+    case 'review':
+      return 'review.start';
+    case 'plan':
+      return 'subagents.plan.start';
+    case 'delegate':
+      return 'subagents.delegate.start';
+    case 'voice_agent':
+      return 'voice_agent.start';
+    default:
+      return null;
+  }
+}
+
 function ok(result: unknown): HappierBuiltInToolDispatchResult {
   return { ok: true, result };
 }
@@ -112,68 +110,68 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
   sessionId: string;
+  surface?: 'mcp' | 'cli';
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
+  const surface = params.surface ?? 'mcp';
+
+  const gatedManualActionId = SURFACE_GATED_MANUAL_TOOL_ACTION_IDS.get(params.toolName) ?? null;
+  if (
+    gatedManualActionId
+    && !isActionAvailableOnToolSurface({
+      actionId: gatedManualActionId,
+      surface,
+      isActionEnabled,
+    })
+  ) {
+    return err('action_disabled', 'Action is disabled');
+  }
 
   if (params.toolName === 'change_title') {
-    const parsed = z.object({ title: z.string().min(1) }).passthrough().safeParse(params.args ?? {});
+    const parsed = changeTitleToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid title payload');
     return normalizeChangeTitleResult(await params.deps.changeTitle(params.sessionId, parsed.data.title));
   }
 
   if (params.toolName === 'action_spec_search') {
-    const result = await searchActionSpecsForMcpSurface(params.args, (id) => isActionEnabled(id));
+    const result = await searchActionSpecsForSurface(params.args, surface, (id) => isActionEnabled(id));
     return result.ok ? ok(result.result) : err(result.errorCode, result.error);
   }
 
   if (params.toolName === 'action_spec_get') {
-    const result = await getActionSpecForMcpSurface(params.args, (id) => isActionEnabled(id));
+    const result = await getActionSpecForSurface(params.args, surface, (id) => isActionEnabled(id));
     return result.ok ? ok(result.result) : err(result.errorCode, result.error);
   }
 
   if (params.toolName === 'execution_run_start') {
-    const parsed = executionRunStartSchema.safeParse(params.args ?? {});
-    if (!parsed.success) return err('invalid_action_input', 'Invalid execution run payload');
-    if (typeof parsed.data.sessionId === 'string' && parsed.data.sessionId.trim() !== params.sessionId) {
-      return err('execution_run_not_allowed', 'This tool call is scoped to a different session');
+    const equivalentActionId = getExecutionRunStartEquivalentActionId(params.args);
+    if (equivalentActionId && !isActionEnabled(equivalentActionId)) {
+      return err('action_disabled', 'Action is disabled');
     }
-
-    const backendTarget = parsed.data.backendTarget ?? {
-      kind: 'builtInAgent' as const,
-      agentId: String(parsed.data.backendId ?? '').trim(),
-    };
-
-    const request = ExecutionRunStartRequestSchema.safeParse({
-      intent: parsed.data.intent,
-      backendTarget,
-      ...(typeof parsed.data.instructions === 'string' ? { instructions: parsed.data.instructions } : {}),
-      ...(typeof parsed.data.display !== 'undefined' ? { display: parsed.data.display } : {}),
-      ...(typeof parsed.data.intentInput !== 'undefined' ? { intentInput: parsed.data.intentInput } : {}),
-      permissionMode: parsed.data.permissionMode ?? 'read_only',
-      retentionPolicy: parsed.data.retentionPolicy ?? 'ephemeral',
-      runClass: parsed.data.runClass ?? 'bounded',
-      ioMode: parsed.data.ioMode ?? 'request_response',
-      ...(typeof parsed.data.initialContextMode !== 'undefined' ? { initialContextMode: parsed.data.initialContextMode } : {}),
-      ...(typeof parsed.data.resumeHandle !== 'undefined' ? { resumeHandle: parsed.data.resumeHandle } : {}),
-      ...(typeof parsed.data.replay !== 'undefined' ? { replay: parsed.data.replay } : {}),
+    const normalized = normalizeExecutionRunStartToolInput({
+      sessionId: params.sessionId,
+      args: params.args,
     });
-    if (!request.success) return err('invalid_action_input', 'Invalid execution run payload');
-
-    return await params.deps.startExecutionRun(params.sessionId, request.data);
+    if (!normalized.ok) return err(normalized.errorCode, normalized.error);
+    return await params.deps.startExecutionRun(params.sessionId, normalized.request);
   }
 
   if (params.toolName === 'action_options_resolve') {
     const resolver = params.deps.resolveActionOptions;
     if (!resolver) return err('options_source_not_supported', 'Options source is not supported');
-    const result = await resolveActionOptionsForMcpSurface(params.args, (id) => isActionEnabled(id), resolver);
+    const result = await resolveActionOptionsForSurface(params.args, surface, (id) => isActionEnabled(id), resolver);
     return result.ok ? ok(result.result) : err(result.errorCode, result.error);
   }
 
   if (params.toolName === 'action_execute') {
-    const parsed = actionExecuteSchema.safeParse(params.args ?? {});
+    const parsed = actionExecuteToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid action execute request');
-    if (!isActionEnabled(parsed.data.actionId as ActionId)) {
+    if (!isActionAvailableOnToolSurface({
+      actionId: parsed.data.actionId as ActionId,
+      surface,
+      isActionEnabled,
+    })) {
       return err('action_disabled', 'Action is disabled');
     }
     return await params.deps.executeActionByToolName(
@@ -188,7 +186,11 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
 
   if (ACTION_TOOL_NAMES.has(params.toolName)) {
     const actionId = ACTION_ID_BY_TOOL_NAME.get(params.toolName) ?? null;
-    if (actionId && !isActionEnabled(actionId)) {
+    if (actionId && !isActionAvailableOnToolSurface({
+      actionId,
+      surface,
+      isActionEnabled,
+    })) {
       return err('action_disabled', 'Action is disabled');
     }
     return await params.deps.executeActionByToolName(params.toolName, params.args, params.sessionId);
