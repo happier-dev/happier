@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiClient } from './api';
 import axios from 'axios';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { logger } from '@/ui/logger';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
@@ -70,23 +72,24 @@ const testMachineMetadata = {
 
 describe('Api server error handling', () => {
     let api: ApiClient;
-    const previousRetryEnv: Record<string, string | undefined> = {};
+    const envKeys = [
+        'HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS',
+        'HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS',
+        'HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS',
+        'HAPPIER_E2E_DELAY_CREATE_SESSION_MS',
+    ] as const;
+    let envScope = createEnvKeyScope(envKeys);
 
     beforeEach(async () => {
         vi.clearAllMocks();
         connectionState.reset(); // Reset offline state between tests
 
         // Keep retry loops fast and deterministic in unit tests.
-        for (const [key, value] of [
+        envScope.patch(Object.fromEntries([
             ['HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS', '3'],
             ['HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS', '0'],
             ['HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS', '0'],
-        ] as const) {
-            if (!Object.prototype.hasOwnProperty.call(previousRetryEnv, key)) {
-                previousRetryEnv[key] = process.env[key];
-            }
-            process.env[key] = value;
-        }
+        ]) as Readonly<Record<string, string>>);
 
         // Create a mock credential
         const mockCredential = {
@@ -101,23 +104,14 @@ describe('Api server error handling', () => {
     });
 
     afterEach(() => {
-        for (const [key, value] of Object.entries(previousRetryEnv)) {
-            if (value === undefined) {
-                delete process.env[key];
-            } else {
-                process.env[key] = value;
-            }
-        }
-        for (const key of Object.keys(previousRetryEnv)) {
-            delete previousRetryEnv[key];
-        }
+        envScope.restore();
+        envScope = createEnvKeyScope(envKeys);
     });
 
     describe('getOrCreateSession', () => {
         it('delays session creation when HAPPIER_E2E_DELAY_CREATE_SESSION_MS is set', async () => {
             vi.useFakeTimers();
-            const prevDelay = process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS;
-            process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS = '1000';
+            envScope.patch({ HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '1000' });
 
             try {
                 mockPost.mockResolvedValue({ status: 201, data: { session: { id: 's1' } } });
@@ -133,17 +127,12 @@ describe('Api server error handling', () => {
                 await expect(promise).resolves.toEqual(expect.objectContaining({ id: 's1' }));
             } finally {
                 vi.useRealTimers();
-                if (prevDelay === undefined) {
-                    delete process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS;
-                } else {
-                    process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS = prevDelay;
-                }
             }
         });
 
         it('should not log bearer tokens or vendor keys when axios errors occur', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             const leakedBearer = 'Bearer very-secret';
             const leakedVendorKey = 'sk-test-123';
@@ -172,11 +161,11 @@ describe('Api server error handling', () => {
             expect(serialized).not.toContain(leakedVendorKey);
             expect(serialized).not.toContain('token=sekret');
 
-            consoleSpy.mockRestore();
+            output.restore();
         });
 
         it('should return null when Happy server is unreachable (ECONNREFUSED)', async () => {
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             // Mock axios to throw connection refused error
             mockPost.mockRejectedValue({ code: 'ECONNREFUSED' });
@@ -189,16 +178,13 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(connectionState.isOffline()).toBe(true);
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            output.restore();
         });
 
         it('should return null when Happy server cannot be found (ENOTFOUND)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             // Mock axios to throw DNS resolution error
             mockPost.mockRejectedValue({ code: 'ENOTFOUND' });
@@ -211,16 +197,13 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(connectionState.isOffline()).toBe(true);
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            output.restore();
         });
 
         it('should return null when Happy server times out (ETIMEDOUT)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             // Mock axios to throw timeout error
             mockPost.mockRejectedValue({ code: 'ETIMEDOUT' });
@@ -233,16 +216,13 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(connectionState.isOffline()).toBe(true);
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            output.restore();
         });
 
         it('should return null when Axios aborts bootstrap on timeout (ECONNABORTED)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             mockPost.mockRejectedValue({ code: 'ECONNABORTED' });
 
@@ -254,16 +234,13 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(connectionState.isOffline()).toBe(true);
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            output.restore();
         });
 
         it('should return null when session endpoint returns 404', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             // Mock axios to return 404
             mockPost.mockRejectedValue({
@@ -280,19 +257,14 @@ describe('Api server error handling', () => {
             expect(result).toBeNull();
             expect(connectionState.isOffline()).toBe(true);
             // New unified format via connectionState.fail()
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Session creation failed: 404')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            expect(output.text()).toContain('Session creation failed: 404');
+            output.restore();
         });
 
         it('throws when server returns 500 Internal Server Error (do not enter offline mode)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             try {
                 // Mock axios to return 500 error
@@ -310,14 +282,15 @@ describe('Api server error handling', () => {
                 ).rejects.toThrow(/Failed to get or create session/i);
 
                 expect(connectionState.isOffline()).toBe(false);
+                expect(output.text()).not.toContain('server unreachable');
             } finally {
-                consoleSpy.mockRestore();
+                output.restore();
             }
         });
 
         it('throws when server returns 503 Service Unavailable (do not enter offline mode)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             try {
                 // Mock axios to return 503 error
@@ -335,8 +308,9 @@ describe('Api server error handling', () => {
                 ).rejects.toThrow(/Failed to get or create session/i);
 
                 expect(connectionState.isOffline()).toBe(false);
+                expect(output.text()).not.toContain('server unreachable');
             } finally {
-                consoleSpy.mockRestore();
+                output.restore();
             }
         });
 
@@ -381,7 +355,7 @@ describe('Api server error handling', () => {
         });
 
         it('should re-throw non-connection errors', async () => {
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             try {
                 // Mock axios to throw a different type of error (e.g., authentication error)
@@ -395,11 +369,9 @@ describe('Api server error handling', () => {
                 expect(connectionState.isOffline()).toBe(false);
 
                 // Should not show the offline mode message
-                expect(consoleSpy).not.toHaveBeenCalledWith(
-                    expect.stringContaining('server unreachable')
-                );
+                expect(output.text()).not.toContain('server unreachable');
             } finally {
-                consoleSpy.mockRestore();
+                output.restore();
             }
         });
     });
@@ -463,7 +435,7 @@ describe('Api server error handling', () => {
 
         it('throws (instead of returning a synthetic machine) when server is unreachable (ECONNREFUSED)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             // Mock axios to throw connection refused error
             const connectionError = { code: 'ECONNREFUSED' };
@@ -479,16 +451,13 @@ describe('Api server error handling', () => {
             })).rejects.toBe(connectionError);
             expect(connectionState.isOffline()).toBe(true);
 
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            output.restore();
         });
 
         it('should throw on 409 machine id conflict (do not enter offline mode)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             mockPost.mockRejectedValue({
                 response: { status: 409, data: { error: 'machine_id_conflict' } },
@@ -503,14 +472,13 @@ describe('Api server error handling', () => {
             ).rejects.toThrow(/machine/i);
 
             expect(connectionState.isOffline()).toBe(false);
-            expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('server unreachable'));
-
-            consoleSpy.mockRestore();
+            expect(output.text()).not.toContain('server unreachable');
+            output.restore();
         });
 
         it('throws a stable error on 410 machine revoked (do not enter offline mode)', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             mockPost.mockRejectedValue({
                 response: { status: 410, data: { error: 'machine_revoked' } },
@@ -525,9 +493,8 @@ describe('Api server error handling', () => {
             ).rejects.toMatchObject({ name: 'MachineRevokedError', machineId: 'test-machine' });
 
             expect(connectionState.isOffline()).toBe(false);
-            expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('server unreachable'));
-
-            consoleSpy.mockRestore();
+            expect(output.text()).not.toContain('server unreachable');
+            output.restore();
         });
 
         it('throws a stable error when server rejects machine registration due to content public key mismatch', async () => {
@@ -595,7 +562,7 @@ describe('Api server error handling', () => {
 
         it('throws (instead of returning a synthetic machine) when server endpoint returns 404', async () => {
             connectionState.reset();
-            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const output = captureConsoleText();
 
             // Mock axios to return 404
             const endpointError = {
@@ -611,14 +578,9 @@ describe('Api server error handling', () => {
             expect(connectionState.isOffline()).toBe(true);
 
             // New unified format via connectionState.fail()
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('server unreachable')
-            );
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Machine registration failed: 404')
-            );
-
-            consoleSpy.mockRestore();
+            expect(output.text()).toContain('server unreachable');
+            expect(output.text()).toContain('Machine registration failed: 404');
+            output.restore();
         });
     });
 });

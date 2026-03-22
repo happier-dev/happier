@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import type { Metadata } from '@/api/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 
 const { mockPost, mockIsAxiosError } = vi.hoisted(() => ({
   mockPost: vi.fn(),
@@ -21,45 +23,37 @@ vi.mock('@/features/serverFeaturesClient', () => ({
   fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
 }));
 
-describe('ApiClient loopback url resolution', () => {
-  const originalEnv = {
-    homeDir: process.env.HAPPIER_HOME_DIR,
-    activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,
-    serverUrl: process.env.HAPPIER_SERVER_URL,
-    webappUrl: process.env.HAPPIER_WEBAPP_URL,
-    publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL,
-  };
+const envScope = createEnvKeyScope([
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+]);
 
+describe('ApiClient loopback url resolution', () => {
   beforeEach(() => {
     mockPost.mockReset();
     mockIsAxiosError.mockReset();
 
-    process.env.HAPPIER_HOME_DIR = '/tmp/happier-cli-test-loopback';
-    process.env.HAPPIER_SERVER_URL = 'http://localhost:3005';
-    process.env.HAPPIER_WEBAPP_URL = 'http://localhost:8080';
-    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    envScope.patch({
+      HAPPIER_HOME_DIR: '/tmp/happier-cli-test-loopback',
+      HAPPIER_SERVER_URL: 'http://localhost:3005',
+      HAPPIER_WEBAPP_URL: 'http://localhost:8080',
+      HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_PUBLIC_SERVER_URL: undefined,
+    });
     reloadConfiguration();
   });
 
   afterEach(() => {
-    if (originalEnv.homeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalEnv.homeDir;
-    if (originalEnv.activeServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-    else process.env.HAPPIER_ACTIVE_SERVER_ID = originalEnv.activeServerId;
-    if (originalEnv.serverUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalEnv.serverUrl;
-    if (originalEnv.webappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalEnv.webappUrl;
-    if (originalEnv.publicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-    else process.env.HAPPIER_PUBLIC_SERVER_URL = originalEnv.publicServerUrl;
-
+    envScope.restore();
     reloadConfiguration();
   });
 
   it('uses 127.0.0.1 instead of localhost for http requests', async () => {
     mockPost.mockRejectedValue({ code: 'ECONNREFUSED' });
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const output = captureConsoleLogAndMuteStdout();
 
     const credential: Credentials = {
       token: 'fake-token',
@@ -82,7 +76,7 @@ describe('ApiClient loopback url resolution', () => {
       metadata,
       state: null,
     });
-    consoleSpy.mockRestore();
+    output.restore();
 
     expect(mockPost).toHaveBeenCalled();
     const calledUrl = mockPost.mock.calls[0]?.[0];
