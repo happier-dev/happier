@@ -7,7 +7,7 @@ import {
 import {
   parseScmSourceControllerWorkspaceExportArtifactsWirePayload,
   type ScmSourceControllerWorkspaceExportArtifacts,
-} from '@/scm/sourceController/workspaceExportArtifacts';
+} from '../../../scm/sourceController/workspaceExportArtifacts';
 
 import type { SessionHandoffProviderBundle } from '../types';
 

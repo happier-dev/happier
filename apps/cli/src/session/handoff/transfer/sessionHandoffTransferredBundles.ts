@@ -14,9 +14,9 @@ import {
   createScmSourceControllerWorkspaceExportArtifacts,
   cloneScmSourceControllerWorkspaceExportManifest,
   type ScmSourceControllerWorkspaceExportArtifacts,
-} from '@/scm/sourceController/workspaceExportArtifacts';
-import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
-import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
+} from '../../../scm/sourceController/workspaceExportArtifacts';
+import type { WorkspaceExportBlobProvider } from '../../../scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
+import { createWorkspaceReplicationCasStore } from '../../../workspaces/replication/cas/workspaceReplicationCasStore';
 import { createSessionHandoffProviderBundlePayloadSource } from '../sessionHandoffProviderBundleFile';
 import type { SessionHandoffProviderBundleTransferPublication } from '../sessionHandoffProviderBundleTransferPublication';
 import type { SessionHandoffWorkspaceReplicationDirectPeerPublication } from '../workspace/sessionHandoffWorkspaceReplicationDirectPeer';

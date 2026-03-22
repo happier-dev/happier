@@ -10,7 +10,7 @@ import type { SessionHandoffTransferredPayload } from '@happier-dev/protocol';
 import {
   cloneScmSourceControllerWorkspaceExportManifest,
   type ScmSourceControllerWorkspaceExportArtifacts,
-} from '@/scm/sourceController/workspaceExportArtifacts';
+} from '../../../scm/sourceController/workspaceExportArtifacts';
 
 import { exportSessionHandoffState } from '../exportSessionHandoffState';
 import { readSessionHandoffProviderBundleFile } from '../sessionHandoffProviderBundleFile';
