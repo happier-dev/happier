@@ -1,19 +1,24 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Pressable, Text } from 'react-native';
+import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    return await createReactNativeWebMock({
+        View: ({ children, ...props }: any) => React.createElement('View', props, children),
+        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+        TextInput: (props: any) => React.createElement('TextInput', props),
+    });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit');
+    return await createUnistylesMock({
         theme: {
             colors: {
                 divider: '#333',
@@ -29,11 +34,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-    StyleSheet: {
-        create: (v: any) => (typeof v === 'function' ? v({ colors: { textSecondary: '#aaa' } }) : v),
-    },
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -75,30 +77,27 @@ describe('useCodeLinesReviewComments', () => {
 
             return (
                 <React.Fragment>
-                    <Pressable onPress={() => controls!.onPressAddComment(lines[0])} />
+                    <Pressable testID="add-comment-trigger" onPress={() => controls!.onPressAddComment(lines[0])} />
                     <Text>{controls!.isCommentActive(lines[0]) ? 'active' : 'inactive'}</Text>
                     {controls!.renderAfterLine(lines[0])}
                 </React.Fragment>
             );
         }
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<Harness />);
-        });
+        const screen = await renderScreen(<Harness />);
 
-        expect(tree!.root.findAllByType('TextInput' as any)).toHaveLength(0);
-        const statusBefore = tree!.root.findAllByType('Text' as any).map((n) => n.props.children).join(' ');
+        expect(screen.findByTestId('add-comment-trigger')).toBeTruthy();
+        expect(screen.findAllByType('TextInput' as any)).toHaveLength(0);
+        const statusBefore = screen.findAllByType('Text' as any).map((n) => n.props.children).join(' ');
         expect(statusBefore).toContain('inactive');
 
-        const pressable = tree!.root.findByType('Pressable' as any);
         await act(async () => {
-            pressable.props.onPress();
+            await screen.pressByTestIdAsync('add-comment-trigger');
         });
 
-        const statusAfter = tree!.root.findAllByType('Text' as any).map((n) => n.props.children).join(' ');
+        const statusAfter = screen.findAllByType('Text' as any).map((n) => n.props.children).join(' ');
         expect(statusAfter).toContain('active');
-        const inputs = tree!.root.findAllByType('TextInput' as any);
+        const inputs = screen.findAllByType('TextInput' as any);
         expect(inputs).toHaveLength(1);
         expect(inputs[0]!.props.placeholder).toBe('Add a review comment…');
     });

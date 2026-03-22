@@ -36,13 +36,19 @@ export function ReviewCommentsMessageCard(props: {
                         return (
                             <View key={c.id} style={styles.commentRow}>
                                 <Pressable
+                                    testID={`review-comments-header:${c.id}`}
+                                    accessibilityRole="button"
                                     onPress={() => setExpandedCommentId((prev) => (prev === c.id ? null : c.id))}
                                     style={styles.commentHeader}
                                 >
                                     <Text selectable style={styles.commentHeaderText}>{c.body}</Text>
                                 </Pressable>
                                 <View style={styles.commentActions}>
-                                    <Pressable onPress={() => props.onJumpToAnchor({ filePath: c.filePath, source: c.source, anchor: c.anchor })}>
+                                    <Pressable
+                                        testID={`review-comments-jump:${c.id}`}
+                                        accessibilityRole="button"
+                                        onPress={() => props.onJumpToAnchor({ filePath: c.filePath, source: c.source, anchor: c.anchor })}
+                                    >
                                         <Text style={styles.jumpText}>{t('files.reviewComments.jump')}</Text>
                                     </Pressable>
                                 </View>

@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,11 +11,15 @@ const sendMessageSpy = vi.fn(async (..._args: any[]) => undefined);
 const useExecutionRunsBackendsForSessionSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => null);
 const useSessionMessagesSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => ({ messages: [], isLoaded: true }));
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         surfaceHighest: '#111',
         divider: '#333',
@@ -23,23 +29,8 @@ vi.mock('react-native-unistyles', () => ({
         shadow: { color: '#000', opacity: 0.1 },
       },
     },
-  }),
-  StyleSheet: {
-    create: (input: any) =>
-      typeof input === 'function'
-        ? input({
-          colors: {
-            surfaceHighest: '#111',
-            divider: '#333',
-            text: '#eee',
-            textSecondary: '#aaa',
-            link: '#06f',
-            shadow: { color: '#000', opacity: 0.1 },
-          },
-        })
-        : input,
-  },
-}));
+    });
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
   MarkdownView: (props: any) => React.createElement('MarkdownView', props),
@@ -57,9 +48,12 @@ vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
   useExecutionRunsBackendsForSession: (...args: any[]) => useExecutionRunsBackendsForSessionSpy(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSessionMessages: (...args: any[]) => useSessionMessagesSpy(...args),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+    useSessionMessages: (...args: any[]) => useSessionMessagesSpy(...args),
+});
+});
 
 describe('ReviewFindingsMessageCard', () => {
   it('falls back to disabling follow-up affordances for coderabbit when backend capabilities are unavailable', async () => {
@@ -81,20 +75,15 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const texts = tree!.root.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
+    const texts = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
     expect(texts.some((text) => text.includes('Ask reviewer'))).toBe(false);
     expect(texts.some((text) => text.includes('Answer reviewer'))).toBe(false);
     expect(texts.some((text) => text.includes('Answer question'))).toBe(false);
@@ -119,20 +108,15 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const texts = tree!.root.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
+    const texts = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
     expect(texts.some((text) => text.includes('Ask reviewer'))).toBe(false);
     expect(texts.some((text) => text.includes('Answer question'))).toBe(false);
   });
@@ -156,20 +140,15 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const texts = tree!.root.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
+    const texts = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
     expect(texts.some((text) => text.includes('Ask reviewer'))).toBe(false);
     expect(texts.some((text) => text.includes('Answer question'))).toBe(false);
   });
@@ -191,28 +170,20 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
 
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const inputs = tree!.root.findAllByType('TextInput');
+    const inputs = tree!.findAllByType('TextInput');
     expect(inputs).toHaveLength(1);
     expect(inputs[0]!.props.value).toBe('please clarify');
 
-    const appliedButton = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Applied'));
-    });
+    const appliedButton = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Applied');
     expect(appliedButton).toBeDefined();
     expect(appliedButton!.props.disabled).toBe(true);
     expect(sessionExecutionRunActionSpy).not.toHaveBeenCalled();
@@ -234,37 +205,19 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const header = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const header = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(header).toBeDefined();
 
     await act(async () => {
-      header!.props.onPress?.();
+      await pressTestInstanceAsync(header!);
     });
 
-    const pressables = tree!.root.findAllByType('Pressable');
-    const clarify = pressables.find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Ask for clarification'));
-    });
-    const ignore = pressables.find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Ignore'));
-    });
-    const implementFix = pressables.find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Implement fix'));
-    });
-    const applyReviewActions = pressables.find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Apply review actions'));
-    });
+    const clarify = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Ask for clarification');
+    const ignore = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Ignore');
+    const implementFix = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Implement fix');
+    const applyReviewActions = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Apply review actions');
 
     expect(clarify).toBeDefined();
     expect(ignore).toBeDefined();
@@ -272,18 +225,18 @@ describe('ReviewFindingsMessageCard', () => {
     expect(applyReviewActions).toBeDefined();
 
     await act(async () => {
-      clarify!.props.onPress?.();
+      await pressTestInstanceAsync(clarify!);
     });
 
-    const inputs = tree!.root.findAllByType('TextInput');
+    const inputs = tree!.findAllByType('TextInput');
     expect(inputs).toHaveLength(1);
 
     await act(async () => {
-      inputs[0]!.props.onChangeText?.('please clarify the impact');
+      changeTextTestInstance(inputs[0]!, 'please clarify the impact');
     });
 
     await act(async () => {
-      await applyReviewActions!.props.onPress?.();
+      await pressTestInstanceAsync(applyReviewActions!);
     });
 
     expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith(
@@ -317,39 +270,28 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
 
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const ignore = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Ignore'));
-    });
+    const ignore = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Ignore');
     expect(ignore).toBeDefined();
 
     await act(async () => {
-      ignore!.props.onPress?.();
+      await pressTestInstanceAsync(ignore!);
     });
 
-    let applyReviewActions = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Apply review actions'));
-    });
+    let applyReviewActions = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Apply review actions');
     expect(applyReviewActions).toBeDefined();
     expect(applyReviewActions!.props.disabled).toBe(false);
 
     await act(async () => {
-      await applyReviewActions!.props.onPress?.();
+      await pressTestInstanceAsync(applyReviewActions!);
     });
 
     expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith(
@@ -363,27 +305,18 @@ describe('ReviewFindingsMessageCard', () => {
       }),
     );
 
-    const appliedButton = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Applied'));
-    });
+    const appliedButton = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Applied');
     expect(appliedButton).toBeDefined();
     expect(appliedButton!.props.disabled).toBe(true);
 
-    const decideLater = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Decide later'));
-    });
+    const decideLater = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Decide later');
     expect(decideLater).toBeDefined();
 
     await act(async () => {
-      decideLater!.props.onPress?.();
+      await pressTestInstanceAsync(decideLater!);
     });
 
-    applyReviewActions = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Apply review actions'));
-    });
+    applyReviewActions = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'Apply review actions');
     expect(applyReviewActions).toBeDefined();
     expect(applyReviewActions!.props.disabled).toBe(false);
   });
@@ -407,20 +340,15 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('T'));
-    });
+    const findingHeader = findTestInstanceByTypeContainingText(tree!, 'Pressable', 'T');
     expect(findingHeader).toBeDefined();
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const askReviewer = tree!.root.findAllByType('Pressable').find((p: any) => {
+    const askReviewer = tree!.findAllByType('Pressable').find((p: any) => {
       const texts = p.findAllByType?.('Text') ?? [];
       return texts.some((t: any) => {
         const text = String(t.props.children ?? '');
@@ -430,16 +358,16 @@ describe('ReviewFindingsMessageCard', () => {
     expect(askReviewer).toBeDefined();
 
     await act(async () => {
-      askReviewer!.props.onPress?.();
+      await pressTestInstanceAsync(askReviewer!);
     });
 
-    const inputs = tree!.root.findAllByType('TextInput');
+    const inputs = tree!.findAllByType('TextInput');
     expect(inputs.length).toBeGreaterThan(0);
     await act(async () => {
-      inputs.at(-1)!.props.onChangeText?.('Please clarify why this matters.');
+      changeTextTestInstance(inputs.at(-1)!, 'Please clarify why this matters.');
     });
 
-    const sendFollowUp = tree!.root.findAllByType('Pressable').find((p: any) => {
+    const sendFollowUp = tree!.findAllByType('Pressable').find((p: any) => {
       const texts = p.findAllByType?.('Text') ?? [];
       return texts.some((t: any) => {
         const text = String(t.props.children ?? '');
@@ -448,7 +376,7 @@ describe('ReviewFindingsMessageCard', () => {
     });
     expect(sendFollowUp).toBeDefined();
     await act(async () => {
-      await sendFollowUp!.props.onPress?.();
+      await pressTestInstanceAsync(sendFollowUp!);
     });
 
     expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith(
@@ -497,18 +425,16 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const publish = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Implement selected fixes'));
+    const publish = tree!.findByProps({
+      testID: 'review-findings-publish-accepted',
+      accessibilityRole: 'button',
     });
     expect(publish).toBeDefined();
 
     await act(async () => {
-      await publish!.props.onPress?.();
+      await pressTestInstanceAsync(publish!);
     });
 
     expect(sendMessageSpy).toHaveBeenCalledTimes(1);
@@ -595,31 +521,29 @@ describe('ReviewFindingsMessageCard', () => {
     };
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }));
-    });
+    tree = (await renderScreen(React.createElement(ReviewFindingsMessageCard, { payload, sessionId: 'sess_1' }))).tree;
 
-    const findingHeader = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Merged finding'));
+    const findingHeader = tree!.findByProps({
+      testID: 'review-findings-header:f1',
+      accessibilityRole: 'button',
     });
     expect(findingHeader).toBeDefined();
 
     await act(async () => {
-      findingHeader!.props.onPress?.();
+      await pressTestInstanceAsync(findingHeader!);
     });
 
-    const allText = tree!.root.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
+    const allText = tree!.findAllByType('Text').map((node: any) => String(node.props.children ?? ''));
     expect(allText.some((text) => text.includes('Merged summary'))).toBe(true);
 
-    const publish = tree!.root.findAllByType('Pressable').find((p: any) => {
-      const texts = p.findAllByType?.('Text') ?? [];
-      return texts.some((t: any) => String(t.props.children ?? '').includes('Implement selected fixes'));
+    const publish = tree!.findByProps({
+      testID: 'review-findings-publish-accepted',
+      accessibilityRole: 'button',
     });
     expect(publish).toBeDefined();
 
     await act(async () => {
-      await publish!.props.onPress?.();
+      await pressTestInstanceAsync(publish!);
     });
 
     expect(sendMessageSpy).toHaveBeenCalledTimes(1);
