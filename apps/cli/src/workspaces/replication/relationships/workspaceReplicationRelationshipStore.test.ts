@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -86,6 +86,12 @@ describe('workspaceReplicationRelationshipStore', () => {
       expect(store.resolveFilePath(relationshipId)).toBe(
         join(activeServerDir, 'workspace-replication', 'relationships', relationshipId, 'relationship.json'),
       );
+
+      const filePath = store.resolveFilePath(relationshipId);
+      const persistedJson = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      delete persistedJson.schemaVersion;
+      await writeFile(filePath, JSON.stringify(persistedJson), 'utf8');
+
       await expect(store.readByScope(scope)).resolves.toMatchObject({
         relationshipId,
       });

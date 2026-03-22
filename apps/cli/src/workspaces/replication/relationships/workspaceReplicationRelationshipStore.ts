@@ -11,6 +11,7 @@ import {
   resolveWorkspaceReplicationRelationshipDirectory,
   resolveWorkspaceReplicationRelationshipRecordPath,
 } from '../state/workspaceReplicationPaths';
+import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
 import {
   normalizeWorkspaceReplicationDirectionScope,
   normalizeWorkspaceReplicationRelationshipScope,
@@ -26,7 +27,7 @@ const WorkspaceReplicationRelationshipConfigSchema = z.object({
 }).strict();
 
 export const WorkspaceReplicationRelationshipRecordSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
   relationshipId: z.string().regex(/^rel_[A-Za-z0-9_-]+$/u),
   endpoints: z.tuple([
     z.object({
@@ -127,7 +128,7 @@ export function createWorkspaceReplicationRelationshipStore(input: Readonly<{
     const existing = await read(relationshipId);
     const now = input.now?.() ?? Date.now();
     const nextRecord = WorkspaceReplicationRelationshipRecordSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
       relationshipId,
       endpoints: resolveWorkspaceReplicationRelationshipEndpoints(normalizedScope),
       config: {

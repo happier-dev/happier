@@ -9,6 +9,7 @@ import {
   createWorkspaceReplicationPaths,
   resolveWorkspaceReplicationRelationshipDirectory,
 } from '../state/workspaceReplicationPaths';
+import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
 
 const WorkspaceReplicationDigestCacheEntrySchema = z
   .object({
@@ -23,7 +24,7 @@ const WorkspaceReplicationDigestCacheEntrySchema = z
 
 const WorkspaceReplicationDigestCacheSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     entries: z.record(z.string().min(1), WorkspaceReplicationDigestCacheEntrySchema),
   })
   .strict();
@@ -74,7 +75,7 @@ export function createWorkspaceReplicationDigestCacheStore(input: Readonly<{
     },
     async save(input) {
       const cache = WorkspaceReplicationDigestCacheSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
         entries: input.entries,
       });
       await mkdir(dirname(resolveFilePath(input.relationshipId)), { recursive: true });

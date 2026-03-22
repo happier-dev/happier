@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,6 +52,12 @@ describe('workspaceReplicationDigestCacheStore', () => {
           'cache.json',
         ),
       );
+
+      const filePath = store.resolveFilePath(relationship.relationshipId);
+      const persistedJson = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      delete persistedJson.schemaVersion;
+      await writeFile(filePath, JSON.stringify(persistedJson), 'utf8');
+
       await expect(store.load(relationship.relationshipId)).resolves.toMatchObject({
         entries: {
           'README.md': {
