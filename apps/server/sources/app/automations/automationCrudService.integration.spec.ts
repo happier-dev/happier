@@ -36,7 +36,7 @@ describe("automationCrudService (integration)", () => {
     });
 
     afterEach(async () => {
-        harness.restoreEnv();
+        harness.resetEnv();
         eventRouter.clearIo();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),

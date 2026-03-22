@@ -161,6 +161,24 @@ describe("resolveServerFeaturePayload", () => {
                         server: {
                             retention: {
                                 enabled: true,
+                                policyVersion: 1,
+                                sessions: {
+                                    mode: "delete_inactive",
+                                    inactivityDays: 30,
+                                    requires: ["updatedAt", "lastActiveAt"],
+                                },
+                                accountChanges: { mode: "delete_older_than", days: 30 },
+                                voiceSessionLeases: { mode: "keep_forever" },
+                                userFeedItems: { mode: "delete_older_than", days: 30 },
+                                sessionShareAccessLogs: { mode: "delete_older_than", days: 30 },
+                                publicShareAccessLogs: { mode: "delete_older_than", days: 30 },
+                                terminalAuthRequests: { mode: "delete_older_than", days: 7 },
+                                accountAuthRequests: { mode: "delete_older_than", days: 7 },
+                                authPairingSessions: { mode: "delete_older_than", days: 7 },
+                                repeatKeys: { mode: "delete_older_than", days: 7 },
+                                globalLocks: { mode: "delete_older_than", days: 7 },
+                                automationRuns: { mode: "delete_older_than", days: 30 },
+                                automationRunEvents: { mode: "delete_older_than", days: 30 },
                             },
                         },
                     },
@@ -169,7 +187,7 @@ describe("resolveServerFeaturePayload", () => {
         );
 
         expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
-        expect(payload.capabilities.server.retention.enabled).toBe(true);
+        expect(payload.capabilities.server.retention?.enabled).toBe(true);
     });
 
 });

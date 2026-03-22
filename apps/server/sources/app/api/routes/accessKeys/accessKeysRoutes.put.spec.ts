@@ -1,70 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const accessKeyFindUnique = vi.fn();
-const accessKeyUpdateMany = vi.fn();
-const sessionFindFirst = vi.fn();
-const machineFindFirst = vi.fn();
+import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        accessKey: {
-            findUnique: (...args: any[]) => accessKeyFindUnique(...args),
-            updateMany: (...args: any[]) => accessKeyUpdateMany(...args),
-            create: vi.fn(),
-        },
-        session: { findFirst: (...args: any[]) => sessionFindFirst(...args) },
-        machine: { findFirst: (...args: any[]) => machineFindFirst(...args) },
-    },
-}));
+const dbMocks = createDbMocks({
+    accessKey: ["findUnique", "updateMany", "create"],
+    session: ["findFirst"],
+    machine: ["findFirst"],
+} as const);
+
+installDbModuleMock({ db: dbMocks.db });
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get() {}
-    post() {}
-    put(path: string, _opts: any, handler: any) {
-        this.routes.set(`PUT ${path}`, handler);
-    }
-    delete() {}
-}
-
-function makeReply() {
-    const reply: any = {
-        statusCode: 200,
-        code: vi.fn((status: number) => {
-            reply.statusCode = status;
-            return reply;
-        }),
-        send: vi.fn((p: any) => p),
-    };
-    return reply;
-}
 
 describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        dbMocks.reset();
     });
 
     it("updates with updateMany CAS and returns success", async () => {
-        accessKeyFindUnique.mockResolvedValueOnce({ dataVersion: 2, data: "d2" });
-        accessKeyUpdateMany.mockResolvedValueOnce({ count: 1 });
+        dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({ dataVersion: 2, data: "d2" });
+        dbMocks.db.accessKey.updateMany.mockResolvedValueOnce({ count: 1 });
 
         const { accessKeysRoutes } = await import("./accessKeysRoutes");
-        const app = new FakeApp();
-        accessKeysRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v1/access-keys/:sessionId/:machineId",
+            registerRoutes(app) {
+                accessKeysRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("PUT /v1/access-keys/:sessionId/:machineId");
-        const reply = makeReply();
-
-        const res = await handler(
+        const { response: res, reply } = await route.invoke(
             { userId: "u1", params: { sessionId: "s1", machineId: "m1" }, body: { data: "d3", expectedVersion: 2 } },
-            reply,
         );
 
-        expect(accessKeyUpdateMany).toHaveBeenCalledWith(
+        expect(dbMocks.db.accessKey.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({
                     accountId: "u1",
@@ -83,41 +55,43 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     });
 
     it("returns version-mismatch when expectedVersion differs from current", async () => {
-        accessKeyFindUnique.mockResolvedValueOnce({ dataVersion: 7, data: "d7" });
+        dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({ dataVersion: 7, data: "d7" });
 
         const { accessKeysRoutes } = await import("./accessKeysRoutes");
-        const app = new FakeApp();
-        accessKeysRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v1/access-keys/:sessionId/:machineId",
+            registerRoutes(app) {
+                accessKeysRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("PUT /v1/access-keys/:sessionId/:machineId");
-        const reply = makeReply();
-
-        const res = await handler(
+        const { response: res, reply } = await route.invoke(
             { userId: "u1", params: { sessionId: "s1", machineId: "m1" }, body: { data: "dX", expectedVersion: 2 } },
-            reply,
         );
 
-        expect(accessKeyUpdateMany).not.toHaveBeenCalled();
+        expect(dbMocks.db.accessKey.updateMany).not.toHaveBeenCalled();
         expect(reply.statusCode).toBe(200);
         expect(res).toEqual({ success: false, error: "version-mismatch", currentVersion: 7, currentData: "d7" });
     });
 
     it("re-fetches and returns version-mismatch on CAS miss (count=0)", async () => {
-        accessKeyFindUnique
+        dbMocks.db.accessKey.findUnique
             .mockResolvedValueOnce({ dataVersion: 2, data: "d2" })
             .mockResolvedValueOnce({ dataVersion: 9, data: "d9" });
-        accessKeyUpdateMany.mockResolvedValueOnce({ count: 0 });
+        dbMocks.db.accessKey.updateMany.mockResolvedValueOnce({ count: 0 });
 
         const { accessKeysRoutes } = await import("./accessKeysRoutes");
-        const app = new FakeApp();
-        accessKeysRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v1/access-keys/:sessionId/:machineId",
+            registerRoutes(app) {
+                accessKeysRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("PUT /v1/access-keys/:sessionId/:machineId");
-        const reply = makeReply();
-
-        const res = await handler(
+        const { response: res, reply } = await route.invoke(
             { userId: "u1", params: { sessionId: "s1", machineId: "m1" }, body: { data: "d3", expectedVersion: 2 } },
-            reply,
         );
 
         expect(reply.statusCode).toBe(200);
@@ -125,23 +99,23 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     });
 
     it("returns 404 when CAS miss re-fetch finds no access key", async () => {
-        accessKeyFindUnique.mockResolvedValueOnce({ dataVersion: 2, data: "d2" }).mockResolvedValueOnce(null);
-        accessKeyUpdateMany.mockResolvedValueOnce({ count: 0 });
+        dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({ dataVersion: 2, data: "d2" }).mockResolvedValueOnce(null);
+        dbMocks.db.accessKey.updateMany.mockResolvedValueOnce({ count: 0 });
 
         const { accessKeysRoutes } = await import("./accessKeysRoutes");
-        const app = new FakeApp();
-        accessKeysRoutes(app as any);
+        const route = createRouteTestBuilder({
+            method: "PUT",
+            path: "/v1/access-keys/:sessionId/:machineId",
+            registerRoutes(app) {
+                accessKeysRoutes(app as any);
+            },
+        });
 
-        const handler = app.routes.get("PUT /v1/access-keys/:sessionId/:machineId");
-        const reply = makeReply();
-
-        const res = await handler(
+        const { response: res, reply } = await route.invoke(
             { userId: "u1", params: { sessionId: "s1", machineId: "m1" }, body: { data: "d3", expectedVersion: 2 } },
-            reply,
         );
 
         expect(reply.statusCode).toBe(404);
         expect(res).toEqual({ error: "Access key not found" });
     });
 });
-
