@@ -146,10 +146,33 @@ vi.mock('@/sync/ops/machineDirectSessions', () => ({
 
 const directSessionsBrowseScreenModulePromise = import('./DirectSessionsBrowseScreen');
 
+type DropdownTriggerPresentation = Readonly<{
+    title: string;
+    subtitle?: string;
+}>;
+
+type DropdownMenuTestNode = Readonly<{
+    props?: {
+        itemRowProps?: {
+            density?: unknown;
+        };
+        itemTrigger?: {
+            itemProps?: {
+                testID?: string;
+                density?: unknown;
+            };
+            showSelectedDetail?: boolean;
+            subtitleFormatter?: (presentation: DropdownTriggerPresentation) => string;
+        };
+        onSelect?: (value: string) => Promise<void> | void;
+        selectedId?: string;
+    };
+}>;
+
 function findDropdownMenuByTriggerTestId(
-    tree: { findAllByType: (type: unknown) => Array<{ props?: { itemTrigger?: { itemProps?: { testID?: string } } } }> },
+    tree: { findAllByType: (type: unknown) => DropdownMenuTestNode[] },
     testID: string,
-) {
+): DropdownMenuTestNode | undefined {
     return tree.findAllByType('DropdownMenu').find((node) => node.props?.itemTrigger?.itemProps?.testID === testID);
 }
 
@@ -199,15 +222,15 @@ describe('DirectSessionsBrowseScreen', () => {
         expect(typeof machineDropdown?.props?.itemTrigger?.subtitleFormatter).toBe('function');
         expect(typeof providerDropdown?.props?.itemTrigger?.subtitleFormatter).toBe('function');
         expect(typeof sourceDropdown?.props?.itemTrigger?.subtitleFormatter).toBe('function');
-        expect(machineDropdown?.props?.itemTrigger?.subtitleFormatter({
+        expect(machineDropdown!.props?.itemTrigger?.subtitleFormatter?.({
             title: 'Leeroys-MacBook-Pro',
             subtitle: 'Active now',
         })).toBe('Leeroys-MacBook-Pro · Active now');
-        expect(providerDropdown?.props?.itemTrigger?.subtitleFormatter({
+        expect(providerDropdown!.props?.itemTrigger?.subtitleFormatter?.({
             title: 'Codex',
             subtitle: undefined,
         })).toBe('Codex');
-        expect(sourceDropdown?.props?.itemTrigger?.subtitleFormatter({
+        expect(sourceDropdown!.props?.itemTrigger?.subtitleFormatter?.({
             title: 'My Codex home',
             subtitle: undefined,
         })).toBe('My Codex home');
@@ -318,10 +341,11 @@ describe('DirectSessionsBrowseScreen', () => {
         await act(async () => {});
 
         const searchInput = screen.findByTestId('direct-session-candidates-search-input');
-        expect(searchInput.props.placeholder).toBe('directSessions.browseSearchPlaceholder');
+        expect(searchInput).toBeTruthy();
+        expect(searchInput!.props.placeholder).toBe('directSessions.browseSearchPlaceholder');
 
         await act(async () => {
-            searchInput.props.onChangeText('opencode');
+            searchInput!.props.onChangeText('opencode');
         });
 
         const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-2');
@@ -364,7 +388,7 @@ describe('DirectSessionsBrowseScreen', () => {
         expect(sourceDropdown).toBeTruthy();
 
         await act(async () => {
-            await sourceDropdown!.props.onSelect('codex:connected-service:openai-codex:work');
+            await sourceDropdown!.props?.onSelect?.('codex:connected-service:openai-codex:work');
         });
 
         candidatesListSpy.mockResolvedValueOnce({
@@ -428,7 +452,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const machineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
 
         await act(async () => {
-            await machineDropdown!.props.onSelect('machine-2');
+            await machineDropdown!.props?.onSelect?.('machine-2');
         });
 
         expect(candidatesListSpy).toHaveBeenLastCalledWith({
@@ -448,7 +472,8 @@ describe('DirectSessionsBrowseScreen', () => {
 
         const rerenderedMachineDropdown = findDropdownMenuByTriggerTestId(screen.tree, 'direct-session-machine-picker-trigger');
 
-        expect(rerenderedMachineDropdown?.props.selectedId).toBe('machine-1');
+        expect(rerenderedMachineDropdown).toBeTruthy();
+        expect(rerenderedMachineDropdown!.props?.selectedId).toBe('machine-1');
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
             providerId: 'codex',
@@ -504,7 +529,7 @@ describe('DirectSessionsBrowseScreen', () => {
 
         // Switch to machine-2 (this starts a slow request)
         await act(async () => {
-            await machineDropdown!.props.onSelect('machine-2');
+            await machineDropdown!.props?.onSelect?.('machine-2');
         });
 
         // Immediately switch back to machine-1 (this completes quickly)
@@ -523,7 +548,7 @@ describe('DirectSessionsBrowseScreen', () => {
         });
 
         await act(async () => {
-            await machineDropdown!.props.onSelect('machine-1');
+            await machineDropdown!.props?.onSelect?.('machine-1');
         });
 
         await act(async () => {});

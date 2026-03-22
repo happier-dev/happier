@@ -667,18 +667,11 @@ vi.mock('@/components/sessions/files/content/review/useInitialScrollRestore', ()
             hasScheduledRef.current = true;
             cancelledRef.current = false;
 
-            const schedule: (cb: FrameRequestCallback) => number =
-                typeof (globalThis as any).requestAnimationFrame === 'function'
-                    ? (globalThis as any).requestAnimationFrame.bind(globalThis)
-                    : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+            const schedule = (cb: () => void) => globalThis.setTimeout(cb, 0);
             const cancelScheduled = () => {
                 const handle = scheduledHandleRef.current;
                 if (handle == null) return;
-                if (typeof (globalThis as any).cancelAnimationFrame === 'function') {
-                    (globalThis as any).cancelAnimationFrame(handle);
-                } else {
-                    globalThis.clearTimeout(handle);
-                }
+                globalThis.clearTimeout(handle);
                 scheduledHandleRef.current = null;
             };
 
@@ -1054,7 +1047,7 @@ describe('ChangedFilesReview', () => {
     }
 
     async function flushReviewEffects(cycles = 1) {
-        await flushHookEffects({ cycles, frames: 1 });
+        await flushHookEffects({ cycles });
     }
 
     it('limits auto-expanded diffs when large and viewability config is enabled', async () => {

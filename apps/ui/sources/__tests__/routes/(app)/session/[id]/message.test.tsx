@@ -371,7 +371,7 @@ describe('Session message route hydration', () => {
     syncLoadOlderMessagesSpy.mockImplementation(async () => ({ loaded: 0, hasMore: true, status: 'not_ready' as const }));
 
     await renderMessageScreen(MessageScreen);
-    await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 1 });
 
     expect(routerReplaceSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).not.toHaveBeenCalled();

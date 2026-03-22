@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
@@ -80,6 +80,10 @@ import { MonacoEditorSurface } from './MonacoEditorSurface.web';
 
 
 describe('MonacoEditorSurface (web)', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
     afterEach(() => {
         vi.clearAllTimers();
         vi.useRealTimers();
@@ -102,8 +106,6 @@ describe('MonacoEditorSurface (web)', () => {
     });
 
     it('debounces onChange when changeDebounceMs is set', async () => {
-        vi.useFakeTimers();
-
         let currentValue = 'start';
         let changeHandler: null | ((..._args: any[]) => void) = null;
         let blurHandler: null | ((..._args: any[]) => void) = null;
@@ -157,15 +159,13 @@ describe('MonacoEditorSurface (web)', () => {
 
         expect(onChange).toHaveBeenCalledTimes(0);
 
-        await flushHookEffects({ advanceTimersMs: 50 });
+        await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 50 });
 
         expect(onChange).toHaveBeenCalledTimes(1);
         expect(onChange).toHaveBeenLastCalledWith('abc');
     });
 
     it('flushes pending debounced change on blur', async () => {
-        vi.useFakeTimers();
-
         let currentValue = 'start';
         let changeHandler: null | ((..._args: any[]) => void) = null;
         let blurHandler: null | ((..._args: any[]) => void) = null;
@@ -219,7 +219,6 @@ describe('MonacoEditorSurface (web)', () => {
         await act(async () => {
             triggerBlur({});
         });
-        await flushHookEffects();
 
         expect(onChange).toHaveBeenCalledTimes(1);
         expect(onChange).toHaveBeenLastCalledWith('blur-me');

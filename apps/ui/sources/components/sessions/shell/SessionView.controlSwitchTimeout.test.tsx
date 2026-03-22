@@ -8,6 +8,7 @@ import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/test
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
+const controlSwitchTimeoutMs = 1_000;
 
 const sessionSwitchSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
@@ -302,7 +303,7 @@ describe('SessionView (control switch timeout)', () => {
   }
 
   async function flushControlSwitchTimeout() {
-    await flushHookEffects({ cycles: 1, turns: 1, runOnlyPendingTimers: true });
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: controlSwitchTimeoutMs });
   }
 
   beforeEach(() => {
@@ -312,7 +313,7 @@ describe('SessionView (control switch timeout)', () => {
     modalAlertSpy.mockClear();
     chatListPropsSpy.mockClear();
     vi.useFakeTimers();
-    process.env.EXPO_PUBLIC_HAPPIER_CONTROL_SWITCH_UI_TIMEOUT_MS = '1000';
+    process.env.EXPO_PUBLIC_HAPPIER_CONTROL_SWITCH_UI_TIMEOUT_MS = String(controlSwitchTimeoutMs);
   });
 
   afterEach(() => {

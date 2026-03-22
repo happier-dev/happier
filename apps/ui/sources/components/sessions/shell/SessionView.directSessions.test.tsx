@@ -377,9 +377,7 @@ describe('SessionView (direct sessions)', () => {
 
   async function renderSessionViewAndSettle() {
     const screen = await renderSessionView();
-    await act(async () => {
-      await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
-    });
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
     return screen;
   }
 
@@ -764,8 +762,8 @@ describe('SessionView (direct sessions)', () => {
       badges: ['sessionsList.storageDirectTab', 'agentInput.agent.codex · happy-host'],
     }));
 
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
     await act(async () => {
-      await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
       await screen.unmount();
     });
   });
@@ -778,9 +776,7 @@ describe('SessionView (direct sessions)', () => {
     expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
     const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
 
-    await act(async () => {
-      await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
-    });
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
     expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
     expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
 

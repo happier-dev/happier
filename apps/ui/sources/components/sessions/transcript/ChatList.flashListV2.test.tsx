@@ -429,13 +429,8 @@ describe('ChatList (FlashList v2)', () => {
         getCapturedFlashListProps();
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
 
-        await act(async () => {
-            await primeFlashListMetrics(600, 1200, { turns: 1 });
-        });
-
-        await act(async () => {
-            await scrollFlashListTo(100);
-        });
+        await primeFlashListMetrics(600, 1200, { turns: 1 });
+        await scrollFlashListTo(100);
 
         expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
     });
@@ -459,15 +454,11 @@ describe('ChatList (FlashList v2)', () => {
 
         getCapturedFlashListProps();
 
-        await act(async () => {
-            await primeFlashListMetrics(600, 1200, { turns: 1 });
-        });
+        await primeFlashListMetrics(600, 1200, { turns: 1 });
 
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
 
-        await act(async () => {
-            await scrollFlashListTo(100, { trusted: false });
-        });
+        await scrollFlashListTo(100, { trusted: false });
 
         expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
     });
@@ -489,15 +480,11 @@ describe('ChatList (FlashList v2)', () => {
         const { ChatList } = await import('./ChatList');
                 const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        await act(async () => {
-            await primeFlashListMetrics(600, 1200, { turns: 2, frames: 2 });
-        });
+        await primeFlashListMetrics(600, 1200, { turns: 2, frames: 2 });
 
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
 
-        await act(async () => {
-            await scrollFlashListTo(600);
-        });
+        await scrollFlashListTo(600);
 
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
     });
@@ -531,11 +518,11 @@ describe('ChatList (FlashList v2)', () => {
                 const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
                 expect(capturedFlashListProps).toBeTruthy();
 
-                await act(async () => {
-                    capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
-                    capturedFlashListProps.onContentSizeChange?.(0, 100);
-                    scrollEl.scrollHeight = 1600;
-                await screen.settle({ turns: 3 });
+                scrollEl.scrollHeight = 1600;
+                await triggerFlashListChatListInitialFill({
+                    layoutHeight: 100,
+                    contentHeight: 100,
+                    flushOptions: { turns: 3 },
                 });
 
                 expect(loadOlderMessagesMock).not.toHaveBeenCalled();
@@ -796,10 +783,8 @@ describe('ChatList (FlashList v2)', () => {
                 await scrollFlashListTo(60);
 
                 scrollEl.scrollHeight = 1400;
-                await act(async () => {
-                    resolveLoadOlder?.({ loaded: 5, hasMore: true, status: 'loaded' });
+                resolveLoadOlder?.({ loaded: 5, hasMore: true, status: 'loaded' });
                 await screen.settle({ turns: 3 });
-                });
 
                 expect(scrollEl.scrollTop).toBe(260);
             },
@@ -861,9 +846,7 @@ describe('ChatList (FlashList v2)', () => {
 
                 scrollEl.scrollHeight = 5200;
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
-                await act(async () => {
-                    resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                });
+                resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
                 await screen.settle({ turns: 3 });
 
                 expect(scrollEl.scrollTop).toBe(4100);
@@ -871,9 +854,7 @@ describe('ChatList (FlashList v2)', () => {
                 visibleAnchor.setRect({ top: 300, bottom: 400 });
                 scrollEl.scrollHeight = 5300;
                 scrollEl.setQuerySelectorAll('[data-testid]', [visibleAnchor]);
-                await act(async () => {
-                    await primeFlashListMetrics(600, 5300);
-                });
+                await primeFlashListMetrics(600, 5300);
 
                 expect(scrollEl.scrollTop).toBe(4280);
             },
@@ -950,9 +931,7 @@ describe('ChatList (FlashList v2)', () => {
 
                 scrollEl.scrollHeight = 5200;
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
-                await act(async () => {
-                    resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                });
+                resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
                 await screen.settle({ turns: 4 });
 
                 expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
@@ -1023,26 +1002,17 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             <ChatList session={{ ...sessionState }} />,
             async (screen) => {
-                await act(async () => {
-                    await primeFlashListMetrics(600, 1200);
-                });
-
-                await act(async () => {
-                    await scrollFlashListTo(600);
-                });
+                await primeFlashListMetrics(600, 1200);
+                await scrollFlashListTo(600);
 
                 scrollEl.scrollTop = 100;
-                await act(async () => {
-                    await scrollFlashListTo(100);
-                });
+                await scrollFlashListTo(100);
 
                 expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
 
                 scrollEl.scrollHeight = 5200;
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
-                await act(async () => {
-                    resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                });
+                resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
                 await screen.settle({ turns: 4 });
 
                 expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
@@ -1468,17 +1438,13 @@ describe('ChatList (FlashList v2)', () => {
 
                 flashListRefHandle.scrollToOffset.mockClear();
 
-                await act(async () => {
-                    await primeFlashListMetrics(100, 1000, { turns: 1 });
-                    await scrollFlashListTo(900, { trusted: false, turns: 1 });
-                });
+                await primeFlashListMetrics(100, 1000, { turns: 1 });
+                await scrollFlashListTo(900, { trusted: false, turns: 1 });
 
                 scrollEl.scrollHeight = 1400;
 
-                await act(async () => {
-                    await primeFlashListMetrics(100, 1400, { turns: 1 });
-                    await scrollFlashListTo(900, { trusted: false, turns: 2 });
-                });
+                await primeFlashListMetrics(100, 1400, { turns: 1 });
+                await scrollFlashListTo(900, { trusted: false, turns: 2 });
 
                 expect(scrollEl.scrollTop).toBe(1300);
                 expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
