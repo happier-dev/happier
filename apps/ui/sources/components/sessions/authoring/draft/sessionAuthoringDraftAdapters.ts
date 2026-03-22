@@ -636,7 +636,6 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     approvedNewDirectoryCreation?: boolean;
-    token?: string;
     agentModeUpdatedAt?: number | null;
 }>): SpawnSessionOptions {
     const backendTarget = resolveDraftBackendTarget(params.draft);
@@ -660,7 +659,6 @@ export function buildSpawnSessionOptionsFromAuthoringDraft(params: Readonly<{
         ...(typeof params.approvedNewDirectoryCreation === 'boolean'
             ? { approvedNewDirectoryCreation: params.approvedNewDirectoryCreation }
             : {}),
-        ...(normalizeOptionalString(params.token) ? { token: params.token!.trim() } : {}),
         backendTarget,
         ...(normalizedProfileId.length > 0 || params.draft.profileId === '' ? { profileId: normalizedProfileId } : {}),
         ...(params.draft.environmentVariables ? { environmentVariables: params.draft.environmentVariables } : {}),

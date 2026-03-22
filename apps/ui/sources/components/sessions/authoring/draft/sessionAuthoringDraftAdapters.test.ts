@@ -270,6 +270,46 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(spawnOptions).not.toHaveProperty('workspaceCheckoutId');
     });
 
+    it('omits legacy spawn token passthrough from authoring draft spawn options', () => {
+        const spawnOptions = buildSpawnSessionOptionsFromAuthoringDraft({
+            draft: {
+                targetType: 'new_session',
+                directory: '/tmp/project',
+                checkoutCreationDraft: null,
+                prompt: 'Prompt',
+                displayText: 'Prompt',
+                agentId: 'claude',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                transcriptStorage: 'persisted',
+                profileId: null,
+                environmentVariables: null,
+                resumeSessionId: null,
+                permissionMode: null,
+                permissionModeUpdatedAt: null,
+                modelId: null,
+                modelUpdatedAt: null,
+                mcpSelection: null,
+                connectedServices: null,
+                terminal: null,
+                windowsRemoteSessionLaunchMode: null,
+                windowsRemoteSessionConsole: null,
+                experimentalCodexAcp: null,
+                codexBackendMode: null,
+                acpSessionModeId: null,
+                sessionConfigOptionOverrides: null,
+                existingSessionId: null,
+                sessionEncryptionMode: null,
+                sessionEncryptionKeyBase64: null,
+                sessionEncryptionVariant: null,
+                automation: null,
+            },
+            machineId: 'machine-1',
+            token: 'legacy-spawn-token',
+        } as any);
+
+        expect(spawnOptions).not.toHaveProperty('token');
+    });
+
     it('round-trips an existing-session authoring draft through the shared automation template adapter', () => {
         const initialDraft = {
             targetType: 'existing_session',
