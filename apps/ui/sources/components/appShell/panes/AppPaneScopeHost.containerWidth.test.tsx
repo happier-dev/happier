@@ -6,11 +6,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 let lastMultiPaneLayout: any = null;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { OS: 'web' },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Platform: {
+                        OS: 'web',
+                        select: (value: Record<string, unknown>) => value.web ?? value.default,
+                    },
+                    useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                }
+    );
+});
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: (props: any) => {
@@ -23,7 +31,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
         if (key === 'editorFocusModeEnabled') return false;
@@ -36,7 +46,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         return null;
     },
     useLocalSettingMutable: () => [null, vi.fn()],
-}));
+});
+});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({

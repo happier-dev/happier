@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,11 +19,19 @@ let mockedSettings: Record<string, any> = {
     bottomPaneHeightBasisPx: 900,
 };
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    View: 'View',
-    useWindowDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                        select: (value: Record<string, unknown>) => value.web ?? value.default,
+                    },
+                    View: 'View',
+                    useWindowDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
+                }
+    );
+});
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: (props: any) => {
@@ -34,12 +44,15 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         return Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null;
     },
     useLocalSettingMutable: () => [null, vi.fn()],
-}));
+});
+});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
@@ -73,16 +86,12 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             bottomPaneHeightBasisPx: 900,
         };
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={null}
-                />
-            );
-        });
+                />);
 
         expect(lastProps).not.toBeNull();
         // When the user-preferred right width cannot fit while keeping the main region usable,
@@ -108,16 +117,12 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             bottomPaneHeightBasisPx: 900,
         };
 
-        await act(async () => {
-            renderer.create(
-                <AppPaneScopeHost
+        await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
                     rightPane={<div />}
                     detailsPane={null}
-                />,
-            );
-        });
+                />);
 
         expect(lastProps).not.toBeNull();
         expect(lastProps.layout.right).toBe('docked');
