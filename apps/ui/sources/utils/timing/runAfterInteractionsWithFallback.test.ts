@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 
 afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.resetModules();
     vi.clearAllMocks();
     delete process.env.EXPO_PUBLIC_HAPPIER_RUN_AFTER_INTERACTIONS_FALLBACK_MS;
@@ -26,7 +27,6 @@ describe('runAfterInteractionsWithFallback', () => {
     });
 
     it('defers on native and is cancelable', async () => {
-        vi.useFakeTimers();
         const cancelSpy = vi.fn();
         const scheduled: Array<() => void> = [];
 
@@ -59,8 +59,12 @@ describe('runAfterInteractionsWithFallback', () => {
     });
 
     it('runs via fallback when InteractionManager never invokes the callback', async () => {
-        vi.useFakeTimers();
         process.env.EXPO_PUBLIC_HAPPIER_RUN_AFTER_INTERACTIONS_FALLBACK_MS = '10';
+        const scheduledTimeouts: Array<{ callback: () => void; delay: number | undefined }> = [];
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay?: number) => {
+            scheduledTimeouts.push({ callback, delay });
+            return 0 as any;
+        }) as typeof setTimeout);
 
         vi.doMock('react-native', async () => {
             const stub = await import('@/dev/reactNativeStub');
@@ -77,10 +81,10 @@ describe('runAfterInteractionsWithFallback', () => {
         const { runAfterInteractionsWithFallback } = await import('./runAfterInteractionsWithFallback');
         runAfterInteractionsWithFallback(fn);
 
+        expect(scheduledTimeouts).toHaveLength(1);
+        expect(scheduledTimeouts[0]!.delay).toBe(10);
         expect(fn).toHaveBeenCalledTimes(0);
-        vi.advanceTimersByTime(9);
-        expect(fn).toHaveBeenCalledTimes(0);
-        vi.advanceTimersByTime(1);
+        scheduledTimeouts[0]!.callback();
         expect(fn).toHaveBeenCalledTimes(1);
     });
 });

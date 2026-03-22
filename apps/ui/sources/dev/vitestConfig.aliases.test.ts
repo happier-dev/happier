@@ -24,4 +24,20 @@ describe('vitest config aliases', () => {
             : [];
         expect(plugins.some((plugin) => plugin.name === 'happier-vitest-expo-node-module-stubs')).toBe(true);
     });
+
+    it('resolves workspace agent imports to source files so vitest does not load stale dist exports', async () => {
+        const module = await import('../../vitest.config');
+        const config = module.default as {
+            plugins?: Array<{ name?: string; resolveId?: (id: string) => string | null | undefined }>;
+        };
+        const plugins = Array.isArray(config.plugins)
+            ? config.plugins
+            : [];
+        const resolver = plugins.find((plugin) => plugin.name === 'happier-vitest-expo-node-module-stubs');
+
+        expect(resolver?.resolveId?.('@happier-dev/agents')).toContain('/packages/agents/src/index.ts');
+        expect(resolver?.resolveId?.('@happier-dev/agents/permissions')).toContain(
+            '/packages/agents/src/permissions/index.ts',
+        );
+    });
 });

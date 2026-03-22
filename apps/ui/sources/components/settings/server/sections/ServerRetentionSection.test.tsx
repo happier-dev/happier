@@ -33,7 +33,7 @@ describe('ServerRetentionSection', () => {
         let tree: renderer.ReactTestRenderer;
         tree = (await renderScreen(React.createElement(ServerRetentionSection, { serverId: 'server-a' }))).tree;
 
-        expect(tree!.root.findAllByType('ItemGroup' as any)).toHaveLength(0);
+        expect(tree!.findAllByType('ItemGroup' as any)).toHaveLength(0);
     });
 
     it('renders retention rows when finite retention is configured', async () => {
@@ -62,7 +62,7 @@ describe('ServerRetentionSection', () => {
         let tree: renderer.ReactTestRenderer;
         tree = (await renderScreen(React.createElement(ServerRetentionSection, { serverId: 'server-a' }))).tree;
 
-        const items = tree!.root.findAllByType('Item' as any);
+        const items = tree!.findAllByType('Item' as any);
         expect(items.length).toBeGreaterThan(0);
         expect(items[0]?.props.testID).toBe('server-retention-summary');
         expect(items.some((item) => item.props.testID === 'server-retention-row-accountChanges')).toBe(true);
