@@ -31,6 +31,24 @@ export const WorkspaceReplicationJobCheckpointSchema = z.enum([
   'baseline_committed',
 ]);
 
+function createDefaultWorkspaceReplicationProgressCounters(): Readonly<{
+  plannedFiles: number;
+  plannedBytes: number;
+  transferredFiles: number;
+  transferredBytes: number;
+  appliedFiles: number;
+  appliedBytes: number;
+}> {
+  return {
+    plannedFiles: 0,
+    plannedBytes: 0,
+    transferredFiles: 0,
+    transferredBytes: 0,
+    appliedFiles: 0,
+    appliedBytes: 0,
+  };
+}
+
 export const WorkspaceReplicationJobProgressCountersSchema = z
   .object({
     plannedFiles: z.number().int().min(0).default(0),
@@ -47,7 +65,7 @@ export const WorkspaceReplicationJobStatusSchema = z
     status: z.enum(['pending', 'in_progress', 'completed', 'aborted', 'failed', 'awaiting_recovery']),
     phase: WorkspaceReplicationJobPhaseSchema,
     checkpoint: WorkspaceReplicationJobCheckpointSchema,
-    progressCounters: WorkspaceReplicationJobProgressCountersSchema.default({}),
+    progressCounters: WorkspaceReplicationJobProgressCountersSchema.default(createDefaultWorkspaceReplicationProgressCounters),
     warnings: z.array(z.string().min(1)).default([]),
     // Divergence detection is planned but not yet fully implemented; keep this persisted surface stable.
     blockingDivergenceCandidates: z.array(z.unknown()).default([]),
@@ -76,15 +94,16 @@ export const WorkspaceReplicationJobRecordSchema = z
   })
   .strip();
 
-export type WorkspaceReplicationJobRecord = z.infer<typeof WorkspaceReplicationJobRecordSchema>;
+export type WorkspaceReplicationJobRecord = z.output<typeof WorkspaceReplicationJobRecordSchema>;
+export type WorkspaceReplicationJobRecordInput = z.input<typeof WorkspaceReplicationJobRecordSchema>;
 
 export type WorkspaceReplicationJobStore = Readonly<{
-  write: (record: WorkspaceReplicationJobRecord) => Promise<void>;
+  write: (record: WorkspaceReplicationJobRecordInput) => Promise<void>;
   read: (jobId: string) => Promise<WorkspaceReplicationJobRecord | null>;
   findByCorrelationId: (correlationId: string) => Promise<WorkspaceReplicationJobRecord | null>;
   update: (
     jobId: string,
-    updater: (current: WorkspaceReplicationJobRecord) => WorkspaceReplicationJobRecord,
+    updater: (current: WorkspaceReplicationJobRecord) => WorkspaceReplicationJobRecordInput,
   ) => Promise<WorkspaceReplicationJobRecord | null>;
 }>;
 

@@ -31,16 +31,17 @@ const SessionHandoffPrepareTargetJobRecordSchema = z
   })
   .strip();
 
-export type SessionHandoffPrepareTargetJobRecord = z.infer<typeof SessionHandoffPrepareTargetJobRecordSchema>;
+export type SessionHandoffPrepareTargetJobRecord = z.output<typeof SessionHandoffPrepareTargetJobRecordSchema>;
+export type SessionHandoffPrepareTargetJobRecordInput = Omit<SessionHandoffPrepareTargetJobRecord, 'schemaVersion'>;
 
 export type SessionHandoffPrepareTargetJobStore = Readonly<{
-  write: (record: SessionHandoffPrepareTargetJobRecord) => Promise<void>;
+  write: (record: SessionHandoffPrepareTargetJobRecordInput) => Promise<void>;
   read: (jobId: string) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
   findByHandoffId: (handoffId: string) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
   list: (input?: Readonly<{ handoffId?: string }>) => Promise<readonly SessionHandoffPrepareTargetJobRecord[]>;
   update: (
     jobId: string,
-    updater: (current: SessionHandoffPrepareTargetJobRecord) => SessionHandoffPrepareTargetJobRecord,
+    updater: (current: SessionHandoffPrepareTargetJobRecord) => SessionHandoffPrepareTargetJobRecordInput,
   ) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
 }>;
 

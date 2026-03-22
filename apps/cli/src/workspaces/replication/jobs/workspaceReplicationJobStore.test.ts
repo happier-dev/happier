@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import type { WorkspaceReplicationJobRecordInput } from './workspaceReplicationJobStore';
+
 describe('workspaceReplicationJobStore', () => {
   it('does not depend on SessionHandoff protocol schemas (import-boundary)', async () => {
     const sourcePath = fileURLToPath(new URL('./workspaceReplicationJobStore.ts', import.meta.url));
@@ -25,7 +27,7 @@ describe('workspaceReplicationJobStore', () => {
         activeServerDir,
       });
 
-      await store.write({
+      const legacyRawRecord: Record<string, unknown> = {
         jobId: 'job_prepare_1',
         correlationId: 'handoff_123',
         createdAtMs: 100,
@@ -42,7 +44,11 @@ describe('workspaceReplicationJobStore', () => {
           // Unknown handoff-shaped keys must be stripped.
           handoffId: 'handoff_123',
         },
-      });
+      };
+
+      // This fixture intentionally does not satisfy the typed engine-native record shape;
+      // it represents a legacy persisted record that the store must normalize/strip.
+      await store.write(legacyRawRecord as unknown as WorkspaceReplicationJobRecordInput);
 
       await expect(store.read('job_prepare_1')).resolves.toMatchObject({
         jobId: 'job_prepare_1',

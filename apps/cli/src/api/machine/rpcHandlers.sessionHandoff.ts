@@ -89,6 +89,7 @@ import {
 import {
   createSessionHandoffPrepareTargetJobStore,
   type SessionHandoffPrepareTargetJobRecord,
+  type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { applyWorkspaceReplicationPlan } from '../../workspaces/replication/apply/applyWorkspaceReplicationPlan';
 import { createWorkspaceReplicationTransfers } from '../../workspaces/replication/transport/workspaceReplicationTransfers';
@@ -350,7 +351,7 @@ function buildPrepareJobRecord(input: Readonly<{
   completedAtMs?: number;
   failedAtMs?: number;
   lastErrorMessage?: string;
-}>): SessionHandoffPrepareTargetJobRecord {
+}>): SessionHandoffPrepareTargetJobRecordInput {
   return {
     jobId: input.jobId,
     handoffId: input.handoffId,
@@ -1165,7 +1166,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     let providerBundle: SessionHandoffProviderBundle | null = null;
     let providerBundleTransferPublication: SessionHandoffProviderBundleTransferPublication | null = null;
 
-    const persistJobRecord = async (jobRecord: SessionHandoffPrepareTargetJobRecord): Promise<void> => {
+    const persistJobRecord = async (jobRecord: SessionHandoffPrepareTargetJobRecordInput): Promise<void> => {
       await prepareJobStore.write(jobRecord);
       const previous = store.get(parsed.data.handoffId) ?? current;
       store.set(parsed.data.handoffId, {

@@ -1,4 +1,4 @@
-export const workspaceReplicationErrorCodes = ['engine_initialization_failed'] as const;
+export const workspaceReplicationErrorCodes = ['engine_initialization_failed', 'job_not_found'] as const;
 
 export type WorkspaceReplicationErrorCode = (typeof workspaceReplicationErrorCodes)[number];
 
