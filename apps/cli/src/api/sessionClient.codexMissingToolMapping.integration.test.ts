@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createMockSession } from '@/testkit/backends/sessionFixtures';
 
 // Hoisted mocks so factories can reference stable fns.
 const { mockIo, mockLoggerDebug } = vi.hoisted(() => ({
@@ -21,29 +23,20 @@ describe('ApiSessionClient (Codex MCP) diagnostics', () => {
         mockIo.mockReset();
         mockLoggerDebug.mockReset();
 
-        const mockSocket = {
-            connected: false,
-            connect: vi.fn(),
-            on: vi.fn(),
-            off: vi.fn(),
-            disconnect: vi.fn(),
-            close: vi.fn(),
-            emit: vi.fn(),
-        };
-        const mockUserSocket = { ...mockSocket };
-        mockIo
-            .mockImplementationOnce(() => mockSocket)
-            .mockImplementationOnce(() => mockUserSocket)
-            .mockImplementation(() => mockSocket);
+        const sessionSocket = createApiSessionSocketStub();
+        const userSocket = createApiSessionSocketStub();
+        bindApiSessionSocketPairMock(mockIo, {
+            sessionSocket,
+            userSocket,
+            fallbackSocket: sessionSocket,
+        });
     });
 
     it('logs when a tool-call-result arrives without a prior tool-call mapping', async () => {
         vi.resetModules();
         const { ApiSessionClient } = await import('./session/sessionClient');
 
-        const client = new ApiSessionClient('fake-token', {
-            id: 'test-session-id',
-            seq: 0,
+        const client = new ApiSessionClient('fake-token', createMockSession({
             metadata: {
                 path: '/tmp',
                 host: 'localhost',
@@ -52,12 +45,7 @@ describe('ApiSessionClient (Codex MCP) diagnostics', () => {
                 happyLibDir: '/home/user/.happy/lib',
                 happyToolsDir: '/home/user/.happy/tools',
             },
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy' as const,
-        } as any);
+        }));
         try {
             client.sendCodexMessage({
                 type: 'tool-call-result',

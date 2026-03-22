@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
@@ -16,40 +18,15 @@ vi.mock('@/persistence', () => ({
 
 vi.mock('axios');
 
-function createMockSocket() {
-    const handlers = new Map<string, Array<(...args: any[]) => void>>();
-    return {
-        connected: false,
-        connect: vi.fn(),
-        on: vi.fn((event: string, cb: (...args: any[]) => void) => {
-            const list = handlers.get(event) ?? [];
-            list.push(cb);
-            handlers.set(event, list);
-        }),
-        off: vi.fn(),
-        disconnect: vi.fn(),
-        close: vi.fn(),
-        emit: vi.fn(),
-        __trigger: (event: string, ...args: any[]) => {
-            for (const cb of handlers.get(event) ?? []) {
-                cb(...args);
-            }
-        },
-    };
-}
-
 describe('ApiSessionClient long-offline reconnect fallback', () => {
     it('falls back to snapshot sync when /v2/changes hits the page cap (>=200) and still catches up messages on reconnect', async () => {
         const { ApiSessionClient } = await import('./session/sessionClient');
         const { writeLastChangesCursor } = await import('@/persistence');
         (writeLastChangesCursor as any).mockClear?.();
 
-        const mockSocket = createMockSocket();
-        const mockUserSocket = createMockSocket();
-        mockIo.mockReset();
-        mockIo
-            .mockImplementationOnce(() => mockSocket as any)
-            .mockImplementationOnce(() => mockUserSocket as any);
+        const mockSocket = createApiSessionSocketStub();
+        const mockUserSocket = createApiSessionSocketStub();
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket: mockSocket, userSocket: mockUserSocket });
 
         const encryptionKey = new Uint8Array(32).fill(7);
         const encryptionVariant = 'legacy' as const;
@@ -89,23 +66,14 @@ describe('ApiSessionClient long-offline reconnect fallback', () => {
             throw new Error(`Unexpected axios.get: ${url}`);
         });
 
-        const client = new ApiSessionClient('fake-token', {
-            id: sessionId,
-            seq: 0,
-            metadata: {
-                path: '/tmp',
-                host: 'localhost',
-                homeDir: '/home/user',
-                happyHomeDir: '/home/user/.happy',
-                happyLibDir: '/home/user/.happy/lib',
-                happyToolsDir: '/home/user/.happy/tools',
-            },
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            encryptionKey,
-            encryptionVariant,
-        } as any);
+        const client = new ApiSessionClient(
+            'fake-token',
+            createMockSession({
+                id: sessionId,
+                encryptionKey,
+                encryptionVariant,
+            }),
+        );
 
         const snapshotSpy = vi.fn(async () => {});
         (client as any).syncSessionSnapshotFromServer = snapshotSpy;
@@ -113,7 +81,7 @@ describe('ApiSessionClient long-offline reconnect fallback', () => {
         (client as any).hasConnectedOnce = true;
         (client as any).lastObservedMessageSeq = lastObservedMessageSeq;
 
-        mockSocket.__trigger('connect');
+        mockSocket.trigger('connect');
         await (client as any).changesSyncInFlight;
 
         expect(snapshotSpy).toHaveBeenCalledWith({ reason: 'connect' });
@@ -127,12 +95,9 @@ describe('ApiSessionClient long-offline reconnect fallback', () => {
         const { writeLastChangesCursor } = await import('@/persistence');
         (writeLastChangesCursor as any).mockClear?.();
 
-        const mockSocket = createMockSocket();
-        const mockUserSocket = createMockSocket();
-        mockIo.mockReset();
-        mockIo
-            .mockImplementationOnce(() => mockSocket as any)
-            .mockImplementationOnce(() => mockUserSocket as any);
+        const mockSocket = createApiSessionSocketStub();
+        const mockUserSocket = createApiSessionSocketStub();
+        bindApiSessionSocketPairMock(mockIo, { sessionSocket: mockSocket, userSocket: mockUserSocket });
 
         const encryptionKey = new Uint8Array(32).fill(7);
         const encryptionVariant = 'legacy' as const;
@@ -163,23 +128,14 @@ describe('ApiSessionClient long-offline reconnect fallback', () => {
             throw new Error(`Unexpected axios.get: ${url}`);
         });
 
-        const client = new ApiSessionClient('fake-token', {
-            id: sessionId,
-            seq: 0,
-            metadata: {
-                path: '/tmp',
-                host: 'localhost',
-                homeDir: '/home/user',
-                happyHomeDir: '/home/user/.happy',
-                happyLibDir: '/home/user/.happy/lib',
-                happyToolsDir: '/home/user/.happy/tools',
-            },
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            encryptionKey,
-            encryptionVariant,
-        } as any);
+        const client = new ApiSessionClient(
+            'fake-token',
+            createMockSession({
+                id: sessionId,
+                encryptionKey,
+                encryptionVariant,
+            }),
+        );
 
         const snapshotSpy = vi.fn(async () => {});
         (client as any).syncSessionSnapshotFromServer = snapshotSpy;
@@ -187,7 +143,7 @@ describe('ApiSessionClient long-offline reconnect fallback', () => {
         (client as any).hasConnectedOnce = true;
         (client as any).lastObservedMessageSeq = lastObservedMessageSeq;
 
-        mockSocket.__trigger('connect');
+        mockSocket.trigger('connect');
         await (client as any).changesSyncInFlight;
 
         expect(snapshotSpy).toHaveBeenCalledWith({ reason: 'connect' });

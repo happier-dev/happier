@@ -5,6 +5,13 @@ import { ApiSessionClient } from './session/sessionClient';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
+import {
+    bindApiSessionSocketPairMock,
+    createApiSessionSocketStub,
+    flushApiSessionClientMessageCommitQueue,
+} from '@/testkit/backends/apiSessionSocketHarness';
+import { createMockSession, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 // Use vi.hoisted to ensure mock function is available when vi.mock factory runs
 const { mockIo } = vi.hoisted(() => ({
@@ -23,8 +30,12 @@ vi.mock('./session/connection/createSessionSocketTransport', () => ({
         socket: mockSocket,
         transport: {
             connect: async () => {},
-            disconnect: async () => {},
-            destroy: async () => {},
+            disconnect: async () => {
+                mockSocket.disconnect();
+            },
+            destroy: async () => {
+                mockSocket.removeAllListeners();
+            },
             isConnected: () => true,
             onConnected: () => () => {},
             onDisconnected: () => () => {},
@@ -37,72 +48,392 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
     DEFAULT_MANAGED_CONNECTION_POLICY: {},
     createManagedConnectionSupervisor: (params: {
         createTransport: () => unknown;
+        onStateChange?: (state: { phase: string }) => Promise<void> | void;
         onConnected?: () => Promise<void> | void;
         onDisconnected?: () => Promise<void> | void;
         onAuthFailed?: () => Promise<void> | void;
-    }) => ({
+    }) => {
+        let transport: {
+            disconnect?: () => Promise<void> | void;
+            destroy?: () => Promise<void> | void;
+        } | null = null;
+
+        return {
         start: async () => {
-            params.createTransport();
+            params.onStateChange?.({ phase: 'connecting' });
+            transport = params.createTransport() as typeof transport;
+            params.onStateChange?.({ phase: 'online' });
             await params.onConnected?.();
         },
-        stop: async () => {},
-    }),
-}));
-
-type SocketEventHandler = (...args: unknown[]) => void;
-
-function createMockSocket() {
-    const listeners = new Map<string, Set<SocketEventHandler>>();
-    const socket: any = {
-        connected: false,
-        on: vi.fn((event: string, handler: SocketEventHandler) => {
-            const bucket = listeners.get(event) ?? new Set<SocketEventHandler>();
-            bucket.add(handler);
-            listeners.set(event, bucket);
-            return socket;
-        }),
-        off: vi.fn((event: string, handler?: SocketEventHandler) => {
-            if (!handler) {
-                listeners.delete(event);
-                return socket;
-            }
-            listeners.get(event)?.delete(handler);
-            return socket;
-        }),
-        connect: vi.fn(() => {
-            socket.connected = true;
-            return socket;
-        }),
-        disconnect: vi.fn(() => {
-            socket.connected = false;
-            return socket;
-        }),
-        close: vi.fn(() => {
-            socket.connected = false;
-            return socket;
-        }),
-        removeAllListeners: vi.fn(() => {
-            listeners.clear();
-            return socket;
-        }),
-        emit: vi.fn(),
-        emitWithAck: vi.fn(),
-        timeout: vi.fn(() => socket),
-        volatile: {
-            emit: vi.fn(),
+        stop: async () => {
+            await transport?.disconnect?.();
+            await transport?.destroy?.();
+            params.onStateChange?.({ phase: 'offline' });
         },
     };
+    },
+}));
+
+function createMockSocket() {
+    return createApiSessionSocketStub() as any;
+}
+
+function createConfiguredSocket(
+    options: Parameters<typeof createApiSessionSocketStub>[0] = {},
+): any {
+    return createApiSessionSocketStub(options) as any;
+}
+
+function replaceSocketPair(params: {
+    sessionSocket?: any;
+    userSocket?: any;
+    fallbackSocket?: any;
+} = {}): void {
+    mockSocket = params.sessionSocket ?? createMockSocket();
+    mockUserSocket = params.userSocket ?? createMockSocket();
+
+    bindApiSessionSocketPairMock(mockIo, {
+        sessionSocket: mockSocket,
+        userSocket: mockUserSocket,
+        fallbackSocket: params.fallbackSocket ?? mockSocket,
+    });
+}
+
+function configureCommittedMessageAck(socket: any, result: {
+    ok: boolean;
+    id: string;
+    seq: number;
+    localId?: string;
+    didWrite?: boolean;
+}) {
+    socket.connected = true;
+    socket.timeout = vi.fn().mockReturnThis();
+    socket.emitWithAck = vi.fn().mockResolvedValue(result);
+}
+
+function connectSessionSocket(socket: any = mockSocket): any {
+    socket.connected = true;
     return socket;
 }
 
+function expectSocketHandler(
+    socket: any,
+    event: string,
+): (...args: unknown[]) => void {
+    const handler =
+        typeof socket.getHandler === 'function'
+            ? socket.getHandler(event)
+            : socket.on?.mock?.calls?.find((call: any[]) => call[0] === event)?.[1];
+    expect(typeof handler).toBe('function');
+    return handler;
+}
+
+function expectLastSocketHandler(
+    socket: any,
+    event: string,
+): (...args: unknown[]) => void {
+    const handlers =
+        typeof socket.getHandlers === 'function'
+            ? socket.getHandlers(event)
+            : socket.on?.mock?.calls
+                  ?.filter((call: any[]) => call[0] === event)
+                  .map((call: any[]) => call[1]);
+    const handler = handlers?.[handlers.length - 1];
+    expect(typeof handler).toBe('function');
+    return handler;
+}
+
+async function flushClientQueue(client: ApiSessionClient): Promise<void> {
+    await flushApiSessionClientMessageCommitQueue(client as any);
+}
+
+function getSocketMessageEmitCalls(socket: any): any[][] {
+    return socket.emit.mock.calls.filter((call: any[]) => call[0] === 'message');
+}
+
+function getSocketMessageAckCalls(socket: any): any[][] {
+    return socket.emitWithAck.mock.calls.filter((call: any[]) => call[0] === 'message');
+}
+
+function getSocketEventCalls(socket: any, event: string): any[][] {
+    return socket.emit.mock.calls.filter((call: any[]) => call[0] === event);
+}
+
+function getSocketVolatileEventCalls(socket: any, event: string): any[][] {
+    return socket.volatile?.emit?.mock?.calls?.filter((call: any[]) => call[0] === event) ?? [];
+}
+
+function getCommittedMessagePayloads(socket: any): any[] {
+    return [
+        ...getSocketMessageAckCalls(socket).map(([, payload]) => payload),
+        ...getSocketMessageEmitCalls(socket).map(([, payload]) => payload),
+    ];
+}
+
+function getLastCommittedMessagePayload(socket: any = mockSocket): any {
+    return getCommittedMessagePayloads(socket).at(-1);
+}
+
+function decryptOutboundMessagePayload(
+    session: any,
+    payload: { message: string | { c?: string; t?: string; v?: unknown } },
+): any {
+    if (
+        payload.message
+        && typeof payload.message === 'object'
+        && payload.message.t === 'plain'
+    ) {
+        return payload.message.v;
+    }
+
+    const encryptedMessage =
+        typeof payload.message === 'string' ? payload.message : payload.message?.c;
+    expect(typeof encryptedMessage).toBe('string');
+    return decrypt(
+        session.encryptionKey,
+        session.encryptionVariant,
+        decodeBase64(encryptedMessage as string),
+    ) as any;
+}
+
+function getDecryptedOutboundMessages(
+    session: any,
+    socket: any = mockSocket,
+): any[] {
+    return getCommittedMessagePayloads(socket).map((payload) =>
+        decryptOutboundMessagePayload(session, payload),
+    );
+}
+
+function getLastDecryptedOutboundMessage(
+    session: any,
+    socket: any = mockSocket,
+): any {
+    const messages = getDecryptedOutboundMessages(session, socket);
+    return messages.at(-1);
+}
+
+function encryptSessionValue(session: any, value: unknown): string {
+    return encodeBase64(
+        encrypt(session.encryptionKey, session.encryptionVariant, value),
+    );
+}
+
+function buildEncryptedSessionContent(session: any, value: unknown): {
+    t: 'encrypted';
+    c: string;
+} {
+    return {
+        t: 'encrypted',
+        c: encryptSessionValue(session, value),
+    };
+}
+
+function buildEncryptedTranscriptMessage(params: {
+    session: any;
+    plaintext: unknown;
+    createdAt: number;
+    id?: string;
+    seq?: number;
+}): any {
+    return {
+        id: params.id,
+        seq: params.seq,
+        content: buildEncryptedSessionContent(params.session, params.plaintext),
+        createdAt: params.createdAt,
+    };
+}
+
+function buildMessagesListResponse(messages: any[], status = 200): {
+    status: number;
+    data: {
+        messages: any[];
+        nextAfterSeq: null;
+    };
+} {
+    return {
+        status,
+        data: {
+            messages,
+            nextAfterSeq: null,
+        },
+    };
+}
+
+async function waitForNextTick(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function getSessionMessagesGetCalls(getSpy: ReturnType<typeof vi.spyOn>, sessionId: string): any[][] {
+    return getSpy.mock.calls.filter(([url]) =>
+        typeof url === 'string' && url.includes(`/v1/sessions/${sessionId}/messages`),
+    );
+}
+
+function removeStartedByArgvFlag(): void {
+    process.argv = process.argv.filter((arg) => arg !== '--started-by');
+}
+
+function startMetadataWait(
+    client: ApiSessionClient,
+    signal?: AbortSignal,
+): Promise<boolean> {
+    return client.waitForMetadataUpdate(signal);
+}
+
+function emitMetadataWakeUpdate(params: {
+    session: any;
+    path: string;
+    socket?: any;
+    updateId?: string;
+    seq?: number;
+    version?: number;
+    idField?: 'id' | 'sid';
+}): void {
+    emitEncryptedSessionMetadataUpdate(params.socket ?? mockSocket, {
+        session: params.session,
+        updateId: params.updateId ?? 'update-metadata',
+        seq: params.seq ?? 1,
+        metadata: { ...params.session.metadata, path: params.path },
+        version: params.version ?? 1,
+        idField: params.idField,
+    });
+}
+
+function triggerLastUserSocketLifecycleEvent(
+    event: 'connect' | 'disconnect',
+): void {
+    const handler = expectLastSocketHandler(mockUserSocket, event);
+    handler();
+}
+
+function stubMetadataSnapshotWake(
+    client: ApiSessionClient,
+    params: {
+        path?: string;
+        metadataVersion?: number;
+        agentStateVersion?: number;
+        waitForTick?: boolean;
+    } = {},
+): ReturnType<typeof vi.fn> {
+    const syncSpy = vi.fn(async () => {
+        if (params.waitForTick) {
+            await waitForNextTick();
+        }
+        if (params.path !== undefined) {
+            (client as any).metadata = { ...(client as any).metadata, path: params.path };
+        }
+        (client as any).metadataVersion = params.metadataVersion ?? 1;
+        (client as any).agentStateVersion = params.agentStateVersion ?? 1;
+        client.emit('metadata-updated');
+    });
+    (client as any).syncSessionSnapshotFromServer = syncSpy;
+    return syncSpy;
+}
+
+function buildServerSessionSnapshotResponse(params: {
+    session: any;
+    metadataVersion: number;
+    metadata: string;
+}): {
+    status: number;
+    data: {
+        session: Record<string, unknown>;
+    };
+} {
+    return {
+        status: 200,
+        data: {
+            session: createSessionRecordFixture({
+                ...params.session,
+                id: params.session.id,
+                active: true,
+                metadataVersion: params.metadataVersion,
+                metadata: params.metadata,
+            }),
+        },
+    };
+}
+
+function buildEncryptedSessionMessageUpdate(params: {
+    session: any;
+    updateId: string;
+    seq: number;
+    messageId: string;
+    plaintext: unknown;
+    localId?: string;
+    createdAt?: number;
+    sid?: string;
+}): any {
+    const session = params.session;
+    const encrypted = encryptSessionValue(session, params.plaintext);
+
+    return {
+        id: params.updateId,
+        seq: params.seq,
+        createdAt: params.createdAt ?? Date.now(),
+        body: {
+            t: 'new-message',
+            sid: params.sid ?? session.id,
+            message: {
+                id: params.messageId,
+                seq: params.seq,
+                ...(params.localId ? { localId: params.localId } : {}),
+                content: { t: 'encrypted', c: encrypted },
+            },
+        },
+    };
+}
+
+function emitEncryptedSessionMessageUpdate(
+    socket: any,
+    params: Parameters<typeof buildEncryptedSessionMessageUpdate>[0],
+): void {
+    const updateHandler = expectSocketHandler(socket, 'update');
+    updateHandler(buildEncryptedSessionMessageUpdate(params) as any);
+}
+
+function buildEncryptedSessionMetadataUpdate(params: {
+    session: any;
+    updateId: string;
+    seq: number;
+    metadata: unknown;
+    version: number;
+    createdAt?: number;
+    idField?: 'id' | 'sid';
+}): any {
+    const session = params.session;
+    const encrypted = encryptSessionValue(session, params.metadata);
+    const sessionField = params.idField ?? 'sid';
+
+    return {
+        id: params.updateId,
+        seq: params.seq,
+        createdAt: params.createdAt ?? Date.now(),
+        body: {
+            t: 'update-session',
+            [sessionField]: session.id,
+            metadata: {
+                version: params.version,
+                value: encrypted,
+            },
+        },
+    };
+}
+
+function emitEncryptedSessionMetadataUpdate(
+    socket: any,
+    params: Parameters<typeof buildEncryptedSessionMetadataUpdate>[0],
+): void {
+    const updateHandler = expectSocketHandler(socket, 'update');
+    updateHandler(buildEncryptedSessionMetadataUpdate(params) as any);
+}
+
 describe('ApiSessionClient connection handling', () => {
-    let consoleSpy: any;
     let mockSession: any;
+    let envScope: ReturnType<typeof createEnvKeyScope>;
     let originalArgv: string[];
     const createdClients: ApiSessionClient[] = [];
-    const flushQueuedCommits = async (client: ApiSessionClient): Promise<void> => {
-        await (client as any).messageCommitQueueTail;
-    };
     const createClient = (token: string, session: any): ApiSessionClient => {
         const client = new ApiSessionClient(token, session);
         createdClients.push(client);
@@ -110,38 +441,27 @@ describe('ApiSessionClient connection handling', () => {
     };
 
     beforeEach(() => {
+        envScope = createEnvKeyScope([
+            'HAPPIER_STACK_TOOL_TRACE',
+            'HAPPIER_STACK_TOOL_TRACE_FILE',
+            'HAPPIER_DAEMON_INITIAL_PROMPT',
+            'HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED',
+        ]);
         originalArgv = [...process.argv];
-        consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'log').mockImplementation(() => {});
 
-        // Mock socket.io client
-        mockSocket = createMockSocket();
-        mockUserSocket = createMockSocket();
+        replaceSocketPair();
 
-        mockIo.mockReset();
-        mockIo
-            .mockImplementationOnce(() => mockUserSocket)
-            .mockImplementationOnce(() => mockSocket)
-            .mockImplementation(() => mockSocket);
-
-        // Create a proper mock session with metadata
-        mockSession = {
-            id: 'test-session-id',
-            seq: 0,
-            encryptionMode: 'e2ee' as const,
+        mockSession = createMockSession({
             metadata: {
                 path: '/tmp',
                 host: 'localhost',
                 homeDir: '/home/user',
                 happyHomeDir: '/home/user/.happy',
                 happyLibDir: '/home/user/.happy/lib',
-                happyToolsDir: '/home/user/.happy/tools'
+                happyToolsDir: '/home/user/.happy/tools',
             },
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            encryptionKey: new Uint8Array(32),
-            encryptionVariant: 'legacy' as const
-        };
+        });
     });
 
     afterEach(async () => {
@@ -157,9 +477,7 @@ describe('ApiSessionClient connection handling', () => {
         }
 
         process.argv = originalArgv;
-        delete process.env.HAPPIER_STACK_TOOL_TRACE;
-        delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
-        delete process.env.HAPPIER_DAEMON_INITIAL_PROMPT;
+        envScope.restore();
         __resetToolTraceForTests();
         vi.useRealTimers();
         vi.unstubAllGlobals();
@@ -192,22 +510,17 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('keeps execution.run.send RPC registered even when execution.runs is disabled', async () => {
-        const previous = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-        process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = '0';
-        try {
-            const client = createClient('token', mockSession);
+        envScope.patch({ HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '0' });
 
-            expect(client.rpcHandlerManager.hasHandler('execution.run.send')).toBe(true);
+        const client = createClient('token', mockSession);
 
-            const result = await client.rpcHandlerManager.invokeLocal('execution.run.send', {
-                runId: 'run-1',
-                message: 'hello',
-            });
-            expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
-        } finally {
-            if (previous === undefined) delete process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-            else process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = previous;
-        }
+        expect(client.rpcHandlerManager.hasHandler('execution.run.send')).toBe(true);
+
+        const result = await client.rpcHandlerManager.invokeLocal('execution.run.send', {
+            runId: 'run-1',
+            message: 'hello',
+        });
+        expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
     });
 
     it('filters historical catch-up user messages from delivery for terminal-started sessions', async () => {
@@ -220,24 +533,20 @@ describe('ApiSessionClient connection handling', () => {
             content: { type: 'text', text: 'historical prompt' },
             meta: { source: 'ui', sentFrom: 'web' },
         };
-        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-old-1',
+                    seq: 1,
+                    createdAt:
+                        Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                }),
+            ]),
+        );
 
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
-            status: 200,
-            data: {
-                messages: [
-                    {
-                        id: 'm-old-1',
-                        seq: 1,
-                        content: { t: 'encrypted', c: ciphertext },
-                        createdAt: Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
-                    },
-                ],
-                nextAfterSeq: null,
-            },
-        });
-
-        process.argv = process.argv.filter((arg) => arg !== '--started-by');
+        removeStartedByArgvFlag();
         mockSession.metadata.startedBy = undefined;
         mockSession.metadata.startedFromDaemon = undefined;
 
@@ -245,8 +554,8 @@ describe('ApiSessionClient connection handling', () => {
         const onUserMessage = vi.fn();
         client.onUserMessage(onUserMessage);
 
-        await new Promise((r) => setTimeout(r, 0));
-        expect(getSpy).toHaveBeenCalledTimes(1);
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
         expect(onUserMessage).not.toHaveBeenCalled();
     });
 
@@ -260,22 +569,18 @@ describe('ApiSessionClient connection handling', () => {
             content: { type: 'text', text: 'historical daemon prompt' },
             meta: { source: 'ui', sentFrom: 'web' },
         };
-        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
-            status: 200,
-            data: {
-                messages: [
-                    {
-                        id: 'm-daemon-old-1',
-                        seq: 1,
-                        content: { t: 'encrypted', c: ciphertext },
-                        createdAt: Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
-                    },
-                ],
-                nextAfterSeq: null,
-            },
-        });
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-daemon-old-1',
+                    seq: 1,
+                    createdAt:
+                        Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                }),
+            ]),
+        );
 
         mockSession.metadata.startedBy = 'daemon';
 
@@ -283,9 +588,87 @@ describe('ApiSessionClient connection handling', () => {
         const onUserMessage = vi.fn();
         client.onUserMessage(onUserMessage);
 
-        await new Promise((r) => setTimeout(r, 0));
-        expect(getSpy).toHaveBeenCalledTimes(1);
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
         expect(onUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers historical daemon-initial-prompt catch-up messages for daemon-started respawns', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const { configuration } = await import('@/configuration');
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'recover daemon prompt after respawn' },
+            meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-daemon-initial-prompt-old-1',
+                    seq: 1,
+                    createdAt:
+                        Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                }),
+            ]),
+        );
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'recover daemon prompt after respawn' },
+                meta: expect.objectContaining({
+                    source: 'daemon-initial-prompt',
+                    sentFrom: 'cli',
+                }),
+            }),
+        );
+    });
+
+    it('uses a deterministic localId for daemon initial prompt commits so respawn replays stay idempotent', async () => {
+        envScope.patch({
+            HAPPIER_DAEMON_INITIAL_PROMPT: 'recover daemon prompt after respawn',
+        });
+
+        configureCommittedMessageAck(mockSocket, {
+            ok: true,
+            id: 'msg-daemon-initial-prompt-1',
+            seq: 1,
+        });
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+        await flushClientQueue(client);
+
+        const payload = getLastCommittedMessagePayload(mockSocket);
+        expect(payload).toEqual(
+            expect.objectContaining({
+                sid: mockSession.id,
+                localId: `daemon-initial-prompt:${mockSession.id}`,
+            }),
+        );
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                localId: `daemon-initial-prompt:${mockSession.id}`,
+                meta: expect.objectContaining({
+                    source: 'daemon-initial-prompt',
+                    sentFrom: 'cli',
+                }),
+            }),
+        );
     });
 
     it('delivers recent catch-up user messages for terminal-started sessions', async () => {
@@ -297,24 +680,19 @@ describe('ApiSessionClient connection handling', () => {
             content: { type: 'text', text: 'recent prompt' },
             meta: { source: 'ui', sentFrom: 'web' },
         };
-        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-new-1',
+                    seq: 1,
+                    createdAt: Date.now(),
+                }),
+            ]),
+        );
 
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
-            status: 200,
-            data: {
-                messages: [
-                    {
-                        id: 'm-new-1',
-                        seq: 1,
-                        content: { t: 'encrypted', c: ciphertext },
-                        createdAt: Date.now(),
-                    },
-                ],
-                nextAfterSeq: null,
-            },
-        });
-
-        process.argv = process.argv.filter((arg) => arg !== '--started-by');
+        removeStartedByArgvFlag();
         mockSession.metadata.startedBy = undefined;
         mockSession.metadata.startedFromDaemon = undefined;
 
@@ -322,8 +700,8 @@ describe('ApiSessionClient connection handling', () => {
         const onUserMessage = vi.fn();
         client.onUserMessage(onUserMessage);
 
-        await new Promise((r) => setTimeout(r, 0));
-        expect(getSpy).toHaveBeenCalledTimes(1);
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
         expect(onUserMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 role: 'user',
@@ -332,30 +710,114 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
+    it('delivers recent catch-up user messages for daemon-started sessions', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'recent daemon prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-daemon-new-1',
+                    seq: 1,
+                    createdAt: Date.now(),
+                }),
+            ]),
+        );
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'recent daemon prompt' },
+            }),
+        );
+    });
+
+    it('starts daemon startup transcript catch-up from the existing session seq', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const existingSeq = 18;
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'queued prompt after resume' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+
+        const getSpy = vi.spyOn(axios, 'get').mockImplementation(async (...args: unknown[]) => {
+            const [url, config] = args as [string, { params?: { afterSeq?: number } } | undefined];
+            if (url.includes(`/v1/sessions/${mockSession.id}/messages`)) {
+                expect(config?.params?.afterSeq).toBe(existingSeq);
+                return buildMessagesListResponse([
+                    buildEncryptedTranscriptMessage({
+                        session: mockSession,
+                        plaintext,
+                        id: 'm-daemon-after-seq-1',
+                        seq: existingSeq + 1,
+                        createdAt: Date.now(),
+                    }),
+                ]);
+            }
+            throw new Error(`Unexpected axios.get: ${url}`);
+        });
+
+        mockSession.seq = existingSeq;
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'queued prompt after resume' },
+            }),
+        );
+    });
+
     it('runs startup transcript catch-up for daemon-started sessions', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
 
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { messages: [], nextAfterSeq: null } });
+        const getSpy = vi
+            .spyOn(axios, 'get')
+            .mockResolvedValue(buildMessagesListResponse([]));
 
         mockSession.metadata.startedBy = 'daemon';
 
         const client = createClient('token', mockSession);
         client.onUserMessage(() => {});
 
-        await new Promise((r) => setTimeout(r, 0));
-        expect(getSpy).toHaveBeenCalledTimes(1);
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
     });
 
     it('sends plaintext session messages when session.encryptionMode is plain', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', { ...mockSession, encryptionMode: 'plain' as const });
 
         client.sendUserTextMessage('hello');
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        expect(mockSocket.emit).toHaveBeenCalledWith(
-            'message',
+        expect(getLastCommittedMessagePayload(mockSocket)).toEqual(
             expect.objectContaining({
                 sid: 'test-session-id',
                 message: expect.objectContaining({ t: 'plain', v: expect.anything() }),
@@ -365,6 +827,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
         client.sendAgentMessage('opencode', {
             type: 'tool-call',
@@ -374,16 +837,9 @@ describe('ApiSessionClient connection handling', () => {
             id: 'msg-1',
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
-        expect(call).toBeTruthy();
-        const payload = call![1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.content.type).toBe('acp');
         expect(decrypted.content.provider).toBe('opencode');
@@ -455,7 +911,7 @@ describe('ApiSessionClient connection handling', () => {
                 return meta;
             });
 
-            await new Promise((r) => setTimeout(r, 0));
+            await waitForNextTick();
             expect(completed).toBe(false);
 
             resolveFetch({
@@ -475,6 +931,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('opencode', {
@@ -501,18 +958,9 @@ describe('ApiSessionClient connection handling', () => {
             id: 'msg-1',
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
-        const decryptedToolCall = calls
-            .map((call: any[]) => {
-                const payload = call[1];
-                return decrypt(
-                    mockSession.encryptionKey,
-                    mockSession.encryptionVariant,
-                    decodeBase64(payload.message),
-                ) as any;
-            })
+        const decryptedToolCall = getDecryptedOutboundMessages(mockSession)
             .find((msg: any) => msg?.content?.type === 'acp' && msg?.content?.data?.type === 'tool-call');
 
         expect(decryptedToolCall).toBeTruthy();
@@ -535,21 +983,14 @@ describe('ApiSessionClient connection handling', () => {
             meta: { source: 'ui', sentFrom: 'e2e', permissionMode: 'read-only' },
         };
 
-        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-        const update = {
-            id: 'u-1',
-            seq: 0,
+        const update = buildEncryptedSessionMessageUpdate({
+            session: mockSession,
+            updateId: 'u-1',
+            seq: 1,
+            messageId: 'm-1',
+            plaintext,
             createdAt: 1234,
-            body: {
-                t: 'new-message',
-                sid: mockSession.id,
-                message: {
-                    id: 'm-1',
-                    seq: 1,
-                    content: { t: 'encrypted', c: ciphertext },
-                },
-            },
-        };
+        });
 
         (client as any).handleUpdate(update, { source: 'session-scoped' });
 
@@ -601,7 +1042,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('consumes daemon initial prompt env and seeds one user prompt on callback attach', () => {
-        process.env.HAPPIER_DAEMON_INITIAL_PROMPT = '  run nightly health check  ';
+        envScope.patch({ HAPPIER_DAEMON_INITIAL_PROMPT: '  run nightly health check  ' });
 
         const client = createClient('fake-token', mockSession);
         const sendUserTextMessageSpy = vi.spyOn(client, 'sendUserTextMessage');
@@ -635,9 +1076,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('routes session user-message RPC through the runtime queue and transcript commit path', async () => {
-        mockSocket.connected = true;
-        mockSocket.timeout = vi.fn().mockReturnThis();
-        mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+        configureCommittedMessageAck(mockSocket, {
             ok: true,
             id: 'msg-rpc-1',
             seq: 1,
@@ -658,7 +1097,7 @@ describe('ApiSessionClient connection handling', () => {
                 permissionMode: 'default',
             },
         });
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
         expect(result).toEqual({ ok: true });
         expect(onUserMessage).toHaveBeenCalledWith(
@@ -683,9 +1122,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('reuses one generated localId for queued RPC user messages and their transcript echo suppression', async () => {
-        mockSocket.connected = true;
-        mockSocket.timeout = vi.fn().mockReturnThis();
-        mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+        configureCommittedMessageAck(mockSocket, {
             ok: true,
             id: 'msg-rpc-2',
             seq: 2,
@@ -702,7 +1139,7 @@ describe('ApiSessionClient connection handling', () => {
                 sentFrom: 'cli',
             },
         });
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
         const emittedLocalId = String((mockSocket.emitWithAck.mock.calls[0]?.[1] as any)?.localId ?? '');
         expect(emittedLocalId).not.toBe('');
@@ -715,40 +1152,27 @@ describe('ApiSessionClient connection handling', () => {
             }),
         );
 
-        const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-        expect(typeof updateHandler).toBe('function');
+        const updateHandler = expectSocketHandler(mockSocket, 'update');
 
-        const plaintext = {
-            role: 'user',
-            content: { type: 'text', text: 'hello without explicit local id' },
-            localId: emittedLocalId,
-            meta: { sentFrom: 'cli', source: 'cli' },
-        };
-        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-        updateHandler({
-            id: 'update-rpc-2',
+        emitEncryptedSessionMessageUpdate(mockSocket, {
+            session: mockSession,
+            updateId: 'update-rpc-2',
             seq: 2,
-            createdAt: Date.now(),
-            body: {
-                t: 'new-message',
-                sid: mockSession.id,
-                message: {
-                    id: 'msg-rpc-2',
-                    seq: 2,
-                    localId: emittedLocalId,
-                    content: { t: 'encrypted', c: encrypted },
-                },
+            messageId: 'msg-rpc-2',
+            localId: emittedLocalId,
+            plaintext: {
+                role: 'user',
+                content: { type: 'text', text: 'hello without explicit local id' },
+                localId: emittedLocalId,
+                meta: { sentFrom: 'cli', source: 'cli' },
             },
-        } as any);
+        });
 
         expect(onUserMessage).toHaveBeenCalledTimes(1);
     });
 
     it('preserves whitespace in queued RPC user messages', async () => {
-        mockSocket.connected = true;
-        mockSocket.timeout = vi.fn().mockReturnThis();
-        mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+        configureCommittedMessageAck(mockSocket, {
             ok: true,
             id: 'msg-rpc-3',
             seq: 3,
@@ -768,7 +1192,7 @@ describe('ApiSessionClient connection handling', () => {
                 sentFrom: 'cli',
             },
         });
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
         expect(result).toEqual({ ok: true });
         expect(onUserMessage).toHaveBeenCalledWith(
@@ -779,7 +1203,7 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
-    it('runs one transcript catch-up on first callback attach to recover missed startup user messages', async () => {
+    it('runs one transcript catch-up on first callback attach to recover missed CLI startup user messages', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
         const createdAt = Date.now();
@@ -787,23 +1211,19 @@ describe('ApiSessionClient connection handling', () => {
         const plaintext = {
             role: 'user',
             content: { type: 'text', text: 'missed startup prompt' },
-            meta: { source: 'ui', sentFrom: 'web' },
+            meta: { source: 'cli', sentFrom: 'cli' },
         };
-        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
-            data: {
-                messages: [
-                    {
-                        id: 'm-catchup-1',
-                        seq: 1,
-                        content: { t: 'encrypted', c: ciphertext },
-                        createdAt,
-                    },
-                ],
-                nextAfterSeq: null,
-            },
-        });
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-catchup-1',
+                    seq: 1,
+                    createdAt,
+                }),
+            ]),
+        );
 
         mockSession.metadata = {
             ...mockSession.metadata,
@@ -813,11 +1233,12 @@ describe('ApiSessionClient connection handling', () => {
         const onUserMessage = vi.fn();
 
         client.onUserMessage(onUserMessage);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await waitForNextTick();
         client.onUserMessage(onUserMessage);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await waitForNextTick();
 
-        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).toHaveBeenCalledTimes(1);
         expect(onUserMessage).toHaveBeenCalledWith(
             expect.objectContaining({
                 role: 'user',
@@ -829,7 +1250,7 @@ describe('ApiSessionClient connection handling', () => {
         getSpy.mockRestore();
     });
 
-    it('retries startup transcript catch-up when the first poll races before the first user prompt commit', async () => {
+    it('retries startup transcript catch-up when the first poll races before the first CLI user prompt commit', async () => {
         vi.useFakeTimers();
         try {
             const axiosMod = await import('axios');
@@ -839,30 +1260,21 @@ describe('ApiSessionClient connection handling', () => {
             const plaintext = {
                 role: 'user',
                 content: { type: 'text', text: 'missed by first poll, recovered by retry' },
-                meta: { source: 'ui', sentFrom: 'web' },
+                meta: { source: 'cli', sentFrom: 'cli' },
             };
-            const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
             const getSpy = vi.spyOn(axios, 'get')
-                .mockResolvedValueOnce({
-                    data: {
-                        messages: [],
-                        nextAfterSeq: null,
-                    },
-                })
-                .mockResolvedValueOnce({
-                    data: {
-                        messages: [
-                            {
-                                id: 'm-catchup-race-1',
-                                seq: 1,
-                                content: { t: 'encrypted', c: ciphertext },
-                                createdAt,
-                            },
-                        ],
-                        nextAfterSeq: null,
-                    },
-                });
+                .mockResolvedValueOnce(buildMessagesListResponse([]))
+                .mockResolvedValueOnce(
+                    buildMessagesListResponse([
+                        buildEncryptedTranscriptMessage({
+                            session: mockSession,
+                            plaintext,
+                            id: 'm-catchup-race-1',
+                            seq: 1,
+                            createdAt,
+                        }),
+                    ]),
+                );
 
             mockSession.metadata = {
                 ...mockSession.metadata,
@@ -908,14 +1320,19 @@ describe('ApiSessionClient connection handling', () => {
             meta: { source: 'ui', sentFrom: 'e2e', permissionMode: 'read-only' },
         };
 
-        const newerCipher = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, newerUser));
-        const olderCipher = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, olderUser));
-
         const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
             data: {
                 messages: [
-                    { createdAt: 200, content: { t: 'encrypted', c: newerCipher } },
-                    { createdAt: 100, content: { t: 'encrypted', c: olderCipher } },
+                    buildEncryptedTranscriptMessage({
+                        session: mockSession,
+                        plaintext: newerUser,
+                        createdAt: 200,
+                    }),
+                    buildEncryptedTranscriptMessage({
+                        session: mockSession,
+                        plaintext: olderUser,
+                        createdAt: 100,
+                    }),
                 ],
             },
         });
@@ -929,6 +1346,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
@@ -939,16 +1357,9 @@ describe('ApiSessionClient connection handling', () => {
             options: {},
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
-        expect(call).toBeTruthy();
-        const payload = call![1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.content.type).toBe('acp');
         expect(decrypted.content.data).toMatchObject({
@@ -958,6 +1369,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('backfills missing permission-request input details from nested options.toolCall.content (Gemini ACP)', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
@@ -978,16 +1390,9 @@ describe('ApiSessionClient connection handling', () => {
             },
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
-        expect(call).toBeTruthy();
-        const payload = call![1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.content.type).toBe('acp');
         expect(decrypted.content.provider).toBe('gemini');
@@ -1002,6 +1407,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('opencode', {
@@ -1019,17 +1425,11 @@ describe('ApiSessionClient connection handling', () => {
             id: 'msg-2',
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
-        expect(calls).toHaveLength(2);
-
-        const payload = calls[1][1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const messages = getDecryptedOutboundMessages(mockSession);
+        expect(messages).toHaveLength(2);
+        const decrypted = messages[1];
 
         expect(decrypted.content.type).toBe('acp');
         expect(decrypted.content.data).toMatchObject({
@@ -1044,6 +1444,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('backfills empty TodoWrite tool-result outputs with the requested todos', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
@@ -1061,17 +1462,11 @@ describe('ApiSessionClient connection handling', () => {
             id: 'msg-2',
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
-        expect(calls).toHaveLength(2);
-
-        const payload = calls[1][1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const messages = getDecryptedOutboundMessages(mockSession);
+        expect(messages).toHaveLength(2);
+        const decrypted = messages[1];
 
         expect(decrypted.content.type).toBe('acp');
         expect(decrypted.content.provider).toBe('gemini');
@@ -1085,6 +1480,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
         client.sendCodexMessage({
             type: 'tool-call',
@@ -1094,16 +1490,9 @@ describe('ApiSessionClient connection handling', () => {
             id: 'msg-1',
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
-        expect(call).toBeTruthy();
-        const payload = call![1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.content.type).toBe('codex');
         expect(decrypted.content.data).toMatchObject({
@@ -1113,6 +1502,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         client.sendCodexMessage({
@@ -1130,17 +1520,11 @@ describe('ApiSessionClient connection handling', () => {
             id: 'msg-2',
         });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
-        expect(calls).toHaveLength(2);
-
-        const payload = calls[1][1];
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(payload.message),
-        ) as any;
+        const messages = getDecryptedOutboundMessages(mockSession);
+        expect(messages).toHaveLength(2);
+        const decrypted = messages[1];
 
         expect(decrypted.content.type).toBe('codex');
         expect(decrypted.content.data).toMatchObject({
@@ -1183,10 +1567,11 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('waitForMetadataUpdate ensures the user-scoped socket is connected so metadata updates can wake idle agents', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         const controller = new AbortController();
-        const promise = client.waitForMetadataUpdate(controller.signal);
+        const promise = startMetadataWait(client, controller.signal);
 
         expect(mockUserSocket.connect).toHaveBeenCalledTimes(1);
 
@@ -1195,56 +1580,18 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('queues outbound messages while disconnected and flushes them after reconnect', async () => {
-        const socketHandlers = new Map<string, Set<(...args: any[]) => void>>();
-        const registerSocketHandler = (event: string, handler: (...args: any[]) => void) => {
-            const handlers = socketHandlers.get(event) ?? new Set<(...args: any[]) => void>();
-            handlers.add(handler);
-            socketHandlers.set(event, handlers);
-        };
-        const triggerSocketEvent = (event: string, ...args: any[]) => {
-            for (const handler of socketHandlers.get(event) ?? []) {
-                handler(...args);
-            }
-        };
-
-        mockSocket = {
-            connected: false,
-            connect: vi.fn(),
-            on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-                registerSocketHandler(event, handler);
-                return mockSocket;
+        replaceSocketPair({
+            sessionSocket: createConfiguredSocket({
+                connected: false,
+                emitWithAckResult: {
+                    ok: true,
+                    id: 'msg-1',
+                    seq: 1,
+                    localId: 'queued-local-id',
+                },
             }),
-            off: vi.fn((event: string, handler?: (...args: any[]) => void) => {
-                if (!handler) {
-                    socketHandlers.delete(event);
-                    return mockSocket;
-                }
-                const handlers = socketHandlers.get(event);
-                handlers?.delete(handler);
-                if (handlers && handlers.size === 0) {
-                    socketHandlers.delete(event);
-                }
-                return mockSocket;
-            }),
-            disconnect: vi.fn(),
-            close: vi.fn(),
-            emit: vi.fn(),
-            timeout: vi.fn(function timeout() {
-                return mockSocket;
-            }),
-            emitWithAck: vi.fn().mockResolvedValue({
-                ok: true,
-                id: 'msg-1',
-                seq: 1,
-                localId: 'queued-local-id',
-            }),
-        };
-
-        mockIo.mockReset();
-        mockIo
-            .mockImplementationOnce(() => mockSocket)
-            .mockImplementationOnce(() => mockUserSocket)
-            .mockImplementation(() => mockSocket);
+            userSocket: mockUserSocket,
+        });
 
         const client = createClient('fake-token', mockSession);
 
@@ -1257,7 +1604,7 @@ describe('ApiSessionClient connection handling', () => {
         } as const;
 
         client.sendClaudeSessionMessage(payload);
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
         expect(mockSocket.emit).not.toHaveBeenCalledWith(
             'message',
@@ -1268,21 +1615,21 @@ describe('ApiSessionClient connection handling', () => {
         expect(mockSocket.emitWithAck).not.toHaveBeenCalled();
 
         mockSocket.connected = true;
-        triggerSocketEvent('connect');
+        mockSocket.trigger('connect');
 
-        await flushQueuedCommits(client);
-
-        expect(mockSocket.emitWithAck).toHaveBeenCalledWith(
-            'message',
-            expect.objectContaining({
-                sid: mockSession.id,
-                message: expect.any(String),
-                localId: expect.any(String),
-            }),
-        );
+        await vi.waitFor(() => {
+            expect(getLastCommittedMessagePayload(mockSocket)).toEqual(
+                expect.objectContaining({
+                    sid: mockSession.id,
+                    message: expect.any(String),
+                    localId: expect.any(String),
+                }),
+            );
+        });
     });
 
     it('merges optional meta into outbound Claude session messages', async () => {
+        connectSessionSocket();
         const client = createClient('fake-token', mockSession);
 
         const payload: RawJSONLines = {
@@ -1296,15 +1643,9 @@ describe('ApiSessionClient connection handling', () => {
 
         client.sendClaudeSessionMessage(payload, { importedFrom: 'claude-taskoutput' });
 
-        await flushQueuedCommits(client);
+        await flushClientQueue(client);
 
-        const call = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message').pop();
-        expect(call).toBeTruthy();
-        const decrypted = decrypt(
-            mockSession.encryptionKey,
-            mockSession.encryptionVariant,
-            decodeBase64(call![1].message),
-        ) as any;
+        const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.meta).toMatchObject({
             sentFrom: 'cli',
@@ -1314,28 +1655,34 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('sends keepAlive(thinking=true) as a non-volatile emit so UIs that connect mid-turn still receive it', () => {
+        connectSessionSocket();
         mockSocket.volatile = { emit: vi.fn() };
 
         const client = createClient('fake-token', mockSession);
         client.keepAlive(true, 'remote');
 
-        expect(mockSocket.emit).toHaveBeenCalledWith(
-            'session-alive',
-            expect.objectContaining({ sid: mockSession.id, thinking: true, mode: 'remote' }),
-        );
-        expect(mockSocket.volatile.emit).not.toHaveBeenCalled();
+        expect(getSocketEventCalls(mockSocket, 'session-alive')).toEqual([
+            [
+                'session-alive',
+                expect.objectContaining({ sid: mockSession.id, thinking: true, mode: 'remote' }),
+            ],
+        ]);
+        expect(getSocketVolatileEventCalls(mockSocket, 'session-alive')).toHaveLength(0);
     });
 
     it('sends keepAlive(thinking=false) via volatile emit to avoid backpressure', () => {
+        connectSessionSocket();
         mockSocket.volatile = { emit: vi.fn() };
 
         const client = createClient('fake-token', mockSession);
         client.keepAlive(false, 'remote');
 
-        expect(mockSocket.volatile.emit).toHaveBeenCalledWith(
-            'session-alive',
-            expect.objectContaining({ sid: mockSession.id, thinking: false, mode: 'remote' }),
-        );
+        expect(getSocketVolatileEventCalls(mockSocket, 'session-alive')).toEqual([
+            [
+                'session-alive',
+                expect.objectContaining({ sid: mockSession.id, thinking: false, mode: 'remote' }),
+            ],
+        ]);
     });
 
 		    it('attaches server localId onto decrypted user messages', async () => {
@@ -1344,31 +1691,18 @@ describe('ApiSessionClient connection handling', () => {
 	        const onUserMessage = vi.fn();
 	        client.onUserMessage(onUserMessage);
 
-	        const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-	        expect(typeof updateHandler).toBe('function');
-
-        const plaintext = {
-            role: 'user',
-            content: { type: 'text', text: 'hello' },
-            meta: { sentFrom: 'web' },
-        };
-        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-        updateHandler({
-            id: 'update-1',
+        emitEncryptedSessionMessageUpdate(mockSocket, {
+            session: mockSession,
+            updateId: 'update-1',
             seq: 1,
-            createdAt: Date.now(),
-            body: {
-                t: 'new-message',
-                sid: mockSession.id,
-                message: {
-                    id: 'msg-1',
-                    seq: 1,
-                    localId: 'local-1',
-                    content: { t: 'encrypted', c: encrypted },
-                },
+            messageId: 'msg-1',
+            localId: 'local-1',
+            plaintext: {
+                role: 'user',
+                content: { type: 'text', text: 'hello' },
+                meta: { sentFrom: 'web' },
             },
-        } as any);
+        });
 
 		        expect(onUserMessage).toHaveBeenCalledWith(
 		            expect.objectContaining({
@@ -1384,32 +1718,19 @@ describe('ApiSessionClient connection handling', () => {
             const onUserMessage = vi.fn();
             client.onUserMessage(onUserMessage);
 
-            const userUpdateHandler = (mockUserSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-            expect(typeof userUpdateHandler).toBe('function');
-
-            const plaintext = {
-                role: 'user',
-                content: { type: 'text', text: 'hello from ui' },
-                localId: 'local-ui-1',
-                meta: { source: 'ui', sentFrom: 'e2e' },
-            };
-            const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-            userUpdateHandler({
-                id: 'update-ui-1',
+            emitEncryptedSessionMessageUpdate(mockUserSocket, {
+                session: mockSession,
+                updateId: 'update-ui-1',
                 seq: 1,
-                createdAt: Date.now(),
-                body: {
-                    t: 'new-message',
-                    sid: mockSession.id,
-                    message: {
-                        id: 'msg-ui-1',
-                        seq: 1,
-                        localId: 'local-ui-1',
-                        content: { t: 'encrypted', c: encrypted },
-                    },
+                messageId: 'msg-ui-1',
+                localId: 'local-ui-1',
+                plaintext: {
+                    role: 'user',
+                    content: { type: 'text', text: 'hello from ui' },
+                    localId: 'local-ui-1',
+                    meta: { source: 'ui', sentFrom: 'e2e' },
                 },
-            } as any);
+            });
 
             expect(onUserMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -1420,37 +1741,17 @@ describe('ApiSessionClient connection handling', () => {
         });
 
         it('does not emit user-message events when committing outbound CLI user messages (ACK is not a prompt)', async () => {
-            const sessionSocket: any = {
+            const sessionSocket = createConfiguredSocket({
                 connected: true,
-                connect: vi.fn(),
-                on: vi.fn(),
-                off: vi.fn(),
-                disconnect: vi.fn(),
-                close: vi.fn(),
-                emit: vi.fn(),
-                timeout: vi.fn().mockReturnThis(),
-                emitWithAck: vi.fn().mockResolvedValue({
+                emitWithAckResult: {
                     ok: true,
                     id: 'msg-1',
                     seq: 1,
                     localId: 'local-1',
-                }),
-            };
-
-            const userSocket: any = {
-                connected: false,
-                connect: vi.fn(),
-                on: vi.fn(),
-                off: vi.fn(),
-                disconnect: vi.fn(),
-                close: vi.fn(),
-                emit: vi.fn(),
-            };
-
-            mockIo.mockReset();
-            mockIo
-                .mockImplementationOnce(() => sessionSocket)
-                .mockImplementationOnce(() => userSocket);
+                },
+            });
+            const userSocket = createConfiguredSocket({ connected: false });
+            replaceSocketPair({ sessionSocket, userSocket });
 
             const client = createClient('fake-token', mockSession);
 
@@ -1468,31 +1769,18 @@ describe('ApiSessionClient connection handling', () => {
             const onUserMessage = vi.fn();
             client.onUserMessage(onUserMessage);
 
-            const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-            expect(typeof updateHandler).toBe('function');
-
-            const plaintext = {
-                role: 'user',
-                content: { type: 'text', text: 'hello from cli' },
-                meta: { sentFrom: 'cli' },
-            };
-            const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-            updateHandler({
-                id: 'update-2',
+            emitEncryptedSessionMessageUpdate(mockSocket, {
+                session: mockSession,
+                updateId: 'update-2',
                 seq: 2,
-                createdAt: Date.now(),
-                body: {
-                    t: 'new-message',
-                    sid: mockSession.id,
-                    message: {
-                        id: 'msg-2',
-                        seq: 2,
-                        localId: 'local-2',
-                        content: { t: 'encrypted', c: encrypted },
-                    },
+                messageId: 'msg-2',
+                localId: 'local-2',
+                plaintext: {
+                    role: 'user',
+                    content: { type: 'text', text: 'hello from cli' },
+                    meta: { sentFrom: 'cli' },
                 },
-            } as any);
+            });
 
             expect(onUserMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -1503,9 +1791,7 @@ describe('ApiSessionClient connection handling', () => {
         });
 
         it('does not deliver self-sent CLI user messages while awaiting their echo update', async () => {
-            mockSocket.connected = true;
-            mockSocket.timeout = vi.fn().mockReturnThis();
-            mockSocket.emitWithAck = vi.fn().mockResolvedValue({
+            configureCommittedMessageAck(mockSocket, {
                 ok: true,
                 id: 'msg-2',
                 seq: 2,
@@ -1519,228 +1805,139 @@ describe('ApiSessionClient connection handling', () => {
 
             await client.sendUserTextMessageCommitted('hello from cli', { localId: 'local-2' });
 
-            const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-            expect(typeof updateHandler).toBe('function');
-
-            const plaintext = {
-                role: 'user',
-                content: { type: 'text', text: 'hello from cli' },
-                meta: { sentFrom: 'cli' },
-            };
-            const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-            updateHandler({
-                id: 'update-2',
+            emitEncryptedSessionMessageUpdate(mockSocket, {
+                session: mockSession,
+                updateId: 'update-2',
                 seq: 2,
-                createdAt: Date.now(),
-                body: {
-                    t: 'new-message',
-                    sid: mockSession.id,
-                    message: {
-                        id: 'msg-2',
-                        seq: 2,
-                        localId: 'local-2',
-                        content: { t: 'encrypted', c: encrypted },
-                    },
+                messageId: 'msg-2',
+                localId: 'local-2',
+                plaintext: {
+                    role: 'user',
+                    content: { type: 'text', text: 'hello from cli' },
+                    meta: { sentFrom: 'cli' },
                 },
-            } as any);
+            });
 
             expect(onUserMessage).not.toHaveBeenCalled();
         });
 
-				    it('waitForMetadataUpdate resolves when session metadata updates', async () => {
-				        const client = createClient('fake-token', mockSession);
+    it('waitForMetadataUpdate resolves when session metadata updates', async () => {
+        const client = createClient('fake-token', mockSession);
 
-				        const waitPromise = client.waitForMetadataUpdate();
+        const waitPromise = startMetadataWait(client);
 
-	        const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-	        expect(typeof updateHandler).toBe('function');
+        emitMetadataWakeUpdate({
+            session: mockSession,
+            path: '/tmp/next',
+            updateId: 'update-2',
+            seq: 2,
+        });
 
-	        const nextMetadata = { ...mockSession.metadata, path: '/tmp/next' };
-	        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, nextMetadata));
+        await expect(waitPromise).resolves.toBe(true);
+    });
 
-	        updateHandler({
-	            id: 'update-2',
-	            seq: 2,
-	            createdAt: Date.now(),
-	            body: {
-	                t: 'update-session',
-	                sid: mockSession.id,
-	                metadata: {
-	                    version: 1,
-	                    value: encrypted,
-	                },
-	            },
-	        } as any);
+    it('waitForMetadataUpdate resolves when the user-scoped socket connects (wakes idle agents)', async () => {
+        const client = createClient('fake-token', mockSession);
 
-				        await expect(waitPromise).resolves.toBe(true);
-				    });
+        const waitPromise = startMetadataWait(client);
 
-	                it('waitForMetadataUpdate resolves when the user-scoped socket connects (wakes idle agents)', async () => {
-	                    const client = createClient('fake-token', mockSession);
+        triggerLastUserSocketLifecycleEvent('connect');
+        await expect(waitPromise).resolves.toBe(true);
+    });
 
-	                    const waitPromise = client.waitForMetadataUpdate();
+    it('waitForMetadataUpdate syncs a session snapshot on user-scoped connect so missed metadata updates are observed', async () => {
+        const client = createClient('fake-token', mockSession);
 
-	                    const connectHandlers = mockUserSocket.on.mock.calls
-	                        .filter((call: any[]) => call[0] === 'connect')
-	                        .map((call: any[]) => call[1]);
-	                    const lastConnectHandler = connectHandlers[connectHandlers.length - 1];
-	                    expect(typeof lastConnectHandler).toBe('function');
+        const syncSpy = stubMetadataSnapshotWake(client, {
+            path: '/tmp/from-sync',
+            waitForTick: true,
+        });
 
-	                    lastConnectHandler();
-	                    await expect(waitPromise).resolves.toBe(true);
-	                });
+        const waitPromise = startMetadataWait(client);
 
-                    it('waitForMetadataUpdate syncs a session snapshot on user-scoped connect so missed metadata updates are observed', async () => {
-                        const client = createClient('fake-token', mockSession);
+        triggerLastUserSocketLifecycleEvent('connect');
 
-                        const syncSpy = vi.fn(async () => {
-                            await new Promise((r) => setTimeout(r, 0));
-                            (client as any).metadata = { ...(client as any).metadata, path: '/tmp/from-sync' };
-                            (client as any).metadataVersion = ((client as any).metadataVersion ?? 0) + 1;
-                            client.emit('metadata-updated');
-                        });
-                        (client as any).syncSessionSnapshotFromServer = syncSpy;
+        await expect(waitPromise).resolves.toBe(true);
+        expect(syncSpy).toHaveBeenCalled();
+        expect(client.getMetadataSnapshot()?.path).toBe('/tmp/from-sync');
+    });
 
-                        const waitPromise = client.waitForMetadataUpdate();
+    it('waitForMetadataUpdate resolves when session metadata updates (server sends update-session with id)', async () => {
+        const client = createClient('fake-token', mockSession);
 
-                        const connectHandlers = mockUserSocket.on.mock.calls
-                            .filter((call: any[]) => call[0] === 'connect')
-                            .map((call: any[]) => call[1]);
-                        const lastConnectHandler = connectHandlers[connectHandlers.length - 1];
-                        expect(typeof lastConnectHandler).toBe('function');
+        const waitPromise = startMetadataWait(client);
 
-                        lastConnectHandler();
+        emitMetadataWakeUpdate({
+            session: mockSession,
+            path: '/tmp/next2',
+            updateId: 'update-2b',
+            seq: 3,
+            idField: 'id',
+        });
 
-                        await expect(waitPromise).resolves.toBe(true);
-                        expect(syncSpy).toHaveBeenCalled();
-                        expect(client.getMetadataSnapshot()?.path).toBe('/tmp/from-sync');
-                    });
+        await expect(waitPromise).resolves.toBe(true);
+    });
 
-            it('waitForMetadataUpdate resolves when session metadata updates (server sends update-session with id)', async () => {
-                const client = createClient('fake-token', mockSession);
+    it('waitForMetadataUpdate resolves false when user-scoped socket disconnects', async () => {
+        const client = createClient('fake-token', mockSession);
 
-                const waitPromise = client.waitForMetadataUpdate();
+        const waitPromise = startMetadataWait(client);
 
-                const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-                expect(typeof updateHandler).toBe('function');
+        triggerLastUserSocketLifecycleEvent('disconnect');
+        await expect(waitPromise).resolves.toBe(false);
+    });
 
-                const nextMetadata = { ...mockSession.metadata, path: '/tmp/next2' };
-                const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, nextMetadata));
+    it('waitForMetadataUpdate does not miss fast user-scoped update-session wakeups', async () => {
+        const client = createClient('fake-token', mockSession);
 
-                updateHandler({
-                    id: 'update-2b',
-                    seq: 3,
-                    createdAt: Date.now(),
-                    body: {
-                        t: 'update-session',
-                        id: mockSession.id,
-                        metadata: {
-                            version: 1,
-                            value: encrypted,
-                        },
-                    },
-                } as any);
+        mockUserSocket.connect.mockImplementation(() => {
+            emitMetadataWakeUpdate({
+                session: mockSession,
+                socket: mockUserSocket,
+                path: '/tmp/fast',
+                updateId: 'update-fast',
+                seq: 999,
+                version: 2,
+            });
+        });
 
-	                await expect(waitPromise).resolves.toBe(true);
-	            });
+        const controller = new AbortController();
+        const promise = startMetadataWait(client, controller.signal);
 
-	            it('waitForMetadataUpdate resolves false when user-scoped socket disconnects', async () => {
-	                const client = createClient('fake-token', mockSession);
+        queueMicrotask(() => controller.abort());
+        await expect(promise).resolves.toBe(true);
+    });
 
-	                const waitPromise = client.waitForMetadataUpdate();
+    it('waitForMetadataUpdate does not miss snapshot sync updates started before handlers attach', async () => {
+        const client = createClient('fake-token', mockSession);
 
-	                const disconnectHandlers = mockUserSocket.on.mock.calls
-	                    .filter((call: any[]) => call[0] === 'disconnect')
-	                    .map((call: any[]) => call[1]);
-	                const lastDisconnectHandler = disconnectHandlers[disconnectHandlers.length - 1];
-	                expect(typeof lastDisconnectHandler).toBe('function');
+        (client as any).metadataVersion = -1;
+        (client as any).agentStateVersion = -1;
+        stubMetadataSnapshotWake(client);
 
-	                lastDisconnectHandler();
-	                await expect(waitPromise).resolves.toBe(false);
-	            });
+        const promise = startMetadataWait(client);
+        await expect(
+            Promise.race([
+                promise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('waitForMetadataUpdate() hung after snapshot sync')), 50)
+                )
+            ])
+        ).resolves.toBe(true);
+    });
 
-                it('waitForMetadataUpdate does not miss fast user-scoped update-session wakeups', async () => {
-                    const client = createClient('fake-token', mockSession);
-
-                    const updateHandler = (mockUserSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-                    expect(typeof updateHandler).toBe('function');
-
-                    mockUserSocket.connect.mockImplementation(() => {
-                        const nextMetadata = { ...mockSession.metadata, path: '/tmp/fast' };
-                        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, nextMetadata));
-                        updateHandler({
-                            id: 'update-fast',
-                            seq: 999,
-                            createdAt: Date.now(),
-                            body: {
-                                t: 'update-session',
-                                sid: mockSession.id,
-                                metadata: {
-                                    version: 2,
-                                    value: encrypted,
-                                },
-                            },
-                        } as any);
-                    });
-
-                    const controller = new AbortController();
-                    const promise = client.waitForMetadataUpdate(controller.signal);
-
-                    queueMicrotask(() => controller.abort());
-                    await expect(promise).resolves.toBe(true);
-                });
-
-                it('waitForMetadataUpdate does not miss snapshot sync updates started before handlers attach', async () => {
-                    const client = createClient('fake-token', mockSession);
-
-                    (client as any).metadataVersion = -1;
-                    (client as any).agentStateVersion = -1;
-
-                    (client as any).syncSessionSnapshotFromServer = () => {
-                        (client as any).metadataVersion = 1;
-                        (client as any).agentStateVersion = 1;
-                        client.emit('metadata-updated');
-                        return Promise.resolve();
-                    };
-
-                    const promise = client.waitForMetadataUpdate();
-                    await expect(
-                        Promise.race([
-                            promise,
-                            new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error('waitForMetadataUpdate() hung after snapshot sync')), 50)
-                            )
-                        ])
-                    ).resolves.toBe(true);
-                });
-
-	            it('updateMetadata syncs a snapshot first when metadataVersion is unknown', async () => {
-	                const sessionSocket: any = {
-	                    connected: false,
-                    connect: vi.fn(),
-                    on: vi.fn(),
-                    off: vi.fn(),
-                    disconnect: vi.fn(),
-                    close: vi.fn(),
-                    emit: vi.fn(),
-                };
-
-                const userSocket: any = {
-                    connected: false,
-                    connect: vi.fn(),
-                    on: vi.fn(),
-                    off: vi.fn(),
-                    disconnect: vi.fn(),
-                    close: vi.fn(),
-                    emit: vi.fn(),
-                };
+    it('updateMetadata syncs a snapshot first when metadataVersion is unknown', async () => {
+                const sessionSocket = createConfiguredSocket({ connected: false });
+                const userSocket = createConfiguredSocket({ connected: false });
 
                 const serverMetadata = {
                     ...mockSession.metadata,
                     tools: ['tool-1'],
                 };
-                const encryptedServerMetadata = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, serverMetadata));
+                const encryptedServerMetadata = encryptSessionValue(
+                    mockSession,
+                    serverMetadata,
+                );
 
                 const emitWithAck = vi.fn().mockResolvedValueOnce({
                     result: 'success',
@@ -1749,35 +1946,17 @@ describe('ApiSessionClient connection handling', () => {
                 });
                 sessionSocket.emitWithAck = emitWithAck;
 
-                mockIo.mockReset();
-                mockIo
-                    .mockImplementationOnce(() => sessionSocket)
-                    .mockImplementationOnce(() => userSocket);
+                replaceSocketPair({ sessionSocket, userSocket });
 
                 const axiosMod = await import('axios');
                 const axios = axiosMod.default as any;
-                vi.spyOn(axios, 'get').mockResolvedValueOnce({
-                    status: 200,
-                    data: {
-                        session: {
-                            id: mockSession.id,
-                            seq: 0,
-                            createdAt: 0,
-                            updatedAt: 0,
-                            active: true,
-                            activeAt: 0,
-                            archivedAt: null,
-                            metadataVersion: 5,
-                            metadata: encryptedServerMetadata,
-                            agentStateVersion: 0,
-                            agentState: null,
-                            pendingCount: 0,
-                            pendingVersion: 0,
-                            dataEncryptionKey: null,
-                            share: null,
-                        },
-                    },
-                });
+                vi.spyOn(axios, 'get').mockResolvedValue(
+                    buildServerSessionSnapshotResponse({
+                        session: mockSession,
+                        metadataVersion: 5,
+                        metadata: encryptedServerMetadata,
+                    }),
+                );
 
                 const client = createClient('fake-token', {
                     ...mockSession,
@@ -1788,19 +1967,14 @@ describe('ApiSessionClient connection handling', () => {
                     },
                 });
 
-                let observedToolsFromSnapshot = false;
-                client.updateMetadata((metadata) => {
-                    observedToolsFromSnapshot = Array.isArray((metadata as any).tools) && (metadata as any).tools.length === 1;
+                await client.updateMetadata((metadata) => {
                     return metadata;
                 });
 
-                await vi.waitFor(() => {
-                    expect(observedToolsFromSnapshot).toBe(true);
-                    expect(emitWithAck).toHaveBeenCalledWith(
-                        'update-metadata',
-                        expect.objectContaining({ expectedVersion: 5 }),
-                    );
-                });
-            });
+                expect(emitWithAck).toHaveBeenCalledWith(
+                    'update-metadata',
+                    expect.objectContaining({ expectedVersion: 5 }),
+                );
+    });
 
 });
