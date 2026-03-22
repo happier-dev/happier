@@ -82,6 +82,7 @@ describe('executeWorkspaceReplicationJob', () => {
       const applyPlan = vi.fn(async () => ({
         appliedFiles: 1,
         appliedBytes: 10,
+        targetPath: '/target-applied',
       }));
       const commitBaseline = vi.fn(async () => undefined);
 
@@ -122,6 +123,9 @@ describe('executeWorkspaceReplicationJob', () => {
       await expect(jobStore.read('job_1')).resolves.toMatchObject({
         jobId: 'job_1',
         completedAtMs: 42,
+        result: {
+          targetPath: '/target-applied',
+        },
         status: {
           status: 'completed',
           checkpoint: 'baseline_committed',

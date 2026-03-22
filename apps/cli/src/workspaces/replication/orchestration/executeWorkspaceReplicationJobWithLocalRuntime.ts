@@ -121,7 +121,7 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
                 jobStore: params.jobStore,
                 jobId: job.jobId,
             });
-            await applyWorkspaceReplicationPlan({
+            const applied = await applyWorkspaceReplicationPlan({
                 activeServerDir: params.activeServerDir,
                 sourceOffer: offer,
                 targetPath: params.apply.targetPath,
@@ -141,6 +141,7 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
             return {
                 appliedFiles: countAppliedFiles(offer),
                 appliedBytes: sumAppliedBytes(offer),
+                targetPath: applied.targetPath,
             };
         },
         commitBaseline: async ({ job, offer }) => {

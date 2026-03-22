@@ -89,6 +89,12 @@ export const WorkspaceReplicationJobRecordSchema = z
     completedAtMs: z.number().int().min(0).optional(),
     failedAtMs: z.number().int().min(0).optional(),
     lastErrorMessage: z.string().min(1).optional(),
+    result: z
+      .object({
+        targetPath: z.string().min(1),
+      })
+      .strip()
+      .optional(),
     status: WorkspaceReplicationJobStatusSchema,
   })
   .strip();

@@ -74,7 +74,7 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
   applyPlan: (input: Readonly<{
     job: WorkspaceReplicationJobRecord;
     offer: WorkspaceReplicationSourceOffer;
-  }>) => Promise<Readonly<{ appliedFiles: number; appliedBytes: number }>>;
+  }>) => Promise<Readonly<{ appliedFiles: number; appliedBytes: number; targetPath: string }>>;
   commitBaseline: (input: Readonly<{
     job: WorkspaceReplicationJobRecord;
     offer: WorkspaceReplicationSourceOffer;
@@ -326,6 +326,9 @@ export async function executeWorkspaceReplicationJob(params: Readonly<{
       }
       return {
         ...record,
+        result: {
+          targetPath: applyResult.targetPath,
+        },
         status: {
           ...record.status,
           status: 'in_progress',

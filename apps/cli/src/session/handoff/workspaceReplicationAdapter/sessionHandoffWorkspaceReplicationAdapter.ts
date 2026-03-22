@@ -345,16 +345,16 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
           updatedAtMs: nowMs,
           failedAtMs: nowMs,
           lastErrorMessage: `Target workspace diverged since last baseline (${plan.blockingTargetDivergencePaths.length} paths)`,
-          status: {
-            status: 'failed',
-            phase: 'planning',
-            checkpoint: 'relationship_resolved',
-            blockingDivergenceCandidates: plan.blockingTargetDivergencePaths,
-          },
-        });
-        throw new Error(`Target workspace diverged since last baseline for ${input.targetPath}`);
-      }
-    }
+	          status: {
+	            status: 'failed',
+	            phase: 'planning',
+	            checkpoint: 'relationship_resolved',
+	            blockingDivergenceCandidates: [...plan.blockingTargetDivergencePaths],
+	          },
+	        });
+	        throw new Error(`Target workspace diverged since last baseline for ${input.targetPath}`);
+	      }
+	    }
   }
 
   if (input.workspaceTransfer?.enabled === true && input.workspaceTransfer.strategy === 'sync_changes' && sourceOffer) {

@@ -141,6 +141,11 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
             });
 
             expect(result.status.status).toBe('completed');
+            expect(result).toMatchObject({
+                result: {
+                    targetPath: targetWorkspaceRoot,
+                },
+            });
             expect(result.status.progressCounters).toMatchObject({
                 plannedFiles: 1,
                 plannedBytes: Buffer.byteLength(fileContents),
