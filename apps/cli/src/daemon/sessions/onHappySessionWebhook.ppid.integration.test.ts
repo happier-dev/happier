@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import type { TrackedSession } from '@/daemon/types';
-
-import { spawn } from 'node:child_process';
+import { spawnInlineNodeParentWithChild, waitForProcessExit } from '@/testkit/process/spawn';
 
 import { createOnHappySessionWebhook } from './onHappySessionWebhook';
 
@@ -29,31 +28,11 @@ describe('createOnHappySessionWebhook (PPID correlation)', () => {
       return;
     }
 
-    const wrapperScript = `
-        const { spawn } = require('node:child_process');
-        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-        console.log(String(child.pid));
-        setInterval(() => {}, 1000);
-      `;
-
-    const wrapper = spawn(process.execPath, ['-e', wrapperScript], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const { parent: wrapper, childPid } = await spawnInlineNodeParentWithChild();
     const wrapperPid = wrapper.pid;
     if (typeof wrapperPid !== 'number') {
       throw new Error('wrapper did not expose a pid');
     }
-
-    const childPid: number = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timed out waiting for child pid')), 2_000);
-      wrapper.stdout?.once('data', (data) => {
-        clearTimeout(timeout);
-        const pid = Number.parseInt(String(data).trim(), 10);
-        if (!Number.isInteger(pid) || pid <= 0) {
-          reject(new Error(`invalid child pid output: ${String(data)}`));
-          return;
-        }
-        resolve(pid);
-      });
-    });
 
     try {
       const pidToTrackedSession = new Map<number, TrackedSession>([
@@ -81,6 +60,8 @@ describe('createOnHappySessionWebhook (PPID correlation)', () => {
       try {
         process.kill(wrapperPid, 'SIGKILL');
       } catch {}
+      await waitForProcessExit(childPid, { timeoutMs: 2_000 });
+      await waitForProcessExit(wrapperPid, { timeoutMs: 2_000 });
     }
   });
 });
