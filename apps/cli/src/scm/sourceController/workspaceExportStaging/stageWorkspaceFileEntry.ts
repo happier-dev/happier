@@ -5,7 +5,11 @@ import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile
 import { resolveWorkspaceRelativePath } from '../workspaceExportPackaging/resolveWorkspaceRelativePath';
 
 import { type WorkspaceStagingRoot } from './createWorkspaceStagingRoot';
-import { stageWorkspaceFileBlob, type StagedWorkspaceFileBlob } from './stageWorkspaceFileBlob';
+import {
+    stageWorkspaceFileBlob,
+    stageWorkspaceFileBlobFromFile,
+    type StagedWorkspaceFileBlob,
+} from './stageWorkspaceFileBlob';
 
 export type StagedWorkspaceFileEntry = Readonly<{
     relativePath: string;
@@ -27,7 +31,44 @@ export async function stageWorkspaceFileEntry(params: Readonly<{
         digest: params.digest,
         content: params.content,
     });
-    const stagedBlobDigest = await hashWorkspaceFile({ filePath: stagedBlob.filePath });
+    return await materializeStagedWorkspaceFileEntry({
+        stagingRoot: params.stagingRoot,
+        relativePath: params.relativePath,
+        digest: params.digest,
+        executable: params.executable,
+        stagedBlob,
+    });
+}
+
+export async function stageWorkspaceFileEntryFromFile(params: Readonly<{
+    stagingRoot: WorkspaceStagingRoot;
+    relativePath: string;
+    digest: string;
+    sourceFilePath: string;
+    executable: boolean;
+}>): Promise<StagedWorkspaceFileEntry> {
+    const stagedBlob = await stageWorkspaceFileBlobFromFile({
+        stagingRoot: params.stagingRoot,
+        digest: params.digest,
+        sourceFilePath: params.sourceFilePath,
+    });
+    return await materializeStagedWorkspaceFileEntry({
+        stagingRoot: params.stagingRoot,
+        relativePath: params.relativePath,
+        digest: params.digest,
+        executable: params.executable,
+        stagedBlob,
+    });
+}
+
+async function materializeStagedWorkspaceFileEntry(params: Readonly<{
+    stagingRoot: WorkspaceStagingRoot;
+    relativePath: string;
+    digest: string;
+    executable: boolean;
+    stagedBlob: StagedWorkspaceFileBlob;
+}>): Promise<StagedWorkspaceFileEntry> {
+    const stagedBlobDigest = await hashWorkspaceFile({ filePath: params.stagedBlob.filePath });
     if (stagedBlobDigest !== params.digest) {
         throw new Error(`Staged workspace file blob digest mismatch for ${params.relativePath}`);
     }
@@ -52,7 +93,7 @@ export async function stageWorkspaceFileEntry(params: Readonly<{
     }
 
     await mkdir(dirname(filePath), { recursive: true });
-    await copyFile(stagedBlob.filePath, filePath);
+    await copyFile(params.stagedBlob.filePath, filePath);
     await chmod(filePath, params.executable ? 0o755 : 0o644);
 
     return {
@@ -60,6 +101,6 @@ export async function stageWorkspaceFileEntry(params: Readonly<{
         filePath,
         digest: params.digest,
         executable: params.executable,
-        blob: stagedBlob,
+        blob: params.stagedBlob,
     };
 }

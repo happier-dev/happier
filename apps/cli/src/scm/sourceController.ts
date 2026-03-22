@@ -5,8 +5,10 @@ export {
 } from './sourceController/workspaceCheckoutOperations';
 export {
     assertPortableWorkspaceTransferEntriesWithSourceController,
+    buildWorkspaceExportArtifactsWithBlobProviderFromSourceController,
     buildWorkspaceExportArtifactsWithSourceController,
     classifyPortableWorkspaceTransferEntryWithSourceController,
+    resolveWorkspaceReplicationSourceInputsWithSourceController,
     resolveWorkspaceTransferEntriesWithSourceController,
     resolveWorkspaceTransferMetadataWithSourceController,
     resolveWorkspaceTransferWithSourceController,
@@ -18,6 +20,14 @@ export {
 export {
     reconcilePostMaterializationWithSourceController,
 } from './sourceController/workspacePostMaterialization';
+export {
+    applyWorkspaceSyncArtifacts,
+} from './sourceController/applyWorkspaceSyncArtifacts';
+export {
+    createWorkspaceSyncArtifacts,
+    createWorkspaceSyncArtifactsFromManifest,
+    type WorkspaceSyncArtifacts,
+} from './sourceController/workspaceSyncArtifacts';
 export {
     assertPortableWorkspaceEntriesWithSourceController,
     classifyPortableWorkspacePathWithSourceController,

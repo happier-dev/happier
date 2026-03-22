@@ -13,10 +13,17 @@ import {
     createScmSourceControllerWorkspaceExportArtifacts,
     type ScmSourceControllerWorkspaceExportArtifacts,
 } from './workspaceExportArtifacts';
+import type { WorkspaceExportBlobProvider } from './workspaceExportStaging/stageWorkspaceEntries';
+import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from './workspaceExportPackaging/buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries';
 import {
     isIgnorableWorkspaceExportAccessError,
     listWorkspaceExportFallbackEntries,
 } from './workspaceExportFallbackEntries';
+import {
+    DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+    inferWorkspaceManifestSafeFilterPolicyFromEntries,
+    type WorkspaceManifestSafeFilterPolicy,
+} from './workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import {
     createScmSourceControllerWorkspaceTransferEntry,
     createScmSourceControllerWorkspaceTransferRequest,
@@ -27,6 +34,13 @@ import {
     type ScmSourceControllerWorkspaceTransferMetadata,
     type ScmSourceControllerWorkspaceTransferResult,
 } from './workspaceTransfer';
+
+export type ScmSourceControllerWorkspaceReplicationSourceInputs = Readonly<{
+    entries: readonly ScmSourceControllerWorkspaceTransferEntry[];
+    sourceControllerMetadata: ScmSourceControllerWorkspaceTransferMetadata | null;
+    safeFilterPolicy: WorkspaceManifestSafeFilterPolicy;
+    isNestedRepoSourcePath: boolean;
+}>;
 
 export function buildNonPortableWorkspacePathError(relativePath: string): Error {
     return new Error(`Workspace transfer contains non-portable workspace path: ${relativePath}`);
@@ -196,32 +210,80 @@ export async function buildWorkspaceExportArtifactsWithSourceController(input: R
         return resolved.workspaceExportArtifacts;
     }
 
-    if (resolved.transfer && !(resolved.isNestedRepoSourcePath && resolved.transfer.entries.length === 0)) {
-        const transferEntries = resolved.transfer.entries.map((entry) => createScmSourceControllerWorkspaceTransferEntry(entry));
-        const sourceControllerMetadata = resolved.transfer.metadata ?? null;
-        await assertPortableWorkspaceTransferEntriesWithSourceController({
-            entries: transferEntries,
-            registry: input.registry,
-        });
-        const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
-            entries: transferEntries,
-            shouldIgnoreAccessError: isIgnorableWorkspaceExportAccessError,
-        });
-        return createScmSourceControllerWorkspaceExportArtifacts({
-            ...workspaceExportArtifacts,
-            sourceControllerMetadata,
-        });
-    }
-
-    const fallbackEntries = await listWorkspaceExportFallbackEntries({
-        root: input.sourcePath,
-        readDirectory: async (directory) => await readdir(directory, { withFileTypes: true }),
-    });
+    const sourceInputs = await resolveWorkspaceReplicationSourceInputsWithSourceController(input);
     const workspaceExportArtifacts = await buildScmSourceControllerWorkspaceExportArtifactsFromTransferEntries({
-        entries: fallbackEntries,
+        entries: sourceInputs.entries,
         shouldIgnoreAccessError: isIgnorableWorkspaceExportAccessError,
     });
     return createScmSourceControllerWorkspaceExportArtifacts({
         ...workspaceExportArtifacts,
+        sourceControllerMetadata: sourceInputs.sourceControllerMetadata,
     });
+}
+
+export async function buildWorkspaceExportArtifactsWithBlobProviderFromSourceController(input: Readonly<{
+    activeServerDir: string;
+    sourcePath: string;
+    workspaceTransfer: ScmSourceControllerWorkspaceTransferRequestInput;
+    registry?: ScmBackendRegistry;
+}>): Promise<Readonly<{
+    workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
+    blobProvider?: WorkspaceExportBlobProvider;
+}>> {
+    const resolved = await resolveWorkspaceTransferStateWithSourceController(input);
+
+    if (resolved.workspaceExportArtifacts) {
+        return {
+            workspaceExportArtifacts: resolved.workspaceExportArtifacts,
+        };
+    }
+
+    const sourceInputs = await resolveWorkspaceReplicationSourceInputsWithSourceController(input);
+    const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries({
+        entries: sourceInputs.entries,
+        shouldIgnoreAccessError: isIgnorableWorkspaceExportAccessError,
+    });
+    return {
+        workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
+            manifest: workspaceExportArtifacts.manifest,
+            blobContentsByDigest: new Map(),
+            sourceControllerMetadata: sourceInputs.sourceControllerMetadata,
+        }),
+        blobProvider: workspaceExportArtifacts.blobProvider,
+    };
+}
+
+export async function resolveWorkspaceReplicationSourceInputsWithSourceController(input: Readonly<{
+    sourcePath: string;
+    workspaceTransfer: ScmSourceControllerWorkspaceTransferRequestInput;
+    registry?: ScmBackendRegistry;
+}>): Promise<ScmSourceControllerWorkspaceReplicationSourceInputs> {
+    const resolved = await resolveWorkspaceTransferStateWithSourceController(input);
+
+    if (resolved.transfer && !(resolved.isNestedRepoSourcePath && resolved.transfer.entries.length === 0)) {
+        const entries = resolved.transfer.entries.map((entry) => createScmSourceControllerWorkspaceTransferEntry(entry));
+        await assertPortableWorkspaceTransferEntriesWithSourceController({
+            entries,
+            registry: input.registry,
+        });
+        return {
+            entries,
+            sourceControllerMetadata: resolved.transfer.metadata ?? null,
+            safeFilterPolicy: inferWorkspaceManifestSafeFilterPolicyFromEntries(entries, input.registry),
+            isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
+        };
+    }
+
+    const entries = await listWorkspaceExportFallbackEntries({
+        root: input.sourcePath,
+        readDirectory: async (directory) => await readdir(directory, { withFileTypes: true }),
+    });
+    return {
+        entries,
+        sourceControllerMetadata: null,
+        safeFilterPolicy: entries.length > 0
+            ? inferWorkspaceManifestSafeFilterPolicyFromEntries(entries, input.registry)
+            : DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+        isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
+    };
 }

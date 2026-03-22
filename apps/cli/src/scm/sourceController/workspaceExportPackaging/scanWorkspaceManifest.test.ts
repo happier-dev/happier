@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createScmBackendRegistry } from '@/scm/registry';
 import type { ScmBackend } from '@/scm/types';
 import type { WorkspaceManifestEntry } from '@/scm/sourceController/workspaceExportPackaging/buildWorkspaceManifestEntry';
-import { scanWorkspaceManifest } from './scanWorkspaceManifest';
+import { scanWorkspaceManifest, type ScannedWorkspaceFile } from './scanWorkspaceManifest';
 
 const tempRoots: string[] = [];
 
@@ -211,6 +211,80 @@ describe('scanWorkspaceManifest', () => {
         expect(symlinkEntry.target).toBe('../target.txt');
         await expect(readlink(join(root, 'links', 'target-link'))).resolves.toBe('../target.txt');
         await expect(readFile(join(root, 'target.txt'), 'utf8')).resolves.toBe('target\n');
+    });
+
+    it('reports hashed file metadata through the optional file-scan hook', async () => {
+        const root = await makeTempDir('workspace-manifest-hook-');
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'README.md'), 'hello\n');
+        await writeFile(join(root, 'src', 'index.ts'), 'export const value = 1;\n');
+
+        const scannedFiles: ScannedWorkspaceFile[] = [];
+
+        await scanWorkspaceManifest({
+            workspaceRoot: root,
+            onFileScanned: (file) => {
+                scannedFiles.push(file);
+            },
+        });
+
+        expect(scannedFiles).toHaveLength(2);
+        expect(scannedFiles).toMatchObject([
+            {
+                relativePath: 'README.md',
+                filePath: join(root, 'README.md'),
+                digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+                sizeBytes: 6,
+                executable: false,
+            },
+            {
+                relativePath: 'src/index.ts',
+                filePath: join(root, 'src', 'index.ts'),
+                digest: 'sha256:5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29',
+                sizeBytes: 24,
+                executable: false,
+            },
+        ]);
+        for (const scannedFile of scannedFiles) {
+            expect(scannedFile.mtimeMs).toEqual(expect.any(Number));
+            if (scannedFile.inode !== undefined) {
+                expect(scannedFile.inode).toEqual(expect.any(Number));
+            }
+            if (scannedFile.device !== undefined) {
+                expect(scannedFile.device).toEqual(expect.any(Number));
+            }
+        }
+    });
+
+    it('uses a cached digest from the optional digest resolver before attempting to read file contents', async () => {
+        const root = await makeTempDir('workspace-manifest-cache-hit-');
+        const filePath = join(root, 'README.md');
+        await writeFile(filePath, 'hello\n');
+        await chmod(filePath, 0o000);
+
+        try {
+            await expect(scanWorkspaceManifest({
+                workspaceRoot: root,
+                resolveCachedFileDigest: ({ relativePath, sizeBytes, executable }) => {
+                    expect(relativePath).toBe('README.md');
+                    expect(sizeBytes).toBe(6);
+                    expect(executable).toBe(false);
+                    return 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03';
+                },
+            })).resolves.toEqual({
+                entries: [
+                    {
+                        kind: 'file',
+                        relativePath: 'README.md',
+                        digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+                        executable: false,
+                        sizeBytes: 6,
+                    },
+                ],
+            });
+        } finally {
+            await chmod(filePath, 0o644);
+        }
     });
 
     it('excludes git admin paths from replication manifests by default', async () => {

@@ -17,10 +17,35 @@ export type WorkspaceManifest = Readonly<{
     entries: readonly WorkspaceManifestEntry[];
 }>;
 
+export type ScannedWorkspaceFile = Readonly<{
+    relativePath: string;
+    filePath: string;
+    digest: string;
+    sizeBytes: number;
+    executable: boolean;
+    mtimeMs: number;
+    inode?: number;
+    device?: number;
+}>;
+
+export type WorkspaceManifestScannedFileMetadata = Readonly<{
+    relativePath: string;
+    filePath: string;
+    sizeBytes: number;
+    executable: boolean;
+    mtimeMs: number;
+    inode?: number;
+    device?: number;
+}>;
+
 export async function scanWorkspaceManifest(params: Readonly<{
     workspaceRoot: string;
     safeFilterPolicy?: WorkspaceManifestSafeFilterPolicy;
     scmRegistry?: ScmBackendRegistry;
+    resolveCachedFileDigest?: (
+        file: WorkspaceManifestScannedFileMetadata,
+    ) => string | null | undefined | Promise<string | null | undefined>;
+    onFileScanned?: (file: ScannedWorkspaceFile) => void | Promise<void>;
 }>): Promise<WorkspaceManifest> {
     const workspaceRoot = resolve(params.workspaceRoot);
     const safeFilterPolicy = resolveWorkspaceManifestSafeFilterPolicy(params.safeFilterPolicy);
@@ -91,20 +116,40 @@ export async function scanWorkspaceManifest(params: Readonly<{
             }
 
             if (stats.isFile()) {
+                const scannedFileMetadata: WorkspaceManifestScannedFileMetadata = {
+                    relativePath: resolvedPath.relativePath,
+                    filePath: candidatePath,
+                    sizeBytes: stats.size,
+                    executable: (stats.mode & 0o111) !== 0,
+                    mtimeMs: Math.max(0, Math.trunc(stats.mtimeMs)),
+                    ...(typeof stats.ino === 'number' && Number.isInteger(stats.ino) && stats.ino >= 0
+                        ? { inode: stats.ino }
+                        : {}),
+                    ...(typeof stats.dev === 'number' && Number.isInteger(stats.dev) && stats.dev >= 0
+                        ? { device: stats.dev }
+                        : {}),
+                };
                 let fileDigest: string;
                 try {
-                    fileDigest = await hashWorkspaceFile({ filePath: candidatePath });
+                    const cachedDigest = await params.resolveCachedFileDigest?.(scannedFileMetadata);
+                    fileDigest = cachedDigest ?? await hashWorkspaceFile({ filePath: candidatePath });
                 } catch (error) {
                     if (isIgnorableWorkspaceExportAccessError(error)) {
                         continue;
                     }
                     throw error;
                 }
-                entries.push(buildWorkspaceManifestEntry({
+                const manifestEntry = buildWorkspaceManifestEntry({
                     relativePath: resolvedPath.relativePath,
                     stats,
                     fileDigest,
-                }));
+                }) as Extract<WorkspaceManifestEntry, { kind: 'file' }>;
+                await params.onFileScanned?.({
+                    ...scannedFileMetadata,
+                    relativePath: manifestEntry.relativePath,
+                    digest: manifestEntry.digest,
+                });
+                entries.push(manifestEntry);
             }
         }
     }

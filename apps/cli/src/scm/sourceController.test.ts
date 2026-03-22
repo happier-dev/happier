@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmBackend } from './types';
@@ -12,6 +16,7 @@ import {
     materializeWorkspaceCheckoutWithSourceController,
     realizeWorkspaceCheckoutWithSourceController,
     reconcilePostMaterializationWithSourceController,
+    resolveWorkspaceReplicationSourceInputsWithSourceController,
     resolveWorkspaceTransferWithSourceController,
     resolveWorkspaceTransferMetadataWithSourceController,
     resolveWorkspaceTransferEntriesWithSourceController,
@@ -412,6 +417,7 @@ describe('scm source controller', () => {
                 sourceController: {
                     inspectWorkspaceLocation: async () => null,
                     resolveWorkspaceTransfer,
+                    isAdministrativeWorkspacePath: ({ relativePath }) => relativePath.startsWith('.git/'),
                 },
             }),
         ]);
@@ -435,6 +441,90 @@ describe('scm source controller', () => {
         });
 
         expect(resolveWorkspaceTransfer).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves replication-friendly source inputs through the shared source-controller seam', async () => {
+        const resolveWorkspaceTransfer = vi.fn(async () => ({
+            entries: [{
+                relativePath: '.git/HEAD',
+                sourcePath: '/repo/.git/HEAD',
+            }],
+            metadata: {
+                branchName: 'main',
+            },
+        }));
+        const registry = createScmBackendRegistry([
+            createTestBackend({
+                id: 'git',
+                detectionRootPath: '/repo',
+                sourceController: {
+                    inspectWorkspaceLocation: async () => null,
+                    resolveWorkspaceTransfer,
+                    isAdministrativeWorkspacePath: ({ relativePath }) => relativePath.startsWith('.git/'),
+                },
+            }),
+        ]);
+
+        await expect(resolveWorkspaceReplicationSourceInputsWithSourceController({
+            sourcePath: '/repo/packages/app',
+            workspaceTransfer: {
+                strategy: 'sync_changes',
+                includeIgnoredMode: 'include_selected',
+                ignoredIncludeGlobs: ['dist/**'],
+            },
+            registry,
+        })).resolves.toEqual({
+            entries: [{
+                relativePath: '.git/HEAD',
+                sourcePath: '/repo/.git/HEAD',
+            }],
+            sourceControllerMetadata: {
+                branchName: 'main',
+            },
+            safeFilterPolicy: {
+                excludeAdministrativePaths: false,
+            },
+            isNestedRepoSourcePath: true,
+        });
+    });
+
+    it('falls back to filesystem entries when no SCM transfer owner resolves', async () => {
+        const sourcePath = await mkdtemp(join(tmpdir(), 'happier-source-controller-fallback-'));
+        const nestedDir = join(sourcePath, 'nested');
+
+        try {
+            await mkdir(nestedDir, { recursive: true });
+            await writeFile(join(sourcePath, 'README.md'), 'hello\n', 'utf8');
+            await writeFile(join(nestedDir, 'copy.md'), 'hello\n', 'utf8');
+
+            await expect(resolveWorkspaceReplicationSourceInputsWithSourceController({
+                sourcePath,
+                workspaceTransfer: {
+                    strategy: 'transfer_snapshot',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                },
+                registry: createScmBackendRegistry([]),
+            })).resolves.toEqual({
+                entries: [
+                    {
+                        relativePath: 'README.md',
+                        sourcePath: join(sourcePath, 'README.md'),
+                    },
+                    {
+                        relativePath: 'nested/copy.md',
+                        sourcePath: join(sourcePath, 'nested/copy.md'),
+                    },
+                ],
+                sourceControllerMetadata: null,
+                safeFilterPolicy: {
+                    excludeAdministrativePaths: true,
+                },
+                isNestedRepoSourcePath: false,
+            });
+        } finally {
+            await rm(sourcePath, { recursive: true, force: true });
+        }
     });
 
     it('passes a backend-agnostic checkout materialization request through the shared source-controller hook', async () => {

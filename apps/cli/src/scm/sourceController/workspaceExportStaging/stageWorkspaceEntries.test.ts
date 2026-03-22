@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { createWorkspaceStagingRoot } from './createWorkspaceStagingRoot';
@@ -58,6 +58,10 @@ async function createFileEntryFixture(): Promise<Readonly<{
         content,
     };
 }
+
+type WorkspaceExportBlobProvider = Readonly<{
+    getBlobFilePath: (digest: string) => string | null | undefined;
+}>;
 
 describe('stageWorkspaceEntries', () => {
     afterEach(async () => {
@@ -134,5 +138,35 @@ describe('stageWorkspaceEntries', () => {
 
         expect(result.verification.isVerified).toBe(false);
         expect(result.verification.manifestComparison.changed.map((entry: { next: { relativePath: string } }) => entry.next.relativePath)).toEqual(['README.md']);
+    });
+
+    it('consults a blob provider when staging file blobs from disk-backed sources', async () => {
+        const stagingRoot = await createWorkspaceStagingRoot({
+            parentDirectory: await makeTempDir('workspace-stage-entries-provider-'),
+            stagingId: 'stage_entries_provider',
+        });
+        const fixture = await createFileEntryFixture();
+        const sourceDirectory = await makeTempDir('workspace-stage-entries-source-');
+        const sourceFilePath = join(sourceDirectory, 'README.md');
+        await writeFile(sourceFilePath, fixture.content);
+
+        const blobProvider = {
+            getBlobFilePath: vi.fn((digest: string) => (digest === fixture.digest ? sourceFilePath : null)),
+        } satisfies WorkspaceExportBlobProvider;
+
+        const result = await stageWorkspaceEntries({
+            stagingRoot,
+            expectedManifest: fixture.manifest,
+            blobContentsByDigest: new Map([[fixture.digest, fixture.content]]),
+            blobProvider,
+        } satisfies Parameters<typeof stageWorkspaceEntries>[0] & Readonly<{
+            blobProvider: WorkspaceExportBlobProvider;
+        }>);
+
+        expect(blobProvider.getBlobFilePath).toHaveBeenCalledTimes(1);
+        expect(blobProvider.getBlobFilePath).toHaveBeenCalledWith(fixture.digest);
+        expect(result.stagedBlobs.map((entry: StagedWorkspaceFileBlob) => entry.digest)).toEqual([fixture.digest]);
+        await expect(readFile(join(stagingRoot.workspaceDirectory, 'README.md'))).resolves.toEqual(fixture.content);
+        expect(result.verification.isVerified).toBe(true);
     });
 });

@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -65,5 +65,34 @@ describe('stageWorkspaceFileBlob', () => {
             content: Buffer.from('staged blob payload\n', 'utf8'),
         })).rejects.toThrow();
         await expect(access(join(stagingRoot.blobsDirectory, 'sha256'))).rejects.toThrow();
+    });
+
+    it('stages blob bytes from a source file without requiring in-memory blob contents', async () => {
+        const stagingRoot = await createWorkspaceStagingRoot({
+            parentDirectory: await makeTempDir('workspace-staging-blob-file-'),
+            stagingId: 'stage_blob_file',
+        });
+        const sourceDirectory = await makeTempDir('workspace-staging-blob-source-');
+        const sourceFilePath = join(sourceDirectory, 'blob.txt');
+        const content = Buffer.from('file-backed blob payload\n', 'utf8');
+        await writeFile(sourceFilePath, content);
+
+        const stageWorkspaceFileBlobModule = await import('./stageWorkspaceFileBlob') as Readonly<{
+            stageWorkspaceFileBlobFromFile?: (params: Readonly<{
+                stagingRoot: typeof stagingRoot;
+                digest: string;
+                sourceFilePath: string;
+            }>) => Promise<Readonly<{ digest: string; filePath: string }>>;
+        }>;
+
+        expect(stageWorkspaceFileBlobModule.stageWorkspaceFileBlobFromFile).toBeTypeOf('function');
+        const stagedBlob = await stageWorkspaceFileBlobModule.stageWorkspaceFileBlobFromFile!({
+            stagingRoot,
+            digest: blobDigest,
+            sourceFilePath,
+        });
+
+        expect(stagedBlob.digest).toBe(blobDigest);
+        await expect(readFile(stagedBlob.filePath)).resolves.toEqual(content);
     });
 });

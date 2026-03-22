@@ -9,7 +9,10 @@ import {
     type WorkspaceStagingRoot,
 } from './workspaceExportStaging/createWorkspaceStagingRoot';
 import { promoteStagedWorkspace } from './workspaceExportStaging/promoteStagedWorkspace';
-import { stageWorkspaceEntries } from './workspaceExportStaging/stageWorkspaceEntries';
+import {
+    stageWorkspaceEntries,
+    type WorkspaceExportBlobProvider,
+} from './workspaceExportStaging/stageWorkspaceEntries';
 import {
     assertWorkspaceMaterializationSymlinkTarget,
     resolveContainedWorkspaceMaterializationPath,
@@ -87,9 +90,11 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
     workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
     targetPath: string;
     conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
+    blobProvider?: WorkspaceExportBlobProvider;
     registry?: ScmBackendRegistry;
     sourcePath?: string;
     naming: WorkspaceExportMaterializationNaming;
+    assertCanContinue?: () => Promise<void>;
 }>): Promise<Readonly<{ targetPath: string }>> {
     const targetPath = await resolveWorkspaceExportMaterializationTargetPath({
         targetPath: params.targetPath,
@@ -106,6 +111,8 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
         stagingId: `${params.naming.stagingIdPrefix}-${randomUUID()}`,
     });
 
+    let previousTargetPath: string | undefined;
+    let didPromoteTarget = false;
     try {
         for (const entry of params.workspaceExportArtifacts.manifest.entries) {
             const materializedEntryPath = resolveContainedWorkspaceMaterializationPath({
@@ -125,18 +132,24 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
             stagingRoot,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             blobContentsByDigest: params.workspaceExportArtifacts.blobContentsByDigest,
+            blobProvider: params.blobProvider,
         });
         if (!staged.verification.isVerified) {
             throw new Error(`Workspace transfer integrity check failed for ${targetPath}`);
         }
 
-        const previousTargetPath = await promoteMaterializedWorkspace({
+        await params.assertCanContinue?.();
+
+        previousTargetPath = await promoteMaterializedWorkspace({
             stagingRoot,
             targetWorkspaceDirectory: targetPath,
             conflictPolicy: params.conflictPolicy,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             naming: params.naming,
         });
+        didPromoteTarget = true;
+
+        await params.assertCanContinue?.();
         await reconcilePostMaterializationWithSourceController({
             targetPath,
             previousTargetPath,
@@ -144,10 +157,21 @@ export async function materializeWorkspaceExportArtifactsWithSourceController(pa
             sourceControllerMetadata: params.workspaceExportArtifacts.sourceControllerMetadata,
             registry: params.registry,
         });
+        await params.assertCanContinue?.();
         if (previousTargetPath) {
             await rm(previousTargetPath, { recursive: true, force: true });
         }
     } catch (error) {
+        if (didPromoteTarget) {
+            if (previousTargetPath) {
+                await rm(targetPath, { recursive: true, force: true }).catch(() => undefined);
+                if (await pathExists(previousTargetPath)) {
+                    await rename(previousTargetPath, targetPath).catch(() => undefined);
+                }
+            } else {
+                await rm(targetPath, { recursive: true, force: true }).catch(() => undefined);
+            }
+        }
         await cleanupWorkspaceStaging({ rootDirectory: stagingRoot.rootDirectory }).catch(() => undefined);
         throw error;
     }

@@ -14,7 +14,7 @@ export type ScmSourceControllerWorkspaceExportTransferEntry = WorkspaceExportTra
 
 export type ScmSourceControllerWorkspaceExportArtifactsWirePayload = Readonly<{
     manifest: WorkspaceExportArtifacts['manifest'];
-    blobs: readonly Readonly<{
+    blobs?: readonly Readonly<{
         digest: string;
         contentBase64: string;
     }>[];
@@ -52,12 +52,13 @@ export function createScmSourceControllerWorkspaceExportArtifacts(input: Readonl
 export function createScmSourceControllerWorkspaceExportArtifactsWirePayload(
     workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts,
 ): ScmSourceControllerWorkspaceExportArtifactsWirePayload {
+    const blobs = [...workspaceExportArtifacts.blobContentsByDigest.entries()].map(([digest, content]) => ({
+        digest,
+        contentBase64: Buffer.from(content).toString('base64'),
+    }));
     return {
         manifest: cloneScmSourceControllerWorkspaceExportManifest(workspaceExportArtifacts.manifest),
-        blobs: [...workspaceExportArtifacts.blobContentsByDigest.entries()].map(([digest, content]) => ({
-            digest,
-            contentBase64: Buffer.from(content).toString('base64'),
-        })),
+        ...(blobs.length > 0 ? { blobs } : {}),
         ...(workspaceExportArtifacts.sourceControllerMetadata
             ? { sourceControllerMetadata: workspaceExportArtifacts.sourceControllerMetadata }
             : {}),
@@ -70,7 +71,7 @@ export function parseScmSourceControllerWorkspaceExportArtifactsWirePayload(
     return createScmSourceControllerWorkspaceExportArtifacts({
         manifest: wirePayload.manifest,
         blobContentsByDigest: new Map(
-            wirePayload.blobs.map((blob) => [blob.digest, Buffer.from(blob.contentBase64, 'base64')]),
+            (wirePayload.blobs ?? []).map((blob) => [blob.digest, Buffer.from(blob.contentBase64, 'base64')]),
         ),
         sourceControllerMetadata: wirePayload.sourceControllerMetadata ?? null,
     });
