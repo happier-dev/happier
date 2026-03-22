@@ -13,6 +13,9 @@ export const KNOWN_CODEX_ROLLOUT_TOOL_NAMES = [
     'shell_command',
     // function_call
     'exec_command',
+    'spawn_agent',
+    'wait_agent',
+    'close_agent',
     // function_call (legacy context7 aliases)
     'context7__get-library-docs',
     'context7__resolve-library-id',
@@ -48,6 +51,12 @@ export function canonicalizeCodexRolloutToolName(name: string): {
             return { canonicalToolName: 'mcp__context7__get-library-docs', visibility: 'default' };
         case 'context7__resolve-library-id':
             return { canonicalToolName: 'mcp__context7__resolve-library-id', visibility: 'default' };
+
+        // Collaboration plumbing is normalized from rollout event_msg actions into the generic SubAgent path.
+        case 'spawn_agent':
+        case 'wait_agent':
+        case 'close_agent':
+            return { canonicalToolName: name, visibility: 'ignore' };
 
         // Agent-internal tools (not very useful as primary UI cards in local-control mirroring).
         case 'update_plan':

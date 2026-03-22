@@ -1,30 +1,42 @@
-import { stat } from 'node:fs/promises';
-
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
-
-import { decodeCodexDirectForwardCursor, encodeCodexDirectForwardCursor } from './codexDirectForwardCursor';
-import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
-import { mapCodexRolloutLineToDirectMessages } from './mapCodexRolloutLineToDirectMessages';
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
+import { decodeCodexDirectForwardCursor, encodeCodexDirectForwardCursor } from './codexDirectForwardCursor';
+import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
+import { materializeCodexDirectTranscriptItems } from './materializeCodexDirectTranscriptItems';
 import {
   mapCodexDirectSessionAppServerPreviewToMessage,
   resolveCodexDirectSessionAppServerMetadata,
 } from './resolveCodexDirectSessionAppServerMetadata';
 
-function selectBestCodexHomeWithFiles(homes: readonly string[], perHomeFiles: readonly CodexRolloutFile[][]): { codexHome: string; files: CodexRolloutFile[] } | null {
-  let best: { codexHome: string; files: CodexRolloutFile[]; latestMtimeMs: number } | null = null;
-  for (let i = 0; i < homes.length; i++) {
-    const home = homes[i]!;
-    const files = perHomeFiles[i] ?? [];
+function selectBestCodexHomeWithFiles(homes: readonly string[], perHomeFiles: readonly (readonly unknown[])[]): string | null {
+  let bestHome: string | null = null;
+  let bestLatestMtimeMs = -1;
+  for (let index = 0; index < homes.length; index += 1) {
+    const home = homes[index]!;
+    const files = perHomeFiles[index] ?? [];
     if (files.length === 0) continue;
-    const latestMtimeMs = Math.max(...files.map((f) => f.mtimeMs));
-    if (!best || latestMtimeMs > best.latestMtimeMs) {
-      best = { codexHome: home, files, latestMtimeMs };
+    const latestMtimeMs = Math.max(...(files as { mtimeMs: number }[]).map((file) => file.mtimeMs));
+    if (latestMtimeMs > bestLatestMtimeMs) {
+      bestLatestMtimeMs = latestMtimeMs;
+      bestHome = home;
     }
   }
-  return best ? { codexHome: best.codexHome, files: best.files } : null;
+  return bestHome;
+}
+
+function buildMergedTailCursor(items: readonly DirectTranscriptRawMessageV1[]): string {
+  const last = items.at(-1);
+  return encodeCodexDirectForwardCursor({
+    v: 3,
+    kind: 'codexForwardMerged',
+    lastCreatedAtMs: last?.createdAtMs ?? 0,
+    lastId: last?.id ?? null,
+  });
+}
+
+function measureDirectTranscriptItemBytes(item: DirectTranscriptRawMessageV1): number {
+  return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }
 
 export async function readAfterCodexTranscript(params: Readonly<{
@@ -44,9 +56,8 @@ export async function readAfterCodexTranscript(params: Readonly<{
   });
 
   const perHomeFiles = await Promise.all(homes.map((home) => collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId })));
-  const best = selectBestCodexHomeWithFiles(homes, perHomeFiles);
-  const files = best?.files ?? [];
-  const appServerMetadata = files.length === 0 || params.cursor === 'tail'
+  const bestHome = selectBestCodexHomeWithFiles(homes, perHomeFiles);
+  const appServerMetadata = bestHome === null || params.cursor === 'tail'
     ? await resolveCodexDirectSessionAppServerMetadata({
       source: params.source,
       activeServerDir: params.activeServerDir,
@@ -54,7 +65,8 @@ export async function readAfterCodexTranscript(params: Readonly<{
       env,
     })
     : null;
-  if (files.length === 0) {
+
+  if (bestHome === null) {
     if (params.cursor === 'tail' && appServerMetadata) {
       return {
         items: [],
@@ -89,107 +101,55 @@ export async function readAfterCodexTranscript(params: Readonly<{
     return { items: [], nextCursor: null, truncated: false };
   }
 
-  const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
-  const maxItems = Math.max(1, Math.trunc(params.maxItems));
-
-  const lastFile = files[files.length - 1]!;
-  const lastFileSize = await stat(lastFile.filePath).then((s) => s.size).catch(() => 0);
+  const allItems = await materializeCodexDirectTranscriptItems({
+    codexHome: bestHome,
+    remoteSessionId: params.remoteSessionId,
+  });
 
   if (params.cursor === 'tail') {
     return {
       items: [],
-      nextCursor: encodeCodexDirectForwardCursor({ v: 1, kind: 'codexForward', fileRelPath: lastFile.fileRelPath, offsetBytes: lastFileSize }),
+      nextCursor: buildMergedTailCursor(allItems),
       truncated: false,
     };
   }
 
   const decoded = decodeCodexDirectForwardCursor(params.cursor);
   if (!decoded) {
-    return { items: [], nextCursor: null, truncated: true };
+    return { items: [], nextCursor: buildMergedTailCursor(allItems), truncated: true };
   }
 
-  if (decoded.kind !== 'codexForward') {
-    return {
-      items: [],
-      nextCursor: encodeCodexDirectForwardCursor({
-        v: 1,
-        kind: 'codexForward',
-        fileRelPath: lastFile.fileRelPath,
-        offsetBytes: lastFileSize,
-      }),
-      truncated: true,
-    };
+  if (decoded.kind !== 'codexForwardMerged') {
+    return { items: [], nextCursor: buildMergedTailCursor(allItems), truncated: true };
   }
 
-  const startIndex = files.findIndex((f) => f.fileRelPath === decoded.fileRelPath);
-  if (startIndex === -1) {
-    const fileSize = await stat(lastFile.filePath).then((s) => s.size).catch(() => 0);
-    return {
-      items: [],
-      nextCursor: encodeCodexDirectForwardCursor({ v: 1, kind: 'codexForward', fileRelPath: lastFile.fileRelPath, offsetBytes: fileSize }),
-      truncated: true,
-    };
+  let startIndex = 0;
+  if (decoded.lastId) {
+    const foundIndex = allItems.findIndex((item) => item.id === decoded.lastId && item.createdAtMs === decoded.lastCreatedAtMs);
+    if (foundIndex === -1) {
+      return { items: [], nextCursor: buildMergedTailCursor(allItems), truncated: true };
+    }
+    startIndex = foundIndex + 1;
   }
 
+  const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
+  const maxItems = Math.max(1, Math.trunc(params.maxItems));
   const items: DirectTranscriptRawMessageV1[] = [];
-  let truncated = false;
-  let remainingBytes = maxBytes;
-  let remainingItems = maxItems;
-  let fileIndex = startIndex;
-  let offsetBytes = Math.max(0, decoded.offsetBytes);
+  let usedBytes = 0;
 
-  while (fileIndex < files.length && remainingBytes > 0 && remainingItems > 0) {
-    const file = files[fileIndex]!;
-    const read = await readJsonlFileForward({
-      filePath: file.filePath,
-      offsetBytes,
-      maxBytes: remainingBytes,
-      maxItems: remainingItems,
-    });
-
-    if (read.truncated) {
-      truncated = true;
+  for (let index = startIndex; index < allItems.length; index += 1) {
+    const item = allItems[index]!;
+    const itemBytes = measureDirectTranscriptItemBytes(item);
+    if (items.length > 0 && (items.length >= maxItems || usedBytes + itemBytes > maxBytes)) {
       break;
     }
-
-    for (const line of read.items) {
-      if (items.length >= maxItems) break;
-      const mapped = mapCodexRolloutLineToDirectMessages({
-        fileRelPath: file.fileRelPath,
-        lineStartOffsetBytes: line.startOffsetBytes,
-        lineValue: line.value,
-      });
-      for (const msg of mapped) {
-        if (items.length >= maxItems) break;
-        items.push(msg);
-      }
+    items.push(item);
+    usedBytes += itemBytes;
+    if (items.length >= maxItems || usedBytes >= maxBytes) {
+      break;
     }
-
-    remainingItems = maxItems - items.length;
-    remainingBytes -= Math.max(0, read.nextOffsetBytes - offsetBytes);
-    offsetBytes = read.nextOffsetBytes;
-
-    if (read.reachedEnd) {
-      fileIndex += 1;
-      offsetBytes = 0;
-      continue;
-    }
-
-    break;
   }
 
-  const nextCursor = (() => {
-    if (fileIndex >= files.length) {
-      return encodeCodexDirectForwardCursor({
-        v: 1,
-        kind: 'codexForward',
-        fileRelPath: lastFile.fileRelPath,
-        offsetBytes: lastFileSize,
-      });
-    }
-    const file = files[Math.max(0, Math.min(files.length - 1, fileIndex))]!;
-    return encodeCodexDirectForwardCursor({ v: 1, kind: 'codexForward', fileRelPath: file.fileRelPath, offsetBytes });
-  })();
-
-  return { items, nextCursor, truncated };
+  const nextCursor = items.length > 0 ? buildMergedTailCursor([...allItems.slice(0, startIndex), ...items]) : buildMergedTailCursor(allItems);
+  return { items, nextCursor, truncated: false };
 }

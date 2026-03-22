@@ -1,46 +1,69 @@
-import { stat } from 'node:fs/promises';
-
 import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
-
-import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
 
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
 import { encodeCodexDirectForwardCursor } from './codexDirectForwardCursor';
-import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
-import { mapCodexRolloutLineToDirectMessages } from './mapCodexRolloutLineToDirectMessages';
+import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
+import { materializeCodexDirectTranscriptItems } from './materializeCodexDirectTranscriptItems';
 import {
   mapCodexDirectSessionAppServerPreviewToMessage,
   resolveCodexDirectSessionAppServerMetadata,
 } from './resolveCodexDirectSessionAppServerMetadata';
 
-type CodexBackwardCursorV1 = Readonly<{
-  v: 1;
-  kind: 'codexBackward';
-  fileRelPath: string;
-  endOffsetBytes: number;
+type CodexBackwardMergedCursorV2 = Readonly<{
+  v: 2;
+  kind: 'codexBackwardMerged';
+  endIndex: number;
 }>;
 
-function encodeBackwardCursor(value: CodexBackwardCursorV1): string {
+function encodeBackwardCursor(value: CodexBackwardMergedCursorV2): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-function decodeBackwardCursor(raw: string | undefined): CodexBackwardCursorV1 | null {
+function decodeBackwardCursor(raw: string | undefined): CodexBackwardMergedCursorV2 | null {
   if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as any;
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed.v !== 1 || parsed.kind !== 'codexBackward') return null;
-    const fileRelPath = typeof parsed.fileRelPath === 'string' ? parsed.fileRelPath : '';
-    const endOffsetBytes = typeof parsed.endOffsetBytes === 'number' && Number.isFinite(parsed.endOffsetBytes) ? Math.trunc(parsed.endOffsetBytes) : NaN;
-    if (!fileRelPath.trim()) return null;
-    if (!Number.isFinite(endOffsetBytes) || endOffsetBytes < 0) return null;
-    return { v: 1, kind: 'codexBackward', fileRelPath, endOffsetBytes };
+    const record = parsed as Record<string, unknown>;
+    if (record.v !== 2 || record.kind !== 'codexBackwardMerged') return null;
+    const endIndex = typeof record.endIndex === 'number' && Number.isFinite(record.endIndex) ? Math.trunc(record.endIndex) : NaN;
+    if (!Number.isFinite(endIndex) || endIndex < 0) return null;
+    return { v: 2, kind: 'codexBackwardMerged', endIndex };
   } catch {
     return null;
   }
 }
 
-type RolloutFile = CodexRolloutFile;
+function selectBestCodexHomeWithFiles(homes: readonly string[], perHomeFiles: readonly (readonly unknown[])[]): string | null {
+  let bestHome: string | null = null;
+  let bestLatestMtimeMs = -1;
+  for (let index = 0; index < homes.length; index += 1) {
+    const home = homes[index]!;
+    const files = perHomeFiles[index] ?? [];
+    if (files.length === 0) continue;
+    const latestMtimeMs = Math.max(...(files as { mtimeMs: number }[]).map((file) => file.mtimeMs));
+    if (latestMtimeMs > bestLatestMtimeMs) {
+      bestLatestMtimeMs = latestMtimeMs;
+      bestHome = home;
+    }
+  }
+  return bestHome;
+}
+
+function buildMergedTailCursor(items: readonly DirectTranscriptRawMessageV1[]): string | null {
+  const last = items.at(-1);
+  if (!last) return null;
+  return encodeCodexDirectForwardCursor({
+    v: 3,
+    kind: 'codexForwardMerged',
+    lastCreatedAtMs: last.createdAtMs,
+    lastId: last.id,
+  });
+}
+
+function measureDirectTranscriptItemBytes(item: DirectTranscriptRawMessageV1): number {
+  return Buffer.byteLength(JSON.stringify(item), 'utf8');
+}
 
 export async function pageCodexTranscript(params: Readonly<{
   source: DirectSessionsSource;
@@ -59,20 +82,8 @@ export async function pageCodexTranscript(params: Readonly<{
     env,
   });
 
-  let best: { codexHome: string; files: RolloutFile[] } | null = null;
-  for (const home of homes) {
-    const files = await collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId });
-    if (files.length === 0) continue;
-    const latestMtime = Math.max(...files.map((f) => f.mtimeMs));
-    if (!best) {
-      best = { codexHome: home, files };
-      continue;
-    }
-    const bestLatest = Math.max(...best.files.map((f) => f.mtimeMs));
-    if (latestMtime > bestLatest) {
-      best = { codexHome: home, files };
-    }
-  }
+  const perHomeFiles = await Promise.all(homes.map((home) => collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId })));
+  const bestHome = selectBestCodexHomeWithFiles(homes, perHomeFiles);
 
   const appServerMetadata = await resolveCodexDirectSessionAppServerMetadata({
     source: params.source,
@@ -80,8 +91,8 @@ export async function pageCodexTranscript(params: Readonly<{
     remoteSessionId: params.remoteSessionId,
     env,
   });
-  const files = best?.files ?? [];
-  if (files.length === 0) {
+
+  if (bestHome === null) {
     const previewItem = appServerMetadata
       ? mapCodexDirectSessionAppServerPreviewToMessage({ remoteSessionId: params.remoteSessionId, metadata: appServerMetadata })
       : null;
@@ -96,112 +107,39 @@ export async function pageCodexTranscript(params: Readonly<{
     return { items: previewItem ? [previewItem] : [], nextCursor: null, tailCursor, hasMore: false };
   }
 
-  const lastFile = files[files.length - 1]!;
-  const lastFileSize = await stat(lastFile.filePath).then((s) => s.size).catch(() => 0);
-  const tailCursor = encodeCodexDirectForwardCursor({
-    v: 1,
-    kind: 'codexForward',
-    fileRelPath: lastFile.fileRelPath,
-    offsetBytes: lastFileSize,
+  const allItems = await materializeCodexDirectTranscriptItems({
+    codexHome: bestHome,
+    remoteSessionId: params.remoteSessionId,
   });
+  const tailCursor = buildMergedTailCursor(allItems);
 
   if (params.direction !== 'older') {
-    // Forward paging is not required for v1 UI flows (tail uses readAfter).
-    // Return empty to avoid surprising ordering bugs until the UI needs it.
     return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
 
-  const cursor = decodeBackwardCursor(params.cursor);
+  const decoded = decodeBackwardCursor(params.cursor);
   const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
+  let endIndex = decoded ? Math.min(Math.max(0, decoded.endIndex), allItems.length) : allItems.length;
+  const selectedReversed: DirectTranscriptRawMessageV1[] = [];
+  let usedBytes = 0;
 
-  let fileIndex = files.length - 1;
-  let endOffsetBytes: number | null = null;
-  let truncated = false;
-
-  if (cursor) {
-    const idx = files.findIndex((f) => f.fileRelPath === cursor.fileRelPath);
-    if (idx === -1) {
-      truncated = true;
-    } else {
-      fileIndex = idx;
-      endOffsetBytes = cursor.endOffsetBytes;
+  for (let index = endIndex - 1; index >= 0; index -= 1) {
+    const item = allItems[index]!;
+    const itemBytes = measureDirectTranscriptItemBytes(item);
+    if (selectedReversed.length > 0 && (selectedReversed.length >= maxItems || usedBytes + itemBytes > maxBytes)) {
+      break;
+    }
+    selectedReversed.push(item);
+    usedBytes += itemBytes;
+    if (selectedReversed.length >= maxItems || usedBytes >= maxBytes) {
+      break;
     }
   }
 
-  const chunks: DirectTranscriptRawMessageV1[][] = [];
-  let remainingBytes = maxBytes;
-  let remainingItems = maxItems;
-  let nextCursorCandidate: CodexBackwardCursorV1 | null = null;
-
-  while (fileIndex >= 0 && remainingBytes > 0 && remainingItems > 0) {
-    const file = files[fileIndex]!;
-    const fileStat = await stat(file.filePath).catch(() => null);
-    const fileSize = fileStat ? fileStat.size : 0;
-    const resolvedEnd = endOffsetBytes === null ? fileSize : Math.min(fileSize, Math.max(0, Math.trunc(endOffsetBytes)));
-
-    if (resolvedEnd <= 0) {
-      endOffsetBytes = null;
-      fileIndex -= 1;
-      continue;
-    }
-
-    const page = await readJsonlFileBackwardPage({
-      filePath: file.filePath,
-      endOffsetBytes: resolvedEnd,
-      maxBytes: remainingBytes,
-      maxItems: remainingItems,
-    });
-
-    const mapped: DirectTranscriptRawMessageV1[] = [];
-    for (const line of page.items) {
-      if (mapped.length >= remainingItems) break;
-      const messages = mapCodexRolloutLineToDirectMessages({
-        fileRelPath: file.fileRelPath,
-        lineStartOffsetBytes: line.startOffsetBytes,
-        lineValue: line.value,
-      });
-      for (const msg of messages) {
-        if (mapped.length >= remainingItems) break;
-        mapped.push(msg);
-      }
-    }
-
-    if (mapped.length > 0) {
-      chunks.unshift(mapped);
-      nextCursorCandidate = {
-        v: 1,
-        kind: 'codexBackward',
-        fileRelPath: file.fileRelPath,
-        endOffsetBytes: page.nextEndOffsetBytes,
-      };
-      remainingItems -= mapped.length;
-      remainingBytes -= Math.max(0, resolvedEnd - page.nextEndOffsetBytes);
-    }
-
-    if (page.reachedStart) {
-      endOffsetBytes = null;
-      fileIndex -= 1;
-      continue;
-    }
-
-    endOffsetBytes = page.nextEndOffsetBytes;
-    if (remainingBytes <= 0 || remainingItems <= 0) break;
-    // Continue on the same file to page further back.
-  }
-
-  const items = chunks.flat();
-  if (items.length === 0 && appServerMetadata) {
-    const previewItem = mapCodexDirectSessionAppServerPreviewToMessage({ remoteSessionId: params.remoteSessionId, metadata: appServerMetadata });
-    if (previewItem) {
-      return { items: [previewItem], nextCursor: null, tailCursor, hasMore: false, ...(truncated ? { truncated } : {}) };
-    }
-  }
-  if (!nextCursorCandidate || items.length === 0) {
-    return { items, nextCursor: null, tailCursor, hasMore: false, ...(truncated ? { truncated } : {}) };
-  }
-
-  const hasMore = nextCursorCandidate.endOffsetBytes > 0 || files.findIndex((f) => f.fileRelPath === nextCursorCandidate.fileRelPath) > 0;
-  const nextCursor = hasMore ? encodeBackwardCursor(nextCursorCandidate) : null;
-  return { items, nextCursor, tailCursor, hasMore, ...(truncated ? { truncated } : {}) };
+  const items = selectedReversed.reverse();
+  const nextEndIndex = Math.max(0, endIndex - items.length);
+  const hasMore = nextEndIndex > 0;
+  const nextCursor = hasMore ? encodeBackwardCursor({ v: 2, kind: 'codexBackwardMerged', endIndex: nextEndIndex }) : null;
+  return { items, nextCursor, tailCursor, hasMore };
 }

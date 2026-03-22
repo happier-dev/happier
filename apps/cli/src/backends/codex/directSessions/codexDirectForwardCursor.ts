@@ -12,7 +12,14 @@ type CodexAppServerForwardCursorV2 = Readonly<{
   previewText: string | null;
 }>;
 
-export type CodexDirectForwardCursor = CodexForwardCursorV1 | CodexAppServerForwardCursorV2;
+type CodexMergedForwardCursorV3 = Readonly<{
+  v: 3;
+  kind: 'codexForwardMerged';
+  lastCreatedAtMs: number;
+  lastId: string | null;
+}>;
+
+export type CodexDirectForwardCursor = CodexForwardCursorV1 | CodexAppServerForwardCursorV2 | CodexMergedForwardCursorV3;
 
 export function encodeCodexDirectForwardCursor(value: CodexDirectForwardCursor): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -40,6 +47,16 @@ export function decodeCodexDirectForwardCursor(raw: string): CodexDirectForwardC
         : null;
       if (!Number.isFinite(updatedAtMs) || updatedAtMs < 0) return null;
       return { v: 2, kind: 'codexForwardAppServer', updatedAtMs, previewText };
+    }
+    if (record.v === 3 && record.kind === 'codexForwardMerged') {
+      const lastCreatedAtMs = typeof record.lastCreatedAtMs === 'number' && Number.isFinite(record.lastCreatedAtMs)
+        ? Math.trunc(record.lastCreatedAtMs)
+        : NaN;
+      const lastId = typeof record.lastId === 'string' && record.lastId.trim().length > 0
+        ? record.lastId
+        : null;
+      if (!Number.isFinite(lastCreatedAtMs) || lastCreatedAtMs < 0) return null;
+      return { v: 3, kind: 'codexForwardMerged', lastCreatedAtMs, lastId };
     }
     return null;
   } catch {

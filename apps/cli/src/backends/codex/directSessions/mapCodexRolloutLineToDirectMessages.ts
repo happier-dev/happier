@@ -1,6 +1,7 @@
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { mapCodexRolloutEventToActions } from '../localControl/rolloutMapper';
+import type { CodexRolloutAction } from '../localControl/rolloutMapper';
+import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
 
 function shouldFilterHarnessBlob(text: string): boolean {
   const t = text.trim();
@@ -35,15 +36,20 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
   fileRelPath: string;
   lineStartOffsetBytes: number;
   lineValue: unknown;
+  actions: ReadonlyArray<CodexRolloutAction>;
+  sidechainId?: string | null;
 }>): DirectTranscriptRawMessageV1[] {
   const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
   // Direct transcript rendering should include "debug-only" tool calls (e.g., Codex-internal read/write tools),
   // but must still filter harness/system blobs that Codex sometimes embeds as user messages.
-  const actions = mapCodexRolloutEventToActions(params.lineValue, { debug: true });
+  const projected = projectCodexRolloutActions(
+    params.actions,
+    { sidechainId: params.sidechainId ?? null },
+  );
 
   const out: DirectTranscriptRawMessageV1[] = [];
-  for (let i = 0; i < actions.length; i++) {
-    const action = actions[i]!;
+  for (let i = 0; i < projected.length; i++) {
+    const action = projected[i]!;
     const idPrefix = `codex:${params.fileRelPath}`;
     const stableId = stableOffsetId(idPrefix, params.lineStartOffsetBytes, i);
 
@@ -70,7 +76,11 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
           role: 'agent',
           content: {
             type: 'codex',
-            data: { type: 'message', message: action.text },
+            data: {
+              type: 'message',
+              message: action.text,
+              ...(action.sidechainId ? { sidechainId: action.sidechainId } : {}),
+            },
           },
         },
       });
@@ -92,6 +102,7 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
               name: action.name,
               input: action.input,
               id: stableId,
+              ...(action.sidechainId ? { sidechainId: action.sidechainId } : {}),
             },
           },
         },
@@ -113,6 +124,8 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
               callId: action.callId,
               output: action.output,
               id: stableId,
+              ...(action.sidechainId ? { sidechainId: action.sidechainId } : {}),
+              ...(action.isError ? { isError: action.isError } : {}),
             },
           },
         },
@@ -123,4 +136,3 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
 
   return out;
 }
-

@@ -4,6 +4,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import {
+  createCodexAppServerProcessEnv,
+  writeFakeCodexAppServerThreadListScript,
+} from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import { readAfterCodexTranscript } from './readAfterCodexTranscript';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
@@ -128,32 +132,18 @@ describe('readAfterCodexTranscript', () => {
     await mkdir(codexHome, { recursive: true });
 
     const sessionId = 'remote_app_server';
-    const fakeAppServer = join(root, 'fake-codex-app-server.mjs');
-    await writeFile(
-      fakeAppServer,
-      [
-        '#!/usr/bin/env node',
-        'import readline from "node:readline";',
-        'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
-        'for await (const line of rl) {',
-        '  if (!line.trim()) continue;',
-        '  const msg = JSON.parse(line);',
-        '  if (msg.method === "initialize") {',
-        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
-        '    continue;',
-        '  }',
-        '  if (msg.method === "initialized") continue;',
-        '  if (msg.method === "thread/list") {',
-        `    process.stdout.write(JSON.stringify({ id: msg.id, result: { data: [{ id: ${JSON.stringify(sessionId)}, name: "App server tail preview", updatedAt: 1736000200, cwd: "/repo/from-app-server" }], nextCursor: null } }) + "\\n");`,
-        '    continue;',
-        '  }',
-        '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
-        '}',
-      ].join('\n'),
-      { encoding: 'utf8', mode: 0o755 },
-    );
+    const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
+      dir: root,
+      initializeName: 'fake',
+      nonArchivedThreads: [{
+        id: sessionId,
+        name: 'App server tail preview',
+        updatedAt: 1736000200,
+        cwd: '/repo/from-app-server',
+      }],
+    });
 
-    const env = { CODEX_HOME: codexHome, HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer } as NodeJS.ProcessEnv;
+    const env = createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: codexHome });
 
     const init = await readAfterCodexTranscript({
       source: { kind: 'codexHome', home: 'user' },
@@ -207,5 +197,212 @@ describe('readAfterCodexTranscript', () => {
     expect(afterRolloutAppears.items).toHaveLength(0);
     expect(afterRolloutAppears.truncated).toBe(true);
     expect(afterRolloutAppears.nextCursor).toBeTruthy();
+  });
+
+  it('returns appended synthetic SubAgent root rows when collaboration events are written after tail', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-subagent-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = '55555555-5555-5555-5555-555555555555';
+    const childThreadId = '66666666-6666-6666-6666-666666666666';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    await writeFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/subagent-tail' }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await appendFile(
+      filePath,
+      responseItemLine({
+        timestamp: '2026-01-02T00:00:00.250Z',
+        payload: {
+          type: 'function_call',
+          name: 'spawn_agent',
+          arguments: JSON.stringify({ role: 'explorer', prompt: 'inspect the repo' }),
+          call_id: 'call_spawn_1',
+        },
+      })
+      + responseItemLine({
+        timestamp: '2026-01-02T00:00:00.500Z',
+        payload: {
+          type: 'function_call_output',
+          call_id: 'call_spawn_1',
+          output: JSON.stringify({ agent_id: childThreadId, nickname: 'Lovelace' }),
+        },
+      })
+      + `${JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-01-02T00:00:01.000Z',
+        payload: {
+          type: 'collab_agent_spawn_end',
+          sender_thread_id: sessionId,
+          new_thread_id: childThreadId,
+          new_agent_nickname: 'Lovelace',
+          new_agent_role: 'explorer',
+          prompt: 'inspect the repo',
+        },
+      })}\n`
+      + `${JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-01-02T00:00:02.000Z',
+        payload: {
+          type: 'collab_waiting_end',
+          sender_thread_id: sessionId,
+          agent_statuses: [{
+            thread_id: childThreadId,
+            agent_nickname: 'Lovelace',
+            agent_role: 'explorer',
+            status: { completed: 'done' },
+          }],
+        },
+      })}\n`
+      + responseItemLine({
+        timestamp: '2026-01-02T00:00:02.500Z',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: `<subagent_notification>\n{"agent_id":"${childThreadId}","status":{"completed":"done"}}\n</subagent_notification>`,
+          }],
+        },
+      }),
+      'utf8',
+    );
+
+    const next = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(next.items).toHaveLength(2);
+    expect(next.items[0]?.raw).toEqual(
+      expect.objectContaining({
+        role: 'agent',
+        content: expect.objectContaining({
+          data: expect.objectContaining({
+            type: 'tool-call',
+            callId: childThreadId,
+            name: 'SubAgent',
+          }),
+        }),
+      }),
+    );
+    expect(next.items[1]?.raw).toEqual(
+      expect.objectContaining({
+        role: 'agent',
+        content: expect.objectContaining({
+          data: expect.objectContaining({
+            type: 'tool-call-result',
+            callId: childThreadId,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('returns appended child rollout sidechain messages when a spawned subagent writes to its rollout file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-child-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = '99999999-9999-9999-9999-999999999999';
+    const childThreadId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const parentFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+    const childFilePath = join(sessionsDir, `rollout-2026-01-02T00-00-01-${childThreadId}.jsonl`);
+
+    await writeFile(
+      parentFilePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/subagent-tail' }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await appendFile(
+      parentFilePath,
+      `${JSON.stringify({
+        type: 'event_msg',
+        timestamp: '2026-01-02T00:00:01.000Z',
+        payload: {
+          type: 'collab_agent_spawn_end',
+          sender_thread_id: sessionId,
+          new_thread_id: childThreadId,
+          new_agent_nickname: 'Lovelace',
+          new_agent_role: 'explorer',
+          prompt: 'inspect the repo',
+        },
+      })}\n`,
+      'utf8',
+    );
+    await writeFile(
+      childFilePath,
+      responseItemLine({
+        timestamp: '2026-01-02T00:00:02.000Z',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'child summary' }] },
+      }),
+      'utf8',
+    );
+
+    const next = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(next.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          raw: expect.objectContaining({
+            role: 'agent',
+            content: expect.objectContaining({
+              data: expect.objectContaining({
+                type: 'message',
+                message: 'child summary',
+                sidechainId: childThreadId,
+              }),
+            }),
+          }),
+        }),
+      ]),
+    );
   });
 });
