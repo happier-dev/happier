@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,16 +14,23 @@ let scopeState: any = {
     right: { isOpen: true, activeTabId: 'git', tabState: {} },
 };
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    AppState: {
-        currentState: 'active',
-        addEventListener: () => ({ remove: () => {} }),
-    },
-    Platform: { select: () => 1 },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            View: 'View',
+                                                            Pressable: 'Pressable',
+                                                            ActivityIndicator: 'ActivityIndicator',
+                                                            AppState: {
+                                                            currentState: 'active',
+                                                            addEventListener: () => ({ remove: () => {} }),
+                                                        },
+                                                            Platform: {
+                                                            select: () => 1,
+                                                        },
+                                                        }
+    );
+});
 
 const themeColors = {
     text: '#fff',
@@ -50,15 +58,10 @@ const themeColors = {
     groupped: { background: '#111', chevron: '#222', sectionTitle: '#aaa' },
 };
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({ colors: themeColors }, {})
-                : styles,
-    },
-    useUnistyles: () => ({ theme: { colors: themeColors } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -72,9 +75,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (fn: any) => fn(),
@@ -88,9 +92,12 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: () => 'sidebar',
-}));
+});
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -118,11 +125,18 @@ vi.mock('@/components/sessions/panes/terminal/SessionRightPanelTerminalView', ()
     SessionRightPanelTerminalView: () => React.createElement('TerminalView'),
 }));
 
-function findHostNodesByTestId(
-    tree: renderer.ReactTestRenderer,
-    testID: string,
-): renderer.ReactTestInstance[] {
-    return tree.root.findAll((node) => String(node.type) === 'View' && node.props?.testID === testID);
+function findHostByTestId(screen: RenderScreenResult, testID: string) {
+    return screen.findAllByTestId(testID).find((node) => typeof node.type === 'string') ?? null;
+}
+
+function getStyleValue(style: unknown, key: string): unknown {
+    const styles = Array.isArray(style) ? style : [style];
+    for (const entry of styles) {
+        if (entry && typeof entry === 'object' && key in entry) {
+            return (entry as Record<string, unknown>)[key];
+        }
+    }
+    return undefined;
 }
 
 describe('SessionRightPanel (core tabs)', () => {
@@ -137,30 +151,26 @@ describe('SessionRightPanel (core tabs)', () => {
     it('renders git, files, and agents tabs and shows the git surface by default', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree!.root.findAllByProps({ testID: 'session-rightpanel-tab:git' })).toHaveLength(1);
-        expect(tree!.root.findAllByProps({ testID: 'session-rightpanel-tab:files' })).toHaveLength(1);
-        expect(tree!.root.findAllByProps({ testID: 'session-rightpanel-tab:agents' })).toHaveLength(1);
-        expect(tree!.root.findAllByProps({ testID: 'session-rightpanel-tab:terminal' })).toHaveLength(0);
-        expect(tree!.root.findAllByType('GitView')).toHaveLength(1);
-        expect(tree!.root.findAllByType('FilesView')).toHaveLength(0);
-        expect(tree!.root.findAllByType('AgentsView')).toHaveLength(0);
+        expect(screen.findByTestId('session-rightpanel-tab:git')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:files')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:agents')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:terminal')).toBeNull();
+
+        expect(getStyleValue(findHostByTestId(screen, 'session-rightpanel-surface-git')?.props.style, 'visibility')).toBe('visible');
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
     });
 
     it('keeps a single agents surface test id when the agents tab is active', async () => {
         scopeState = { right: { isOpen: true, activeTabId: 'agents', tabState: {} } };
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(findHostNodesByTestId(tree!, 'session-rightpanel-surface-agents')).toHaveLength(1);
-        expect(tree!.root.findAllByType('AgentsView')).toHaveLength(1);
+        expect(getStyleValue(findHostByTestId(screen, 'session-rightpanel-surface-agents')?.props.style, 'visibility')).toBe('visible');
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
     });
 });

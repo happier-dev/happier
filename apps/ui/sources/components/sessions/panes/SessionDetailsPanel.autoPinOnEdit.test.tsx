@@ -1,18 +1,23 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: { ...rn.Platform, OS: 'web' },
-        View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                        View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
+                                                        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                                                    }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -41,17 +46,26 @@ vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => (
     SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            // Boundary mock: SessionDetailsPanel only reads editor focus mode in this suite.
+            useLocalSetting: ((key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            }) as any,
+            // Boundary mock: the suite only needs a stable boolean mutable local setting tuple.
+            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+        },
+    });
+});
 
 const pinDetailsTab = vi.fn();
 const scopeState = {
@@ -75,19 +89,23 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
+afterEach(() => {
+    standardCleanup();
+    pinDetailsTab.mockClear();
+    SessionFileDetailsViewMock.mockClear();
+});
+
 describe('SessionDetailsPanel (auto pin on edit)', () => {
     it('pins a preview file tab when editing begins', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        await act(async () => {
-            renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
         expect(SessionFileDetailsViewMock).toHaveBeenCalledTimes(1);
         const props = SessionFileDetailsViewMock.mock.calls[0]?.[0];
         expect(typeof props?.onStartEditingFile).toBe('function');
 
-        act(() => {
+        await act(async () => {
             props.onStartEditingFile();
         });
 

@@ -1,15 +1,22 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { SessionScreenTestIdsProvider } from '../../shell/sessionScreenTestIds';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let bottomActiveTabIdMock: string | null = 'terminal';
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            View: (props: any) => React.createElement('View', props, props.children),
+                                                        }
+    );
+});
 
 const terminalPaneSpy = vi.fn();
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
@@ -42,9 +49,7 @@ describe('SessionBottomPanel', () => {
         const { SessionBottomPanel } = await import('./SessionBottomPanel');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionBottomPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        tree = (await renderScreen(<SessionBottomPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
         expect(tree).toBeTruthy();
         expect(terminalPaneSpy).toHaveBeenCalledTimes(1);
@@ -61,9 +66,7 @@ describe('SessionBottomPanel', () => {
         bottomActiveTabIdMock = 'files';
         const { SessionBottomPanel } = await import('./SessionBottomPanel');
 
-        await act(async () => {
-            renderer.create(<SessionBottomPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        await renderScreen(<SessionBottomPanel sessionId="s1" scopeId="session:s1" />);
 
         expect(terminalPaneSpy).not.toHaveBeenCalled();
     });
@@ -72,13 +75,9 @@ describe('SessionBottomPanel', () => {
         const { SessionBottomPanel } = await import('./SessionBottomPanel');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionScreenTestIdsProvider enabled={false}>
+        tree = (await renderScreen(<SessionScreenTestIdsProvider enabled={false}>
                     <SessionBottomPanel sessionId="s1" scopeId="session:s1" />
-                </SessionScreenTestIdsProvider>,
-            );
-        });
+                </SessionScreenTestIdsProvider>)).tree;
 
         expect(tree!.root.findAllByProps({ testID: 'session-bottom-panel-root' })).toHaveLength(0);
         expect(tree!.root.findAllByProps({ testID: 'session-bottompanel-surface-terminal' })).toHaveLength(0);

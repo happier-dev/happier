@@ -1,28 +1,28 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPaneLazyLoader } from './SessionPaneLazyLoader';
+import { createDeferred, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            View: (props: any) => React.createElement('View', props, props.children),
+                                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                                                            ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
+                                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#666',
-                text: '#111',
-                surface: '#fff',
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -32,9 +32,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('SessionPaneLazyLoader', () => {
     afterEach(() => {
@@ -43,37 +44,27 @@ describe('SessionPaneLazyLoader', () => {
 
     it('keeps loading while a slow pane module is still pending and renders once it resolves', async () => {
         const LoadedPane = () => React.createElement('LoadedPane');
-        let resolveLoad: ((value: React.ComponentType<Record<string, never>>) => void) | null = null;
-        const load = vi.fn<() => Promise<React.ComponentType<Record<string, never>>>>(() => new Promise((resolve) => {
-            resolveLoad = resolve;
-        }));
+        const deferred = createDeferred<React.ComponentType<Record<string, never>>>();
+        const load = vi.fn(() => deferred.promise);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionPaneLazyLoader
-                    testID="session-pane-loader"
-                    load={load}
-                    props={{}}
-                />
-            );
-        });
+        const screen = await renderScreen(
+            <SessionPaneLazyLoader
+                testID="session-pane-loader"
+                load={load}
+                props={{}}
+            />,
+        );
 
-        expect(JSON.stringify(tree.toJSON())).toContain('common.loading');
+        expect(screen.findByTestId('session-pane-loader')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('common.loading');
         expect(load).toHaveBeenCalledTimes(1);
 
         await act(async () => {
+            deferred.resolve(LoadedPane);
             await Promise.resolve();
         });
 
-        expect(JSON.stringify(tree.toJSON())).toContain('common.loading');
-
-        await act(async () => {
-            resolveLoad?.(LoadedPane);
-            await Promise.resolve();
-        });
-
-        expect(JSON.stringify(tree.toJSON())).toContain('LoadedPane');
+        expect(screen.findByType(LoadedPane)).toBeTruthy();
     });
 
     it('shows retry UI after a rejected load and recovers when the user retries', async () => {
@@ -82,31 +73,25 @@ describe('SessionPaneLazyLoader', () => {
             .mockRejectedValueOnce(new Error('module load failed'))
             .mockResolvedValueOnce(LoadedPane);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionPaneLazyLoader
-                    testID="session-pane-loader"
-                    load={load}
-                    props={{}}
-                />
-            );
-        });
+        const screen = await renderScreen(
+            <SessionPaneLazyLoader
+                testID="session-pane-loader"
+                load={load}
+                props={{}}
+            />,
+        );
 
-        await act(async () => {
-            await Promise.resolve();
-        });
+        expect(screen.findByTestId('session-pane-loader-error')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('common.error');
+        expect(screen.getTextContent()).toContain('common.retry');
 
-        expect(JSON.stringify(tree.toJSON())).toContain('common.error');
-        expect(JSON.stringify(tree.toJSON())).toContain('common.retry');
-
-        const retryButton = tree.root.findByType('Pressable');
+        const retryButton = screen.findByType('Pressable');
         await act(async () => {
             retryButton.props.onPress();
             await Promise.resolve();
         });
 
         expect(load).toHaveBeenCalledTimes(2);
-        expect(JSON.stringify(tree.toJSON())).toContain('LoadedPane');
+        expect(screen.findByType(LoadedPane)).toBeTruthy();
     });
 });

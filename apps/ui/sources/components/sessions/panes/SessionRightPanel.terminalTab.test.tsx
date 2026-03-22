@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,16 +16,23 @@ let scopeState: any = {
     right: { isOpen: true, activeTabId: 'git', tabState: {} },
 };
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    AppState: {
-        currentState: 'active',
-        addEventListener: () => ({ remove: () => {} }),
-    },
-    Platform: { select: () => 1 },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            View: 'View',
+                                                            Pressable: 'Pressable',
+                                                            ActivityIndicator: 'ActivityIndicator',
+                                                            AppState: {
+                                                            currentState: 'active',
+                                                            addEventListener: () => ({ remove: () => {} }),
+                                                        },
+                                                            Platform: {
+                                                            select: () => 1,
+                                                        },
+                                                        }
+    );
+});
 
 const themeColors = {
     text: '#fff',
@@ -51,15 +60,10 @@ const themeColors = {
     groupped: { background: '#111', chevron: '#222', sectionTitle: '#aaa' },
 };
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({ colors: themeColors }, {})
-                : styles,
-    },
-    useUnistyles: () => ({ theme: { colors: themeColors } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -73,9 +77,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (fn: any) => fn(),
@@ -89,12 +94,15 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
         if (key === 'embeddedTerminalDockLocation') return embeddedTerminalDockLocation;
         return null;
     },
-}));
+});
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -132,9 +140,7 @@ describe('SessionRightPanel (terminal tab)', () => {
         const mod = await import('./SessionRightPanel');
         const SessionRightPanel = mod.SessionRightPanel;
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        tree = (await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />)).tree;
         return { tree: tree!, SessionRightPanel };
     }
 

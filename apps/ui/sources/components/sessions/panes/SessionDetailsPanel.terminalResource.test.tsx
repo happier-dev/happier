@@ -1,32 +1,19 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    ActivityIndicator: 'ActivityIndicator',
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: { create: (value: any) => value },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -35,23 +22,31 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useLocalSetting: ((key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            }) as any,
+            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+        },
+    });
+});
 
 const terminalViewSpy = vi.fn();
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
@@ -103,14 +98,11 @@ describe('SessionDetailsPanel (terminal resource)', () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         terminalViewSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree).toBeTruthy();
         expect(terminalViewSpy).toHaveBeenCalledTimes(1);
         expect(terminalViewSpy.mock.calls[0]?.[0]?.sessionId).toBe('s1');
         expect(terminalViewSpy.mock.calls[0]?.[0]?.currentDockLocation).toBe('details');
+        expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 });

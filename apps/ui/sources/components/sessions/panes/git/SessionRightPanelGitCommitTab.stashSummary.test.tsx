@@ -1,25 +1,34 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { createSyncOpsModuleMock, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const stashListMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    FlatList: (props: any) => {
-        const header = props.ListHeaderComponent ? React.createElement(React.Fragment, null, props.ListHeaderComponent) : null;
-        const items = Array.isArray(props.data)
-            ? props.data.map((item: any, index: number) => React.createElement(React.Fragment, { key: `item-${index}` }, props.renderItem?.({ item, index })))
-            : null;
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                View: 'View',
+                                FlatList: (props: any) => {
+                                    const header = props.ListHeaderComponent ? React.createElement(React.Fragment, null, props.ListHeaderComponent) : null;
+                                    const items = Array.isArray(props.data)
+                                        ? props.data.map((item: any, index: number) => React.createElement(React.Fragment, { key: `item-${index}` }, props.renderItem?.({ item, index })))
+                                        : null;
 
-        return React.createElement('FlatList', props, header, items);
-    },
-    ScrollView: 'ScrollView',
-    Pressable: 'Pressable',
-    Platform: { select: (value: any) => value?.default ?? null, OS: 'web' },
-}));
+                                    return React.createElement('FlatList', props, header, items);
+                                },
+                                ScrollView: 'ScrollView',
+                                Pressable: 'Pressable',
+                                Platform: {
+                                    select: (value: any) => value?.default ?? null,
+                                    OS: 'web',
+                                },
+                            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -62,25 +71,33 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}), mono: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/ops', () => ({
-    sessionScmStashList: stashListMock,
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionScmStashList: stashListMock,
+        },
+    });
+});
 
 describe('SessionRightPanelGitCommitTab (stash summary)', () => {
     it('renders stash summary row immediately from the snapshot stash count before the live stash RPC resolves', async () => {
-        stashListMock.mockImplementation(() => new Promise(() => {}));
+        stashListMock.mockResolvedValue({
+            success: true,
+            managedCount: 2,
+            managedStashes: [],
+            totalCount: 2,
+        });
 
         const onOpenStashDetails = vi.fn();
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f', danger: '#c00' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -129,20 +146,28 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
                     scmStatusFiles={null}
                     showCommitComposer={false}
                     onOpenStashDetails={onOpenStashDetails}
-                />
-            );
-        });
+                />);
 
-        const row = tree.root.findByProps({ testID: 'scm-stash-summary-row' });
-        const countText = tree.root.findAll(
-            (node) => typeof node.props?.children === 'string' && node.props.children === '2',
-        );
+        await act(async () => {});
 
-        act(() => {
-            row.props.onPress();
-        });
+        const row = screen.findByTestId('scm-stash-summary-row');
+        if (!row) {
+            throw new Error('Unable to find stash summary row');
+        }
+        const rowChildren = React.Children.toArray(row.props.children);
+        const trailingSummary = rowChildren[1];
+        if (!React.isValidElement<{ children?: React.ReactNode }>(trailingSummary)) {
+            throw new Error('Unable to find stash summary count container');
+        }
+        const trailingSummaryChildren = React.Children.toArray(trailingSummary.props.children);
+        const trailingCount = trailingSummaryChildren[0];
+        if (!React.isValidElement<{ children?: React.ReactNode }>(trailingCount)) {
+            throw new Error('Unable to find stash count text');
+        }
+        expect(trailingCount.props.children).toBe('2');
 
-        expect(countText).not.toHaveLength(0);
+        screen.pressByTestId('scm-stash-summary-row');
+
         expect(onOpenStashDetails).toHaveBeenCalledTimes(1);
     });
 
@@ -157,10 +182,7 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
         const onOpenStashDetails = vi.fn();
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f', danger: '#c00' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -209,16 +231,12 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
                     scmStatusFiles={null}
                     showCommitComposer={false}
                     onOpenStashDetails={onOpenStashDetails}
-                />
-            );
-        });
+                />);
 
         await act(async () => {});
 
-        const row = tree.root.findByProps({ testID: 'scm-stash-summary-row' });
-        act(() => {
-            row.props.onPress();
-        });
+        expect(screen.findByTestId('scm-stash-summary-row')).not.toBeNull();
+        screen.pressByTestId('scm-stash-summary-row');
 
         expect(onOpenStashDetails).toHaveBeenCalledTimes(1);
     });
@@ -234,10 +252,7 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
         const onOpenStashDetails = vi.fn();
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f', danger: '#c00' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -286,17 +301,13 @@ describe('SessionRightPanelGitCommitTab (stash summary)', () => {
                     scmStatusFiles={null}
                     showCommitComposer={false}
                     onOpenStashDetails={onOpenStashDetails}
-                />
-            );
-        });
+                />);
 
         // allow stash list effect to resolve
         await act(async () => {});
 
-        const row = tree.root.findByProps({ testID: 'scm-stash-summary-row' });
-        act(() => {
-            row.props.onPress();
-        });
+        expect(screen.findByTestId('scm-stash-summary-row')).not.toBeNull();
+        screen.pressByTestId('scm-stash-summary-row');
 
         expect(onOpenStashDetails).toHaveBeenCalledTimes(1);
     });

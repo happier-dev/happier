@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,42 +34,24 @@ const directSessionRuntimeState = vi.hoisted(() => ({
     status: null as null | { runnerActive?: boolean },
 }));
 
-function findHostNodesByTestId(
-    tree: renderer.ReactTestRenderer,
-    testID: string,
-    hostType: 'View' | 'Pressable' | 'ScrollView',
-): renderer.ReactTestInstance[] {
-    return tree.root.findAll((node) => String(node.type) === hostType && node.props?.testID === testID);
-}
-
-function findTextNodeByChildren(
-    tree: renderer.ReactTestRenderer,
-    children: string,
-): renderer.ReactTestInstance {
-    return tree.root.find((node) => String(node.type) === 'Text' && node.props?.children === children);
-}
-
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        AppState: actual.AppState ?? {
-            currentState: 'active',
-            addEventListener: () => ({ remove: () => {} }),
-        },
-        Platform: {
-            ...actual.Platform,
-            OS: 'web',
-            select: (value: any) => value?.web ?? value?.default,
-        },
-        View: ({ children, ...props }: any) => React.createElement('View', props, children),
-        ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            Platform: {
+                                                            OS: 'web',
+                                                            select: (value: any) => value?.web ?? value?.default,
+                                                        },
+                                                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+                                                            ScrollView: ({ children, ...props }: any) => React.createElement('ScrollView', props, children),
+                                                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                                                        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -87,32 +71,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                        shadow: { color: '#000' },
-                        accent: {
-                            blue: '#007AFF',
-                            green: '#34C759',
-                            orange: '#FF9500',
-                            yellow: '#FFCC00',
-                            red: '#FF3B30',
-                            indigo: '#5856D6',
-                            purple: '#AF52DE',
-                        },
-                    },
-                })
-                : styles,
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -123,8 +83,9 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, values?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
         if (key === 'session.subagents.intent.review') return 'Review';
         if (key === 'executionRuns.details.titles.executionRun') return 'Subagent';
         if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
@@ -134,8 +95,8 @@ vi.mock('@/text', () => ({
             return `${values.count}`;
         }
         return key;
-    },
-}));
+    } });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -143,10 +104,13 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSession: () => sessionState.session,
     useSettings: () => ({}),
-}));
+});
+});
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => sessionMachineReachabilityState,
@@ -234,9 +198,13 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 describe('SessionRightPanelAgentsView', () => {
     beforeAll(async () => {
@@ -257,22 +225,18 @@ describe('SessionRightPanelAgentsView', () => {
     });
 
     it('renders active and recent sections and opens preview/full routes from agent rows', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(findHostNodesByTestId(tree!, 'session-agents-section-active', 'View')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-agents-section-recent', 'View')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-rightpanel-agents-scroll', 'ScrollView')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-agents-section-count:session-agents-section-active', 'View')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-agents-section-count:session-agents-section-recent', 'View')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-subagent-row:agent_team_member:team-1:alpha', 'View').length).toBeGreaterThan(0);
-        expect(findHostNodesByTestId(tree!, 'session-subagent-row:execution_run:run_1', 'View').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('session-agents-section-active')).toBeTruthy();
+        expect(screen.findByTestId('session-agents-section-recent')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-agents-scroll')).toBeTruthy();
+        expect(screen.findByTestId('session-agents-section-count:session-agents-section-active')).toBeTruthy();
+        expect(screen.findByTestId('session-agents-section-count:session-agents-section-recent')).toBeTruthy();
+        expect(screen.findByTestId('session-subagent-row:agent_team_member:team-1:alpha')).toBeTruthy();
+        expect(screen.findByTestId('session-subagent-row:execution_run:run_1')).toBeTruthy();
 
-        const [openPreview] = findHostNodesByTestId(tree!, 'session-subagent-row:agent_team_member:team-1:alpha', 'View');
         await act(async () => {
-            openPreview.props.onClick();
+            screen.pressByTestId('session-subagent-row:agent_team_member:team-1:alpha');
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -284,38 +248,31 @@ describe('SessionRightPanelAgentsView', () => {
             }),
             { intent: 'preview' },
         );
-        const [openFull] = findHostNodesByTestId(tree!, 'session-subagent-open-full:execution_run:run_1', 'Pressable');
         await act(async () => {
-            openFull.props.onPress();
+            screen.pressByTestId('session-subagent-open-full:execution_run:run_1');
         });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/message/tool-msg-2');
 
-        const [openAdvanced] = findHostNodesByTestId(tree!, 'session-subagent-open-advanced:execution_run:run_1', 'Pressable');
         await act(async () => {
-            openAdvanced.props.onPress();
+            screen.pressByTestId('session-subagent-open-advanced:execution_run:run_1');
         });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/runs/run_1');
     });
 
     it('keeps launch actions collapsed by default when the session already has agents and expands them on demand', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+
+        expect(screen.findByTestId('session-subagents-launch-section')).toBeTruthy();
+        expect(screen.findByTestId('session-subagents-launch-section-toggle')).toBeTruthy();
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeNull();
+
         await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+            screen.pressByTestId('session-subagents-launch-section-toggle');
         });
 
-        expect(findHostNodesByTestId(tree!, 'session-subagents-launch-section', 'View')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(0);
-
-        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeTruthy();
         await act(async () => {
-            toggle.props.onPress();
-        });
-
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(1);
-        const [reviewLaunch] = findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run:review', 'Pressable');
-        await act(async () => {
-            reviewLaunch.props.onPress();
+            screen.pressByTestId('session-subagent-launch-execution-run:review');
         });
 
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
@@ -333,12 +290,22 @@ describe('SessionRightPanelAgentsView', () => {
     });
 
     it('uses a minimal outer launch section shell and uppercase 14px section headings', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        const [launchSection] = findHostNodesByTestId(tree!, 'session-subagents-launch-section', 'View');
+        const launchSection = screen.findByTestId('session-subagents-launch-section');
+        const launchSectionTitle = screen.findByTestId('session-subagents-launch-section-title');
+        const activeSection = screen.findByTestId('session-agents-section-active');
+        const recentSection = screen.findByTestId('session-agents-section-recent');
+
+        expect(launchSection).toBeTruthy();
+        expect(launchSectionTitle).toBeTruthy();
+        expect(activeSection).toBeTruthy();
+        expect(recentSection).toBeTruthy();
+
+        if (!launchSection || !launchSectionTitle || !activeSection || !recentSection) {
+            throw new Error('expected session subagent section nodes');
+        }
+
         expect(launchSection.props.style).toMatchObject({
             gap: 10,
         });
@@ -348,15 +315,15 @@ describe('SessionRightPanelAgentsView', () => {
         expect(launchSection.props.style.paddingHorizontal).toBeUndefined();
         expect(launchSection.props.style.paddingVertical).toBeUndefined();
 
-        expect(findTextNodeByChildren(tree!, 'session.subagents.panel.launchSectionTitle').props.style).toMatchObject({
+        expect(launchSectionTitle.findAllByType('Text')[0].props.style).toMatchObject({
             fontSize: 14,
             textTransform: 'uppercase',
         });
-        expect(findTextNodeByChildren(tree!, 'session.subagents.panel.active').props.style).toMatchObject({
+        expect(activeSection.findAllByType('Text')[0].props.style).toMatchObject({
             fontSize: 14,
             textTransform: 'uppercase',
         });
-        expect(findTextNodeByChildren(tree!, 'session.subagents.panel.recent').props.style).toMatchObject({
+        expect(recentSection.findAllByType('Text')[0].props.style).toMatchObject({
             fontSize: 14,
             textTransform: 'uppercase',
         });
@@ -381,14 +348,10 @@ describe('SessionRightPanelAgentsView', () => {
     });
 
     it('opens execution-run rows into the shared subagent transcript details pane', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        const [openExecutionRunPreview] = findHostNodesByTestId(tree!, 'session-subagent-row:execution_run:run_1', 'View');
         await act(async () => {
-            openExecutionRunPreview.props.onClick();
+            screen.pressByTestId('session-subagent-row:execution_run:run_1');
         });
 
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
@@ -403,21 +366,14 @@ describe('SessionRightPanelAgentsView', () => {
     });
 
     it('renders compact Claude launch actions and opens launcher previews in the details pane', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+
         await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+            screen.pressByTestId('session-subagents-launch-section-toggle');
         });
 
-        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
         await act(async () => {
-            toggle.props.onPress();
-        });
-
-        const [launchTeam] = findHostNodesByTestId(tree!, 'session-subagent-launch-claude-team', 'Pressable');
-        const [launchTeammate] = findHostNodesByTestId(tree!, 'session-subagent-launch-claude-teammate', 'Pressable');
-
-        await act(async () => {
-            launchTeam.props.onPress();
+            screen.pressByTestId('session-subagent-launch-claude-team');
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -432,7 +388,7 @@ describe('SessionRightPanelAgentsView', () => {
         );
 
         await act(async () => {
-            launchTeammate.props.onPress();
+            screen.pressByTestId('session-subagent-launch-claude-teammate');
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -447,9 +403,8 @@ describe('SessionRightPanelAgentsView', () => {
             { intent: 'preview' },
         );
 
-        const [addTeammateToTeam] = findHostNodesByTestId(tree!, 'session-subagent-team-add:team-1', 'Pressable');
         await act(async () => {
-            addTeammateToTeam.props.onPress();
+            screen.pressByTestId('session-subagent-team-add:team-1');
         });
         expect(openDetailsTabSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -466,24 +421,17 @@ describe('SessionRightPanelAgentsView', () => {
     });
 
     it('renders the latest loaded sidechain activity preview for subagent rows', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree!.root.findAllByProps({ testID: 'session-subagent-activity:agent_team_member:team-1:alpha' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findByProps({ testID: 'session-subagent-activity:agent_team_member:team-1:alpha' }).props.children).toContain(
+        expect(screen.findByTestId('session-subagent-activity:agent_team_member:team-1:alpha')?.props.children).toContain(
             'Alpha is validating the auth flow now.',
         );
     });
 
     it('marks subagent rows that are blocked waiting for permission', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(findHostNodesByTestId(tree!, 'session-subagent-permission-blocked:agent_team_member:team-1:alpha', 'View')).toHaveLength(1);
+        expect(screen.findByTestId('session-subagent-permission-blocked:agent_team_member:team-1:alpha')).toBeTruthy();
     });
 
     it('keeps Subagent launch shortcuts available when the session is inactive but resumable', async () => {
@@ -498,18 +446,14 @@ describe('SessionRightPanelAgentsView', () => {
         sessionExecutionRunsSupportedState.supported = true;
         executionRunsBackendsState.backends = { claude: { available: true, intents: ['review', 'plan', 'delegate'] } };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(0);
-        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeNull();
         await act(async () => {
-            toggle.props.onPress();
+            screen.pressByTestId('session-subagents-launch-section-toggle');
         });
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(1);
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-claude-team', 'Pressable')).toHaveLength(1);
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeTruthy();
+        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
     });
 
     it('keeps the Subagent launch card visible while live execution-run backends are still loading for an active local session', async () => {
@@ -523,17 +467,13 @@ describe('SessionRightPanelAgentsView', () => {
         sessionExecutionRunsSupportedState.supported = false;
         executionRunsBackendsState.backends = null;
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+
         await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+            screen.pressByTestId('session-subagents-launch-section-toggle');
         });
 
-        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
-        await act(async () => {
-            toggle.props.onPress();
-        });
-
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(1);
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeTruthy();
     });
 
     it('still hides Subagent launch shortcuts when the session is inactive and not resumable', async () => {
@@ -547,18 +487,14 @@ describe('SessionRightPanelAgentsView', () => {
         sessionExecutionRunsSupportedState.supported = true;
         executionRunsBackendsState.backends = { claude: { available: true, intents: ['review', 'plan', 'delegate'] } };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(0);
-        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeNull();
         await act(async () => {
-            toggle.props.onPress();
+            screen.pressByTestId('session-subagents-launch-section-toggle');
         });
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(0);
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-claude-team', 'Pressable')).toHaveLength(1);
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeNull();
+        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
     });
 
     it('hides execution-run launch shortcuts for linked direct sessions until the runner is locally active', async () => {
@@ -585,16 +521,12 @@ describe('SessionRightPanelAgentsView', () => {
         };
         directSessionRuntimeState.status = { runnerActive: false };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
-        });
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(0);
-        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
+        expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeNull();
         await act(async () => {
-            toggle.props.onPress();
+            screen.pressByTestId('session-subagents-launch-section-toggle');
         });
-        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-claude-team', 'Pressable')).toHaveLength(1);
+        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
     });
 });

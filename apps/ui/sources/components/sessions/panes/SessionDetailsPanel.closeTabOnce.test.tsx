@@ -1,21 +1,23 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    ActivityIndicator: 'ActivityIndicator',
-    View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+                                                    }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -30,28 +32,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                        shadow: { color: '#000', opacity: 0.2 },
-                        accent: {
-                            indigo: '#5C6BC0',
-                            orange: '#FF9500',
-                        },
-                    },
-                })
-                : value,
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -60,6 +42,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -82,17 +65,24 @@ vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'editorFocusModeEnabled') return false;
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useLocalSetting: ((key: string) => {
+                if (key === 'editorFocusModeEnabled') return false;
+                return null;
+            }) as any,
+            useLocalSettingMutable: (() => [false, vi.fn()]) as any,
+        },
+    });
+});
 
 let mockAppPaneScope: any = null;
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -120,13 +110,9 @@ describe('SessionDetailsPanel (close tab)', () => {
         };
 
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        });
-
-        const closeButtons = tree!.root
+        const closeButtons = screen.root
             .findAllByProps({ accessibilityLabel: 'session.detailsPanel.closeTabA11y' })
             // Filter out composite wrapper nodes created by our react-native test doubles.
             .filter((node) => typeof node.type === 'string');

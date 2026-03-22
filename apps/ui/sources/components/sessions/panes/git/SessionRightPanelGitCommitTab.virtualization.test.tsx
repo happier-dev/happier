@@ -1,20 +1,30 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    FlatList: 'FlatList',
-    ScrollView: 'ScrollView',
-    Pressable: 'Pressable',
-    Platform: { select: (value: any) => value?.default ?? null, OS: 'web' },
-    AppState: {
-        currentState: 'active',
-        addEventListener: () => ({ remove: () => {} }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                                    View: 'View',
+                                                                    FlatList: 'FlatList',
+                                                                    ScrollView: 'ScrollView',
+                                                                    Pressable: 'Pressable',
+                                                                    Platform: {
+                                                                    select: (value: any) => value?.default ?? null,
+                                                                    OS: 'web',
+                                                                },
+                                                                    AppState: {
+                                                                    currentState: 'active',
+                                                                    addEventListener: () => ({ remove: () => {} }),
+                                                                },
+                                                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -57,9 +67,10 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}), mono: () => ({}) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('SessionRightPanelGitCommitTab (virtualization)', () => {
     it('renders a FlatList for repository changed files to avoid huge ScrollView renders', async () => {
@@ -73,9 +84,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         }));
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        tree = (await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -112,9 +121,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
                     scmStatusFiles={null}
                     showCommitComposer={false}
-                />
-            );
-        });
+                />)).tree;
 
         expect(() => tree.root.findByType('FlatList' as any)).not.toThrow();
     });
@@ -130,9 +137,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         }));
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        tree = (await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -169,9 +174,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
                     scmStatusFiles={null}
                     showCommitComposer={false}
-                />
-            );
-        });
+                />)).tree;
 
         expect(() => tree.root.findByType('ScmChangesSelectionHeaderRow' as any)).toThrow();
     });
@@ -195,9 +198,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         ];
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTab
+        tree = (await renderScreen(<SessionRightPanelGitCommitTab
                     theme={{ colors: { divider: '#ddd', surface: '#fff', surfaceHigh: '#f6f6f6', text: '#000', textSecondary: '#666', success: '#0a0', warning: '#f90', textLink: '#09f' } }}
                     sessionId="s1"
                     sessionPath="/workspace"
@@ -234,9 +235,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                     onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
                     scmStatusFiles={null}
                     showCommitComposer={false}
-                />
-            );
-        });
+                />)).tree;
 
         const flatList = tree.root.findByType('FlatList' as any);
         expect(Array.isArray(flatList.props.data)).toBe(true);

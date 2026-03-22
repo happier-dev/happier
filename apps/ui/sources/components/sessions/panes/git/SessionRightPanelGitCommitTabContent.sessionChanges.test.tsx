@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,9 +28,14 @@ const useDerivedSessionChangeSetSpy = vi.fn((_: unknown) => ({
     providerDiffByPath: null,
 }));
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                                    View: (props: any) => React.createElement('View', props, props.children),
+                                                                }
+    );
+});
 
 vi.mock('@/components/sessions/panes/git/SessionRightPanelGitCommitTab', () => ({
     SessionRightPanelGitCommitTab: (props: any) => React.createElement('SessionRightPanelGitCommitTab', props),
@@ -66,7 +73,9 @@ vi.mock('./useSessionRightPanelGitCommitSelection', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => ({
             getSessionRepositoryTreeExpandedPaths: () => [],
@@ -76,7 +85,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSession: () => ({ metadata: {} }),
     useProjectForSession: () => null,
     useSessionMessages: () => ({ messages: [] }),
-}));
+});
+});
 
 describe('SessionRightPanelGitCommitTabContent', () => {
     it('prefers latest-turn view when a canonical latest-turn change set is available', async () => {
@@ -105,9 +115,7 @@ describe('SessionRightPanelGitCommitTabContent', () => {
         const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRightPanelGitCommitTabContent
+        tree = (await renderScreen(<SessionRightPanelGitCommitTabContent
                     theme={{}}
                     sessionId="s1"
                     sessionPath="/tmp/repo"
@@ -140,9 +148,7 @@ describe('SessionRightPanelGitCommitTabContent', () => {
                     onOpenStashDetails={vi.fn()}
                     openFileInDetails={vi.fn()}
                     openFileInDetailsPinned={vi.fn()}
-                />
-            );
-        });
+                />)).tree;
 
         expect(useChangedFilesDataSpy).toHaveBeenCalledWith(expect.objectContaining({
             latestTurnChangeSet: expect.objectContaining({ sessionId: 's1' }),

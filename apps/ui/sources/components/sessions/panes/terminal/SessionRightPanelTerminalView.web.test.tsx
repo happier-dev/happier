@@ -1,5 +1,6 @@
+import { createDeferred, flushHookEffects, renderScreen, type RenderScreenResult } from '@/dev/testkit';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
@@ -19,39 +20,45 @@ const terminalHandleInstances: Array<{
 
 let shouldTriggerResizeAfterReady = false;
 let terminalRendererVersion = 0;
-let activeTree: renderer.ReactTestRenderer | null = null;
+let activeScreen: RenderScreenResult | null = null;
 let sessionState: any = { metadata: { machineId: 'machine-1', path: '/tmp' } };
 let projectState: any = null;
 
-vi.mock('react-native', () => ({
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-}));
+async function renderAndFlush(element: React.ReactElement): Promise<RenderScreenResult> {
+    const screen = await renderScreen(element);
+    activeScreen = screen;
+    await flushHookEffects();
+    return screen;
+}
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                surface: '#000',
-                surfaceHigh: '#111',
-                surfaceSelected: '#222',
-                divider: '#333',
-                text: '#fff',
-                textSecondary: '#aaa',
-            },
-        }),
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#000',
-                text: '#fff',
-                textSecondary: '#aaa',
-            },
-        },
-    }),
-}));
+async function loadSessionRightPanelTerminalViewWeb() {
+    const mod = await import('./SessionRightPanelTerminalView.web');
+    return mod.SessionRightPanelTerminalView;
+}
+
+async function loadSessionEmbeddedTerminalPaneWeb() {
+    const mod = await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.web');
+    return mod.SessionEmbeddedTerminalPane;
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                View: (props: any) => React.createElement('View', props, props.children),
+                Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+                Platform: {
+                    OS: 'web',
+                    select: (value: any) => value?.default ?? null,
+                },
+            }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => React.createElement('Ionicons', props),
@@ -102,10 +109,9 @@ vi.mock('@/components/terminal/xterm/XtermTerminalView.web', () => ({
             if (!shouldTriggerResizeAfterReady) {
                 return;
             }
-            const timeout = setTimeout(() => {
+            void Promise.resolve().then(() => {
                 props.onResize(81, 24);
-            }, 0);
-            return () => clearTimeout(timeout);
+            });
         }, [props.onReady]);
 
         return React.createElement('XtermTerminalView', props);
@@ -116,9 +122,10 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineRpcTargetAvailable: true }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'phone',
@@ -149,24 +156,27 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: (key: string) => {
-        if (key === 'uiFontScale') return 1;
-        if (key === 'embeddedTerminalDockLocation') return 'sidebar';
-        return null;
-    },
+            if (key === 'uiFontScale') return 1;
+            if (key === 'embeddedTerminalDockLocation') return 'sidebar';
+            return null;
+        },
     useLocalSettingMutable: (key: string) => {
-        if (key === 'embeddedTerminalDockLocation') return ['sidebar', vi.fn()];
-        return [null, vi.fn()];
-    },
+            if (key === 'embeddedTerminalDockLocation') return ['sidebar', vi.fn()];
+            return [null, vi.fn()];
+        },
     useAllMachines: () => Object.values(storageGetStateSpy()?.machines ?? {}),
     useAllSessions: () => Object.values(storageGetStateSpy()?.sessions ?? {}),
     useProjectForSession: () => projectState,
     useSession: () => sessionState,
     storage: {
-        getState: () => storageGetStateSpy(),
-    },
-}));
+            getState: () => storageGetStateSpy(),
+        },
+});
+});
 
 vi.mock('@/sync/ops/machineTerminal', () => ({
     machineTerminalEnsure: (...args: any[]) => machineTerminalEnsureSpy(...args),
@@ -185,29 +195,11 @@ vi.mock('@/utils/url/openExternalUrl', () => ({
 }));
 
 describe('SessionRightPanelTerminalView.web', () => {
-    async function flushTerminalEffects(cycles: number = 4) {
-        for (let i = 0; i < cycles; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-        }
-    }
-
-    async function waitForTerminalStreamReadStart(minCalls: number = 1, maxAttempts: number = 12) {
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-            if (machineTerminalStreamReadSpy.mock.calls.length >= minCalls) {
-                return;
-            }
-            await flushTerminalEffects();
-        }
-        expect(machineTerminalStreamReadSpy.mock.calls.length).toBeGreaterThanOrEqual(minCalls);
-    }
-
     beforeEach(() => {
         vi.resetModules();
         shouldTriggerResizeAfterReady = false;
         terminalRendererVersion = 0;
-        activeTree = null;
+        activeScreen = null;
         terminalHandleInstances.length = 0;
         sessionState = { metadata: { machineId: 'machine-1', path: '/tmp' } };
         projectState = null;
@@ -244,55 +236,40 @@ describe('SessionRightPanelTerminalView.web', () => {
     });
 
     afterEach(async () => {
-        if (!activeTree) return;
-        await act(async () => {
-            activeTree?.unmount();
-        });
-        activeTree = null;
+        if (activeScreen) {
+            await activeScreen.unmount();
+            activeScreen = null;
+        }
+        terminalHandleInstances.length = 0;
     });
 
     it('restarts the PTY when the user presses restart', async () => {
-        const mod = await import('./SessionRightPanelTerminalView.web');
-        const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-        });
-        activeTree = tree;
-
-        await flushTerminalEffects();
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
+        const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
         expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
 
-        const restartButtons = tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-terminal-restart');
-        expect(restartButtons.length).toBeGreaterThan(0);
+        const restartButton = screen.findByTestId('session-rightpanel-terminal-restart');
+        expect(restartButton).toBeTruthy();
 
-        await act(async () => {
-            restartButtons[0]!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-terminal-restart');
 
-        await flushTerminalEffects();
+        await flushHookEffects();
 
         expect(machineTerminalRestartSpy).toHaveBeenCalledTimes(1);
     });
 
     it('uses a canonical session-scoped terminalKey', async () => {
-        const mod = await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.web');
-        const SessionEmbeddedTerminalPaneWeb = mod.SessionEmbeddedTerminalPane;
+        const SessionEmbeddedTerminalPaneWeb = await loadSessionEmbeddedTerminalPaneWeb();
 
-        await act(async () => {
-            activeTree = renderer.create(
-                <SessionEmbeddedTerminalPaneWeb
-                    sessionId="s1"
-                    scopeId="session:s1"
-                    currentDockLocation="details"
-                    testIdPrefix="pane-a"
-                />
-            );
-        });
-
-        await flushTerminalEffects();
+        await renderAndFlush(
+            <SessionEmbeddedTerminalPaneWeb
+                sessionId="s1"
+                scopeId="session:s1"
+                currentDockLocation="details"
+                testIdPrefix="pane-a"
+            />,
+        );
 
         expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
         const ensureInput = machineTerminalEnsureSpy.mock.calls[0]?.[1];
@@ -331,21 +308,16 @@ describe('SessionRightPanelTerminalView.web', () => {
             getProjectForSession: () => projectState,
         });
 
-        const mod = await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.web');
-        const SessionEmbeddedTerminalPaneWeb = mod.SessionEmbeddedTerminalPane;
+        const SessionEmbeddedTerminalPaneWeb = await loadSessionEmbeddedTerminalPaneWeb();
 
-        await act(async () => {
-            activeTree = renderer.create(
-                <SessionEmbeddedTerminalPaneWeb
-                    sessionId="s1"
-                    scopeId="session:s1"
-                    currentDockLocation="details"
-                    testIdPrefix="pane-a"
-                />
-            );
-        });
-
-        await flushTerminalEffects();
+        await renderAndFlush(
+            <SessionEmbeddedTerminalPaneWeb
+                sessionId="s1"
+                scopeId="session:s1"
+                currentDockLocation="details"
+                testIdPrefix="pane-a"
+            />,
+        );
 
         expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
         expect(machineTerminalEnsureSpy.mock.calls[0]?.[0]).toBe('m-project');
@@ -355,21 +327,12 @@ describe('SessionRightPanelTerminalView.web', () => {
     it('does not re-ensure the PTY session when the terminal resizes', async () => {
         shouldTriggerResizeAfterReady = true;
 
-        const mod = await import('./SessionRightPanelTerminalView.web');
-        const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-        });
-        activeTree = tree;
+        const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        await flushHookEffects();
 
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        });
-        await flushTerminalEffects();
-
-        expect(tree).toBeTruthy();
+        expect(screen.tree).toBeTruthy();
         expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -383,23 +346,15 @@ describe('SessionRightPanelTerminalView.web', () => {
                 }))
                 .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false });
 
-            const mod = await import('./SessionRightPanelTerminalView.web');
-            const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            await act(async () => {
-                activeTree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-            });
+            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushTerminalEffects();
-            await act(async () => {
-                await vi.runAllTimersAsync();
-            });
-            await flushTerminalEffects();
+            await flushHookEffects({ runAllTimers: true });
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
 
-            const retryButtons = activeTree!.root.findAll((node) => node.props?.testID === 'session-rightpanel-terminal-retry');
-            expect(retryButtons).toHaveLength(0);
+            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
         } finally {
             vi.useRealTimers();
         }
@@ -434,28 +389,18 @@ describe('SessionRightPanelTerminalView.web', () => {
                     done: true,
                 });
 
-            const mod = await import('./SessionRightPanelTerminalView.web');
-            const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            let tree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-            });
-            activeTree = tree;
+            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushTerminalEffects();
-            await act(async () => {
-                await vi.runAllTimersAsync();
-            });
-            await flushTerminalEffects();
+            await flushHookEffects({ runAllTimers: true });
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
 
             const thirdReadArgs = machineTerminalStreamReadSpy.mock.calls[2]?.[1];
             expect(thirdReadArgs?.cursor).toBe(5);
-            const retryButtons = tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-terminal-retry');
-            expect(retryButtons).toHaveLength(0);
+            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
         } finally {
             vi.useRealTimers();
         }
@@ -486,27 +431,17 @@ describe('SessionRightPanelTerminalView.web', () => {
                     done: true,
                 });
 
-            const mod = await import('./SessionRightPanelTerminalView.web');
-            const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            let tree!: renderer.ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-            });
-            activeTree = tree;
+            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
-            await flushTerminalEffects();
-            await act(async () => {
-                await vi.runAllTimersAsync();
-            });
-            await flushTerminalEffects();
+            await flushHookEffects({ runAllTimers: true });
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(3);
             expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
 
-            const retryButtons = tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-terminal-retry');
-            expect(retryButtons).toHaveLength(0);
+            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
         } finally {
             vi.useRealTimers();
         }
@@ -551,21 +486,15 @@ describe('SessionRightPanelTerminalView.web', () => {
                 })
                 .mockImplementationOnce(() => secondMountReadBlocked.promise);
 
-            const mod = await import('./SessionRightPanelTerminalView.web');
-            const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+            const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-            await act(async () => {
-                activeTree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-            });
-
-            await flushTerminalEffects();
+            const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
             expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
 
             await act(async () => {
-                activeTree?.unmount();
+                screen.tree.unmount();
             });
-            activeTree = null;
 
             firstMountReadBlocked.resolve({
                 ok: true,
@@ -574,13 +503,9 @@ describe('SessionRightPanelTerminalView.web', () => {
                 nextCursor: 5,
                 done: true,
             });
-            await flushTerminalEffects();
+            await flushHookEffects();
 
-            await act(async () => {
-                activeTree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-            });
-
-            await flushTerminalEffects();
+            await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
 
             expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
             expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
@@ -593,7 +518,7 @@ describe('SessionRightPanelTerminalView.web', () => {
                 nextCursor: 5,
                 done: true,
             });
-            await flushTerminalEffects();
+            await flushHookEffects();
         } finally {
             firstMountReadBlocked.resolve({
                 ok: true,
@@ -632,27 +557,22 @@ describe('SessionRightPanelTerminalView.web', () => {
             })
             .mockImplementationOnce(() => blockedRead.promise);
 
-        const mod = await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.web');
-        const SessionEmbeddedTerminalPaneWeb = mod.SessionEmbeddedTerminalPane;
+        const SessionEmbeddedTerminalPaneWeb = await loadSessionEmbeddedTerminalPaneWeb();
 
-        await act(async () => {
-            activeTree = renderer.create(
-                <SessionEmbeddedTerminalPaneWeb
-                    sessionId="s1"
-                    scopeId="session:s1"
-                    currentDockLocation="details"
-                    testIdPrefix="pane-a"
-                />
-            );
-        });
-
-        await flushTerminalEffects();
+        const screen = await renderAndFlush(
+            <SessionEmbeddedTerminalPaneWeb
+                sessionId="s1"
+                scopeId="session:s1"
+                currentDockLocation="details"
+                testIdPrefix="pane-a"
+            />,
+        );
 
         expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
 
         terminalRendererVersion = 1;
         await act(async () => {
-            activeTree?.update(
+            screen.tree.update(
                 <SessionEmbeddedTerminalPaneWeb
                     sessionId="s1"
                     scopeId="session:s1"
@@ -662,7 +582,7 @@ describe('SessionRightPanelTerminalView.web', () => {
             );
         });
 
-        await flushTerminalEffects();
+        await flushHookEffects();
 
         expect(terminalHandleInstances).toHaveLength(2);
         expect(terminalHandleInstances[1]?.clear).toHaveBeenCalledTimes(1);
@@ -675,7 +595,7 @@ describe('SessionRightPanelTerminalView.web', () => {
             nextCursor: 5,
             done: true,
         });
-        await flushTerminalEffects();
+        await flushHookEffects();
     });
 
     it('preserves cached transcript when a reused terminal reconnects without a cached terminal id', async () => {
@@ -696,13 +616,10 @@ describe('SessionRightPanelTerminalView.web', () => {
             done: true,
         });
 
-        const mod = await import('./SessionRightPanelTerminalView.web');
-        const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-        await act(async () => {
-            activeTree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-        });
-        await flushTerminalEffects();
+        await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        await flushHookEffects();
 
         const cached = cacheMod.readTerminalSurfaceState('session:s1:terminal');
         expect(cached).toEqual({
@@ -735,43 +652,31 @@ describe('SessionRightPanelTerminalView.web', () => {
                 done: true,
             });
 
-        const mod = await import('./SessionRightPanelTerminalView.web');
-        const SessionRightPanelTerminalViewWeb = mod.SessionRightPanelTerminalView;
+        const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
+        await vi.waitFor(() => {
+            expect(machineTerminalStreamReadSpy).toHaveBeenCalled();
         });
-        activeTree = tree;
 
-        await waitForTerminalStreamReadStart(1);
+        const clearButton = screen.findByTestId('session-rightpanel-terminal-clear');
+        expect(clearButton).toBeTruthy();
 
-        const clearButtons = tree.root.findAll((node) => node.props?.testID === 'session-rightpanel-terminal-clear');
-        expect(clearButtons.length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('session-rightpanel-terminal-clear');
 
         await act(async () => {
-            clearButtons[0]!.props.onPress();
+            delayedRead.resolve({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'stale-output' }],
+                nextCursor: 5,
+                done: false,
+            });
         });
-
-        delayedRead.resolve({
-            ok: true,
-            terminalId: 't1',
-            events: [{ t: 'data', data: 'stale-output' }],
-            nextCursor: 5,
-            done: false,
-        });
-        await flushTerminalEffects();
+        await flushHookEffects();
 
         expect(terminalHandleInstances[0]?.clear).toHaveBeenCalled();
         expect(terminalHandleInstances[0]?.write).not.toHaveBeenCalledWith('stale-output');
         expect(machineTerminalStreamReadSpy.mock.calls[1]?.[1]?.cursor).toBe(5);
     });
 });
-
-function createDeferred<T>() {
-    let resolve!: (value: T) => void;
-    const promise = new Promise<T>((nextResolve) => {
-        resolve = nextResolve;
-    });
-    return { promise, resolve };
-}
