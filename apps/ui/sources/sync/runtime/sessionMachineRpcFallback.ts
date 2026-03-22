@@ -103,9 +103,9 @@ async function resolveTransferPolicyAllowsMachineRpcDirect(sessionId: string): P
         serverId,
     });
 
-    // Preserve legacy behavior when server features aren't available yet; we can only enforce
-    // the policy when we have a snapshot.
-    if (!serverFeatures) return true;
+    // Fail closed for guarded methods: if we cannot evaluate policy, we must not attempt
+    // `machine_rpc_direct` and risk bypassing server transfer restrictions.
+    if (!serverFeatures) return false;
 
     const availability = resolveAppSessionTransferAvailability({
         machineTargetAvailable: true,
