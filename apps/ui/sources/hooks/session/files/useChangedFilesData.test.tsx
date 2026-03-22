@@ -6,6 +6,8 @@ import type { SessionChangeSet } from '@happier-dev/protocol';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { useChangedFilesData, type UseChangedFilesDataResult } from './useChangedFilesData';
+import { renderScreen } from '@/dev/testkit';
+
 
 // Align with React test-renderer act requirements in this suite.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,7 +60,7 @@ function makeSnapshot(): ScmWorkingSnapshot {
 }
 
 describe('useChangedFilesData', () => {
-    it('can skip attribution computation for repository-only surfaces', () => {
+    it('can skip attribution computation for repository-only surfaces', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -85,9 +87,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -103,7 +103,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('includes inferred session attribution when reliability is high', () => {
+    it('includes inferred session attribution when reliability is high', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -120,9 +120,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -140,7 +138,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('suppresses inferred attribution when multiple sessions are active', () => {
+    it('suppresses inferred attribution when multiple sessions are active', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -157,9 +155,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -176,7 +172,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('keeps session view toggle available in limited mode when direct attribution exists', () => {
+    it('keeps session view toggle available in limited mode when direct attribution exists', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         function Test() {
@@ -202,9 +198,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) {
@@ -220,7 +214,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('prefers provider-backed session change sets over inferred attribution', () => {
+    it('prefers provider-backed session change sets over inferred attribution', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         const sessionChangeSet: SessionChangeSet = {
@@ -258,9 +252,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) throw new Error('Expected hook result');
@@ -274,7 +266,7 @@ describe('useChangedFilesData', () => {
         });
     });
 
-    it('derives a latest-turn scope from provider-backed turn change sets', () => {
+    it('derives a latest-turn scope from provider-backed turn change sets', async () => {
         let latest: UseChangedFilesDataResult | null = null;
 
         const latestTurnChangeSet: SessionChangeSet = {
@@ -312,9 +304,7 @@ describe('useChangedFilesData', () => {
         }
 
         let root: renderer.ReactTestRenderer;
-        act(() => {
-            root = renderer.create(<Test />);
-        });
+        root = (await renderScreen(<Test />)).tree;
 
         expect(latest).not.toBeNull();
         if (!latest) throw new Error('Expected hook result');

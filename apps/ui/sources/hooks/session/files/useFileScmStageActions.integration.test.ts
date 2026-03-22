@@ -44,13 +44,16 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlert,
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {

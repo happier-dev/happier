@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,16 +26,13 @@ describe('useRepositoryTreeBrowser', () => {
         cachedDirectoryEntries.set('session-1:', [
             { name: 'cached.md', type: 'file' },
         ]);
+        let resolveRootEntries: ((value: { ok: true; entries: Array<{ name: string; type: 'file' | 'directory' }> }) => void) | null = null;
 
         listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ directoryPath }) => {
             if (!directoryPath) {
-                return {
-                    ok: true,
-                    entries: [
-                        { name: 'src', type: 'directory' },
-                        { name: 'README.md', type: 'file' },
-                    ],
-                };
+                return await new Promise((resolve) => {
+                    resolveRootEntries = resolve;
+                });
             }
             return { ok: true, entries: [] };
         });
@@ -52,15 +51,25 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         expect(api.nodes.map((n: any) => n.path)).toEqual(['cached.md']);
 
         // Revalidation should still occur.
         await act(async () => {});
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
+
+        await act(async () => {
+            resolveRootEntries?.({
+                ok: true,
+                entries: [
+                    { name: 'src', type: 'directory' },
+                    { name: 'README.md', type: 'file' },
+                ],
+            });
+            await Promise.resolve();
+        });
+        expect(api.nodes.map((n: any) => n.path)).toEqual(['src', 'README.md']);
     });
 
     it('persists expanded directories via provided callbacks and collapses all', async () => {
@@ -96,9 +105,7 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
         await act(async () => {});
 
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
@@ -179,9 +186,7 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
         await act(async () => {});
 
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
@@ -259,9 +264,7 @@ describe('useRepositoryTreeBrowser', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
         await act(async () => {});
 
         await act(async () => {

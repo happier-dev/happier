@@ -1,14 +1,23 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';
-import {
-    downloadSessionPathViaTransfer,
-} from '@/sync/domains/files/transfers/sessionPathTransferRpc';
-import { uploadLocalSourceToSessionPath } from '@/sync/domains/files/transfers/uploadLocalSourceToSessionPath';
+import { openLocalUploadSourceReader } from '@/sync/domains/files/transfers/localUploadSourceReader';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
+import { downloadBulkPayloadToFile, uploadBulkPayloadFromFile } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import { createSessionFileTransferRpcCaller } from '@/sync/domains/transfers/runtime/sessionFileTransferRpcCaller';
 import { sessionStatFile } from '@/sync/ops';
+import { rebaseTransferRequestPathToMachineTarget } from '@/sync/runtime/sessionMachineRpcFallback';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
+import { resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';
+
+const SESSION_FILES_UPLOAD_INIT = 'daemon.sessionFiles.upload.init';
+const SESSION_FILES_UPLOAD_CHUNK = 'daemon.sessionFiles.upload.chunk';
+const SESSION_FILES_UPLOAD_FINALIZE = 'daemon.sessionFiles.upload.finalize';
+const SESSION_FILES_UPLOAD_ABORT = 'daemon.sessionFiles.upload.abort';
+const SESSION_FILES_DOWNLOAD_INIT = 'daemon.sessionFiles.download.init';
+const SESSION_FILES_DOWNLOAD_CHUNK = 'daemon.sessionFiles.download.chunk';
+const SESSION_FILES_DOWNLOAD_FINALIZE = 'daemon.sessionFiles.download.finalize';
+const SESSION_FILES_DOWNLOAD_ABORT = 'daemon.sessionFiles.download.abort';
 
 export type WorkspaceUploadEntry =
     | Readonly<{ kind: 'web'; file: File; relativePath: string }>
@@ -42,6 +51,14 @@ export type WorkspaceDownloadState =
     | Readonly<{ status: 'error'; error: string }>;
 
 type TransferResult = { ok: true } | { ok: false; error: string };
+type BulkTransferFailureResponse = Readonly<{ success: false; error: string; errorCode?: string }>;
+type WorkspaceFileDownloadInitResponse = Readonly<{
+    success: true;
+    downloadId: string;
+    chunkSizeBytes: number;
+    sizeBytes: number;
+    name: string;
+}> | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 function joinRepoPath(parentDir: string, relativePath: string): string {
     const cleanParent = String(parentDir ?? '').trim().replace(/\\/g, '/').replace(/\/+$/g, '');
@@ -58,6 +75,32 @@ function joinFileUri(baseUri: string, childPath: string): string {
     if (!child) return base;
     const withSlash = base.endsWith('/') ? base : `${base}/`;
     return `${withSlash}${child}`;
+}
+
+async function openWorkspaceUploadSourceReader(entry: WorkspaceUploadEntry): Promise<{
+    sizeBytes: number;
+    readBytes: (offset: number, length: number) => Promise<Uint8Array>;
+    close: () => Promise<void>;
+}> {
+    if (entry.kind === 'web') {
+        const reader = await openLocalUploadSourceReader({ kind: 'web', file: entry.file });
+        return {
+            sizeBytes: reader.sizeBytes ?? entry.file.size,
+            readBytes: reader.readBytes,
+            close: reader.close,
+        };
+    }
+
+    const reader = await openLocalUploadSourceReader({
+        kind: 'native',
+        uri: entry.uri,
+        sizeBytes: entry.sizeBytes,
+    });
+    return {
+        sizeBytes: reader.sizeBytes ?? (typeof entry.sizeBytes === 'number' && Number.isFinite(entry.sizeBytes) ? Math.floor(entry.sizeBytes) : 0),
+        readBytes: reader.readBytes,
+        close: reader.close,
+    };
 }
 
 export async function buildUploadEntryPlan(input: Readonly<{
@@ -213,16 +256,16 @@ async function createNativeDownloadSink(input: Readonly<{ name: string }>): Prom
             try { file.delete(); } catch { }
         };
 
-        return {
-            ok: true,
-            fileUri: file.uri,
-            close,
-            cleanup,
-            writeBytes: async (bytes) => await writeNativeFileChunk(handle, bytes),
-        };
-    } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : 'Failed to create download sink' };
-    }
+    return {
+        ok: true,
+        fileUri: file.uri,
+        close,
+        cleanup,
+        writeBytes: async (bytes) => await writeNativeFileChunk(handle, bytes),
+    };
+} catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Failed to create download sink' };
+}
 }
 
 type NativeDownloadSink = Extract<Awaited<ReturnType<typeof createNativeDownloadSink>>, { ok: true }>;
@@ -312,14 +355,39 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     const task = tasks[index];
                     if (!task) return;
 
-                    let lastUploaded = 0;
-                    const result = await uploadLocalSourceToSessionPath({
+                    const source = await openWorkspaceUploadSourceReader(task.entry);
+                    const transferClient = createSessionFileTransferRpcCaller({
                         sessionId: params.sessionId,
-                        source: task.entry,
-                        targetPath: task.targetPath,
-                        sizeBytes: task.sizeBytes,
-                        overwrite: task.overwrite,
-                        signal: controller.signal,
+                        sessionRpcTransferSizeBytes: task.sizeBytes,
+                    });
+                    let lastUploaded = 0;
+                        const result = await uploadBulkPayloadFromFile({
+                            fileReader: source,
+                            init: async () => await transferClient.call({
+                                request: {
+                                    path: task.targetPath,
+                                    sizeBytes: task.sizeBytes,
+                                    overwrite: task.overwrite,
+                                },
+                            machineMethod: SESSION_FILES_UPLOAD_INIT,
+                            sessionMethod: SESSION_FILES_UPLOAD_INIT,
+                            toMachineRequest: rebaseTransferRequestPathToMachineTarget,
+                        }),
+                        sendChunk: async (request) => await transferClient.call({
+                            request,
+                            machineMethod: SESSION_FILES_UPLOAD_CHUNK,
+                            sessionMethod: SESSION_FILES_UPLOAD_CHUNK,
+                        }),
+                        finalize: async (request) => await transferClient.call({
+                            request,
+                            machineMethod: SESSION_FILES_UPLOAD_FINALIZE,
+                            sessionMethod: SESSION_FILES_UPLOAD_FINALIZE,
+                        }),
+                        abort: async (request) => await transferClient.call({
+                            request,
+                            machineMethod: SESSION_FILES_UPLOAD_ABORT,
+                            sessionMethod: SESSION_FILES_UPLOAD_ABORT,
+                        }),
                         onProgress: (progress) => {
                             const delta = progress.uploadedBytes - lastUploaded;
                             lastUploaded = progress.uploadedBytes;
@@ -332,9 +400,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                                 };
                             });
                         },
+                        signal: controller.signal,
                     });
 
-                    if (!result.success) {
+                    if (result.success !== true) {
                         cancelOnce();
                         setUploadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: result.error });
                         return;
@@ -374,6 +443,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         downloadAbortRef.current = controller;
 
         const nativeSinkRef: { current: NativeDownloadSink | null } = { current: null };
+        const downloadedChunks: Uint8Array[] = [];
         const updateProgress = (progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => {
             setDownloadState((prev) => prev.status === 'downloading'
                 ? { ...prev, downloadedBytes: progress.downloadedBytes, totalBytes: progress.totalBytes }
@@ -381,33 +451,105 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         };
 
         try {
-            if (Platform.OS === 'web') {
-                const chunks: Array<Uint8Array<ArrayBuffer>> = [];
-                const res = await downloadSessionPathViaTransfer({
-                    sessionId: params.sessionId,
-                    path: input.path,
-                    asZip: input.asZip,
-                    onInit: async ({ name, sizeBytes }) => {
+            const transferClient = createSessionFileTransferRpcCaller({
+                sessionId: params.sessionId,
+            });
+
+            const res = await downloadBulkPayloadToFile({
+                destination: {
+                    writeBytes: async (bytes) => {
+                        if (Platform.OS === 'web') {
+                            downloadedChunks.push(new Uint8Array(bytes));
+                            return;
+                        }
+
+                        if (!nativeSinkRef.current) {
+                            throw new Error('Download sink unavailable');
+                        }
+                        await nativeSinkRef.current.writeBytes(bytes);
+                    },
+                    close: async () => {
+                        if (Platform.OS !== 'web' && nativeSinkRef.current) {
+                            await nativeSinkRef.current.close();
+                        }
+                    },
+                    cleanup: async () => {
+                        if (Platform.OS === 'web') {
+                            downloadedChunks.length = 0;
+                            return;
+                        }
+
+                        if (nativeSinkRef.current) {
+                            await nativeSinkRef.current.cleanup();
+                        }
+                    },
+                },
+                init: async (request) => {
+                    const init = await transferClient.call({
+                        request: {
+                            path: input.path,
+                            asZip: input.asZip,
+                            recipientPublicKeyBase64: request.recipientPublicKeyBase64,
+                        },
+                        machineMethod: SESSION_FILES_DOWNLOAD_INIT,
+                        sessionMethod: SESSION_FILES_DOWNLOAD_INIT,
+                        toMachineRequest: rebaseTransferRequestPathToMachineTarget,
+                    }) as WorkspaceFileDownloadInitResponse;
+
+                    if (init.success) {
                         setDownloadState({
                             status: 'downloading',
-                            name,
+                            name: init.name,
                             downloadedBytes: 0,
-                            totalBytes: sizeBytes,
+                            totalBytes: init.sizeBytes,
                         });
-                    },
-                    signal: controller.signal,
-                    onProgress: updateProgress,
-                    writeBytes: async (bytes) => {
-                        chunks.push(new Uint8Array(bytes));
-                    },
-                });
 
-                if (!res.success) {
-                    setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
-                    return { ok: false, error: res.error };
-                }
+                        if (Platform.OS !== 'web') {
+                            const sink = await createNativeDownloadSink({ name: init.name || 'download' });
+                            if (!sink.ok) {
+                                return {
+                                    success: false,
+                                    error: sink.error,
+                                } satisfies BulkTransferFailureResponse;
+                            }
+                            nativeSinkRef.current = sink;
+                        }
+                    }
 
-                const blob = new Blob(chunks, { type: 'application/octet-stream' });
+                    return init as Readonly<{
+                        success: true;
+                        downloadId: string;
+                        chunkSizeBytes: number;
+                        sizeBytes: number;
+                        name: string;
+                    }> | Readonly<{ success: false; error: string; errorCode?: string }>;
+                },
+                readChunk: async (request) => await transferClient.call({
+                    request,
+                    machineMethod: SESSION_FILES_DOWNLOAD_CHUNK,
+                    sessionMethod: SESSION_FILES_DOWNLOAD_CHUNK,
+                }),
+                finalize: async (request) => await transferClient.call({
+                    request,
+                    machineMethod: SESSION_FILES_DOWNLOAD_FINALIZE,
+                    sessionMethod: SESSION_FILES_DOWNLOAD_FINALIZE,
+                }),
+                abort: async (request) => await transferClient.call({
+                    request,
+                    machineMethod: SESSION_FILES_DOWNLOAD_ABORT,
+                    sessionMethod: SESSION_FILES_DOWNLOAD_ABORT,
+                }),
+                signal: controller.signal,
+                onProgress: updateProgress,
+            });
+
+            if (!res.ok) {
+                setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
+                return { ok: false, error: res.error };
+            }
+
+            if (Platform.OS === 'web') {
+                const blob = new Blob(downloadedChunks as BlobPart[], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
                 try {
                     const anchor = document.createElement('a');
@@ -420,49 +562,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                         try { URL.revokeObjectURL(url); } catch { }
                     }, 1_000);
                 }
-            } else {
-                const res = await downloadSessionPathViaTransfer({
-                    sessionId: params.sessionId,
-                    path: input.path,
-                    asZip: input.asZip,
-                    onInit: async ({ name, sizeBytes }) => {
-                        const nextSink = await createNativeDownloadSink({ name: name || 'download' });
-                        if (!nextSink.ok) {
-                            throw new Error(nextSink.error);
-                        }
-                        nativeSinkRef.current = nextSink;
-                        setDownloadState({
-                            status: 'downloading',
-                            name,
-                            downloadedBytes: 0,
-                            totalBytes: sizeBytes,
-                        });
-                    },
-                    signal: controller.signal,
-                    onProgress: updateProgress,
-                    writeBytes: async (bytes) => {
-                        if (!nativeSinkRef.current) {
-                            throw new Error('Download sink unavailable');
-                        }
-                        await nativeSinkRef.current.writeBytes(bytes);
-                    },
-                });
-
-                if (!res.success) {
-                    if (nativeSinkRef.current) {
-                        await nativeSinkRef.current.cleanup();
-                    }
-                    setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
-                    return { ok: false, error: res.error };
-                }
-
-                if (!nativeSinkRef.current) {
-                    setDownloadState({ status: 'error', error: 'Download sink unavailable' });
-                    return { ok: false, error: 'Download sink unavailable' };
-                }
-
-                await nativeSinkRef.current.close();
-
+            } else if (nativeSinkRef.current) {
                 try {
                     const Sharing: any = await import('expo-sharing');
                     if (Sharing && typeof Sharing.isAvailableAsync === 'function') {
@@ -474,6 +574,9 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 } catch {
                     // Best-effort share only.
                 }
+            } else {
+                setDownloadState({ status: 'error', error: 'Download sink unavailable' });
+                return { ok: false, error: 'Download sink unavailable' };
             }
 
             if (controller.signal.aborted) {

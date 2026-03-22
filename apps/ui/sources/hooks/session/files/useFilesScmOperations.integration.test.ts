@@ -50,13 +50,16 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: modalAlert,
-        confirm: modalConfirm,
-        prompt: modalPrompt,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlert,
+            confirm: modalConfirm,
+            prompt: modalPrompt,
+        },
+    }).module;
+});
 
 vi.mock('@/components/sessions/files/commit/showScmCommitMessageEditorModal', () => ({
     showScmCommitMessageEditorModal,
