@@ -1,32 +1,54 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { createRouterMock, enableReactActEnvironment, PICKER_NAV_STATE, PICKER_THEME_COLORS, type PickerStackOptionsInput } from './testHarness';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    createNavigationMock,
+    createRouterMock,
+    enableReactActEnvironment,
+    PICKER_NAV_STATE,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
 enableReactActEnvironment();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+const setOptionsSpy = vi.hoisted(() => vi.fn());
+const listeners = vi.hoisted(() => new Set<() => void>());
+const navigationApi = createNavigationMock();
+const routerApi = createRouterMock();
+let searchParams = { selectedId: '', machineId: 'm1' };
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
-    Pressable: 'Pressable',
-    View: 'View',
-}));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        Platform: { OS: 'ios' },
+    });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), show: vi.fn() },
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => (key === 'useProfiles' ? false : false),
-    useSettingMutable: () => [[], vi.fn()],
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            show: vi.fn(),
+        },
+    }).module;
+});
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => (key === 'useProfiles' ? false : false),
+            useSettingMutable: () => [[], vi.fn()],
+        },
+    }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
@@ -60,73 +82,84 @@ vi.mock('@/sync/ops', () => ({
     machinePreviewEnv: vi.fn(async () => ({ supported: false })),
 }));
 
-vi.mock('@/sync/domains/profiles/profileCompatibility', () => ({
-    getProfileEnvironmentVariables: () => ({}),
-}));
+vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
+    return {
+        ...actual,
+        getProfileEnvironmentVariables: () => ({}),
+    };
+});
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
     storeTempData: () => 'temp',
     getTempData: () => null,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: PICKER_THEME_COLORS.header } } }),
-    StyleSheet: { create: () => ({}) },
-}));
+vi.mock('react-native-unistyles', async () =>
+    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const baseModule = createExpoRouterMock({
+        navigation: navigationApi,
+        params: searchParams,
+        router: {
+            push: routerApi.push,
+            back: routerApi.back,
+            replace: routerApi.replace,
+            setParams: routerApi.setParams,
+        },
+    }).module;
+
+    return {
+        ...baseModule,
+        Stack: {
+            Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+                React.useEffect(() => {
+                    setOptionsSpy(typeof options === 'function' ? options() : options);
+                    listeners.forEach((notify) => notify());
+                }, [options]);
+                return null;
+            },
+        },
+        useNavigation: () => {
+            const [, force] = React.useReducer((value) => value + 1, 0);
+            React.useLayoutEffect(() => {
+                listeners.add(force);
+                return () => {
+                    listeners.delete(force);
+                };
+            }, [force]);
+            return navigationApi;
+        },
+        useLocalSearchParams: () => searchParams,
+    };
+});
 
 describe('ProfilePickerScreen (Stack.Screen options stability)', () => {
-    it('does not trigger an infinite setOptions update loop', async () => {
-        const routerApi = createRouterMock();
-        const listeners = new Set<() => void>();
-        let setOptionsCalls = 0;
-        const observedOptions: unknown[] = [];
-        let searchParams = { selectedId: '', machineId: 'm1' };
+    afterEach(() => {
+        standardCleanup();
+    });
 
-        const navigationApi = {
-            getState: () => PICKER_NAV_STATE,
-            dispatch: vi.fn(),
-            setOptions: (_options: unknown) => {
-                setOptionsCalls += 1;
-                observedOptions.push(_options);
-                if (setOptionsCalls > 8) {
-                    throw new Error(`setOptions loop detected after ${setOptionsCalls} calls`);
-                }
-                listeners.forEach((notify) => notify());
-            },
-        };
-
-        vi.doMock('expo-router', () => ({
-            Stack: {
-                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
-                    React.useEffect(() => {
-                        navigationApi.setOptions(typeof options === 'function' ? options() : options);
-                    }, [options]);
-                    return null;
-                },
-            },
-            useRouter: () => routerApi,
-            useNavigation: () => {
-                const [, force] = React.useReducer((x) => x + 1, 0);
-                React.useLayoutEffect(() => {
-                    listeners.add(force);
-                    return () => void listeners.delete(force);
-                }, [force]);
-                return navigationApi;
-            },
-            useLocalSearchParams: () => searchParams,
-        }));
-
-        const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
-        let tree: renderer.ReactTestRenderer | undefined;
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(ProfilePickerScreen));
+    beforeEach(() => {
+        listeners.clear();
+        searchParams = { selectedId: '', machineId: 'm1' };
+        setOptionsSpy.mockClear();
+        navigationApi.getState = () => ({
+            index: PICKER_NAV_STATE.index,
+            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
         });
+    });
+
+    it('does not trigger an infinite setOptions update loop', async () => {
+        const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
+        const screen = await renderScreen(React.createElement(ProfilePickerScreen));
 
         searchParams = { selectedId: 'profile-1', machineId: 'm1' };
-        await act(async () => {
-            tree?.update(React.createElement(ProfilePickerScreen));
-        });
+        await screen.update(React.createElement(ProfilePickerScreen));
+
+        const setOptionsCalls = setOptionsSpy.mock.calls.length;
+        const observedOptions = setOptionsSpy.mock.calls.map(([options]) => options);
 
         expect(setOptionsCalls).toBeGreaterThan(0);
         expect(setOptionsCalls).toBeLessThanOrEqual(2);

@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,12 +24,13 @@ function setMockServerId(serverId: string): void {
     }
 }
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+        }
+    );
 });
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
@@ -93,9 +96,13 @@ vi.mock('@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetS
     }),
 }));
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => mockState.localSearchParams,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        params: mockState.localSearchParams,
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     loadNewSessionDraft: () => {
@@ -157,9 +164,7 @@ describe('/new (blocking guidance)', () => {
         const Screen = (await import('@/app/(app)/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        tree = (await renderScreen(React.createElement(Screen))).tree;
 
         expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
         expect(() => tree!.root.findByType('NewSessionWizard')).toThrow();
@@ -181,9 +186,7 @@ describe('/new (blocking guidance)', () => {
         const Screen = (await import('@/app/(app)/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        tree = (await renderScreen(React.createElement(Screen))).tree;
 
         expect(() => tree!.root.findByType('NewSessionWizard')).not.toThrow();
         expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).toThrow();
