@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createCodexAppServerStreamEventBridge } from './streamEventBridge';
 
 describe('createCodexAppServerStreamEventBridge', () => {
-    it('maps app-server v2 agent message and reasoning notifications', () => {
+    it('maps app-server v2 agent message, plan, and reasoning notifications', () => {
         const bridge = createCodexAppServerStreamEventBridge();
 
         expect(
@@ -15,6 +15,16 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 },
             }),
         ).toEqual([{ type: 'assistant-text-delta', itemId: 'msg_1', text: 'Hello' }]);
+
+        expect(
+            bridge.onNotification({
+                method: 'item/plan/delta',
+                params: {
+                    itemId: 'plan_1',
+                    delta: '## Proposed plan',
+                },
+            }),
+        ).toEqual([{ type: 'assistant-text-delta', itemId: 'plan_1', text: '## Proposed plan' }]);
 
         expect(
             bridge.onNotification({
@@ -50,6 +60,25 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 },
             }),
         ).toEqual([{ type: 'reasoning-delta', itemId: 'reason_1', text: 'more detail' }]);
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'plan_1',
+                        type: 'Plan',
+                        text: '## Proposed plan\n1. Inspect\n2. Implement\n3. Verify',
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'assistant-text-final',
+                itemId: 'plan_1',
+                text: '## Proposed plan\n1. Inspect\n2. Implement\n3. Verify',
+            },
+        ]);
 
         expect(
             bridge.onNotification({
@@ -137,6 +166,46 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 output: {
                     stdout: 'done',
                     exitCode: 0,
+                },
+            },
+        ]);
+    });
+
+    it('synthesizes a command tool-call before the result when completion arrives without a prior started event', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'cmd_failed',
+                        type: 'commandExecution',
+                        command: 'mkdir -p /tmp/demo',
+                        cwd: '/repo',
+                        stderr: 'Rejected("rejected by user")',
+                        exitCode: 1,
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'tool-call',
+                toolKind: 'command',
+                callId: 'cmd_failed',
+                name: 'CodexBash',
+                input: {
+                    command: 'mkdir -p /tmp/demo',
+                    cwd: '/repo',
+                },
+            },
+            {
+                type: 'tool-result',
+                toolKind: 'command',
+                callId: 'cmd_failed',
+                output: {
+                    stderr: 'Rejected("rejected by user")',
+                    exitCode: 1,
                 },
             },
         ]);

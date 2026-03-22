@@ -95,18 +95,22 @@ function omitKeys(value: RecordLike, keys: readonly string[]): RecordLike {
 function readToolContextFromItem(item: RecordLike): ToolContext | null {
     const itemType = readItemType(item);
     if (itemType === 'commandexecution') {
+        const command = readString(item.command);
+        const cwd = readString(item.cwd);
+        if (!command && !cwd) return null;
         return {
             toolKind: 'command',
             name: 'CodexBash',
-            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType']),
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType', 'stderr', 'stdout', 'exitCode', 'exit_code', 'status', 'success', 'error']),
         };
     }
 
     if (itemType === 'filechange') {
+        if (!Object.prototype.hasOwnProperty.call(item, 'changes')) return null;
         return {
             toolKind: 'file-change',
             name: 'CodexPatch',
-            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType']),
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType', 'stderr', 'stdout', 'exitCode', 'exit_code', 'status', 'success', 'error']),
         };
     }
 
@@ -124,8 +128,11 @@ function readToolContextFromItem(item: RecordLike): ToolContext | null {
     };
 }
 
-function readToolResultOutput(item: RecordLike, itemType: string | null): unknown {
-    const output = omitKeys(item, ['id', 'itemId', 'type', 'itemType']);
+function readToolResultOutput(item: RecordLike, itemType: string | null, input?: unknown): unknown {
+    const inputKeys = input && typeof input === 'object' && !Array.isArray(input)
+        ? Object.keys(input as RecordLike)
+        : [];
+    const output = omitKeys(item, ['id', 'itemId', 'type', 'itemType', ...inputKeys]);
     return itemType === 'mcptoolcall' && 'result' in item ? extractMcpToolCallResultOutput(item.result) : output;
 }
 
@@ -172,7 +179,7 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
             const params = asRecord(notification.params);
             if (!params) return [];
 
-            if (notification.method === 'item/agentMessage/delta') {
+            if (notification.method === 'item/agentMessage/delta' || notification.method === 'item/plan/delta') {
                 const itemId = readItemId(params);
                 const text = readText(params, ['delta', 'text', 'message']);
                 return itemId && text ? [{ type: 'assistant-text-delta', itemId, text }] : [];
@@ -214,7 +221,7 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
             const itemType = readItemType(item);
             if (!itemId || !itemType) return [];
 
-            if (itemType === 'agentmessage') {
+            if (itemType === 'agentmessage' || itemType === 'plan') {
                 const text = readText(item, ['text', 'message', 'content']);
                 return text ? [{ type: 'assistant-text-final', itemId, text }] : [];
             }
@@ -224,15 +231,33 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                 return text ? [{ type: 'reasoning-final', itemId, text }] : [];
             }
 
-            const toolContext = toolContextByCallId.get(itemId) ?? readToolContextFromItem(item);
-            if (!toolContext) return [];
+            const rememberedToolContext = toolContextByCallId.get(itemId) ?? null;
+            const synthesizedToolContext = rememberedToolContext ?? readToolContextFromItem(item);
+            if (!synthesizedToolContext) return [];
             toolContextByCallId.delete(itemId);
-            return [{
-                type: 'tool-result',
-                toolKind: toolContext.toolKind,
-                callId: itemId,
-                output: readToolResultOutput(item, itemType),
-            }];
+            if (rememberedToolContext) {
+                return [{
+                    type: 'tool-result',
+                    toolKind: rememberedToolContext.toolKind,
+                    callId: itemId,
+                    output: readToolResultOutput(item, itemType),
+                }];
+            }
+            return [
+                {
+                    type: 'tool-call',
+                    toolKind: synthesizedToolContext.toolKind,
+                    callId: itemId,
+                    name: synthesizedToolContext.name,
+                    input: synthesizedToolContext.input,
+                },
+                {
+                    type: 'tool-result',
+                    toolKind: synthesizedToolContext.toolKind,
+                    callId: itemId,
+                    output: readToolResultOutput(item, itemType, synthesizedToolContext.input),
+                },
+            ];
         },
 
         onServerRequest: (request): CodexAppServerStreamUpdate[] => {
