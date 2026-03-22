@@ -8,9 +8,6 @@ const readCachedMachineRpcDirectRouteMock = vi.hoisted(() =>
     vi.fn((_input: unknown): TransferRouteViabilityRecord => ({ status: 'unknown' })),
 );
 const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
-const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
-    throw new Error('legacy downloadMachineTransferJsonPayload helper should not be used');
-}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -31,17 +28,12 @@ vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async (importOr
     downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload', () => ({
-    downloadMachineTransferJsonPayload: legacyDownloadMachineTransferJsonPayloadMock,
-}));
-
 describe('machine prompt registries ops (server-scoped routing)', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
         readCachedMachineRpcDirectRouteMock.mockReset();
         readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
         downloadBulkJsonPayloadMock.mockReset();
-        legacyDownloadMachineTransferJsonPayloadMock.mockClear();
     });
 
     it('downloads fetched registry item payloads through the canonical bulk transfer pipeline', async () => {
@@ -109,7 +101,6 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             finalize: expect.any(Function),
             parsePayload: expect.any(Function),
         }));
-        expect(legacyDownloadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',

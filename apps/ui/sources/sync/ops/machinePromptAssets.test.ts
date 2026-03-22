@@ -9,12 +9,6 @@ const readCachedMachineRpcDirectRouteMock = vi.hoisted(() =>
 );
 const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const uploadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
-const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
-    throw new Error('legacy downloadMachineTransferJsonPayload helper should not be used');
-}));
-const legacyUploadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
-    throw new Error('legacy uploadMachineTransferJsonPayload helper should not be used');
-}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -36,14 +30,6 @@ vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async (importOr
     uploadBulkJsonPayload: uploadBulkJsonPayloadMock,
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload', () => ({
-    downloadMachineTransferJsonPayload: legacyDownloadMachineTransferJsonPayloadMock,
-}));
-
-vi.mock('@/sync/domains/transfers/runtime/uploadMachineTransferJsonPayload', () => ({
-    uploadMachineTransferJsonPayload: legacyUploadMachineTransferJsonPayloadMock,
-}));
-
 describe('machine prompt assets ops (server-scoped routing)', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
@@ -51,8 +37,6 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
         readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
         downloadBulkJsonPayloadMock.mockReset();
         uploadBulkJsonPayloadMock.mockReset();
-        legacyDownloadMachineTransferJsonPayloadMock.mockClear();
-        legacyUploadMachineTransferJsonPayloadMock.mockClear();
     });
 
     it('routes prompt asset type listing through server-scoped machine rpc', async () => {
@@ -165,7 +149,6 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
             finalize: expect.any(Function),
             parsePayload: expect.any(Function),
         }));
-        expect(legacyDownloadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
@@ -247,6 +230,5 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
             finalize: expect.any(Function),
             parseResponse: expect.any(Function),
         }));
-        expect(legacyUploadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
     });
 });
