@@ -88,6 +88,7 @@ describe('server routed machine transfer', () => {
   afterEach(() => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
     delete process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES;
+    delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
   });
 
   it('streams a payload across the machine channel and uses ack envelopes to advance chunk delivery', async () => {
@@ -335,6 +336,36 @@ describe('server routed machine transfer', () => {
           machineTransferChannel: target,
         }),
       ).rejects.toThrow('Transfer exceeds the server-routed transfer size limit');
+    } finally {
+      unregister();
+    }
+  });
+
+  it('fails closed when the transfer payload exceeds the in-memory max-bytes limit', async () => {
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+    const { source, target } = createLoopbackChannels();
+    const payload = Buffer.from('handoff-payload', 'utf8'); // > 8 bytes
+
+    const { registerServerRoutedTransferResponder, requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId: string) => (
+        transferId === 'transfer_oversized_memory'
+          ? { kind: 'buffer', payload, sizeBytes: payload.length }
+          : null
+      ),
+      chunkBytes: 4,
+    });
+
+    try {
+      await expect(
+        requestServerRoutedTransferPayload({
+          transferId: 'transfer_oversized_memory',
+          sourceMachineId: 'machine_source',
+          machineTransferChannel: target,
+        }),
+      ).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
     } finally {
       unregister();
     }

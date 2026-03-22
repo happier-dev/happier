@@ -7,6 +7,7 @@ import type { SessionHandoffTransferredBundles } from '../../session/handoff/tra
 describe('direct peer machine transfer', () => {
   afterEach(() => {
     delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS;
+    delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
   });
 
   it('serves a published payload as an encrypted chunk session only when the transfer token matches', async () => {
@@ -120,6 +121,42 @@ describe('direct peer machine transfer', () => {
       });
 
       expect(loaded.equals(payload)).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('fails closed when the transfer payload exceeds the in-memory max-bytes limit', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+
+    const {
+      createDirectPeerTransferRegistry,
+      requestDirectPeerTransferPayload,
+      startDirectPeerTransferServer,
+    } = await import('./directPeerTransport');
+
+    let registry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
+    const server = await startDirectPeerTransferServer({
+      readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
+    });
+    registry = createDirectPeerTransferRegistry({
+      advertisedPort: server.port,
+      now: () => 2_100,
+    });
+
+    try {
+      const payload = Buffer.from('payload-too-large', 'utf8'); // > 8 bytes
+      const published = registry.publishTransfer({
+        transferId: 'transfer_oversized',
+        payload,
+      });
+
+      await expect(requestDirectPeerTransferPayload({
+        transferId: 'transfer_oversized',
+        endpointCandidates: published.endpointCandidates,
+        now: () => 2_100,
+      })).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
     } finally {
       await server.stop();
     }

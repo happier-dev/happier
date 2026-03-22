@@ -5,6 +5,7 @@ import {
   resolveServerRoutedTransferMaxBytes,
   SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR,
 } from './serverRoutedTransferPolicy';
+import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 import {
   createEncryptedTransferChunkEnvelope,
   createTransferManifestHash,
@@ -399,10 +400,22 @@ export async function requestServerRoutedTransferPayload(params: Readonly<{
   timeoutMs?: number;
 }>): Promise<Buffer> {
   const maxBytes = resolveServerRoutedTransferMaxBytes();
+  const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
   const chunks = new Map<number, Buffer>();
+  let receivedBytes = 0;
   const payload = await requestServerRoutedTransfer({
     ...params,
     onChunk: async (chunk, info) => {
+      if (chunks.has(info.sequence)) {
+        return;
+      }
+      receivedBytes += chunk.length;
+      if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(receivedBytes, maxBytes)) {
+        throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      }
+      if (receivedBytes > inMemoryMaxBytes) {
+        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
+      }
       chunks.set(info.sequence, chunk);
     },
     onFinish: async (manifestHash) => {
@@ -411,8 +424,11 @@ export async function requestServerRoutedTransferPayload(params: Readonly<{
           .sort(([left], [right]) => left - right)
           .map(([, chunk]) => chunk),
       );
-      if (isServerRoutedTransferOverSizeLimit(transferPayload.length, maxBytes)) {
+      if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(transferPayload.length, maxBytes)) {
         throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      }
+      if (transferPayload.length > inMemoryMaxBytes) {
+        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
       }
       if (createTransferManifestHash(transferPayload) !== manifestHash) {
         throw new Error(`Machine transfer manifest mismatch for ${params.transferId}`);

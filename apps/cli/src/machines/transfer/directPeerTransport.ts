@@ -24,6 +24,7 @@ import {
   type TransferPayloadSource,
 } from './transferPayloadSource';
 import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
+import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 
 const DEFAULT_DIRECT_PEER_TTL_MS = 30_000;
 const DEFAULT_DIRECT_PEER_REQUEST_TIMEOUT_MS = 5_000;
@@ -579,10 +580,16 @@ export async function requestDirectPeerTransferPayload(params: Readonly<{
   fetchFn?: typeof fetch;
   now?: () => number;
 }>): Promise<Buffer> {
+  const maxBytes = resolveInMemoryTransferMaxBytes();
+  let receivedBytes = 0;
   const chunks: Buffer[] = [];
   return await requestDirectPeerTransfer({
     ...params,
     onChunk: async (chunk) => {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxBytes) {
+        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      }
       chunks.push(chunk);
     },
     onFinish: async (manifestHash) => {
