@@ -1,4 +1,5 @@
 import type { Metadata } from '@/api/types';
+import { logger } from '@/ui/logger';
 
 import { computePendingSessionModeOverrideApplication } from './permission/permissionModeFromMetadata';
 
@@ -13,6 +14,8 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
   let lastAppliedUpdatedAt = 0;
   let pending: { modeId: string; updatedAt: number } | null = null;
   let applyingPromise: Promise<void> | null = null;
+  let lastAttemptedUpdatedAt = 0;
+  let lastAttemptNumber = 0;
 
   const applyPendingIfPossible = (): Promise<void> => {
     if (applyingPromise) return applyingPromise;
@@ -20,10 +23,21 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
     if (!params.isStarted()) return Promise.resolve();
 
     const next = pending;
+    const attempt =
+      next.updatedAt === lastAttemptedUpdatedAt
+        ? lastAttemptNumber + 1
+        : 1;
     if (next.updatedAt <= lastAppliedUpdatedAt) {
       pending = null;
       return Promise.resolve();
     }
+    lastAttemptedUpdatedAt = next.updatedAt;
+    lastAttemptNumber = attempt;
+    logger.debug('[SessionModeOverrideSync] Applying session mode override', {
+      modeId: next.modeId,
+      updatedAt: next.updatedAt,
+      attempt,
+    });
 
     applyingPromise = params.runtime
       .setSessionMode(next.modeId)
@@ -32,8 +46,13 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
         lastAppliedUpdatedAt = next.updatedAt;
         if (pending && pending.updatedAt <= lastAppliedUpdatedAt) pending = null;
       })
-      .catch(() => {
-        // Best-effort only. Keep `pending` so next sync can retry.
+      .catch((error: unknown) => {
+        logger.debug('[SessionModeOverrideSync] Failed to apply session mode override; will retry on next sync', {
+          modeId: next.modeId,
+          updatedAt: next.updatedAt,
+          attempt,
+          error: error instanceof Error ? error.message : String(error ?? 'unknown error'),
+        });
       })
       .finally(() => {
         applyingPromise = null;

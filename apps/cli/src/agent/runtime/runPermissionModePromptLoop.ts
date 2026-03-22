@@ -170,6 +170,9 @@ export async function runPermissionModePromptLoop(opts: {
     await opts.onAfterStart?.();
     wasStarted = true;
     await overrideSync.flushPendingAfterStart();
+    await refreshSessionSnapshotBeforeTurnBestEffort();
+    syncPermissionModeFromMetadata();
+    overrideSync.syncFromMetadata();
     return { startedFreshSessionForTurn };
   };
 
@@ -195,6 +198,9 @@ export async function runPermissionModePromptLoop(opts: {
           if (!turnInFlight) {
             overrideSync.syncFromMetadata();
             await overrideSync.flushPendingAfterStart();
+            await refreshSessionSnapshotBeforeTurnBestEffort();
+            syncPermissionModeFromMetadata();
+            overrideSync.syncFromMetadata();
           }
         },
       });
@@ -235,6 +241,9 @@ export async function runPermissionModePromptLoop(opts: {
     await refreshSessionSnapshotBeforeTurnBestEffort();
     overrideSync.syncFromMetadata();
     await overrideSync.flushPendingAfterStart();
+    await refreshSessionSnapshotBeforeTurnBestEffort();
+    syncPermissionModeFromMetadata();
+    overrideSync.syncFromMetadata();
     opts.messageBuffer.addMessage(message.message.text, 'user');
 
     const special = parseSpecialCommand(message.message.text);

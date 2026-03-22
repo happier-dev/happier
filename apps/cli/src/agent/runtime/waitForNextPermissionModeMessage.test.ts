@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createDeferred } from '@/testkit/async/deferred';
 
 import { waitForNextPermissionModeMessage } from './waitForNextPermissionModeMessage';
 
@@ -15,14 +16,6 @@ function createQueue(): MessageQueue2<QueueMode> {
 
 function asSessionClient(session: PermissionModeSessionFixture): ApiSessionClient {
   return session as unknown as ApiSessionClient;
-}
-
-function createDeferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((innerResolve) => {
-    resolve = innerResolve;
-  });
-  return { promise, resolve };
 }
 
 describe('waitForNextPermissionModeMessage', () => {

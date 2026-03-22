@@ -1,28 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import type { Metadata } from '@/api/types';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 import { createRuntimeOverrideSynchronizers } from './createRuntimeOverrideSynchronizers';
 import { formatProviderPromptErrorMessage } from './formatProviderPromptErrorMessage';
 
-function createTestSession() {
-  let metadata: any = null;
+type PromptLoopMetadata = Metadata & {
+  replaySeedV1?: any;
+  forkV1?: any;
+};
+
+function createPromptLoopSession() {
+  return createMutableApiSessionClientFixture<PromptLoopMetadata>();
+}
+
+function createPromptLoopMetadata(overrides: Partial<PromptLoopMetadata> = {}): PromptLoopMetadata {
   return {
-    getMetadataSnapshot: vi.fn(() => metadata),
-    updateMetadata: vi.fn(async (updater: (current: any) => any) => {
-      metadata = updater(metadata);
-    }),
-    __setMetadata: (next: any) => {
-      metadata = next;
-    },
-    __getMetadata: () => metadata,
-    fetchLatestUserPermissionIntentFromTranscript: vi.fn(async () => null),
-    popPendingMessage: vi.fn(async () => false),
-    waitForMetadataUpdate: vi.fn(async () => false),
-    sendAgentMessage: vi.fn(),
-  } as any;
+    ...createTestMetadata(overrides as Partial<Metadata>),
+    ...overrides,
+  };
 }
 
 function createModeQueue() {
@@ -49,10 +50,12 @@ function createRuntime() {
 
 describe('runPermissionModePromptLoop', () => {
   it('applies replay seed exactly once to the first real user prompt', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     session.__setMetadata({
-      permissionMode: 'default',
-      permissionModeUpdatedAt: 0,
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
       replaySeedV1: {
         v: 1,
         seedText: 'SEED',
@@ -107,12 +110,12 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second');
 
     const finalMetadata = session.__getMetadata();
-    expect(finalMetadata.replaySeedV1.appliedToLocalId).toBe('local-1');
-    expect(finalMetadata.replaySeedV1.seedText).toBe('');
+    expect(finalMetadata?.replaySeedV1?.appliedToLocalId).toBe('local-1');
+    expect(finalMetadata?.replaySeedV1?.seedText).toBe('');
   });
 
   it('starts runtime, sends prompt, and emits ready', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -160,7 +163,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('can eagerly start the runtime before the first prompt arrives', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -206,7 +209,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('preserves the fresh-session system prompt when eager startup happens before the first prompt', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -256,7 +259,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('uses sendPromptWithMeta when provided by the runtime', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime() as any;
     runtime.sendPromptWithMeta = vi.fn(async () => {});
@@ -299,7 +302,8 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('formats object-shaped prompt errors without leaking [object Object] into the transcript', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
+    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.sendPrompt = vi.fn(async () => {
@@ -341,25 +345,28 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: formatProviderPromptErrorMessage,
     });
 
-    expect(session.sendAgentMessage).toHaveBeenCalledWith('qwen', {
+    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
       type: 'message',
       message: expect.stringContaining('"message": "Internal error"'),
     });
-    const sentMessages = session.sendAgentMessage.mock.calls.map(([, payload]: [string, { message?: string }]) => payload?.message ?? '');
+    const sentMessages = sendAgentMessageSpy.mock.calls.map((call) =>
+      'message' in call[1] ? call[1].message ?? '' : '',
+    );
     expect(sentMessages.join('\n')).not.toContain('[object Object]');
   });
 
   it('refreshes the session snapshot and re-syncs metadata overrides before sending the next queued prompt when queue delivery wins the race', async () => {
-    const session = createTestSession();
-    const initialMetadata = {
+    const session = createPromptLoopSession();
+    const initialMetadata = createPromptLoopMetadata({
       permissionMode: 'default',
       permissionModeUpdatedAt: 0,
-    };
-    let serverMetadata: any = initialMetadata;
+    });
+    let serverMetadata: PromptLoopMetadata = initialMetadata;
     session.__setMetadata(initialMetadata);
-    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
+    const refreshSessionSnapshotSpy = vi.fn(async () => {
       session.__setMetadata(serverMetadata);
     });
+    session.refreshSessionSnapshotFromServerBestEffort = refreshSessionSnapshotSpy;
 
     const queue = createModeQueue();
     const runtime = createRuntime() as any;
@@ -383,12 +390,12 @@ describe('runPermissionModePromptLoop', () => {
     const readySpy = vi.fn(() => {
       readyCount += 1;
       if (readyCount === 1) {
-        serverMetadata = {
+        serverMetadata = createPromptLoopMetadata({
           permissionMode: 'default',
           permissionModeUpdatedAt: 0,
           acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
           modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
-        };
+        });
         queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
         return;
       }
@@ -435,16 +442,16 @@ describe('runPermissionModePromptLoop', () => {
       { modeId: null, modelId: null },
       { modeId: 'plan', modelId: 'openai/gpt-5.2' },
     ]);
-    expect(session.refreshSessionSnapshotFromServerBestEffort.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(refreshSessionSnapshotSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it('refreshes the session snapshot and applies metadata overrides while idle even without a new queued prompt', async () => {
-    const session = createTestSession();
-    const initialMetadata = {
+    const session = createPromptLoopSession();
+    const initialMetadata = createPromptLoopMetadata({
       permissionMode: 'default',
       permissionModeUpdatedAt: 0,
-    };
-    let serverMetadata: any = initialMetadata;
+    });
+    let serverMetadata: PromptLoopMetadata = initialMetadata;
     session.__setMetadata(initialMetadata);
     session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
       session.__setMetadata(serverMetadata);
@@ -478,12 +485,12 @@ describe('runPermissionModePromptLoop', () => {
     const readySpy = vi.fn(() => {
       readyCount += 1;
       if (readyCount !== 1) return;
-      serverMetadata = {
+      serverMetadata = createPromptLoopMetadata({
         permissionMode: 'default',
         permissionModeUpdatedAt: 0,
         acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
         modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
-      };
+      });
       resolveMetadataWake?.(true);
     });
 
@@ -551,12 +558,12 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('refreshes the session snapshot and applies metadata overrides that arrived during the turn before waiting again', async () => {
-    const session = createTestSession();
-    const initialMetadata = {
+    const session = createPromptLoopSession();
+    const initialMetadata = createPromptLoopMetadata({
       permissionMode: 'default',
       permissionModeUpdatedAt: 0,
-    };
-    let serverMetadata: any = initialMetadata;
+    });
+    let serverMetadata: PromptLoopMetadata = initialMetadata;
     session.__setMetadata(initialMetadata);
     session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
       session.__setMetadata(serverMetadata);
@@ -645,12 +652,12 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     await promptStarted;
-    serverMetadata = {
+    serverMetadata = createPromptLoopMetadata({
       permissionMode: 'default',
       permissionModeUpdatedAt: 0,
       acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
       modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
-    };
+    });
     const releasePromptSend = resolvePromptSend;
     if (!releasePromptSend) {
       throw new Error('Expected prompt send to be waiting');
@@ -667,7 +674,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('prepends appendSystemPrompt on the first fresh-session prompt only', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -716,7 +723,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('does not prepend appendSystemPrompt when resuming an existing provider session', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -760,10 +767,13 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('handles /clear by resetting runtime and skipping prompt send', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
+    const updateMetadataSpy = vi.spyOn(session, 'updateMetadata');
     session.__setMetadata({
-      permissionMode: 'default',
-      permissionModeUpdatedAt: 0,
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
       replaySeedV1: {
         v: 1,
         seedText: 'SEED',
@@ -814,11 +824,11 @@ describe('runPermissionModePromptLoop', () => {
     expect(permissionHandler.reset).toHaveBeenCalledTimes(1);
     expect(readySpy).toHaveBeenCalledTimes(1);
     expect(messageBuffer.getMessages().some((m) => m.content === 'Session reset.')).toBe(true);
-    expect(session.updateMetadata).not.toHaveBeenCalled();
+    expect(updateMetadataSpy).not.toHaveBeenCalled();
   });
 
   it('restarts when mode hash changes and replays the pending message', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -864,7 +874,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('drops vendor resume when permission settings change on a runtime that requires a fresh session', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.shouldResumeAfterPermissionModeChange = vi.fn(() => false);
@@ -911,7 +921,8 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('falls back to fresh start when resume fails', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
+    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
     const queue = createModeQueue();
     const runtime = createRuntime();
     // Simulate a backend that becomes "initialized" during a resume attempt, then fails.
@@ -966,13 +977,14 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, { resumeId: 'resume-id', importHistory: false });
     expect(runtime.reset).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, {});
-    expect(session.sendAgentMessage).toHaveBeenCalledWith('qwen', { type: 'message', message: 'Resume failed; starting a new session.' });
+    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', { type: 'message', message: 'Resume failed; starting a new session.' });
     expect(runtime.sendPrompt).toHaveBeenCalledWith('hello');
   });
 
   it('disables ACP replay history import when resuming a forked session (acp_fork_latest)', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     session.__setMetadata({
+      ...createPromptLoopMetadata(),
       forkV1: {
         v: 1,
         parentSessionId: 'sess_parent',
@@ -1020,7 +1032,7 @@ describe('runPermissionModePromptLoop', () => {
   });
 
   it('fails closed without masking the strict initial resume error', async () => {
-    const session = createTestSession();
+    const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string; importHistory?: boolean }) => {

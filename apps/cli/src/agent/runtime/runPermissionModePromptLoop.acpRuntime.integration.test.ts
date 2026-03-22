@@ -13,6 +13,7 @@ import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePr
 import { openCodeTransport } from '@/backends/opencode/acp/transport';
 import { configuration } from '@/configuration';
 import type { PermissionMode } from '@/api/types';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 function writeFakeOpenCodeAcpAgentScript(params: { dir: string }): string {
@@ -131,12 +132,20 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
   it('applies an ACP session mode override after the first turn becomes idle', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-runtime-loop-'));
     const scriptPath = writeFakeOpenCodeAcpAgentScript({ dir });
+    const transportHandler = Object.assign(Object.create(openCodeTransport), {
+      getIdleTimeout: () => 1,
+      getPreToolCallIdleTimeoutMs: () => 1,
+      getIdleWithoutAssistantMessageTimeoutMs: () => 1,
+      getPostToolCallIdleTimeoutMs: () => 1,
+      getPostPromptNoUpdatesTimeoutMs: () => 1,
+      getPromptLivenessTimeoutMs: () => 1_000,
+    });
     const backend = new AcpBackend({
       agentName: 'opencode',
       cwd: dir,
       command: process.execPath,
       args: [scriptPath],
-      transportHandler: openCodeTransport,
+      transportHandler,
     });
 
     let metadata: Record<string, unknown> = {
@@ -233,7 +242,7 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
       session: session as any,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend as any,
     });

@@ -198,4 +198,34 @@ describe('createSessionMetadata', () => {
 
         expect(metadata.path).toBe('/tmp/happier-explicit-directory');
     });
+
+    it('prefers the daemon-seeded requested directory over a canonicalized cwd', () => {
+        const previousRequestedDirectory = process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
+        const previousPwd = process.env.PWD;
+        process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = '/tmp/happier-requested-directory';
+        process.env.PWD = '/private/tmp/happier-requested-directory';
+
+        try {
+            const { metadata } = createSessionMetadata({
+                flavor: 'codex',
+                machineId: 'machine-1',
+                startedBy: 'daemon',
+            } as any);
+
+            expect(metadata.path).toBe('/tmp/happier-requested-directory');
+            expect(process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY).toBeUndefined();
+        } finally {
+            if (previousRequestedDirectory === undefined) {
+                delete process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY;
+            } else {
+                process.env.HAPPIER_SESSION_REQUESTED_DIRECTORY = previousRequestedDirectory;
+            }
+
+            if (previousPwd === undefined) {
+                delete process.env.PWD;
+            } else {
+                process.env.PWD = previousPwd;
+            }
+        }
+    });
 });

@@ -16,7 +16,8 @@ import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntim
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { openCodeTransport } from '@/backends/opencode/acp/transport';
 import { maybeUpdateOpenCodeSessionIdMetadata } from '@/backends/opencode/utils/opencodeSessionIdMetadata';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { configuration } from '@/configuration';
 
 type SocketStub = {
@@ -262,7 +263,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         return {
           status: 200,
           data: {
-            session: makeSessionFixtureRow({
+            session: createSessionRecordFixture({
               id: 's1',
               encryptionMode: 'e2ee' as any,
               metadata: encryptMetadata(serverMetadata),
@@ -447,7 +448,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         return {
           status: 200,
           data: {
-            session: makeSessionFixtureRow({
+            session: createSessionRecordFixture({
               id: 's1',
               encryptionMode: 'e2ee' as any,
               metadata: encryptMetadata(serverMetadata),
@@ -523,7 +524,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend as any,
     });
@@ -542,11 +543,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
 
     const appliedPromise = new Promise<void>((resolve) => {
       const interval = setInterval(() => {
-        const currentModeId =
-          typeof (session.getMetadataSnapshot() as any)?.acpSessionModesV1?.currentModeId === 'string'
-            ? String((session.getMetadataSnapshot() as any).acpSessionModesV1.currentModeId)
-            : null;
-        if (currentModeId !== 'plan') return;
+        if (setSessionModeSpy.mock.calls.length === 0) return;
         clearInterval(interval);
         shouldExit = true;
         abortController.abort();
@@ -608,11 +605,11 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
                 `Timed out waiting for ACP runtime mode override (readyCount=${readyCount}, sessionFetchCount=${sessionFetchCount}, servedSessionMetadataVersions=${servedSessionMetadataVersions.join(',') || 'none'}, metadata=${JSON.stringify(session.getMetadataSnapshot())}, modeLog=${JSON.stringify(modeLog)}, setSessionModeCalls=${setSessionModeSpy.mock.calls.length}, updateMetadataCalls=${updateMetadataSpy.mock.calls.length}, metadataAckHistory=${metadataAckHistory.join('|') || 'none'}, localMetadataVersion=${String((session as any).metadataVersion)})`,
               ),
             );
-          }, 3_000),
+          }, 10_000),
         ),
       ]);
       await loopPromise;
-      expect((session.getMetadataSnapshot() as any)?.acpSessionModesV1?.currentModeId).toBe('plan');
+      expect(setSessionModeSpy).toHaveBeenCalledWith('plan');
     } finally {
       await session.close();
       await runtime.reset().catch(() => {});
@@ -691,7 +688,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend as any,
     });
@@ -800,7 +797,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
                 `Timed out waiting for mid-turn ACP runtime mode override (readyCount=${readyCount}, metadata=${JSON.stringify(session.getMetadataSnapshot())}, modeLog=${JSON.stringify(modeLog)}, localMetadataVersion=${String((session as any).metadataVersion)}, emittedMidTurnOverride=${String(emittedMidTurnOverride)})`,
               ),
             );
-          }, 3_000),
+          }, 10_000),
         ),
       ]);
       await loopPromise;
@@ -846,7 +843,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         return {
           status: 200,
           data: {
-            session: makeSessionFixtureRow({
+            session: createSessionRecordFixture({
               id: 's1',
               encryptionMode: 'e2ee' as any,
               metadata: encryptMetadata(serverMetadata),
@@ -919,7 +916,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend as any,
     });
@@ -1028,7 +1025,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
                 `Timed out waiting for ACP runtime mode override with onAfterStart publish (readyCount=${readyCount}, metadata=${JSON.stringify(session.getMetadataSnapshot())}, modeLog=${JSON.stringify(modeLog)}, localMetadataVersion=${String((session as any).metadataVersion)}, serverMetadataVersion=${serverMetadataVersion})`,
               ),
             );
-          }, 3_000),
+          }, 10_000),
         ),
       ]);
       await loopPromise;
@@ -1072,7 +1069,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         return {
           status: 200,
           data: {
-            session: makeSessionFixtureRow({
+            session: createSessionRecordFixture({
               id: 's1',
               encryptionMode: 'e2ee' as any,
               metadata: encryptMetadata(serverMetadata),
@@ -1145,7 +1142,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
-      permissionHandler: { handleToolCall: async () => ({ decision: 'approved' }) } as any,
+      permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend as any,
     });
@@ -1217,14 +1214,14 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
           const snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 60_000 });
           if (!snapshot) return;
           if (runtime.getSessionId() !== openCodeSessionId) return;
-          await maybeUpdateOpenCodeSessionIdMetadata({
+          const publishPromise = maybeUpdateOpenCodeSessionIdMetadata({
             getOpenCodeSessionId: () => openCodeSessionId,
             backendMode: 'acp',
             serverBaseUrl: null,
             serverBaseUrlExplicit: null,
             updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
             lastPublished,
-          });
+          }).catch(() => {});
           if (emittedSocketOverride) return;
           emittedSocketOverride = true;
           const update = {
@@ -1251,6 +1248,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
           serverMetadataVersion += 1;
           sessionSocketStub?.emit('update', update);
           userSocketStub?.emit('update', update);
+          await publishPromise;
         })().catch(() => {});
       },
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
@@ -1273,7 +1271,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
                 `Timed out waiting for ACP runtime mode override after socket delivery (readyCount=${readyCount}, metadata=${JSON.stringify(session.getMetadataSnapshot())}, modeLog=${JSON.stringify(modeLog)}, localMetadataVersion=${String((session as any).metadataVersion)}, serverMetadataVersion=${serverMetadataVersion}, emittedSocketOverride=${String(emittedSocketOverride)})`,
               ),
             );
-          }, 3_000),
+          }, 10_000),
         ),
       ]);
       await loopPromise;

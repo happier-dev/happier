@@ -29,6 +29,7 @@ import { logger } from '@/ui/logger';
 import packageJson from '../../../package.json';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
+import { resolveRequestedSessionDirectory } from './resolveRequestedSessionDirectory';
 
 /**
  * Backend flavor identifier for session metadata.
@@ -145,7 +146,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
     const mcpSelection = parseSessionMcpSelectionV1Json(consumeSessionEnv('HAPPIER_SESSION_MCP_SELECTION_JSON'));
     const sessionConfigOptionOverrides = parseSessionConfigOptionOverridesFromEnvironment();
     const metadataBase: Metadata = {
-        path: opts.directory ?? process.cwd(),
+        path: resolveRequestedSessionDirectory({ requestedDirectory: opts.directory }),
         host: os.hostname(),
         version: packageJson.version,
         os: os.platform(),

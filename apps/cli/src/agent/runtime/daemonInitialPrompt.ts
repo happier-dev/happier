@@ -8,9 +8,19 @@ export function normalizeDaemonInitialPrompt(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+export function buildDaemonInitialPromptLocalId(sessionId: unknown): string | null {
+  if (typeof sessionId !== 'string') {
+    return null;
+  }
+  const normalizedSessionId = sessionId.trim();
+  if (normalizedSessionId.length === 0) {
+    return null;
+  }
+  return `daemon-initial-prompt:${normalizedSessionId}`;
+}
+
 export function consumeDaemonInitialPromptFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
   const prompt = normalizeDaemonInitialPrompt(env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]);
   delete env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY];
   return prompt;
 }
-

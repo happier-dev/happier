@@ -17,9 +17,11 @@ function normalizeValueId(raw: unknown): ConfigOptionValueId | null {
   return null;
 }
 
-function parseOverrides(metadata: Metadata | null): Array<{ configId: string; valueId: ConfigOptionValueId; updatedAt: number }> {
+export function resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts: Readonly<{
+  metadata: Metadata | null | undefined;
+}>): Array<{ configId: string; valueId: ConfigOptionValueId; updatedAt: number }> {
   const root = readMetadataAliasValue<Record<string, unknown>>(
-    metadata,
+    opts.metadata ?? null,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   ) ?? null;
@@ -97,7 +99,9 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
   };
 
   const syncFromMetadata = (): void => {
-    const candidates = parseOverrides(params.session.getMetadataSnapshot());
+    const candidates = resolveSessionConfigOptionOverridesFromMetadataSnapshot({
+      metadata: params.session.getMetadataSnapshot(),
+    });
     if (candidates.length === 0) return;
 
     for (const candidate of candidates) {

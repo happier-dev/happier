@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+  },
+}));
+
 import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
+import { logger } from '@/ui/logger';
 
 describe('createSessionModeOverrideSynchronizer', () => {
   it('queues pending overrides before runtime start and applies after start', async () => {
@@ -61,6 +68,41 @@ describe('createSessionModeOverrideSynchronizer', () => {
 
     expect(setSessionMode).toHaveBeenCalledTimes(2);
     expect(setSessionMode).toHaveBeenLastCalledWith('plan');
+  });
+
+  it('logs failed applies and later retry attempts', async () => {
+    let attempt = 0;
+    const setSessionMode = vi.fn(async (_modeId: string) => {
+      attempt += 1;
+      if (attempt === 1) throw new Error('transient failure');
+    });
+
+    const sync = createSessionModeOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 51, modeId: 'plan' } } as any),
+      },
+      runtime: { setSessionMode },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    await new Promise((r) => setTimeout(r, 0));
+
+    sync.syncFromMetadata();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[SessionModeOverrideSync] Applying session mode override',
+      expect.objectContaining({ modeId: 'plan', updatedAt: 51, attempt: 1 }),
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[SessionModeOverrideSync] Failed to apply session mode override; will retry on next sync',
+      expect.objectContaining({ modeId: 'plan', updatedAt: 51, attempt: 1, error: 'transient failure' }),
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[SessionModeOverrideSync] Applying session mode override',
+      expect.objectContaining({ modeId: 'plan', updatedAt: 51, attempt: 2 }),
+    );
   });
 
   it('does not start a concurrent apply while flushPendingAfterStart is in flight', async () => {
