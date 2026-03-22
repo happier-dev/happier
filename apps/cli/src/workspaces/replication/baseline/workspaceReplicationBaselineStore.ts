@@ -11,6 +11,7 @@ import {
 } from './baselineCacheKeys';
 import { createWorkspaceReplicationRelationshipStore } from '../relationships/workspaceReplicationRelationshipStore';
 import { workspaceReplicationModes } from '../relationships/relationshipScope';
+import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
 
 export const WorkspaceReplicationBaselineRecordSchema = z
   .object({
@@ -23,7 +24,7 @@ export type WorkspaceReplicationBaselineRecord = z.infer<typeof WorkspaceReplica
 
 const PersistedWorkspaceReplicationBaselineSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     cacheKey: z.string().regex(/^workspace-replication-baseline-v1-[a-f0-9]{64}$/u),
     scope: z.object({
       sourceMachineId: z.string().min(1),
@@ -78,7 +79,7 @@ export function createWorkspaceReplicationBaselineStore(input: Readonly<{
       const baseline = WorkspaceReplicationBaselineRecordSchema.parse(params.baseline);
       await relationships.ensureRelationship(params.scope);
       await writeJsonAtomic(resolveFilePath(params.scope), {
-        schemaVersion: 1,
+        schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
         cacheKey,
         scope: params.scope,
         baseline,

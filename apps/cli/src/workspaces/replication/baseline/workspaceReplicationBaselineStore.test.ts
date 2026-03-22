@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -70,6 +70,13 @@ describe('workspaceReplicationBaselineStore', () => {
           savedAtMs: 123,
         },
       });
+
+      const filePath = store.resolveFilePath(scope);
+      const persisted = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      // Legacy records might omit schemaVersion. The store should fail open for missing schemaVersion
+      // (still rejecting mismatched schema versions).
+      delete persisted.schemaVersion;
+      await writeFile(filePath, JSON.stringify(persisted), 'utf8');
 
       expect(store.resolveFilePath(scope)).toBe(
         join(
