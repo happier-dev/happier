@@ -11,7 +11,6 @@ import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { MachineMetadata, Metadata, PermissionMode } from '@/api/types';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
-import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
 import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
@@ -36,6 +35,7 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -137,7 +137,7 @@ type StandardAcpProviderDeps = {
   runPermissionModePromptLoopFn?: typeof runPermissionModePromptLoop;
   sendReadyWithPushNotificationFn?: typeof sendReadyWithPushNotification;
   registerKillSessionHandlerFn?: typeof registerKillSessionHandler;
-  archiveAndCloseSessionFn?: typeof archiveAndCloseSession;
+  archiveAndCloseRuntimeSessionFn?: typeof archiveAndCloseRuntimeSession;
   cleanupBackendRunResourcesFn?: typeof cleanupBackendRunResources;
   renderFn?: typeof render;
 };
@@ -156,7 +156,7 @@ export async function runStandardAcpProvider(
   const runPermissionModePromptLoopFn = deps.runPermissionModePromptLoopFn ?? runPermissionModePromptLoop;
   const sendReadyWithPushNotificationFn = deps.sendReadyWithPushNotificationFn ?? sendReadyWithPushNotification;
   const registerKillSessionHandlerFn = deps.registerKillSessionHandlerFn ?? registerKillSessionHandler;
-  const archiveAndCloseSessionFn = deps.archiveAndCloseSessionFn ?? archiveAndCloseSession;
+  const archiveAndCloseRuntimeSessionFn = deps.archiveAndCloseRuntimeSessionFn ?? archiveAndCloseRuntimeSession;
   const cleanupBackendRunResourcesFn = deps.cleanupBackendRunResourcesFn ?? cleanupBackendRunResources;
   const renderFn = deps.renderFn ?? render;
 
@@ -364,7 +364,7 @@ export async function runStandardAcpProvider(
       await handleAbort();
       try {
         if (outcome.archive) {
-          await archiveAndCloseSessionFn(session);
+          await archiveAndCloseRuntimeSessionFn(session, opts.credentials, outcome.archiveReason);
         }
       } finally {
         await cleanupOnce();

@@ -139,7 +139,7 @@ function createHarness() {
     registerKillSessionHandlerFn: (_manager: unknown, handler: () => void | Promise<void>) => {
       killHandler = handler;
     },
-    archiveAndCloseSessionFn: async () => {
+    archiveAndCloseRuntimeSessionFn: async () => {
       archiveCalls += 1;
     },
     cleanupBackendRunResourcesFn: async ({ keepAliveInterval, unmountUi }: any) => {
