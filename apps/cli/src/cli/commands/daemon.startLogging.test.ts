@@ -1,27 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeTextFile } from '@/testkit/fs/fileHelpers';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const { checkIfDaemonRunningMock, getLatestDaemonLogMock } = vi.hoisted(() => ({
   checkIfDaemonRunningMock: vi.fn(async () => true),
   getLatestDaemonLogMock: vi.fn(async () => null as null | { path: string }),
 }));
 
-async function captureConsole(fn: () => Promise<void> | void): Promise<string> {
-  const chunks: string[] = [];
-  const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: any[]) => {
-    chunks.push(args.map((a) => String(a)).join(' ') + '\n');
-  });
-  const errSpy = vi.spyOn(console, 'error').mockImplementation((...args: any[]) => {
-    chunks.push(args.map((a) => String(a)).join(' ') + '\n');
-  });
+async function runDaemonStartAndCapture(expectedExitCode: number): Promise<string> {
+  const output = captureConsoleText();
+
   try {
-    await fn();
-    return chunks.join('');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code ?? ''}`);
+    }) as any);
+
+    try {
+      const { handleDaemonCliCommand } = await import('./daemon');
+      await handleDaemonCliCommand({ args: ['daemon', 'start'], rawArgv: [], terminalRuntime: null });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes(`exit:${expectedExitCode}`)) throw err;
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    return output.text();
   } finally {
-    logSpy.mockRestore();
-    errSpy.mockRestore();
+    output.restore();
   }
 }
 
@@ -60,19 +70,25 @@ describe('happier daemon start output', () => {
     // This command uses real setTimeout polling when the daemon isn't immediately detected.
     vi.useRealTimers();
 
-    const prevEnv = { ...process.env };
-    const tmp = await mkdtemp(join(tmpdir(), 'happier-daemon-start-'));
+    const envScope = createEnvKeyScope([
+      'HAPPIER_HOME_DIR',
+      'HAPPIER_SERVER_URL',
+      'HAPPIER_WEBAPP_URL',
+      'HAPPIER_ACTIVE_SERVER_ID',
+    ]);
+    const tmp = await createTempDir('happier-daemon-start-');
 
     try {
       vi.resetModules();
-      process.env.HAPPIER_HOME_DIR = tmp;
-      process.env.HAPPIER_SERVER_URL = 'http://localhost:4321';
-      process.env.HAPPIER_WEBAPP_URL = 'http://localhost:9999';
-      process.env.HAPPIER_ACTIVE_SERVER_ID = 'env_test';
+      envScope.patch({
+        HAPPIER_HOME_DIR: tmp,
+        HAPPIER_SERVER_URL: 'http://localhost:4321',
+        HAPPIER_WEBAPP_URL: 'http://localhost:9999',
+        HAPPIER_ACTIVE_SERVER_ID: 'env_test',
+      });
 
       const credDir = join(tmp, 'servers', 'env_test');
-      await mkdir(credDir, { recursive: true });
-      await writeFile(
+      await writeTextFile(
         join(credDir, 'access.key'),
         JSON.stringify(
           {
@@ -82,32 +98,17 @@ describe('happier daemon start output', () => {
           null,
           2,
         ),
-        { encoding: 'utf8' },
       );
 
-      const stdout = await captureConsole(async () => {
-        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-          throw new Error(`exit:${code ?? ''}`);
-        }) as any);
-
-        try {
-          const { handleDaemonCliCommand } = await import('./daemon');
-          await handleDaemonCliCommand({ args: ['daemon', 'start'], rawArgv: [], terminalRuntime: null });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (!msg.includes('exit:0')) throw err;
-        } finally {
-          exitSpy.mockRestore();
-        }
-      });
+      const stdout = await runDaemonStartAndCapture(0);
 
       expect(stdout).toContain('Daemon started successfully');
       expect(stdout).toContain('Server: http://localhost:4321');
       expect(stdout).toContain('Server ID: env_test');
       expect(stdout).toContain('Account: account-123');
     } finally {
-      process.env = prevEnv;
-      await rm(tmp, { recursive: true, force: true });
+      envScope.restore();
+      await removeTempDir(tmp);
     }
   }, 60_000);
 
@@ -116,21 +117,7 @@ describe('happier daemon start output', () => {
     checkIfDaemonRunningMock.mockResolvedValue(false);
     getLatestDaemonLogMock.mockResolvedValue({ path: '/tmp/happier-daemon.log' });
 
-    const stdout = await captureConsole(async () => {
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-        throw new Error(`exit:${code ?? ''}`);
-      }) as any);
-
-      try {
-        const { handleDaemonCliCommand } = await import('./daemon');
-        await handleDaemonCliCommand({ args: ['daemon', 'start'], rawArgv: [], terminalRuntime: null });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes('exit:1')) throw err;
-      } finally {
-        exitSpy.mockRestore();
-      }
-    });
+    const stdout = await runDaemonStartAndCapture(1);
 
     expect(stdout).toContain('Failed to start daemon');
     expect(stdout).toContain('/tmp/happier-daemon.log');
