@@ -174,8 +174,7 @@ describe('MachineDetailScreen (serverId param switching)', () => {
         try {
             await renderScreen(React.createElement(MachineDetailScreen));
 
-            await flushHookEffects({ cycles: 1, turns: 1 });
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 2, turns: 1 });
         } finally {
             process.removeListener('unhandledRejection', unhandledSpy);
             consoleError.mockRestore();

@@ -1,11 +1,11 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     createRootLayoutFeaturesResponse,
     createStorageStoreMock,
     flushHookEffects,
+    renderScreen,
 } from '@/dev/testkit';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 
@@ -22,7 +22,7 @@ const mockState = await vi.hoisted(async () => {
         clearPendingNotificationActionSpy: vi.fn(),
         clearPendingNotificationNavSpy: vi.fn(),
         clearPendingTerminalConnectSpy: vi.fn(),
-        lastRenderer: null as renderer.ReactTestRenderer | null,
+        lastUnmount: null as null | (() => Promise<void>),
         mockSettings: {
             ...settingsDefaults,
             voice: {
@@ -201,20 +201,14 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
         }),
 }));
 
-afterEach(() => {
+afterEach(async () => {
     mockState.activeServerUrl = 'https://api.happier.dev';
     mockState.serverProfilesValue = [];
     mockState.pendingTerminalConnectValue = null;
     mockState.pendingNotificationNavValue = null;
     mockState.pendingNotificationActionValue = null;
-    try {
-        act(() => {
-            mockState.lastRenderer?.unmount();
-        });
-    } catch {
-        // ignore
-    }
-    mockState.lastRenderer = null;
+    await mockState.lastUnmount?.();
+    mockState.lastUnmount = null;
     mockState.pushSpy.mockClear();
     mockState.upsertActivateAndSwitchServerSpy.mockReset();
     mockState.setActiveServerAndSwitchSpy.mockReset();
@@ -229,14 +223,8 @@ afterEach(() => {
 
 async function renderRootLayout() {
     const RootLayout = (await import('@/app/(app)/_layout')).default;
-    await act(async () => {
-        try {
-            mockState.lastRenderer?.unmount();
-        } catch {
-            // ignore
-        }
-        mockState.lastRenderer = renderer.create(React.createElement(RootLayout));
-    });
+    await mockState.lastUnmount?.();
+    mockState.lastUnmount = (await renderScreen(React.createElement(RootLayout))).unmount;
     await flushHookEffects();
 }
 
