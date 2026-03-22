@@ -168,7 +168,6 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                             activeTabId={effectiveValue}
                             onSelectTab={(tabId) => props.onSelectOptionControlValue?.(option.id, tabId as SessionConfigOptionValueId)}
                             testIDPrefix={`${selectedOptionControlTestIDPrefix}-option:${option.id}`}
-                            compact
                         />
                     </View>
                 );
