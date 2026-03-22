@@ -13,6 +13,21 @@ test('apps/ui/eas.json defines a development profile for OTA-native debug dev-cl
   const build = eas?.build ?? null;
   assert.equal(typeof build, 'object');
 
+  const baseInstallScope = String(build?.base?.env?.HAPPIER_INSTALL_SCOPE ?? '');
+  const installScopeTokens = new Set(
+    baseInstallScope
+      .split(',')
+      .map((token) => token.trim())
+      .filter(Boolean),
+  );
+  for (const workspace of ['ui', 'protocol', 'agents', 'transfers', 'connection-supervisor']) {
+    assert.equal(
+      installScopeTokens.has(workspace),
+      true,
+      `base HAPPIER_INSTALL_SCOPE should include ${workspace}`,
+    );
+  }
+
   const development = build?.development ?? null;
   assert.equal(typeof development, 'object');
   assert.equal(development.extends, 'base');
