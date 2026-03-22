@@ -1,80 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import * as acpCatalog from '@/agent/acp';
-import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
-import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import type { AuggieBackendOptions } from './backend';
-
-type CreateCall = { agentId: string; opts: AuggieBackendOptions };
-
-const createCalls: CreateCall[] = [];
-
-function makeFakeBackend(id: string): AgentBackend {
-  const handlers: AgentMessageHandler[] = [];
-  return {
-    async startSession() {
-      return { sessionId: `session-${id}` };
-    },
-    async sendPrompt() {},
-    async cancel() {},
-    onMessage(handler: AgentMessageHandler) {
-      handlers.push(handler);
-    },
-    async dispose() {
-      handlers.length = 0;
-    },
-  };
-}
-
-type SessionStubContract = Pick<
-  ApiSessionClient,
-  | 'sendAgentMessageCommitted'
-  | 'sendUserTextMessageCommitted'
-  | 'fetchRecentTranscriptTextItemsForAcpImport'
-  | 'updateMetadata'
-  | 'keepAlive'
-  | 'sendAgentMessage'
->;
-
-function createSessionStub(): ApiSessionClient {
-  const stub: SessionStubContract = {
-    sendAgentMessageCommitted: async () => {},
-    sendUserTextMessageCommitted: async () => {},
-    fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-    updateMetadata: async () => {},
-    keepAlive: () => {},
-    sendAgentMessage: () => {},
-  };
-  return stub as ApiSessionClient;
-}
+import type { CatalogAcpRuntimeCreateCall } from '@/testkit/backends/catalogAcpRuntime';
+import { createCatalogAcpBackendSpy, createMessageBufferFixture } from '@/testkit/backends/catalogAcpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 
 describe('Auggie ACP runtime permission mode wiring', () => {
   it('forwards permissionMode to createCatalogAcpBackend and recreates backend after reset', async () => {
-    createCalls.length = 0;
+    const createCalls: CatalogAcpRuntimeCreateCall[] = [];
     let permissionMode: PermissionMode = 'default';
-    const permissionHandler: AcpPermissionHandler = {
-      handleToolCall: async () => ({ decision: 'approved' }),
-    };
-
-    const createCatalogSpy = vi
-      .spyOn(acpCatalog, 'createCatalogAcpBackend')
-      .mockImplementation(async (agentId, opts) => {
-        createCalls.push({ agentId: String(agentId), opts: opts as AuggieBackendOptions });
-        return { backend: makeFakeBackend(String(createCalls.length)) } as never;
-      });
+    const createCatalogSpy = createCatalogAcpBackendSpy(createCalls);
 
     try {
       const { createAuggieAcpRuntime } = await import('./runtime');
       const runtime = createAuggieAcpRuntime({
         directory: '/tmp',
         machineId: 'machine-1',
-        session: createSessionStub(),
-        messageBuffer: new MessageBuffer(),
+        session: createApiSessionClientFixture(),
+        messageBuffer: createMessageBufferFixture(),
         mcpServers: {},
-        permissionHandler,
+        permissionHandler: createApprovedPermissionHandler(),
         onThinkingChange() {},
         allowIndexing: false,
         getPermissionMode: () => permissionMode,
@@ -83,13 +29,13 @@ describe('Auggie ACP runtime permission mode wiring', () => {
       await runtime.startOrLoad({});
       expect(createCalls).toHaveLength(1);
       expect(createCalls[0]?.agentId).toBe('auggie');
-      expect(createCalls[0]?.opts?.permissionMode).toBe('default');
+      expect(createCalls[0]?.permissionMode).toBe('default');
 
       permissionMode = 'yolo';
       await runtime.reset();
       await runtime.startOrLoad({});
       expect(createCalls).toHaveLength(2);
-      expect(createCalls[1]?.opts?.permissionMode).toBe('yolo');
+      expect(createCalls[1]?.permissionMode).toBe('yolo');
     } finally {
       createCatalogSpy.mockRestore();
     }

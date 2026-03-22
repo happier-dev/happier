@@ -1,36 +1,33 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 import type { AgentBackend } from '@/agent/core';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createAuggieBackend } from './backend';
 
 type BackendWithArgs = AgentBackend & { options: { args: string[] } };
 
-const ORIGINAL_ENV = {
-  PATH: process.env.PATH,
-  HAPPIER_AUGGIE_PATH: process.env.HAPPIER_AUGGIE_PATH,
-};
-
+const envKeys = ['PATH', 'HAPPIER_AUGGIE_PATH'] as const;
 const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
 
 function createFakeBin(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'happier-auggie-backend-'));
+  const dir = createTempDirSync('happier-auggie-backend-');
   TEMP_DIRS.add(dir);
   const isWindows = process.platform === 'win32';
-  const binPath = join(dir, isWindows ? `${name}.cmd` : name);
-  writeFileSync(binPath, isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
-  if (!isWindows) chmodSync(binPath, 0o755);
-  return binPath;
+  return writeExecutableShimSync({
+    dir,
+    fileName: isWindows ? `${name}.cmd` : name,
+    contents: isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
 }
 
 afterEach(() => {
-  if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
-  else process.env.PATH = ORIGINAL_ENV.PATH;
-  if (ORIGINAL_ENV.HAPPIER_AUGGIE_PATH === undefined) delete process.env.HAPPIER_AUGGIE_PATH;
-  else process.env.HAPPIER_AUGGIE_PATH = ORIGINAL_ENV.HAPPIER_AUGGIE_PATH;
-  for (const dir of TEMP_DIRS) rmSync(dir, { recursive: true, force: true });
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
+  for (const dir of TEMP_DIRS) removeTempDirSync(dir);
   TEMP_DIRS.clear();
 });
 
