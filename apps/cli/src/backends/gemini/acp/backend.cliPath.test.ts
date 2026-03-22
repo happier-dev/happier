@@ -1,39 +1,40 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createGeminiBackend } from './backend';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeTextFile } from '@/testkit/fs/fileHelpers';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
-const ORIGINAL_ENV = {
-  PATH: process.env.PATH,
-  HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-  HAPPIER_GEMINI_PATH: process.env.HAPPIER_GEMINI_PATH,
-  HAPPIER_JS_RUNTIME_PATH: process.env.HAPPIER_JS_RUNTIME_PATH,
-};
+const envKeys = [
+  'PATH',
+  'HAPPIER_HOME_DIR',
+  'HAPPIER_GEMINI_PATH',
+  'HAPPIER_JS_RUNTIME_PATH',
+] as const;
 
 const tempDirs = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
 
 async function createFakeBin(name: string): Promise<{ dir: string; binPath: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-gemini-backend-'));
+  const fileName = process.platform === 'win32' ? `${name}.cmd` : name;
+  const dir = await createTempDir('happier-gemini-backend-');
   tempDirs.add(dir);
-  const binPath = join(dir, name);
-  await writeFile(binPath, '#!/bin/sh\necho ok\n', 'utf8');
-  await chmod(binPath, 0o755);
+  const binPath = await writeExecutableShim({
+    dir,
+    fileName,
+    contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
   return { dir, binPath };
 }
 
 afterEach(async () => {
-  if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
-  else process.env.PATH = ORIGINAL_ENV.PATH;
-  if (ORIGINAL_ENV.HAPPIER_HOME_DIR === undefined) delete process.env.HAPPIER_HOME_DIR;
-  else process.env.HAPPIER_HOME_DIR = ORIGINAL_ENV.HAPPIER_HOME_DIR;
-  if (ORIGINAL_ENV.HAPPIER_GEMINI_PATH === undefined) delete process.env.HAPPIER_GEMINI_PATH;
-  else process.env.HAPPIER_GEMINI_PATH = ORIGINAL_ENV.HAPPIER_GEMINI_PATH;
-  if (ORIGINAL_ENV.HAPPIER_JS_RUNTIME_PATH === undefined) delete process.env.HAPPIER_JS_RUNTIME_PATH;
-  else process.env.HAPPIER_JS_RUNTIME_PATH = ORIGINAL_ENV.HAPPIER_JS_RUNTIME_PATH;
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
   for (const dir of tempDirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
   tempDirs.clear();
 });
@@ -79,16 +80,14 @@ describe('Gemini ACP backend CLI path resolution', () => {
 
   it('wraps node-shebang system CLIs with the configured JS runtime', async () => {
     delete process.env.HAPPIER_GEMINI_PATH;
-    const dir = await mkdtemp(join(tmpdir(), 'happier-gemini-path-'));
+    const dir = await createTempDir('happier-gemini-path-');
     tempDirs.add(dir);
-    const runtimeDir = await mkdtemp(join(tmpdir(), 'happier-gemini-runtime-'));
+    const runtimeDir = await createTempDir('happier-gemini-runtime-');
     tempDirs.add(runtimeDir);
     const fake = join(dir, 'gemini');
     const runtimePath = join(runtimeDir, 'node');
-    await writeFile(fake, '#!/usr/bin/env node\nprocess.stdout.write(\"hi\\n\")\n', 'utf8');
-    await chmod(fake, 0o755);
-    await writeFile(runtimePath, '#!/bin/sh\nexit 0\n', 'utf8');
-    await chmod(runtimePath, 0o755);
+    await writeTextFile(fake, '#!/usr/bin/env node\nprocess.stdout.write(\"hi\\n\")\n', { mode: 0o755 });
+    await writeTextFile(runtimePath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     process.env.PATH = dir;
     process.env.HAPPIER_JS_RUNTIME_PATH = runtimePath;
 
@@ -108,15 +107,14 @@ describe('Gemini ACP backend CLI path resolution', () => {
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
 
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-gemini-managed-home-'));
+    const homeDir = await createTempDir('happier-gemini-managed-home-');
     tempDirs.add(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
 
     const { resolveProviderCliManagedCommandPath } = await import('@/runtime/managedTools/providerCliResolution');
     const binPath = resolveProviderCliManagedCommandPath('gemini', { happyHomeDir: homeDir });
     await mkdir(join(binPath, '..'), { recursive: true });
-    await writeFile(binPath, '#!/bin/sh\necho ok\n', 'utf8');
-    await chmod(binPath, 0o755);
+    await writeTextFile(binPath, '#!/bin/sh\necho ok\n', { mode: 0o755 });
 
     const result = createGeminiBackend({
       cwd: '/tmp',

@@ -36,12 +36,12 @@ import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/pe
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
+import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 
 import type { AgentBackend } from '@/agent';
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
@@ -502,7 +502,7 @@ export async function runGemini(opts: {
 
       try {
         if (outcome.archive) {
-          await archiveAndCloseSession(session);
+          await archiveAndCloseRuntimeSession(session, opts.credentials, outcome.archiveReason);
         }
       } catch (e) {
         logger.debug('[Gemini] Failed to archive session during termination (non-fatal)', e);

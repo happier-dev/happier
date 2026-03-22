@@ -25,15 +25,17 @@ export interface GeminiLocalConfig {
  * Try to read Gemini config (auth token and model) from local Gemini CLI config
  * Gemini CLI stores tokens in ~/.gemini/ or uses gcloud Application Default Credentials
  */
-export function readGeminiLocalConfig(): GeminiLocalConfig {
+export function readGeminiLocalConfig(env: Readonly<Record<string, string | undefined>> = process.env): GeminiLocalConfig {
+  return readGeminiLocalConfigFromEnv(env);
+}
+
+export function readGeminiLocalConfigFromEnv(env: Readonly<Record<string, string | undefined>>): GeminiLocalConfig {
   let token: string | null = null;
   let model: string | null = null;
   let googleCloudProject: string | null = null;
   let googleCloudProjectEmail: string | null = null;
-  
-  // Try common Gemini CLI config locations
-  // Gemini CLI stores OAuth tokens in ~/.gemini/oauth_creds.json after 'gemini auth'
-  const paths = resolveGeminiConfigPaths();
+
+  const paths = resolveGeminiConfigPaths(env);
   const possiblePaths = [
     paths.userOauthCredsPath,
     paths.userConfigPath,
@@ -46,10 +48,6 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
     if (existsSync(configPath)) {
       try {
         const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        
-        // Try different possible token field names
-        // Note: oauth_creds.json contains OAuth access_token, which is NOT a Gemini API key.
-        // We intentionally do not treat it as an API key for GEMINI_API_KEY.
         if (!token) {
           const foundToken = config.token || config.apiKey || config.GEMINI_API_KEY;
           if (foundToken && typeof foundToken === 'string') {
@@ -57,8 +55,7 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
             logger.debug(`[Gemini] Found token in ${configPath}`);
           }
         }
-        
-        // Try to read model from config
+
         if (!model) {
           const foundModel = config.model || config.GEMINI_MODEL;
           if (foundModel && typeof foundModel === 'string') {
@@ -66,17 +63,17 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
             logger.debug(`[Gemini] Found model in ${configPath}: ${model}`);
           }
         }
-        
-        // Try to read Google Cloud Project from config
+
         if (!googleCloudProject) {
           const foundProject = config.googleCloudProject || config.google_cloud_project || config.projectId;
           if (foundProject && typeof foundProject === 'string') {
             googleCloudProject = foundProject;
-            // Also get the associated email if stored
             if (config.googleCloudProjectEmail && typeof config.googleCloudProjectEmail === 'string') {
               googleCloudProjectEmail = config.googleCloudProjectEmail;
             }
-            logger.debug(`[Gemini] Found Google Cloud Project in ${configPath}: ${googleCloudProject}${googleCloudProjectEmail ? ` (for ${googleCloudProjectEmail})` : ''}`);
+            logger.debug(
+              `[Gemini] Found Google Cloud Project in ${configPath}: ${googleCloudProject}${googleCloudProjectEmail ? ` (for ${googleCloudProjectEmail})` : ''}`,
+            );
           }
         }
       } catch (error) {
@@ -85,12 +82,11 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
     }
   }
 
-  // Also check environment variable for Google Cloud Project
   if (!googleCloudProject) {
-    const envProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const envProject = env.GOOGLE_CLOUD_PROJECT || env.GOOGLE_CLOUD_PROJECT_ID;
     if (envProject) {
       googleCloudProject = envProject;
-      googleCloudProjectEmail = null; // Env var applies to all accounts
+      googleCloudProjectEmail = null;
       logger.debug(`[Gemini] Found Google Cloud Project from env: ${googleCloudProject}`);
     }
   }
@@ -111,12 +107,13 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
  */
 export function determineGeminiModel(
   explicitModel: string | null | undefined,
-  localConfig: GeminiLocalConfig
+  localConfig: GeminiLocalConfig,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   if (explicitModel !== undefined) {
     if (explicitModel === null) {
       // Explicitly null - use env or default, skip local config
-      return process.env[GEMINI_MODEL_ENV] || DEFAULT_GEMINI_MODEL;
+      return env[GEMINI_MODEL_ENV] || DEFAULT_GEMINI_MODEL;
     } else {
       // Model explicitly provided - use it
       return explicitModel;
@@ -124,7 +121,7 @@ export function determineGeminiModel(
   } else {
     // No explicit model - check env var first (user override), then local config, then default
     // This allows users to override config via environment variable
-    const envModel = process.env[GEMINI_MODEL_ENV];
+    const envModel = env[GEMINI_MODEL_ENV];
     logger.debug(`[Gemini] Model selection: env[GEMINI_MODEL_ENV]=${envModel}, localConfig.model=${localConfig.model}, DEFAULT=${DEFAULT_GEMINI_MODEL}`);
     const model = envModel || localConfig.model || DEFAULT_GEMINI_MODEL;
     logger.debug(`[Gemini] Selected model: ${model}`);
@@ -218,8 +215,14 @@ export function saveGoogleCloudProjectToConfig(projectId: string, email?: string
  * @returns The initial model string
  */
 export function getInitialGeminiModel(): string {
-  const localConfig = readGeminiLocalConfig();
-  return process.env[GEMINI_MODEL_ENV] || localConfig.model || DEFAULT_GEMINI_MODEL;
+  return getInitialGeminiModelFromEnv(process.env);
+}
+
+export function getInitialGeminiModelFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  const localConfig = readGeminiLocalConfig(env);
+  return env[GEMINI_MODEL_ENV] || localConfig.model || DEFAULT_GEMINI_MODEL;
 }
 
 /**
@@ -231,11 +234,12 @@ export function getInitialGeminiModel(): string {
  */
 export function getGeminiModelSource(
   explicitModel: string | null | undefined,
-  localConfig: GeminiLocalConfig
+  localConfig: GeminiLocalConfig,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): 'explicit' | 'env-var' | 'local-config' | 'default' {
   if (explicitModel !== undefined && explicitModel !== null) {
     return 'explicit';
-  } else if (process.env[GEMINI_MODEL_ENV]) {
+  } else if (env[GEMINI_MODEL_ENV]) {
     return 'env-var';
   } else if (localConfig.model) {
     return 'local-config';
