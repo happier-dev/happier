@@ -16,9 +16,14 @@ import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
+export type AgentIconSvgXmlResolver = (
+    theme: UnistylesThemes[keyof UnistylesThemes],
+) => string;
+
 export type AgentUiConfig = Readonly<{
     id: AgentId;
-    icon: ImageSourcePropType;
+    icon: ImageSourcePropType | null;
+    svgIconXml: AgentIconSvgXmlResolver | null;
     /**
      * Optional tint for the icon (Codex icon is monochrome and should match text color).
      */
@@ -51,8 +56,16 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     copilot: COPILOT_UI,
 });
 
-export function getAgentIconSource(agentId: AgentId): ImageSourcePropType {
+export function getAgentIconSource(agentId: AgentId): ImageSourcePropType | null {
     return AGENTS_UI[agentId].icon;
+}
+
+export function getAgentIconSvgXml(
+    agentId: AgentId,
+    theme: UnistylesThemes[keyof UnistylesThemes],
+): string | null {
+    const resolveSvgXml = AGENTS_UI[agentId].svgIconXml;
+    return resolveSvgXml ? resolveSvgXml(theme) : null;
 }
 
 export function getAgentIconTintColor(agentId: AgentId, theme: UnistylesThemes[keyof UnistylesThemes]): string | undefined {

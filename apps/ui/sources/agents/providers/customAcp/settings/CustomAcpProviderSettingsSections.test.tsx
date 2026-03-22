@@ -1,50 +1,45 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { renderSettingsView } from '@/dev/testkit';
 
 const routerPushSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'web',
-        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
-    },
-    Dimensions: { get: () => ({ width: 1440, height: 900 }) },
-    AppState: {
-        currentState: 'active',
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                    Pressable: 'Pressable',
+                    Platform: {
+                        OS: 'web',
+                        select: <T,>(options: { default?: T; web?: T }) => options.web ?? options.default ?? null,
+                    },
+                    Dimensions: {
+                        get: () => ({ width: 1440, height: 900 }),
+                    },
+                    AppState: {
+                        currentState: 'active',
+                        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                    },
+                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return expoRouterMock.module;
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (factory: any) => {
-            const theme = {
-                colors: {
-                    textSecondary: '#999',
-                    success: '#0f0',
-                    accent: {
-                        indigo: '#00f',
-                        orange: '#f80',
-                    },
-                },
-            };
-            return typeof factory === 'function' ? factory(theme) : factory;
-        },
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#999',
@@ -55,22 +50,28 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+            prompt: vi.fn(async () => null),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'acpCatalogSettingsV1') {
             return {
@@ -138,7 +139,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         }
         return [null, vi.fn()];
     },
-}));
+});
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
@@ -155,28 +157,21 @@ describe('CustomAcpProviderSettingsSections', () => {
 
     it('renders ACP backend management directly in the provider settings screen', async () => {
         const { CustomAcpProviderSettingsSections } = await import('./CustomAcpProviderSettingsSections');
+        const screen = await renderSettingsView(React.createElement(CustomAcpProviderSettingsSections));
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(CustomAcpProviderSettingsSections));
-        });
+        expect(screen.findRow('settings.acpCatalog.builtIn.kiro')).toBeTruthy();
+        expect(screen.findRow('settings.acpCatalog.builtIn.customAcp')).toBeNull();
+        expect(screen.findRow('settings.acpCatalog.backend.backend-1')).toBeTruthy();
+        expect(screen.findRow('settings.acpCatalog.addBackend')).toBeTruthy();
+        expect(screen.findGroup('settings.acpCatalogPresets')).toBeNull();
 
-        const items = tree!.root.findAllByType('Item' as any);
-        expect(items.some((item) => item.props.testID === 'settings.acpCatalog.builtIn.kiro')).toBe(true);
-        expect(items.some((item) => item.props.testID === 'settings.acpCatalog.builtIn.customAcp')).toBe(false);
-        expect(items.some((item) => item.props.testID === 'settings.acpCatalog.backend.backend-1')).toBe(true);
-        expect(items.some((item) => item.props.testID === 'settings.acpCatalog.addBackend')).toBe(true);
-        expect(items.some((item) => item.props.title === 'settings.acpCatalogPresets')).toBe(false);
-
-        const backendRow = items.find((item) => item.props.testID === 'settings.acpCatalog.backend.backend-1');
-        const addBackend = items.find((item) => item.props.title === 'settings.acpCatalogAddBackend');
+        const backendRow = screen.findRow('settings.acpCatalog.backend.backend-1');
+        const addBackend = screen.findRowByTitle('settings.acpCatalogAddBackend');
         expect(backendRow).toBeTruthy();
         expect(addBackend).toBeTruthy();
 
-        await act(async () => {
-            backendRow!.props.onPress();
-            addBackend!.props.onPress();
-        });
+        screen.pressRow('settings.acpCatalog.backend.backend-1');
+        screen.pressRowByTitle('settings.acpCatalogAddBackend');
 
         expect(routerPushSpy).toHaveBeenNthCalledWith(
             1,

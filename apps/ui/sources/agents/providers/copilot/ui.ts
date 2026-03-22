@@ -1,11 +1,11 @@
-import type { UnistylesThemes } from 'react-native-unistyles';
-
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
+import { PROVIDER_LOGO_SVG_XML } from '@/agents/registry/providerLogoSvgXml';
 
 export const COPILOT_UI: AgentUiConfig = {
     id: 'copilot',
-    icon: require('@/assets/images/icon-monochrome.png'),
-    tintColor: (theme: UnistylesThemes[keyof UnistylesThemes]) => theme.colors.text,
+    icon: null,
+    svgIconXml: PROVIDER_LOGO_SVG_XML.copilot ?? null,
+    tintColor: null,
     avatarOverlay: {
         circleScale: 0.35,
         iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),

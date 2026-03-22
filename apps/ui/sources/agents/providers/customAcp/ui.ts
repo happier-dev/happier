@@ -5,6 +5,7 @@ import type { AgentUiConfig } from '@/agents/registry/registryUi';
 export const CUSTOM_ACP_UI: AgentUiConfig = {
     id: 'customAcp',
     icon: require('@/assets/images/icon-monochrome.png'),
+    svgIconXml: null,
     tintColor: (theme: UnistylesThemes[keyof UnistylesThemes]) => theme.colors.text,
     avatarOverlay: {
         circleScale: 0.35,

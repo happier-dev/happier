@@ -71,6 +71,13 @@ export function getAgentIconSource(agentId: AgentId): ReturnType<RegistryUiModul
     return registryUi().getAgentIconSource(agentId);
 }
 
+export function getAgentIconSvgXml(
+    agentId: AgentId,
+    theme: Parameters<RegistryUiModule['getAgentIconSvgXml']>[1],
+): ReturnType<RegistryUiModule['getAgentIconSvgXml']> {
+    return registryUi().getAgentIconSvgXml(agentId, theme);
+}
+
 export function getAgentIconTintColor(
     agentId: AgentId,
     theme: AgentIconTintTheme,

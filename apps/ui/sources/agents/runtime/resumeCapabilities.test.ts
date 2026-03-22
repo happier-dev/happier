@@ -16,8 +16,12 @@ describe('getAgentVendorResumeId', () => {
         expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'claude')).toBe('c1');
     });
 
-    test('returns null for experimental resume agents when not enabled', () => {
-        expect(getAgentVendorResumeId({ codexSessionId: 'x1' }, 'codex')).toBeNull();
+    test('returns null for Codex vendor resume when disabled by settings', () => {
+        expect(getAgentVendorResumeId(
+            { codexSessionId: 'x1' },
+            'codex',
+            { accountSettings: { codexBackendMode: 'mcp' } },
+        )).toBeNull();
     });
 
     test('returns Codex session id when experimental resume is enabled for Codex by settings', () => {

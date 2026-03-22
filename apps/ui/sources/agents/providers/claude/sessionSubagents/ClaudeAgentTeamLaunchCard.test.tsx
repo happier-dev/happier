@@ -1,18 +1,28 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import {
+    changeTextTestInstance,
+    renderScreen,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sendMessageSpy = vi.fn(async () => undefined);
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 surface: '#fff',
@@ -22,36 +32,25 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#666',
             },
         },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : styles,
-    },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
     TextInput: (props: any) => React.createElement('TextInput', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
-vi.mock('@/sync/sync', () => ({
-    sync: {
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: () => ({
         sendMessage: sendMessageSpy,
-    },
+    }),
 }));
 
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -62,23 +61,17 @@ describe('ClaudeAgentTeamLaunchCard', () => {
     it('sends a structured team-create message', async () => {
         const { ClaudeAgentTeamLaunchCard } = await import('@/agents/providers/claude/sessionSubagents/ClaudeAgentTeamLaunchCard');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<ClaudeAgentTeamLaunchCard sessionId="s1" teamIds={[]} />);
-        });
+        const screen = await renderScreen(<ClaudeAgentTeamLaunchCard sessionId="s1" teamIds={[]} />);
 
-        const inputs = tree!.root.findAllByType('TextInput');
-        expect(inputs.length).toBeGreaterThanOrEqual(2);
+        const teamIdInput = screen.findAllByProps({ placeholder: 'session.subagents.panel.teamIdPlaceholder' })[0];
+        const teamDescriptionInput = screen.findByProps({ placeholder: 'session.subagents.panel.teamDescriptionPlaceholder' });
 
         await act(async () => {
-            inputs[0]!.props.onChangeText('qa-team');
-            inputs[1]!.props.onChangeText('Coordinate QA work.');
+            changeTextTestInstance(teamIdInput, 'qa-team', 'team id input');
+            changeTextTestInstance(teamDescriptionInput, 'Coordinate QA work.', 'team description input');
         });
 
-        const [launchTeam] = tree!.root.findAllByProps({ testID: 'session-subagent-launch-claude-team' });
-        await act(async () => {
-            await launchTeam.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-subagent-launch-claude-team');
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
             's1',
@@ -100,45 +93,34 @@ describe('ClaudeAgentTeamLaunchCard', () => {
     it('can render teammate-only mode with an initial team id', async () => {
         const { ClaudeAgentTeamLaunchCard } = await import('@/agents/providers/claude/sessionSubagents/ClaudeAgentTeamLaunchCard');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ClaudeAgentTeamLaunchCard
-                    sessionId="s1"
-                    teamIds={['qa-team']}
-                    mode="member"
-                    initialTeamId="qa-team"
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ClaudeAgentTeamLaunchCard
+                sessionId="s1"
+                teamIds={['qa-team']}
+                mode="member"
+                initialTeamId="qa-team"
+            />,
+        );
 
-        const inputs = tree!.root.findAllByType('TextInput');
-        expect(inputs).toHaveLength(3);
-        expect(inputs[0]!.props.value).toBe('qa-team');
-        expect(tree!.root.findAllByProps({ testID: 'session-subagent-launch-claude-team' })).toHaveLength(0);
-        expect(tree!.root.findAllByProps({ testID: 'session-subagent-launch-claude-teammate' }).length).toBeGreaterThan(0);
+        expect(screen.findByProps({ placeholder: 'session.subagents.panel.teamIdPlaceholder' })?.props.value).toBe('qa-team');
+        expect(screen.findByProps({ placeholder: 'session.subagents.panel.teammateLabelPlaceholder' })?.props.value).toBe('');
+        expect(screen.findByProps({ placeholder: 'session.subagents.panel.teammateInstructionsPlaceholder' })?.props.value).toBe('');
+        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeNull();
+        expect(screen.findByTestId('session-subagent-launch-claude-teammate')).toBeTruthy();
     });
 
     it('lets the user pick an existing team when launching a teammate', async () => {
         const { ClaudeAgentTeamLaunchCard } = await import('@/agents/providers/claude/sessionSubagents/ClaudeAgentTeamLaunchCard');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ClaudeAgentTeamLaunchCard
-                    sessionId="s1"
-                    teamIds={['qa-team', 'ops-team']}
-                    mode="member"
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <ClaudeAgentTeamLaunchCard
+                sessionId="s1"
+                teamIds={['qa-team', 'ops-team']}
+                mode="member"
+            />,
+        );
 
-        const [opsChoice] = tree!.root.findAllByProps({ testID: 'session-subagent-team-choice:ops-team' });
-        await act(async () => {
-            opsChoice.props.onPress();
-        });
-
-        const inputs = tree!.root.findAllByType('TextInput');
-        expect(inputs[0]!.props.value).toBe('ops-team');
+        await screen.pressByTestIdAsync('session-subagent-team-choice:ops-team');
+        expect(screen.findByProps({ placeholder: 'session.subagents.panel.teamIdPlaceholder' })?.props.value).toBe('ops-team');
     });
 });

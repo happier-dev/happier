@@ -10,12 +10,13 @@ type CollapsedActionItem = Readonly<{
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                    React.createElement('Pressable', props, props.children),
+        }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -26,9 +27,12 @@ vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsLight: vi.fn(),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('createAuggieAllowIndexingChip', () => {
     it('registers as a provider-option control and exposes a collapsed toggle action', async () => {
