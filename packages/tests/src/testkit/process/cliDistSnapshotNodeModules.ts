@@ -56,7 +56,7 @@ function copyMissingEntry(destPath: string, sourcePath: string): void {
   }
 
   try {
-    cpSync(sourcePath, destPath, { recursive: true, dereference: false, preserveTimestamps: true });
+    cpSync(sourcePath, destPath, { recursive: true, dereference: true, preserveTimestamps: true });
   } catch {
     // Best-effort only. Callers must tolerate missing links in constrained environments.
   }
@@ -97,6 +97,50 @@ function listNodeModulesEntries(nodeModulesDir: string): Dirent[] {
 
 function listScopedPackageEntries(scopeDir: string): Dirent[] {
   return listNodeModulesEntries(scopeDir).filter((entry) => !entry.name.startsWith('.'));
+}
+
+function collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath: string): ReadonlyArray<{ name: string; optional: boolean }> {
+  let pkg: any;
+  try {
+    pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  } catch {
+    return [];
+  }
+
+  const deps = pkg?.dependencies ?? {};
+  const optionalDeps = pkg?.optionalDependencies ?? {};
+
+  const required = Object.keys(deps)
+    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
+    .map((name) => ({ name, optional: false }));
+  const optional = Object.keys(optionalDeps)
+    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
+    .map((name) => ({ name, optional: true }));
+
+  return [...required, ...optional];
+}
+
+function ensureWorkspacePackageRuntimeDependencyFallbacks(
+  snapshotPackageNodeModulesDir: string,
+  rootDir: string,
+  packageJsonPath: string,
+): void {
+  const rootNodeModulesDir = resolve(rootDir, 'node_modules');
+  const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+
+  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath)) {
+    const snapshotDepPath = resolve(snapshotPackageNodeModulesDir, ...dep.name.split('/'));
+    const sourceCandidates = [
+      resolve(cliNodeModulesDir, ...dep.name.split('/')),
+      resolve(rootNodeModulesDir, ...dep.name.split('/')),
+    ];
+
+    for (const sourcePath of sourceCandidates) {
+      if (!existsSync(sourcePath)) continue;
+      ensureCopiedDirectory(snapshotDepPath, sourcePath);
+      break;
+    }
+  }
 }
 
 function ensureHoistedScopeFallback(scopeName: string, params: {
@@ -253,9 +297,59 @@ function ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir: st
 
     const sourceNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', scopePackageName, 'node_modules');
     const snapshotPackageNodeModulesDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'node_modules');
-    if (!existsSync(sourceNodeModulesDir)) continue;
+    if (existsSync(sourceNodeModulesDir)) {
+      ensureCopiedDirectory(snapshotPackageNodeModulesDir, sourceNodeModulesDir);
+    }
+    ensureWorkspacePackageRuntimeDependencyFallbacks(snapshotPackageNodeModulesDir, rootDir, packageJsonPath);
+  }
+}
 
-    ensureCopiedDirectory(snapshotPackageNodeModulesDir, sourceNodeModulesDir);
+function ensureExternalPackageRuntimeDependencyTree(packageDir: string, rootDir: string, visited: Set<string>): void {
+  const packageJsonPath = resolve(packageDir, 'package.json');
+  if (!existsSync(packageJsonPath) || visited.has(packageJsonPath)) return;
+  visited.add(packageJsonPath);
+
+  const rootNodeModulesDir = resolve(rootDir, 'node_modules');
+  const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+
+  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath)) {
+    const destDepPath = resolve(packageDir, 'node_modules', ...dep.name.split('/'));
+    const sourceCandidates = [
+      resolve(cliNodeModulesDir, ...dep.name.split('/')),
+      resolve(rootNodeModulesDir, ...dep.name.split('/')),
+    ];
+
+    if (!existsSync(destDepPath)) {
+      for (const sourcePath of sourceCandidates) {
+        if (!existsSync(sourcePath)) continue;
+        ensureCopiedDirectory(destDepPath, sourcePath);
+        break;
+      }
+    }
+
+    if (isDirectoryEntry(destDepPath)) {
+      ensureExternalPackageRuntimeDependencyTree(destDepPath, rootDir, visited);
+    }
+  }
+}
+
+function ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir: string, rootDir: string): void {
+  const visited = new Set<string>();
+
+  for (const entry of listNodeModulesEntries(snapshotNodeModulesDir)) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.name === '@happier-dev') continue;
+
+    const packagePath = resolve(snapshotNodeModulesDir, entry.name);
+    if (entry.name.startsWith('@')) {
+      for (const scopedEntry of listScopedPackageEntries(packagePath)) {
+        if (scopedEntry.name.startsWith('.')) continue;
+        ensureExternalPackageRuntimeDependencyTree(resolve(packagePath, scopedEntry.name), rootDir, visited);
+      }
+      continue;
+    }
+
+    ensureExternalPackageRuntimeDependencyTree(packagePath, rootDir, visited);
   }
 }
 
@@ -278,6 +372,7 @@ export function ensureCliDistSnapshotNodeModules(params: {
     ensureWorkspacePackageDistTrees(snapshotNodeModulesDir, params.rootDir);
     ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
     ensureCopiedNodeModulesEntries(cliNodeModulesDir, snapshotNodeModulesDir, new Set(['@happier-dev']));
+    ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
   } else if (existsSync(rootNodeModulesDir)) {
     ensureSymlink(snapshotNodeModulesDir, rootNodeModulesDir);
   }

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -75,6 +75,63 @@ describe('ensureCliDistSnapshotNodeModules', () => {
     expect(readFileSync(snapshotFile, 'utf8')).toContain('initial');
   });
 
+  it('vendors runtime dependencies for copied external packages so nested imports resolve', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-external-runtime-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@sentry', 'node'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', '@sentry', 'node-core'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@sentry', 'node', 'package.json'),
+      JSON.stringify({
+        name: '@sentry/node',
+        version: '10.39.0',
+        dependencies: {
+          '@sentry/node-core': '10.39.0',
+        },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@sentry', 'node', 'index.js'),
+      'export const live = "sentry-node";\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'node_modules', '@sentry', 'node-core', 'package.json'),
+      JSON.stringify({
+        name: '@sentry/node-core',
+        version: '10.39.0',
+        main: 'index.js',
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'node_modules', '@sentry', 'node-core', 'index.js'),
+      'export const live = "sentry-node-core";\n',
+      'utf8',
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-external-runtime-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    const snapshotCoreFile = join(
+      snapshotDir,
+      'node_modules',
+      '@sentry',
+      'node',
+      'node_modules',
+      '@sentry',
+      'node-core',
+      'index.js',
+    );
+    expect(readFileSync(snapshotCoreFile, 'utf8')).toContain('sentry-node-core');
+  });
+
   it('copies deep bundled runtime dependencies into the snapshot so nested protocol imports resolve', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-deep-runtime-'));
     createdDirs.push(rootDir);
@@ -124,6 +181,208 @@ describe('ensureCliDistSnapshotNodeModules', () => {
       'nacl-fast.js',
     );
     expect(readFileSync(snapshotFile, 'utf8')).toContain('initial');
+  });
+
+  it('materializes symlinked bundled runtime dependencies into the snapshot', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-symlinked-runtime-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'node_modules', 'zod'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+    writeFileSync(
+      join(rootDir, 'node_modules', 'zod', 'package.json'),
+      JSON.stringify({
+        name: 'zod',
+        version: '4.3.6',
+        main: 'index.js',
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'zod', 'index.js'), 'export const live = "source";\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'package.json'),
+      JSON.stringify({ name: '@happier-dev/agents' }, null, 2),
+      'utf8',
+    );
+    symlinkSync(
+      resolve(rootDir, 'node_modules', 'zod'),
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod'),
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-symlinked-runtime-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    const snapshotZodDir = join(snapshotDir, 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod');
+    expect(lstatSync(snapshotZodDir).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(snapshotZodDir, 'package.json'), 'utf8')).toContain('"name": "zod"');
+    expect(readFileSync(join(snapshotZodDir, 'index.js'), 'utf8')).toContain('source');
+  });
+
+  it('backfills missing bundled workspace runtime dependencies from the source root node_modules tree', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-root-runtime-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents'), { recursive: true });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist'), { recursive: true });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod', 'v4'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod', 'v4-mini'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'packages', 'agents', 'dist'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', 'zod'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    writeFileSync(
+      join(rootDir, 'packages', 'agents', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/agents',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        exports: { '.': { default: './dist/index.js' } },
+        dependencies: { zod: '4.3.6' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'packages', 'agents', 'dist', 'index.js'),
+      'export const agent = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'node_modules', 'zod', 'package.json'),
+      JSON.stringify({
+        name: 'zod',
+        version: '4.3.6',
+        main: 'index.js',
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'zod', 'index.js'), 'export const live = "source-root";\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/agents',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        exports: { '.': { default: './dist/index.js' } },
+        dependencies: { zod: '4.3.6' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'),
+      'export const agent = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod', 'v4', 'index.js'),
+      'export const partial = "nested";\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod', 'v4-mini', 'index.js'),
+      'export const partialMini = "nested";\n',
+      'utf8',
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-root-runtime-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    const snapshotZodDir = join(snapshotDir, 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod');
+    expect(existsSync(snapshotZodDir)).toBe(true);
+    expect(lstatSync(snapshotZodDir).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(snapshotZodDir, 'package.json'), 'utf8')).toContain('"name": "zod"');
+    expect(readFileSync(join(snapshotZodDir, 'index.js'), 'utf8')).toContain('source-root');
+  });
+
+  it('repairs missing bundled workspace runtime deps from the root node_modules tree', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-root-runtime-fallback-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol'), { recursive: true });
+    mkdirSync(join(rootDir, 'packages', 'protocol', 'dist'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', 'zod'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          dependencies: {
+            zod: '4.3.6',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'packages', 'protocol', 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          main: './dist/index.js',
+          dependencies: {
+            zod: '4.3.6',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'packages', 'protocol', 'dist', 'index.js'),
+      'export const protocol = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'node_modules', 'zod', 'package.json'),
+      JSON.stringify(
+        {
+          name: 'zod',
+          version: '4.3.6',
+          main: 'index.js',
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'zod', 'index.js'), 'export const live = "root-zod";\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-root-runtime-fallback-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    expect(
+      readFileSync(join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'zod', 'index.js'), 'utf8'),
+    ).toContain('root-zod');
   });
 
   it('ignores transient dist.__sync_tmp__ directories when copying bundled workspace scopes', () => {

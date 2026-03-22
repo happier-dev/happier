@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
-import { ensureCliSharedDepsBuilt, ensureCliDistSnapshotEntrypoint } from './cliDist';
+import { ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt } from './cliDist';
 import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
 import { resolveTsxImportHookPath } from './tsxImportHook';
 
@@ -21,64 +21,58 @@ function resolveCliSourceEntrypoint(rootDir: string): string {
   return resolve(rootDir, 'apps', 'cli', 'src', 'index.ts');
 }
 
-function resolveCliTsconfigPath(rootDir: string): string {
-  return resolve(rootDir, 'apps', 'cli', 'tsconfig.json');
+function resolveCliSnapshotSourceEntrypoint(snapshotDir: string): string {
+  return resolve(snapshotDir, 'src', 'index.ts');
 }
 
-function ensureCopiedTextFile(snapshotDir: string, rootDir: string, relPath: string): void {
-  const target = resolve(rootDir, 'apps', 'cli', relPath);
-  if (!existsSync(target)) return;
-  const dest = resolve(snapshotDir, relPath);
-  if (existsSync(dest)) return;
-  mkdirSync(dirname(dest), { recursive: true });
-  try {
-    writeFileSync(dest, readFileSync(target));
-  } catch {
-    // Best-effort only. Source launch can still proceed if a metadata file is absent.
-  }
+function resolveCliTsconfigPath(snapshotDir: string): string {
+  return resolve(snapshotDir, 'tsconfig.json');
 }
 
-async function ensureCliSourceSnapshotRoot(rootDir: string, snapshotDir: string): Promise<void> {
-  const sourceDir = resolve(rootDir, 'apps', 'cli', 'src');
-  if (!existsSync(sourceDir)) {
-    throw new Error(`CLI source entrypoint missing for test launch: ${resolveCliSourceEntrypoint(rootDir)}`);
+function ensureCliSourceSnapshot(snapshotDir: string, rootDir: string): void {
+    mkdirSync(snapshotDir, { recursive: true });
+
+  const linkTargets = ['src', 'scripts', 'tools', 'bin'];
+  for (const relPath of linkTargets) {
+    const target = resolve(rootDir, 'apps', 'cli', relPath);
+    if (!existsSync(target)) continue;
+    const dest = resolve(snapshotDir, relPath);
+    if (existsSync(dest)) continue;
+    symlinkSync(target, dest, process.platform === 'win32' ? 'junction' : 'dir');
   }
 
-  mkdirSync(snapshotDir, { recursive: true });
-  await ensureCliSharedDepsBuilt(
-    { testDir: snapshotDir, env: process.env },
-    {
-      repoRoot: rootDir,
-    },
-  );
   ensureCliDistSnapshotNodeModules({
     snapshotDir,
     snapshotDistDir: resolve(snapshotDir, 'dist'),
     rootDir,
   });
-  ensureCopiedTextFile(snapshotDir, rootDir, 'package.json');
-  ensureCopiedTextFile(snapshotDir, rootDir, 'tsconfig.json');
 
-  const snapshotSourceDir = resolve(snapshotDir, 'src');
-  if (!existsSync(snapshotSourceDir)) {
-    mkdirSync(dirname(snapshotSourceDir), { recursive: true });
-    try {
-      symlinkSync(sourceDir, snapshotSourceDir, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch {
-      // Best-effort only. Some environments disallow symlinks.
-    }
+  for (const relPath of ['package.json', 'tsconfig.json']) {
+    const target = resolve(rootDir, 'apps', 'cli', relPath);
+    if (!existsSync(target)) continue;
+    const dest = resolve(snapshotDir, relPath);
+    if (existsSync(dest)) continue;
+    writeFileSync(dest, readFileSync(target));
   }
 }
 
-async function resolveCliSourceLaunchSpec(rootDir: string, snapshotDir?: string): Promise<CliTestLaunchSpec> {
-  const snapshotRootDir = typeof snapshotDir === 'string' && snapshotDir.trim() ? snapshotDir : null;
-  if (snapshotRootDir) {
-    await ensureCliSourceSnapshotRoot(rootDir, snapshotRootDir);
-  }
-
-  const sourceEntrypoint = snapshotRootDir
-    ? resolve(snapshotRootDir, 'src', 'index.ts')
-    : resolveCliSourceEntrypoint(rootDir);
+async function resolveCliSourceLaunchSpec(
+  params: Readonly<{ testDir: string; env: NodeJS.ProcessEnv }>,
+  rootDir: string,
+  options: CliLaunchOptions,
+): Promise<CliTestLaunchSpec> {
+  await ensureCliSharedDepsBuilt(params, {
+    repoRoot: rootDir,
+    runCommand: options.runCommand,
+    skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+    timeoutMs: options.timeoutMs,
+    pollIntervalMs: options.pollIntervalMs,
+    staleAfterMs: options.staleAfterMs,
+    buildTimeoutMs: options.buildTimeoutMs,
+  });
+  const snapshotDir = options.snapshotDir;
+  ensureCliSourceSnapshot(snapshotDir, rootDir);
+  const sourceEntrypoint = resolveCliSnapshotSourceEntrypoint(snapshotDir);
   if (!existsSync(sourceEntrypoint)) {
     throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);
   }
@@ -90,10 +84,10 @@ async function resolveCliSourceLaunchSpec(rootDir: string, snapshotDir?: string)
 
   return {
     command: process.execPath,
-    args: ['--preserve-symlinks', '--import', tsxHookPath, sourceEntrypoint],
-    cwd: snapshotRootDir ?? resolve(rootDir, 'apps', 'cli'),
+    args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookPath, sourceEntrypoint],
+    cwd: snapshotDir,
     env: {
-      TSX_TSCONFIG_PATH: snapshotRootDir ? resolve(snapshotRootDir, 'tsconfig.json') : resolveCliTsconfigPath(rootDir),
+      TSX_TSCONFIG_PATH: resolveCliTsconfigPath(snapshotDir),
     },
   };
 }
@@ -118,7 +112,7 @@ export async function resolveCliTestLaunchSpec(
   const rootDir = options.repoRoot ?? repoRootDir();
 
   if (options.preferSourceEntrypoint || shouldUseCliSourceEntrypoint(params.env)) {
-    return await resolveCliSourceLaunchSpec(rootDir, options.snapshotDir);
+    return await resolveCliSourceLaunchSpec(params, rootDir, options);
   }
 
   let snapshotEntrypoint: string;
@@ -128,7 +122,7 @@ export async function resolveCliTestLaunchSpec(
     if (!existsSync(resolveCliSourceEntrypoint(rootDir))) {
       throw error;
     }
-    return resolveCliSourceLaunchSpec(rootDir);
+    return resolveCliSourceLaunchSpec(params, rootDir, options);
   }
 
   return {

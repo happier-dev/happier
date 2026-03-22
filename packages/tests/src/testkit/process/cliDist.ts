@@ -211,6 +211,10 @@ function findMissingDistChunkImports(distDir: string): string[] {
 }
 
 function resolveCliSharedDepsOutputPaths(rootDir: string): string[] {
+  return CLI_SHARED_DEP_PACKAGE_NAMES.flatMap((packageName) => resolveCliWorkspaceExpectedOutputPaths(rootDir, packageName));
+}
+
+function resolveCliBundledSharedDepsOutputPaths(rootDir: string): string[] {
   return CLI_SHARED_DEP_PACKAGE_NAMES.flatMap((packageName) => resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName));
 }
 
@@ -542,14 +546,18 @@ function isBuildDirectoryStale(params: { sourcePaths: readonly string[]; outputD
 }
 
 function hasCliSharedDepsOutputs(rootDir: string, opts: { skipSourceFreshnessCheck?: boolean } = {}): boolean {
+  const workspaceOutputPaths = resolveCliSharedDepsOutputPaths(rootDir);
+  if (!workspaceOutputPaths.every((candidatePath) => existsSync(candidatePath))) {
+    return false;
+  }
+
   repairMissingCliBundledSharedDepsOutputs(rootDir);
   if (!hasCliBundledSharedDepsOutputs(rootDir)) return false;
   if (opts.skipSourceFreshnessCheck) return true;
 
-  const outputPaths = resolveCliSharedDepsOutputPaths(rootDir);
   return !areBuildOutputsStale({
     sourcePaths: resolveCliSharedDepsSourcePaths(rootDir),
-    outputPaths,
+    outputPaths: resolveCliBundledSharedDepsOutputPaths(rootDir),
   });
 }
 
@@ -575,41 +583,32 @@ export async function ensureCliSharedDepsBuilt(
     return;
   }
 
-  const lockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-shared-deps-build.lock');
-  _ensureSharedPromise = withCliDistBuildLock(
-    async () => {
-      if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
+  _ensureSharedPromise = (async () => {
+    if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
+      return;
+    }
+
+    const runCommand = options.runCommand ?? runLoggedCommand;
+    for (let attempt = 1; attempt <= maxBuildAttempts; attempt += 1) {
+      await runCommand({
+        command: yarnCommand(),
+        args: ['-s', 'workspace', '@happier-dev/cli', 'build:shared'],
+        cwd: rootDir,
+        env: { ...process.env, ...params.env, CI: '1' },
+        stdoutPath: resolve(params.testDir, 'cli.buildShared.stdout.log'),
+        stderrPath: resolve(params.testDir, 'cli.buildShared.stderr.log'),
+        timeoutMs: options.buildTimeoutMs ?? 240_000,
+      });
+
+      if (hasCliSharedDepsOutputs(rootDir)) {
         return;
       }
+    }
 
-      const runCommand = options.runCommand ?? runLoggedCommand;
-      for (let attempt = 1; attempt <= maxBuildAttempts; attempt += 1) {
-        await runCommand({
-          command: yarnCommand(),
-          args: ['-s', 'workspace', '@happier-dev/cli', 'build:shared'],
-          cwd: rootDir,
-          env: { ...process.env, ...params.env, CI: '1' },
-          stdoutPath: resolve(params.testDir, 'cli.buildShared.stdout.log'),
-          stderrPath: resolve(params.testDir, 'cli.buildShared.stderr.log'),
-          timeoutMs: options.buildTimeoutMs ?? 240_000,
-        });
-
-        if (hasCliSharedDepsOutputs(rootDir)) {
-          return;
-        }
-      }
-
-      if (!hasCliSharedDepsOutputs(rootDir)) {
-        throw new Error(`Shared workspace deps output missing after build: ${resolve(rootDir, 'packages')}`);
-      }
-    },
-    {
-      lockPath,
-      timeoutMs: options.timeoutMs,
-      pollIntervalMs: options.pollIntervalMs,
-      staleAfterMs: options.staleAfterMs,
-    },
-  );
+    if (!hasCliSharedDepsOutputs(rootDir)) {
+      throw new Error(`Shared workspace deps output missing after build: ${resolve(rootDir, 'packages')}`);
+    }
+  })();
 
   try {
     return await _ensureSharedPromise;
@@ -710,15 +709,15 @@ export async function ensureCliDistBuilt(
     return resolveReusableEntrypoint() === null;
   };
 
+  const reusableEntrypoint = resolveReusableEntrypoint();
+  if (reusableEntrypoint) {
+    return reusableEntrypoint;
+  }
+
   // If a previous ensure attempt completed but dist is missing, rebuild.
   if (_ensurePromise) {
     await _ensurePromise.catch(() => {});
     _ensurePromise = null;
-  }
-
-  const reusableEntrypoint = resolveReusableEntrypoint();
-  if (reusableEntrypoint) {
-    return reusableEntrypoint;
   }
 
   _ensurePromise = withCliDistBuildLock(async () => {

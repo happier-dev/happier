@@ -346,6 +346,54 @@ describe('ensureCliDistBuilt', () => {
     expect(buildCalls).toBe(2);
   });
 
+  it('does not hold the shared-deps lock while the build command reacquires it', async () => {
+    const repoRoot = await createRepoRoot();
+    const sourcePath = join(repoRoot, 'packages', 'agents', 'src', 'index.ts');
+    const lockPath = join(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
+    const outputPaths = [
+      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js'),
+      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js'),
+      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
+      join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
+    ];
+
+    utimesSync(sourcePath, new Date('2030-03-09T01:18:00.000Z'), new Date('2030-03-09T01:18:00.000Z'));
+
+    vi.resetModules();
+    const { ensureCliSharedDepsBuilt } = await import('./cliDist');
+
+    let buildCalls = 0;
+    await expect(
+      ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          lockPath,
+          timeoutMs: 1_000,
+          runCommand: async () => {
+            buildCalls += 1;
+            await withCliDistBuildLock(
+              async () => {
+                const outputTime = new Date('2030-03-09T01:20:00.000Z');
+                for (const outputPath of outputPaths) {
+                  utimesSync(outputPath, outputTime, outputTime);
+                }
+              },
+              {
+                lockPath,
+                timeoutMs: 100,
+                pollIntervalMs: 25,
+                staleAfterMs: 1_000,
+              },
+            );
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(buildCalls).toBe(1);
+  });
+
   it('accepts fresh bundled shared deps even when workspace dist is stale', async () => {
     const repoRoot = await createRepoRoot();
     const sourcePath = join(repoRoot, 'packages', 'protocol', 'src', 'index.ts');
@@ -375,6 +423,43 @@ describe('ensureCliDistBuilt', () => {
         runCommand: async () => {
           rebuildCalls += 1;
         },
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
+  });
+
+  it('returns healthy shared deps without waiting for an unrelated held shared-deps lock', async () => {
+    const repoRoot = await createRepoRoot();
+    const lockPath = join(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
+
+    let rebuildCalls = 0;
+    await withCliDistBuildLock(
+      async () => {
+        const ensurePromise = ensureCliSharedDepsBuilt(
+          { testDir: join(repoRoot, '.project'), env: process.env },
+          {
+            repoRoot,
+            lockPath,
+            timeoutMs: 1_000,
+            skipSourceFreshnessCheck: true,
+            runCommand: async () => {
+              rebuildCalls += 1;
+            },
+          },
+        );
+
+        const raced = await Promise.race([
+          ensurePromise.then(() => 'resolved'),
+          sleep(250).then(() => 'pending'),
+        ]);
+        expect(raced).toBe('resolved');
+        await ensurePromise;
+      },
+      {
+        lockPath,
+        timeoutMs: 10_000,
+        staleAfterMs: 10_000,
       },
     );
 
