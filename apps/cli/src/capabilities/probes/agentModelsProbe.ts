@@ -5,6 +5,7 @@ import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
 import { withCodexAppServerClient } from '@/backends/codex/appServer/client/withCodexAppServerClient';
 import { readCodexAppServerSessionControls } from '@/backends/codex/appServer/sessionControlsMetadata';
+import { readCodexEnvironmentAuthState } from '@/backends/codex/cli/auth/readCodexEnvironmentAuthState';
 import type { CatalogAgentId } from '@/backends/types';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
@@ -17,7 +18,27 @@ import { createConfiguredAcpProbeBackend } from './createConfiguredAcpProbeBacke
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 import { spawn } from 'node:child_process';
 
-export type ProbedAgentModel = Readonly<{ id: string; name: string; description?: string }>;
+type ProbedAgentModelOptionValue = string | number | boolean | null;
+
+type ProbedAgentModelOption = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+  type: string;
+  currentValue: ProbedAgentModelOptionValue;
+  options?: ReadonlyArray<Readonly<{
+    value: ProbedAgentModelOptionValue;
+    name: string;
+    description?: string;
+  }>>;
+}>;
+
+export type ProbedAgentModel = Readonly<{
+  id: string;
+  name: string;
+  description?: string;
+  modelOptions?: ReadonlyArray<ProbedAgentModelOption>;
+}>;
 
 export type ProbedAgentModelsResult = Readonly<{
   provider: CatalogAgentId;
@@ -33,6 +54,10 @@ const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
   successTtlMs: PROBE_MODELS_SUCCESS_TTL_MS,
   errorTtlMs: PROBE_MODELS_FAILURE_TTL_MS,
 });
+
+export function resetAgentModelsProbeCacheForTests(): void {
+  agentModelsProbeCache.clear();
+}
 
 function buildAgentModelsProbeCacheKey(agentId: CatalogAgentId, cwd: string, backendTarget?: BackendTargetRefV1, variant?: string): string {
   const normalizedCwd = String(cwd ?? '').trim();
@@ -77,8 +102,54 @@ function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
       const id = typeof (m as any).id === 'string' ? String((m as any).id).trim() : '';
       const name = typeof (m as any).name === 'string' ? String((m as any).name).trim() : '';
       const description = typeof (m as any).description === 'string' ? String((m as any).description) : undefined;
+      const modelOptions = Array.isArray((m as any).modelOptions)
+        ? ((m as any).modelOptions as unknown[])
+          .map((option) => {
+            if (!option || typeof option !== 'object' || Array.isArray(option)) return null;
+            const optionId = typeof (option as any).id === 'string' ? String((option as any).id).trim() : '';
+            const optionName = typeof (option as any).name === 'string' ? String((option as any).name).trim() : '';
+            const optionType = typeof (option as any).type === 'string' ? String((option as any).type).trim() : '';
+            if (!optionId || !optionName || !optionType) return null;
+            const optionDescription = typeof (option as any).description === 'string'
+              ? String((option as any).description)
+              : undefined;
+            const currentValue = (option as any).currentValue ?? null;
+            const normalizedChoices = Array.isArray((option as any).options)
+              ? ((option as any).options as unknown[])
+                .map((choice) => {
+                  if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return null;
+                  const value = (choice as any).value ?? null;
+                  const choiceName = typeof (choice as any).name === 'string' ? String((choice as any).name).trim() : '';
+                  if (!choiceName) return null;
+                  const choiceDescription = typeof (choice as any).description === 'string'
+                    ? String((choice as any).description)
+                    : undefined;
+                  return {
+                    value,
+                    name: choiceName,
+                    ...(choiceDescription ? { description: choiceDescription } : {}),
+                  };
+                })
+                .filter(Boolean) as ProbedAgentModelOption['options']
+              : undefined;
+            return {
+              id: optionId,
+              name: optionName,
+              type: optionType,
+              currentValue,
+              ...(optionDescription ? { description: optionDescription } : {}),
+              ...(normalizedChoices && normalizedChoices.length > 0 ? { options: normalizedChoices } : {}),
+            } satisfies ProbedAgentModelOption;
+          })
+          .filter(Boolean) as ProbedAgentModel['modelOptions']
+        : undefined;
       if (!id || !name) return null;
-      return { id, name, ...(description ? { description } : {}) } satisfies ProbedAgentModel;
+      return {
+        id,
+        name,
+        ...(description ? { description } : {}),
+        ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
+      } satisfies ProbedAgentModel;
     })
     .filter(Boolean) as ProbedAgentModel[];
 
@@ -273,9 +344,13 @@ export async function probeModelsFromAcpBackend(params: {
 async function probeModelsFromCodexAppServer(params: Readonly<{
   cwd: string;
 }>): Promise<ReadonlyArray<ProbedAgentModel> | null> {
+  const authMethod = readCodexEnvironmentAuthState().method;
   const controls = await withCodexAppServerClient({
     cwd: params.cwd,
-    run: async (client) => readCodexAppServerSessionControls({ client }),
+    run: async (client) => readCodexAppServerSessionControls({
+      client,
+      authMethod,
+    }),
   });
   return normalizeDynamicModels(controls.availableModels);
 }
@@ -350,7 +425,7 @@ export async function probeAgentModelsBestEffort(params: {
         agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
         return res;
       }
-      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
       return fallback;
     }
 

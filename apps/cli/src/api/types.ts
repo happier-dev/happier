@@ -485,6 +485,18 @@ export type Metadata = {
       id: string,
       name: string,
       description?: string,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+      }>,
     }>,
   },
   sessionModelsV1?: {
@@ -496,6 +508,18 @@ export type Metadata = {
       id: string,
       name: string,
       description?: string,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+      }>,
     }>,
   },
   /**

@@ -24,7 +24,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     readCodexAppServerSessionControlsMock.mockReset();
   });
 
-  it('uses Codex app-server session controls config options when account settings select appServer', async () => {
+  it('returns only session-level config options when model-scoped controls are present', async () => {
     withCodexAppServerClientMock.mockImplementation(async ({ cwd, run }: any) => {
       expect(cwd).toBe('/repo');
       return await run({ request: vi.fn() });
@@ -32,20 +32,32 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     readCodexAppServerSessionControlsMock.mockResolvedValue({
       availableModes: [],
       currentModeId: 'default',
-      availableModels: [],
-      currentModelId: 'gpt-5.4',
-      configOptions: [
+      availableModels: [
         {
-          id: 'speed',
-          name: 'Speed',
-          type: 'select',
-          currentValue: 'fast',
-          options: [
-            { value: 'standard', name: 'Standard' },
-            { value: 'fast', name: 'Fast' },
+          id: 'gpt-5.4',
+          name: 'GPT-5.4',
+          modelOptions: [
+            {
+              id: 'reasoning_effort',
+              name: 'Thinking',
+              type: 'select',
+              currentValue: 'medium',
+              options: [
+                { value: 'low', name: 'Low' },
+                { value: 'medium', name: 'Medium' },
+              ],
+            },
+            {
+              id: 'speed',
+              name: 'Fast',
+              type: 'boolean',
+              currentValue: true,
+            },
           ],
         },
       ],
+      currentModelId: 'gpt-5.4',
+      configOptions: [],
     });
 
     const result = await probeAgentConfigOptionsBestEffort({
@@ -56,18 +68,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
 
     expect(result).toEqual({
       provider: 'codex',
-      configOptions: [
-        {
-          id: 'speed',
-          name: 'Speed',
-          type: 'select',
-          currentValue: 'fast',
-          options: [
-            { value: 'standard', name: 'Standard' },
-            { value: 'fast', name: 'Fast' },
-          ],
-        },
-      ],
+      configOptions: [],
       source: 'dynamic',
     });
     expect(withCodexAppServerClientMock).toHaveBeenCalledTimes(1);

@@ -5,6 +5,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend } from '@/agent/core';
 import { probeAgentModelsBestEffort, probeModelsFromAcpBackend } from './agentModelsProbe';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import {
   createProbeTempDir,
   resolveAcpSdkEntryFromCwd,
@@ -24,12 +25,6 @@ async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> 
   } finally {
     Object.defineProperty(process, 'platform', descriptor);
   }
-}
-
-function createApprovedPermissionHandler(): AcpPermissionHandler {
-  return {
-    handleToolCall: async () => ({ decision: 'approved' }),
-  };
 }
 
 function createProbeBackendOptions(params: {

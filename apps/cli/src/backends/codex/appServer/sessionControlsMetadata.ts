@@ -19,19 +19,25 @@ type SessionControlOption = {
     description?: string;
 };
 
+type SessionConfigOptionValue = string | number | boolean | null;
+
 type SessionConfigOption = {
     id: string;
     name: string;
     description?: string;
     type: string;
-    currentValue: string;
-    options?: Array<{ value: string; name: string; description?: string }>;
+    currentValue: SessionConfigOptionValue;
+    options?: Array<{ value: SessionConfigOptionValue; name: string; description?: string }>;
 };
+
+type SessionModelOption = SessionControlOption & Readonly<{
+    modelOptions?: SessionConfigOption[];
+}>;
 
 export type CodexAppServerSessionControlsSnapshot = Readonly<{
     availableModes: SessionControlOption[];
     currentModeId: string | null;
-    availableModels: SessionControlOption[];
+    availableModels: SessionModelOption[];
     currentModelId: string | null;
     configOptions: SessionConfigOption[];
 }>;
@@ -54,6 +60,10 @@ type CollaborationModeMask = SessionControlOption & Readonly<{
     reasoningEffort: string | null;
 }>;
 
+type ModelMask = SessionModelOption & Readonly<{
+    isDefault: boolean;
+}>;
+
 function normalizeString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -74,12 +84,109 @@ function readListEntries(value: unknown): unknown[] {
     return [];
 }
 
-function normalizeSessionControlOptions(value: unknown): SessionControlOption[] {
-    const out: SessionControlOption[] = [];
-    for (const entry of readListEntries(value)) {
+function normalizeReasoningEffortLabel(value: string): string {
+    switch (value) {
+        case 'low':
+            return 'Low';
+        case 'medium':
+            return 'Medium';
+        case 'high':
+            return 'High';
+        case 'xhigh':
+            return 'Max';
+        default:
+            return value;
+    }
+}
+
+type ReasoningEffortChoice = Readonly<{
+    value: string;
+    description?: string;
+}>;
+
+function normalizeReasoningEffortChoices(value: unknown): ReasoningEffortChoice[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => {
+            const stringValue = normalizeString(entry);
+            if (stringValue) {
+                return { value: stringValue } satisfies ReasoningEffortChoice;
+            }
+            const record = asRecord(entry);
+            if (!record) return null;
+            const reasoningEffort = normalizeString(record.reasoningEffort)
+                ?? normalizeString(record.reasoning_effort)
+                ?? normalizeString(record.value)
+                ?? normalizeString(record.id);
+            if (!reasoningEffort) return null;
+            const description = normalizeString(record.description);
+            return {
+                value: reasoningEffort,
+                ...(description ? { description } : {}),
+            } satisfies ReasoningEffortChoice;
+        })
+        .filter((entry): entry is ReasoningEffortChoice => entry !== null);
+}
+
+function buildReasoningEffortModelOption(params: Readonly<{
+    modelId: string;
+    record: Record<string, unknown>;
+    currentModelId: string | null;
+    currentReasoningEffort?: string | null;
+}>): SessionConfigOption | null {
+    const values = normalizeReasoningEffortChoices(params.record.supportedReasoningEfforts);
+    if (values.length === 0) return null;
+    const defaultValue = normalizeString(params.record.defaultReasoningEffort) ?? values[0]?.value ?? null;
+    if (!defaultValue) return null;
+    const currentValue = params.modelId === params.currentModelId
+        ? (params.currentReasoningEffort ?? defaultValue)
+        : defaultValue;
+    return {
+        id: 'reasoning_effort',
+        name: 'Thinking',
+        type: 'select',
+        currentValue,
+        options: values.map((value) => ({
+            value: value.value,
+            name: normalizeReasoningEffortLabel(value.value),
+            ...(value.description ? { description: value.description } : {}),
+        })),
+    };
+}
+
+function buildSpeedModelOption(params: Readonly<{
+    authMethod?: string | null;
+    modelId: string;
+    currentModelId: string | null;
+    currentServiceTier?: string | null;
+}>): SessionConfigOption | null {
+    if (!isSpeedEligible({ authMethod: params.authMethod, currentModelId: params.modelId })) return null;
+    return {
+        id: 'speed',
+        name: 'Fast',
+        type: 'boolean',
+        currentValue: params.modelId === params.currentModelId
+            ? (params.currentServiceTier === 'fast' ? 'fast' : 'standard')
+            : 'standard',
+        options: [
+            { value: 'standard', name: 'Standard' },
+            { value: 'fast', name: 'Fast' },
+        ],
+    };
+}
+
+function normalizeSessionModelMasks(params: Readonly<{
+    value: unknown;
+    authMethod?: string | null;
+    currentModelId: string | null;
+    currentReasoningEffort?: string | null;
+    currentServiceTier?: string | null;
+}>): ModelMask[] {
+    const out: ModelMask[] = [];
+    for (const entry of readListEntries(params.value)) {
         const record = asRecord(entry);
         if (!record) continue;
-        const id = normalizeString(record.id) ?? normalizeString(record.slug) ?? normalizeString(record.mode);
+        const id = normalizeString(record.id) ?? normalizeString(record.slug);
         const name = normalizeString(record.displayName) ?? normalizeString(record.name) ?? normalizeString(record.label) ?? id;
         if (!id || !name) continue;
         const description = normalizeString(record.description)
@@ -87,7 +194,27 @@ function normalizeSessionControlOptions(value: unknown): SessionControlOption[] 
                 const reasoningEffort = normalizeString(record.reasoning_effort);
                 return reasoningEffort ? `Reasoning effort: ${reasoningEffort}` : null;
             })();
-        out.push({ id, name, ...(description ? { description } : {}) });
+        const reasoningOption = buildReasoningEffortModelOption({
+            modelId: id,
+            record,
+            currentModelId: params.currentModelId,
+            currentReasoningEffort: params.currentReasoningEffort,
+        });
+        const speedOption = buildSpeedModelOption({
+            authMethod: params.authMethod,
+            modelId: id,
+            currentModelId: params.currentModelId,
+            currentServiceTier: params.currentServiceTier,
+        });
+        const modelOptions = [reasoningOption, speedOption]
+            .filter((option): option is SessionConfigOption => option !== null);
+        out.push({
+            id,
+            name,
+            ...(description ? { description } : {}),
+            ...(modelOptions.length > 0 ? { modelOptions } : {}),
+            isDefault: record.default === true || record.isDefault === true || record.selected === true || record.current === true,
+        });
     }
     return out;
 }
@@ -118,7 +245,11 @@ function normalizeCollaborationModeMasks(value: unknown): CollaborationModeMask[
     return out;
 }
 
-function resolveCurrentId(value: unknown, options: readonly SessionControlOption[]): string | null {
+function resolveCurrentId(
+    value: unknown,
+    options: readonly SessionControlOption[],
+    params?: Readonly<{ fallbackToFirst?: boolean }>,
+): string | null {
     for (const entry of readListEntries(value)) {
         const record = asRecord(entry);
         if (!record) continue;
@@ -128,7 +259,7 @@ function resolveCurrentId(value: unknown, options: readonly SessionControlOption
             return id;
         }
     }
-    return options[0]?.id ?? null;
+    return params?.fallbackToFirst === true ? options[0]?.id ?? null : null;
 }
 
 function isSpeedEligible(params: Readonly<{
@@ -139,34 +270,25 @@ function isSpeedEligible(params: Readonly<{
     return params.authMethod === 'oauth_cli' || params.authMethod === 'credentials_file';
 }
 
-function buildSpeedConfigOptions(params: Readonly<{
-    authMethod?: string | null;
-    currentModelId: string | null;
-    currentServiceTier?: string | null;
-}>): SessionConfigOption[] {
-    if (!isSpeedEligible(params)) return [];
-    return [{
-        id: 'speed',
-        name: 'Speed',
-        type: 'select',
-        currentValue: params.currentServiceTier === 'fast' ? 'fast' : 'standard',
-        options: [
-            { value: 'standard', name: 'Standard' },
-            { value: 'fast', name: 'Fast' },
-        ],
-    }];
-}
-
 export function resolveCodexAppServerCollaborationModeSelection(params: Readonly<{
     modesResponse: unknown;
+    modelsResponse?: unknown;
     modeId: string;
     currentModelId: string | null;
+    currentReasoningEffort?: string | null;
 }>): CollaborationModeSelection | null {
     const requestedModeId = normalizeString(params.modeId);
     if (!requestedModeId) return null;
     const match = normalizeCollaborationModeMasks(params.modesResponse).find((entry) => entry.id === requestedModeId);
     if (!match) return null;
-    const model = match.model ?? params.currentModelId;
+    const modelMasks = normalizeSessionModelMasks({
+        value: params.modelsResponse,
+        currentModelId: params.currentModelId,
+        currentReasoningEffort: params.currentReasoningEffort,
+    });
+    const fallbackModelId = modelMasks.find((entry) => entry.isDefault)?.id
+        ?? resolveCurrentId(params.modelsResponse, modelMasks, { fallbackToFirst: true });
+    const model = match.model ?? params.currentModelId ?? fallbackModelId;
     if (!model) return null;
     return {
         modeId: match.id,
@@ -174,7 +296,7 @@ export function resolveCodexAppServerCollaborationModeSelection(params: Readonly
             mode: match.mode,
             settings: {
                 model,
-                reasoning_effort: match.reasoningEffort,
+                reasoning_effort: params.currentReasoningEffort ?? match.reasoningEffort,
                 developer_instructions: null,
             },
         },
@@ -186,6 +308,7 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
     authMethod?: string | null;
     currentModeId?: string | null;
     currentModelId?: string | null;
+    currentReasoningEffort?: string | null;
     currentServiceTier?: string | null;
 }>): Promise<CodexAppServerSessionControlsSnapshot> {
     const [modesResponse, modelsResponse] = await Promise.all([
@@ -202,22 +325,23 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
     const currentModeId = availableModes.some((entry) => entry.id === params.currentModeId)
         ? params.currentModeId ?? null
         : resolveCurrentId(modesResponse, availableModes);
-    const availableModels = normalizeSessionControlOptions(modelsResponse);
+    const availableModels = normalizeSessionModelMasks({
+        value: modelsResponse,
+        authMethod: params.authMethod,
+        currentModelId: params.currentModelId ?? null,
+        currentReasoningEffort: params.currentReasoningEffort,
+        currentServiceTier: params.currentServiceTier,
+    }).map(({ isDefault, ...entry }) => entry);
     const currentModelId = availableModels.some((entry) => entry.id === params.currentModelId)
         ? params.currentModelId ?? null
-        : resolveCurrentId(modelsResponse, availableModels);
-    const configOptions = buildSpeedConfigOptions({
-        authMethod: params.authMethod,
-        currentModelId,
-        currentServiceTier: params.currentServiceTier,
-    });
+        : resolveCurrentId(modelsResponse, availableModels, { fallbackToFirst: true });
 
     return {
         availableModes,
         currentModeId,
         availableModels,
         currentModelId,
-        configOptions,
+        configOptions: [],
     };
 }
 
@@ -229,6 +353,7 @@ export async function publishCodexAppServerSessionControlsMetadata(params: Reado
     authMethod?: string | null;
     currentModeId?: string | null;
     currentModelId?: string | null;
+    currentReasoningEffort?: string | null;
     currentServiceTier?: string | null;
 }>): Promise<void> {
     const provider = normalizeString(params.provider) ?? 'codex';
@@ -247,6 +372,7 @@ export async function publishCodexAppServerSessionControlsMetadata(params: Reado
         authMethod: params.authMethod,
         currentModeId: params.currentModeId,
         currentModelId: params.currentModelId,
+        currentReasoningEffort: params.currentReasoningEffort,
         currentServiceTier: params.currentServiceTier,
     });
 
