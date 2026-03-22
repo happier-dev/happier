@@ -6,6 +6,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
+import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
 
 function fail(message) {
   console.error(message);
@@ -98,13 +100,10 @@ function npmPack(pkgDir, destDir, opts) {
       stdio: ['ignore', 'pipe', 'inherit'],
       timeout: 10 * 60_000,
     }).trim();
-    const parsed = raw ? JSON.parse(raw) : [];
-    const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-    const filename = typeof entry?.filename === 'string' ? entry.filename.trim() : '';
-    if (!filename) {
-      throw new Error(`CLI pack helper did not return a valid filename (cwd: ${pkgDir})`);
-    }
-    const tgzPath = path.resolve(destDir, filename);
+    const { tgzPath } = resolvePackedTarball(raw, {
+      cwd: pkgDir,
+      sourceLabel: 'CLI pack helper',
+    });
     if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
       throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
     }
@@ -144,44 +143,10 @@ function npmPack(pkgDir, destDir, opts) {
  * @returns {string}
  */
 function resolveInstalledBin(prefixDir) {
-  const exe = process.platform === 'win32' ? 'happier.cmd' : 'happier';
+  const binPath = resolveInstalledBinPath(prefixDir);
+  if (binPath) return binPath;
 
-  const env = { ...process.env, npm_config_prefix: prefixDir };
-  let binDir = '';
-  try {
-    const invocation = resolveWindowsCommandInvocation({
-      command: 'npm',
-      args: ['bin', '-g'],
-      env,
-      resolveCommandOnPath: true,
-    });
-    binDir = execFileSync(invocation.command, invocation.args, {
-      env,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    })
-      .trim()
-      .split(/\r?\n/)[0]
-      .trim();
-  } catch {
-    binDir = '';
-  }
-
-  const candidates = [
-    ...(binDir ? [path.join(binDir, exe)] : []),
-    path.join(prefixDir, 'bin', exe),
-    path.join(prefixDir, exe),
-    path.join(prefixDir, 'node_modules', '.bin', exe),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
-    }
-  }
-
-  fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: ${exe})`);
+  fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: happier)`);
 }
 
 function main() {

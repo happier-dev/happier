@@ -130,6 +130,33 @@ If implementation exists before the test:
 - Reset shared state in tests that rely on dynamic imports, module-level caches, mutable globals, or reused mocks. Order-dependent tests are test bugs and must be fixed at the isolation layer.
 - After fixing a targeted failing test in a shared-runtime area, rerun at least one broader lane that can expose related stale fixtures or shared-state issues. A single-file green run is not enough when multiple suites share the same contract.
 
+### Read-First Implementation And Reuse
+- Before implementing, inspect the codebase for existing logic, helpers, harnesses, builders, and patterns that already own the same responsibility.
+- Prefer reusing, extending, generalizing, or extracting from the canonical implementation instead of adding similar-but-different or competing logic.
+- When introducing a canonical path, migrate, fold in, or remove overlapping old logic instead of leaving parallel implementations behind.
+- Keep code with its natural owner: shared primitives in shared locations, package-specific logic in the owning package.
+- Prefer small focused files and coherent subfolders; extract mixed-responsibility or oversized files when that improves clarity, reuse, and long-term maintainability.
+- Before handoff, review your change like a merge reviewer: look for stale logic, duplicate paths, ownership drift, missing cleanup, missing edge-case handling, and leftover compatibility layers.
+
+### Repo Testing Guardrails (Mandatory)
+- Before behavior-changing edits, do a test impact inventory: identify the affected lanes, the existing tests that cover the contract, and any shared/package-local harnesses that the change can invalidate.
+- If you change a runtime contract, routing contract, transport shape, feature gate behavior, or provider capability, update the affected tests in the same change. Do not defer the test updates to a later cleanup pass.
+- Do not partially mock central shared modules that multiple suites depend on, especially `@/sync/domains/state/storage`. Use a shared mock factory or package-local testkit helper so new exports and contract changes fail in one place instead of many.
+- Before creating a new test helper, mock family, or harness, inspect the codebase for the canonical testkit/helper for that boundary. Prefer extending, generalizing, or extracting from it over adding another ad hoc variant.
+- Be especially careful with repeated high-drift boundaries. Prefer package-owned helpers over fresh inline mocks for UI boundaries such as `expo-router`, `@/text`, `@/modal`, `react-native`, and `react-native-unistyles`, and prefer existing route/DB harnesses over direct server storage mocks when those harnesses already exist.
+- For `apps/ui` tests, the default testing surface is the UI-local testkit in `apps/ui/sources/dev/testkit/**`. Read `apps/ui/sources/dev/testkit/README.md` before introducing new UI mocks, fixtures, render helpers, or harnesses, and prefer imports from `@/dev/testkit` when the needed helper already exists.
+- In UI unit/integration tests, do **not** introduce new inline `vi.mock(...)` families for `expo-router`, `@/text`, `@/modal`, `react-native`, `react-native-unistyles`, or `@/sync/domains/state/storage` when the canonical UI testkit already owns that boundary. If the canonical helper is missing one needed capability, extend the helper in `apps/ui/sources/dev/testkit/**` in the same change instead of hand-rolling a file-local mock shape.
+- In UI tests, treat `react-native-unistyles` primarily as render/runtime plumbing, not as a behavior worth pinning in most suites. Prefer one shared/global Unistyles mock plus package-owned helper overrides only when a test truly needs custom theme/runtime behavior.
+- In UI tests, delete or avoid local theme/color/style mock data when the suite does not assert a real layout, visibility, or formatting contract. Redundant per-file theme objects and style literals are drift surfaces.
+- Do not assert exact theme colors, incidental opacity/background values, or raw style objects in ordinary product tests when a behavior-level assertion would protect the contract better. Keep style assertions mainly for true geometry/layout, visibility mechanics, or formatting/typography contracts.
+- When a UI test still needs a local mock override, prefer the canonical testkit factory with the smallest override surface over a bespoke inline `vi.mock(...)` module shape.
+- If a truly one-off local override remains necessary after checking the canonical testkit, keep it minimal, build it on top of the canonical factory where possible, and leave a short comment explaining why the shared helper could not express the case yet. Do not introduce a second reusable local helper family for that boundary.
+- Prefer typed fixtures/builders from the owning testkit over repeated inline object literals when the same state/config/session/theme shape appears across multiple tests. For UI-local reuse, add/extend fixtures under `apps/ui/sources/dev/testkit/fixtures/**`; for cross-repo reuse, use `packages/tests/src/testkit/**`.
+- Keep helpers near the owning package unless the primitive is truly cross-package shared: UI helpers in `apps/ui`, CLI helpers in `apps/cli`, server helpers in `apps/server`, cross-repo primitives in `packages/tests/src/testkit`.
+- UI e2e must assert stable user contracts: wait for enabled controls, click the real submit/confirm affordance, and use stable `testID` selectors. Do not rely on settings-dependent gestures like Enter-to-send unless the test explicitly configures that setting first.
+- After fixing a shared-area test or harness failure, rerun one broader related lane before handoff. A narrow green run is only enough for the RED/GREEN loop, not for final validation.
+- Keep at most one active rerun for the same lane/spec. Duplicate runners create process leaks, artifact noise, and false flake signals.
+
 ## Test Suite Selection (Fast vs Slow)
 
 **Rule of thumb**:

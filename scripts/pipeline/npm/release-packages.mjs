@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { resolvePackedTarball } from './resolvePackedTarball.mjs';
 
 function fail(message) {
   console.error(message);
@@ -121,19 +122,10 @@ function npmPack(pkgDir, opts) {
       stdio: ['ignore', 'pipe', 'inherit'],
       timeout: 10 * 60_000,
     }).trim();
-
-    let parsed;
-    try {
-      parsed = raw ? JSON.parse(raw) : [];
-    } catch (err) {
-      throw new Error(`CLI pack helper returned invalid JSON (cwd: ${pkgDir}): ${err}`);
-    }
-    const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-    const filename = typeof entry?.filename === 'string' ? entry.filename.trim() : '';
-    if (!filename) {
-      throw new Error(`CLI pack helper did not return a valid filename (cwd: ${pkgDir})`);
-    }
-    const tgzPath = path.resolve(pkgDir, filename);
+    const { filename, tgzPath } = resolvePackedTarball(raw, {
+      cwd: pkgDir,
+      sourceLabel: 'CLI pack helper',
+    });
     if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
       throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
     }

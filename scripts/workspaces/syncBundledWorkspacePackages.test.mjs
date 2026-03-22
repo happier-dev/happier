@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -268,15 +268,56 @@ test('syncBundledWorkspacePackages removes stale staged sync directories before 
     writeFileSync(resolve(destDist, 'index.js'), 'export const refreshed = true;\n', 'utf8');
     writeFileSync(resolve(staleTmpDir, 'stale.js'), 'export const stale = true;\n', 'utf8');
     writeFileSync(resolve(staleBackupDir, 'backup.js'), 'export const backup = true;\n', 'utf8');
+    const staleAt = new Date(Date.now() - 120_000);
+    utimesSync(staleTmpDir, staleAt, staleAt);
+    utimesSync(staleBackupDir, staleAt, staleAt);
 
     syncBundledWorkspacePackages({
       repoRoot,
       packages: ['protocol'],
       hostApps: ['cli'],
+      staleSwapDirAgeMs: 1_000,
     });
 
     assert.equal(existsSync(staleTmpDir), false, 'expected stale sync tmp dir to be removed during refresh');
     assert.equal(existsSync(staleBackupDir), false, 'expected stale sync backup dir to be removed during refresh');
+    assert.equal(readFileSync(resolve(destDist, 'index.js'), 'utf8'), 'export const fresh = true;\n');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('syncBundledWorkspacePackages preserves fresh staged sync directories owned by another live process', () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-sync-bundled-workspaces-live-staging-'));
+  try {
+    const srcDist = resolve(repoRoot, 'packages', 'protocol', 'dist');
+    const srcPackageJsonPath = resolve(repoRoot, 'packages', 'protocol', 'package.json');
+    const destPackageDir = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol');
+    const destDist = resolve(destPackageDir, 'dist');
+    const liveTmpDir = resolve(destPackageDir, 'dist.__sync_tmp__.12345.1');
+
+    mkdirSync(srcDist, { recursive: true });
+    mkdirSync(destDist, { recursive: true });
+    mkdirSync(liveTmpDir, { recursive: true });
+    writeFileSync(srcPackageJsonPath, JSON.stringify({
+      name: '@happier-dev/protocol',
+      version: '0.0.0',
+      type: 'module',
+      exports: { '.': { default: './dist/index.js' } },
+    }));
+    writeFileSync(resolve(srcDist, 'index.js'), 'export const fresh = true;\n', 'utf8');
+    writeFileSync(resolve(destDist, 'index.js'), 'export const refreshed = true;\n', 'utf8');
+    writeFileSync(resolve(liveTmpDir, 'in-flight.js'), 'export const inFlight = true;\n', 'utf8');
+
+    syncBundledWorkspacePackages({
+      repoRoot,
+      packages: ['protocol'],
+      hostApps: ['cli'],
+      staleSwapDirAgeMs: 120_000,
+      isPidAlive: (pid) => pid === 12345,
+    });
+
+    assert.equal(existsSync(liveTmpDir), true, 'expected fresh staging dir for another live process to be preserved');
     assert.equal(readFileSync(resolve(destDist, 'index.js'), 'utf8'), 'export const fresh = true;\n');
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
