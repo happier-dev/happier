@@ -8,22 +8,30 @@ vi.mock('expo-constants', () => ({
   },
 }));
 
-vi.mock('react-native', () => ({
-  Platform: {
-    OS: 'ios',
-    Version: '17.0',
-  },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'ios',
+                                        Version: '17.0',
+                                    },
+                                }
+    );
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  getStorage: () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    getStorage: () => ({
     getState: () => ({
       sessions: {},
       sessionMessages: {},
       sessionPending: {},
     }),
   }),
-}));
+});
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({
