@@ -281,19 +281,25 @@ export class TmuxUtilities {
 
   /**
    * Ensure session exists, create if needed
-   * @returns true if session already existed, false if it was created
+   * @returns true if the session already existed, false if this call created it
    */
   async ensureSessionExists(sessionName?: string): Promise<boolean> {
     const targetSession = sessionName || this.sessionName;
 
-    // Check if session exists
     if (await this.sessionExists(targetSession)) {
       return true;
     }
 
-    // Create session if it doesn't exist
     const createResult = await this.executeTmuxCommand(['new-session', '-d', '-s', targetSession]);
-    return createResult !== null && createResult.returncode === 0;
+    if (createResult && createResult.returncode === 0) {
+      return false;
+    }
+
+    if (await this.sessionExists(targetSession)) {
+      return true;
+    }
+
+    throw new Error(`Failed to create tmux session: ${createResult?.stderr ?? 'unknown error'}`);
   }
 
   /**
@@ -477,11 +483,9 @@ export class TmuxUtilities {
 
       const windowName = options.windowName || `happy-${Date.now()}`;
 
-      // Check if session already exists to avoid creating an extra empty window
-      const sessionAlreadyExisted = await this.sessionExists(sessionName);
-
       // Ensure session exists
-      await this.ensureSessionExists(sessionName);
+      const sessionAlreadyExisted = await this.ensureSessionExists(sessionName);
+      const baseWindowIndex = await this.getBaseWindowIndex(sessionName);
 
       // Build command to execute in the new window
       const fullCommand = buildPosixShellCommand(args);
@@ -541,7 +545,7 @@ export class TmuxUtilities {
         // On retry, query for an available index and explicitly target it.
         let currentArgs = createWindowArgs;
         if (attempt > 1) {
-          const availableIndex = await this.findAvailableWindowIndex(sessionName);
+          const availableIndex = await this.findAvailableWindowIndex(sessionName, baseWindowIndex);
           logger.debug(`[TMUX] Retrying with explicit window index ${availableIndex}`);
           // Rebuild args with explicit target: session:index
           const explicitTarget = `${sessionName}:${availableIndex}`;
@@ -580,11 +584,11 @@ export class TmuxUtilities {
 
       logger.debug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
 
-      // If session was just created, kill the empty window 0 that new-session created
+      // If this call created the session, remove the bootstrap window created by new-session.
       if (!sessionAlreadyExisted) {
-        const killResult = await this.executeTmuxCommand(['kill-window', '-t', `${sessionName}:0`]);
+        const killResult = await this.executeTmuxCommand(['kill-window', '-t', `${sessionName}:${baseWindowIndex}`]);
         if (killResult && killResult.returncode === 0) {
-          logger.debug(`[TMUX] Killed empty window 0 in newly created session ${sessionName}`);
+          logger.debug(`[TMUX] Killed bootstrap window ${baseWindowIndex} in newly created session ${sessionName}`);
         }
       }
 
@@ -718,18 +722,32 @@ export class TmuxUtilities {
   }
 
   /**
+   * Read tmux's configured base window index for the target session.
+   * Falls back to 0 when tmux does not report a valid value.
+   */
+  async getBaseWindowIndex(sessionName?: string): Promise<number> {
+    const targetSession = sessionName || this.sessionName;
+    const result = await this.executeTmuxCommand(['show-options', '-t', targetSession, '-gqv', 'base-index']);
+    const parsed = Number.parseInt(result?.stdout.trim() ?? '', 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  }
+
+  /**
    * Find an available window index for the session.
    * Starts from base-index (default 0) and finds the first gap or next available.
    */
-  async findAvailableWindowIndex(sessionName?: string): Promise<number> {
+  async findAvailableWindowIndex(sessionName?: string, baseWindowIndex?: number): Promise<number> {
+    const firstWindowIndex = typeof baseWindowIndex === 'number'
+      ? baseWindowIndex
+      : await this.getBaseWindowIndex(sessionName);
     const usedIndices = await this.getWindowIndices(sessionName);
 
     if (usedIndices.size === 0) {
-      return 0;
+      return firstWindowIndex;
     }
 
     // Find the first gap, or use max + 1
-    let candidate = 0;
+    let candidate = firstWindowIndex;
     while (usedIndices.has(candidate)) {
       candidate += 1;
     }
