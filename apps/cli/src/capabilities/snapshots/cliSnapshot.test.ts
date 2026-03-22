@@ -1,11 +1,12 @@
-import { execFileSync } from 'node:child_process';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import { detectCliSnapshotOnDaemonPath } from './cliSnapshot';
 import { resolveProviderCliManagedCommandPath } from '@/runtime/managedTools/providerCliResolution';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
+import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 const SCOPED_ENV_KEYS = [
   'HOME',
@@ -28,43 +29,23 @@ const SCOPED_ENV_KEYS = [
 type ScopedEnvKey = (typeof SCOPED_ENV_KEYS)[number];
 
 function setEnv(key: ScopedEnvKey, value: string | undefined) {
-  if (typeof value === 'string') process.env[key] = value;
-  else delete process.env[key];
+  applyEnvValues({ [key]: value });
 }
 
 function makeTempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return createTempDirSync(prefix);
 }
 
 function makeExecutableShim(params: { dir: string; name: string; stdout: string }): string {
   const isWin = process.platform === 'win32';
-  const filePath = join(params.dir, isWin ? `${params.name}.cmd` : params.name);
   const content = isWin
     ? `@echo off\r\n${params.stdout}\r\n`
     : `#!/bin/sh\n${params.stdout}\n`;
-  writeFileSync(filePath, content, 'utf8');
-  if (!isWin) {
-    chmodSync(filePath, 0o755);
-  }
-  return filePath;
-}
-
-function resolveSystemJavaScriptRuntimeBinary(pathOverride?: string | undefined): string {
-  const output = process.platform === 'win32'
-    ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'where bun || where node'], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: pathOverride ?? process.env.PATH ?? '' },
-      })
-    : execFileSync('/bin/sh', ['-lc', 'command -v bun || command -v node'], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: pathOverride ?? process.env.PATH ?? '' },
-      });
-  const [first] = output
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (!first) throw new Error('missing JavaScript runtime binary for test');
-  return first;
+  return writeExecutableShimSync({
+    dir: params.dir,
+    fileName: isWin ? `${params.name}.cmd` : params.name,
+    contents: content,
+  });
 }
 
 describe('detectCliSnapshotOnDaemonPath', () => {
@@ -73,9 +54,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   let envBaseline: Record<ScopedEnvKey, string | undefined>;
 
   beforeEach(() => {
-    envBaseline = Object.fromEntries(
-      SCOPED_ENV_KEYS.map((key) => [key, process.env[key]]),
-    ) as Record<ScopedEnvKey, string | undefined>;
+    envBaseline = snapshotEnvValues(SCOPED_ENV_KEYS) as Record<ScopedEnvKey, string | undefined>;
 
     workDir = makeTempDir('happier-cliSnapshot-');
     homeDir = join(workDir, 'home');
@@ -94,10 +73,8 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   });
 
   afterEach(() => {
-    for (const key of SCOPED_ENV_KEYS) {
-      setEnv(key, envBaseline[key]);
-    }
-    if (workDir) rmSync(workDir, { recursive: true, force: true });
+    restoreEnvValues(envBaseline);
+    if (workDir) removeTempDirSync(workDir);
   });
 
   it.skipIf(process.platform === 'win32')(

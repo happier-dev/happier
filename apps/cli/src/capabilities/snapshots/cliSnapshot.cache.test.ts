@@ -1,47 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join, resolve } from 'node:path';
 
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
+import { writePnpmNodeBridge } from '@/testkit/fs/executableShim';
 import type { DetectCliRequest } from './cliSnapshot';
-
-function resolveSystemJavaScriptRuntimeBinary(pathOverride?: string | undefined): string {
-  const output = process.platform === 'win32'
-    ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'where bun || where node'], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: pathOverride ?? process.env.PATH ?? '' },
-      })
-    : execFileSync('/bin/sh', ['-lc', 'command -v bun || command -v node'], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: pathOverride ?? process.env.PATH ?? '' },
-      });
-  const [first] = output
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (!first) throw new Error('missing JavaScript runtime binary for test');
-  return first;
-}
-
-async function writeFakeManagedPnpmNodeBridge(params: Readonly<{
-  fixtureDir: string;
-  pathLookup: string | undefined;
-}>): Promise<string> {
-  const runtimeBinary = resolveSystemJavaScriptRuntimeBinary(params.pathLookup);
-  const pnpmPath = resolve(join(params.fixtureDir, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'));
-  await writeFile(
-    pnpmPath,
-    process.platform === 'win32'
-      ? `@echo off\r\nif "%1"=="node" (\r\n  shift\r\n  "${runtimeBinary}" %*\r\n  exit /b %errorlevel%\r\n)\r\nexit /b 1\r\n`
-      : `#!/bin/sh\nif [ \"$1\" = \"node\" ]; then\n  shift\n  exec \"${runtimeBinary}\" \"$@\"\nfi\nexit 1\n`,
-    'utf8',
-  );
-  if (process.platform !== 'win32') {
-    await chmod(pnpmPath, 0o755);
-  }
-  return pnpmPath;
-}
 
 describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   it('returns a timed-out auth status instead of hanging when a CLI auth probe never settles', async () => {
@@ -260,7 +223,7 @@ process.exit(0);
     const prevPnpmBin = process.env.HAPPIER_PNPM_BIN;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_PNPM_BIN = await writeFakeManagedPnpmNodeBridge({ fixtureDir: fixture.dir, pathLookup: prevPath });
+    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
     try {
       const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
 
@@ -323,7 +286,7 @@ process.exit(0);
 
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_PNPM_BIN = await writeFakeManagedPnpmNodeBridge({ fixtureDir: fixture.dir, pathLookup: prevPath });
+    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
 
     try {
       const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
@@ -395,7 +358,7 @@ process.exit(0);
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
     process.env.HAPPIER_HOME_DIR = '/tmp/happier-home-1';
-    process.env.HAPPIER_PNPM_BIN = await writeFakeManagedPnpmNodeBridge({ fixtureDir: fixture.dir, pathLookup: prevPath });
+    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
 
     try {
       const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
@@ -459,7 +422,7 @@ process.exit(0);
 
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_PNPM_BIN = await writeFakeManagedPnpmNodeBridge({ fixtureDir: fixture.dir, pathLookup: prevPath });
+    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
 
     try {
       const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, writeFile, chmod } from 'node:fs/promises';
+import { writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import { executionRunsCapability } from './toolExecutionRuns';
 import type { DetectCliEntry, DetectCliSnapshot } from '../snapshots/cliSnapshot';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function makeUnavailableCliEntry(): DetectCliEntry {
   return { available: false };
@@ -34,25 +35,18 @@ function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>, path = '
 }
 
 describe('executionRunsCapability', () => {
-  const envSnapshot = { ...process.env };
-
-  function restoreEnv(snapshot: NodeJS.ProcessEnv): void {
-    for (const key of Object.keys(process.env)) {
-      if (!(key in snapshot)) delete process.env[key];
-    }
-    for (const [key, value] of Object.entries(snapshot)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
+  const envScope = createEnvKeyScope(['PATH', 'HAPPIER_CODERABBIT_REVIEW_CMD', 'HAPPIER_CODEX_BACKEND_MODE']);
 
   beforeEach(() => {
-    restoreEnv(envSnapshot);
-    process.env.HAPPIER_CODERABBIT_REVIEW_CMD = 'coderabbit';
+    envScope.restore();
+    envScope.patch({
+      HAPPIER_CODERABBIT_REVIEW_CMD: 'coderabbit',
+      HAPPIER_CODEX_BACKEND_MODE: undefined,
+    });
   });
 
   afterEach(() => {
-    restoreEnv(envSnapshot);
+    envScope.restore();
   });
 
   it('reports supportsVendorResume per backend for UI gating', async () => {
@@ -86,35 +80,34 @@ describe('executionRunsCapability', () => {
 
   it('detects native coderabbit availability from process PATH even when cliSnapshot.path is empty', async () => {
     // Ensure we test PATH detection (not the override).
-    delete process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
+    await withTempDir('happier-coderabbit-path-test-', async (dir) => {
+      envScope.patch({ HAPPIER_CODERABBIT_REVIEW_CMD: undefined });
 
-    const dir = await mkdtemp(join(tmpdir(), 'happier-coderabbit-path-test-'));
-    const bin = join(dir, 'coderabbit');
-    await writeFile(
-      bin,
-      '#!/usr/bin/env bash\n' +
-        'echo \"coderabbit\"',
-      'utf8',
-    );
-    await chmod(bin, 0o755);
+      const bin = join(dir, 'coderabbit');
+      await writeFile(
+        bin,
+        '#!/usr/bin/env bash\n' +
+          'echo \"coderabbit\"',
+        'utf8',
+      );
+      await chmod(bin, 0o755);
 
-    const prevPath = process.env.PATH ?? '';
-    process.env.PATH = `${dir}${prevPath ? `:${prevPath}` : ''}`;
+      const pathLookup = process.env.PATH ?? '';
+      envScope.patch({ PATH: `${dir}${pathLookup ? `:${pathLookup}` : ''}` });
 
-    const res = await executionRunsCapability.detect({
-      context: {
-        cliSnapshot: makeCliSnapshot({ claude: { available: true } }),
-      },
-      request: { id: 'tool.executionRuns' },
-    }) as {
-      available: boolean;
-      backends: { coderabbit?: { available?: boolean } };
-    };
+      const res = await executionRunsCapability.detect({
+        context: {
+          cliSnapshot: makeCliSnapshot({ claude: { available: true } }),
+        },
+        request: { id: 'tool.executionRuns' },
+      }) as {
+        available: boolean;
+        backends: { coderabbit?: { available?: boolean } };
+      };
 
-    process.env.PATH = prevPath;
-
-    expect(res?.available).toBe(true);
-    expect(res?.backends?.coderabbit?.available).toBe(true);
+      expect(res?.available).toBe(true);
+      expect(res?.backends?.coderabbit?.available).toBe(true);
+    });
   });
 
   it('reports Codex resume support from the effective runtime mode (HAPPIER_CODEX_BACKEND_MODE)', async () => {

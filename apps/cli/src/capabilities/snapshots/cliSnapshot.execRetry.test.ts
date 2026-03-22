@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+
+import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 describe('detectCliSnapshotOnDaemonPath (version retry)', () => {
   it('retries version probing when execFile hits transient spawn errors', async () => {
@@ -13,13 +14,17 @@ describe('detectCliSnapshotOnDaemonPath (version retry)', () => {
       },
     }));
 
-    const dir = await mkdtemp(join(tmpdir(), 'happier-cliSnapshot-retry-'));
-    const prevPath = process.env.PATH;
-    const prevCodexPath = process.env.HAPPIER_CODEX_PATH;
+    const fixture = await createProbeTempDir('happier-cliSnapshot-retry');
+    const envScope = createEnvKeyScope([
+      'PATH',
+      'HAPPIER_CODEX_PATH',
+      'HAPPIER_TEST_CLI_SNAPSHOT_RETRY_STATE_FILE',
+    ]);
+
     try {
-      const stateFile = join(dir, 'state.txt');
-      const codexPath = join(dir, 'codex.cjs');
-      await writeFile(
+      const stateFile = join(fixture.dir, 'state.txt');
+      const codexPath = join(fixture.dir, 'codex.cjs');
+      await writeExecutableScript(
         codexPath,
         `
 const fs = require('node:fs');
@@ -37,14 +42,12 @@ if (arg === '--version') {
 process.stdout.write('ok\\n');
 process.exit(0);
 `.trimStart(),
-        'utf8',
       );
-      if (process.platform !== 'win32') {
-        await chmod(codexPath, 0o755);
-      }
 
-      process.env.HAPPIER_TEST_CLI_SNAPSHOT_RETRY_STATE_FILE = stateFile;
-      process.env.HAPPIER_CODEX_PATH = codexPath;
+      envScope.patch({
+        HAPPIER_TEST_CLI_SNAPSHOT_RETRY_STATE_FILE: stateFile,
+        HAPPIER_CODEX_PATH: codexPath,
+      });
 
       const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
       const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
@@ -52,12 +55,8 @@ process.exit(0);
       expect(snapshot.clis.codex.available).toBe(true);
       expect(snapshot.clis.codex.version).toBe('1.2.3');
     } finally {
-      delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_RETRY_STATE_FILE;
-      if (prevCodexPath === undefined) delete process.env.HAPPIER_CODEX_PATH;
-      else process.env.HAPPIER_CODEX_PATH = prevCodexPath;
-      if (prevPath === undefined) delete process.env.PATH;
-      else process.env.PATH = prevPath;
-      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      envScope.restore();
+      await fixture.cleanup();
     }
   });
 });
