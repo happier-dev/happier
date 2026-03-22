@@ -1,29 +1,37 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.fn();
 const applySettingsSpy = vi.fn(async () => {});
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: vi.fn(), push: pushSpy }),
-  useLocalSearchParams: () => ({ serviceId: 'claude-subscription' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: vi.fn(), push: pushSpy },
+        params: { serviceId: 'claude-subscription' },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(async () => null),
-    alert: vi.fn(async () => {}),
-    confirm: vi.fn(async () => false),
-    alertAsync: vi.fn(async () => {}),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        confirmResult: false,
+        spies: {
+            prompt: vi.fn(async () => null),
+            alert: vi.fn(async () => {}),
+        },
+    }).module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => true,
@@ -86,36 +94,22 @@ afterEach(() => {
 
 describe('ConnectedServiceDetailView oauth add modes (platform)', () => {
   it('does not render embedded browser add method on web', async () => {
-    vi.doMock('react-native', async () => {
-      const actual = await vi.importActual<typeof import('react-native')>('react-native');
-      return { ...actual, Platform: { ...actual.Platform, OS: 'web' } };
-    });
+    vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
 
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+    const screen = await renderScreen(<ConnectedServiceDetailView />);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
-
-    expect(tree.root.findAll((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-paste').length).toBeGreaterThan(0);
-    expect(tree.root.findAll((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-browser')).toHaveLength(0);
+    expect(screen.findByTestId('connected-services-action:add-oauth-profile-paste')).toBeTruthy();
+    expect(screen.findByTestId('connected-services-action:add-oauth-profile-browser')).toBeNull();
   });
 
   it('renders embedded browser add method on native', async () => {
-    vi.doMock('react-native', async () => {
-      const actual = await vi.importActual<typeof import('react-native')>('react-native');
-      return { ...actual, Platform: { ...actual.Platform, OS: 'ios' } };
-    });
+    vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'ios' } }));
 
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+    const screen = await renderScreen(<ConnectedServiceDetailView />);
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
-
-    expect(tree.root.findAll((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-paste').length).toBeGreaterThan(0);
-    expect(tree.root.findAll((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-browser').length).toBeGreaterThan(0);
+    expect(screen.findByTestId('connected-services-action:add-oauth-profile-paste')).toBeTruthy();
+    expect(screen.findByTestId('connected-services-action:add-oauth-profile-browser')).toBeTruthy();
   });
 });

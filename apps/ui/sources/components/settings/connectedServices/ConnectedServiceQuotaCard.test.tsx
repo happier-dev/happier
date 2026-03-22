@@ -14,6 +14,8 @@ import type {
 } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { ConnectedServiceQuotaCard } from './ConnectedServiceQuotaCard';
+import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -102,27 +104,23 @@ describe('ConnectedServiceQuotaCard', () => {
     const onSetPinnedMeterIds = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceQuotaCard
+    tree = (await renderScreen(<ConnectedServiceQuotaCard
           serviceId="anthropic"
           profileId="work"
           title="Quotas"
           pinnedMeterIds={[]}
           onSetPinnedMeterIds={onSetPinnedMeterIds}
-        />,
-      );
-    });
+        />)).tree;
 
     await act(async () => {
       await flushAsyncEffects();
     });
 
-    expect(tree.root.findAll((n) => n.props?.title === 'Weekly')).toHaveLength(1);
+    expect(tree.findAll((n) => n.props?.title === 'Weekly')).toHaveLength(1);
 
-    const row = tree.root.find((n) => n.props?.meter?.meterId === 'weekly' && typeof n.props?.onTogglePin === 'function');
+    const row = tree.find((n) => n.props?.meter?.meterId === 'weekly' && typeof n.props?.onTogglePin === 'function');
     await act(async () => {
-      row.props.onTogglePin();
+      invokeTestInstanceHandler(row, 'onTogglePin', );
     });
 
     expect(onSetPinnedMeterIds).toHaveBeenCalledWith(['weekly']);
@@ -164,22 +162,18 @@ describe('ConnectedServiceQuotaCard', () => {
     const onSnapshot = vi.fn();
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceQuotaCard
+    tree = (await renderScreen(<ConnectedServiceQuotaCard
           serviceId="anthropic"
           profileId="work"
           title="Quotas"
           pinnedMeterIds={[]}
           onSetPinnedMeterIds={() => {}}
           onSnapshot={onSnapshot}
-        />,
-      );
-    });
+        />)).tree;
 
-    const refreshItem = tree.root.find((n) => n.props?.title === 'Refresh');
+    const refreshItem = tree.find((n) => n.props?.title === 'Refresh');
     await act(async () => {
-      refreshItem.props.onPress?.();
+      await pressTestInstanceAsync(refreshItem);
     });
     await act(async () => {
       await flushAsyncEffects();

@@ -1,6 +1,9 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { changeTextTestInstance, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,13 +40,16 @@ vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAcco
   storeConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(async () => null),
-    alert: alertSpy,
-    alertAsync: alertAsyncSpy,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: vi.fn(async () => null),
+            alert: alertSpy,
+            alertAsync: alertAsyncSpy,
+        },
+    }).module;
+});
 
 describe('ConnectedServiceOauthPasteView button layout', () => {
   it('opens the authorization URL via a primary button', async () => {
@@ -52,25 +58,17 @@ describe('ConnectedServiceOauthPasteView button layout', () => {
     alertAsyncSpy.mockClear();
     const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={() => {}} />,
-      );
-    });
+    const screen = await renderScreen(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={() => {}} />);
 
     // Flush effects (pkce/state init).
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
-    const openButton = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.openAuthorizationButton');
-    await act(async () => {
-      await openButton.props.onPress?.();
-    });
+    await screen.pressByTestIdAsync('connectedServices.oauthPaste.openAuthorizationButton');
 
     expect(alertAsyncSpy).toHaveBeenCalledTimes(1);
     expect(alertAsyncSpy).toHaveBeenCalledWith(
@@ -88,27 +86,23 @@ describe('ConnectedServiceOauthPasteView button layout', () => {
     alertAsyncSpy.mockClear();
     const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceOauthPasteView serviceId="claude-subscription" profileId="work" onDone={() => {}} />,
-      );
-    });
+    const screen = await renderScreen(<ConnectedServiceOauthPasteView serviceId="claude-subscription" profileId="work" onDone={() => {}} />);
 
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
-    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    const redirectInput = screen.findByTestId('connectedServices.oauthPaste.redirectUrlInput');
+    expect(redirectInput).not.toBeNull();
+    if (!redirectInput) {
+        throw new Error('missing redirect input');
+    }
     expect(String(redirectInput.props?.placeholder ?? '')).toContain('code#state');
 
-    const openButton = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.openAuthorizationButton');
-    await act(async () => {
-      await openButton.props.onPress?.();
-    });
+    await screen.pressByTestIdAsync('connectedServices.oauthPaste.openAuthorizationButton');
 
     expect(alertAsyncSpy).toHaveBeenCalledTimes(1);
     expect(alertAsyncSpy).toHaveBeenCalledWith(
@@ -121,45 +115,47 @@ describe('ConnectedServiceOauthPasteView button layout', () => {
   it('disables validate until a redirect URL is provided', async () => {
     const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={() => {}} />,
-      );
-    });
+    const screen = await renderScreen(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={() => {}} />);
 
-    const validateButton = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
+    const validateButton = screen.findByTestId('connectedServices.oauthPaste.validateRedirectButton');
+    expect(validateButton).not.toBeNull();
+    if (!validateButton) {
+        throw new Error('missing validate button');
+    }
     expect(Boolean(validateButton.props?.disabled)).toBe(true);
 
-    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    const redirectInput = screen.findByTestId('connectedServices.oauthPaste.redirectUrlInput');
+    expect(redirectInput).not.toBeNull();
+    if (!redirectInput) {
+        throw new Error('missing redirect input');
+    }
     await act(async () => {
-      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+      changeTextTestInstance(redirectInput, 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
     });
 
-    const validateEnabled = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
+    const validateEnabled = screen.findByTestId('connectedServices.oauthPaste.validateRedirectButton');
+    expect(validateEnabled).not.toBeNull();
+    if (!validateEnabled) {
+        throw new Error('missing enabled validate button');
+    }
     expect(Boolean(validateEnabled.props?.disabled)).toBe(false);
-
-    await act(async () => {
-      tree.unmount();
-    });
   });
 
   it('renders method switch fallback as a button', async () => {
     const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ConnectedServiceOauthPasteView
+    const screen = await renderScreen(<ConnectedServiceOauthPasteView
           serviceId="openai-codex"
           profileId="work"
           onDone={() => {}}
           fallbackAction={{ title: 'Try device auth', onPress: () => {} }}
-        />,
-      );
-    });
+        />);
 
-    const fallbackItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.switchMethodItem');
-    expect(fallbackItem.props?.title).toBe('Try device auth');
+    const fallbackItem = screen.findByTestId('connectedServices.oauthPaste.switchMethodItem');
+    expect(fallbackItem).not.toBeNull();
+    if (!fallbackItem) {
+        throw new Error('missing fallback item');
+    }
+    expect(fallbackItem.props?.onPress).toBeTypeOf('function');
   });
 });

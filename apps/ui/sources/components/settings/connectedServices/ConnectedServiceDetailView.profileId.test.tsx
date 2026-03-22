@@ -1,16 +1,22 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const backSpy = vi.fn();
 const pushSpy = vi.fn();
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: pushSpy }),
-  useLocalSearchParams: () => ({ serviceId: 'openai-codex' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: backSpy, push: pushSpy },
+        params: { serviceId: 'openai-codex' },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
@@ -19,13 +25,16 @@ vi.mock('@/auth/context/AuthContext', () => ({
 const promptSpy = vi.fn(async () => 'work/bad');
 const alertSpy = vi.fn(async () => {});
 const applySettingsSpy = vi.fn(async () => {});
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: promptSpy,
-    alert: alertSpy,
-    confirm: vi.fn(async () => false),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: promptSpy,
+            alert: alertSpy,
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
 vi.mock('@/sync/store/settingsWriters', () => ({
   useApplySettings: () => applySettingsSpy,
@@ -88,13 +97,11 @@ describe('ConnectedServiceDetailView profile id validation', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const add = tree.root.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
+    const add = tree.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
     await act(async () => {
-      await add.props.onPress?.();
+      await pressTestInstanceAsync(add);
     });
 
     expect(alertSpy).toHaveBeenCalled();
@@ -110,13 +117,11 @@ describe('ConnectedServiceDetailView profile id validation', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const add = tree.root.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
+    const add = tree.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
     await act(async () => {
-      await add.props.onPress?.();
+      await pressTestInstanceAsync(add);
     });
 
     expect(pushSpy).toHaveBeenCalledWith(
@@ -139,9 +144,7 @@ describe('ConnectedServiceDetailView profile id validation', () => {
     const Inner = (ConnectedServiceDetailView as unknown as { type: React.ComponentType<Record<string, never>> }).type;
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<Inner />);
-    });
+    tree = (await renderScreen(<Inner />)).tree;
 
     connectedServicesEnabled = true;
     await act(async () => {

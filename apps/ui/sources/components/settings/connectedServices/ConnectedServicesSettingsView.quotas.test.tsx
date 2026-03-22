@@ -6,15 +6,21 @@ import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext 
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const backSpy = vi.fn();
 const pushSpy = vi.fn();
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: pushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: backSpy, push: pushSpy },
+    });
+    return routerMock.module;
+});
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -118,14 +124,12 @@ describe('ConnectedServicesSettingsView quotas', () => {
     const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServicesSettingsView />);
-    });
+    tree = (await renderScreen(<ConnectedServicesSettingsView />)).tree;
 
     await act(async () => {
       await flushAsyncEffects();
     });
 
-    expect(tree.root.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);
+    expect(tree.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);
   });
 });

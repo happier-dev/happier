@@ -1,3 +1,4 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -6,16 +7,22 @@ import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext 
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const backSpy = vi.fn();
 const pushSpy = vi.fn();
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ back: backSpy, push: pushSpy }),
-  useLocalSearchParams: () => ({ serviceId: 'openai-codex' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: backSpy, push: pushSpy },
+        params: { serviceId: 'openai-codex' },
+    });
+    return routerMock.module;
+});
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -110,11 +117,9 @@ describe('ConnectedServiceDetailView quotas', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    expect(tree.root.findAll((n) => n.props?.title === 'Refresh').length).toBeGreaterThan(0);
+    expect(tree.findAll((n) => n.props?.title === 'Refresh').length).toBeGreaterThan(0);
   });
 
   it('hides quota card when feature is disabled', async () => {
@@ -123,11 +128,9 @@ describe('ConnectedServiceDetailView quotas', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    expect(tree.root.findAll((n) => n.props?.title === 'Refresh')).toHaveLength(0);
+    expect(tree.findAll((n) => n.props?.title === 'Refresh')).toHaveLength(0);
   });
 
   it('does not expose connected services detail when the feature is disabled', async () => {
@@ -136,11 +139,9 @@ describe('ConnectedServiceDetailView quotas', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const items = tree.root.findAll((n) => typeof n.props?.title === 'string' && typeof n.props?.onPress === 'function');
+    const items = tree.findAll((n) => typeof n.props?.title === 'string' && typeof n.props?.onPress === 'function');
     expect(items.length).toBe(0);
   });
 
@@ -185,17 +186,15 @@ describe('ConnectedServiceDetailView quotas', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
-    const row = tree.root.find((n) => n.props?.meter?.meterId === 'weekly' && typeof n.props?.onTogglePin === 'function');
+    const row = tree.find((n) => n.props?.meter?.meterId === 'weekly' && typeof n.props?.onTogglePin === 'function');
     await act(async () => {
-      row.props.onTogglePin();
+      invokeTestInstanceHandler(row, 'onTogglePin', );
     });
 
     expect(applySettingsSpy).toHaveBeenCalledWith({
@@ -235,15 +234,13 @@ describe('ConnectedServiceDetailView quotas', () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ConnectedServiceDetailView />);
-    });
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
     await act(async () => {
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
-    const row = tree.root.find((n) => n.props?.meter?.meterId === 'weekly');
+    const row = tree.find((n) => n.props?.meter?.meterId === 'weekly');
     expect(row).toBeTruthy();
   });
 });
