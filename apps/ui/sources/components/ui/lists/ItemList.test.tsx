@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,16 +18,12 @@ describe('ItemList', () => {
 
         try {
             let tree: renderer.ReactTestRenderer;
-            await act(async () => {
-                tree = renderer.create(
-                    <ItemList>
+            tree = (await renderScreen(<ItemList>
                         <React.Fragment />
-                    </ItemList>
-                );
-            });
+                    </ItemList>)).tree;
             await act(async () => {});
 
-            const scrollView = tree!.root.findByType('ScrollView');
+            const scrollView = tree!.findByType('ScrollView');
             const styleProp = scrollView.props.style;
             expect(Array.isArray(styleProp)).toBe(true);
             expect(styleProp.some((entry: any) => entry?.minHeight === 0)).toBe(true);

@@ -1,40 +1,33 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
-  AppState: { addEventListener: () => ({ remove: () => {} }) },
-  Pressable: 'Pressable',
-  Text: 'Text',
-  View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
+                                    },
+                                    AppState: {
+                                        addEventListener: () => ({ remove: () => {} }),
+                                    },
+                                    Pressable: 'Pressable',
+                                    Text: 'Text',
+                                    View: 'View',
+                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (factory: any) =>
-      typeof factory === 'function'
-        ? factory({
-          colors: {
-            text: '#fff',
-            textSecondary: '#aaa',
-            textDestructive: '#f44',
-            surfacePressed: '#111',
-            surfacePressedOverlay: '#222',
-            surfaceSelected: '#333',
-            surfaceHigh: '#444',
-            surfaceHighest: '#555',
-            divider: '#666',
-            accent: { blue: '#08f' },
-          },
-          dark: false,
-        })
-        : factory,
-  },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         text: '#fff',
         textSecondary: '#aaa',
@@ -49,8 +42,8 @@ vi.mock('react-native-unistyles', () => ({
       },
       dark: false,
     },
-  }),
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}) },
@@ -65,15 +58,11 @@ describe('SelectableRow node normalization', () => {
     const { SelectableRow } = await import('./SelectableRow');
 
     let tree: renderer.ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(
-        <SelectableRow
+    tree = (await renderScreen(<SelectableRow
           title="Row"
           left={<>{'.'}</>}
           right={<>{'.'}</>}
-        />,
-      );
-    });
+        />)).tree;
 
     const json = (tree! as any).toJSON();
     const seen: { dotCount: number; badDotCount: number; badParents: Array<string | null> } = {

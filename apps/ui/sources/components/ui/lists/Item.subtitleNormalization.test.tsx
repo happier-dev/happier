@@ -1,20 +1,39 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import {
+    collectUnexpectedRawTextNodes,
+    findTestInstanceByTypeContainingText,
+    findTestInstanceByTypeWithProps,
+    renderScreen,
+} from '@/dev/testkit';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+type PlatformSelectValues = Readonly<{
+    default?: string;
+    web?: string;
+    ios?: string;
+    android?: string;
+}>;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
-    },
-}));
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            AppState: {
+                addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            },
+            Platform: {
+                OS: 'web',
+                select: (values: PlatformSelectValues) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
+            },
+        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -24,16 +43,19 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -51,12 +73,8 @@ vi.mock('react-native-unistyles', () => ({
                 },
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) =>
-            typeof input === 'function' ? input({ colors: { groupped: { background: '#111', chevron: '#888' }, divider: '#444' } }, {}) : input,
-    },
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -80,197 +98,106 @@ describe('Item', () => {
     it('does not render a chevron or pressable wrapper when not interactive', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item title="Title" />,
-            );
-        });
+        const screen = await renderScreen(<Item title="Title" />);
 
         // Non-interactive rows should not be pressable on web.
-        expect(() => (tree! as any).root.findByType('Pressable' as any)).toThrow();
+        expect(() => screen.findByType('Pressable' as any)).toThrow();
 
-        const ionicons = (tree! as any).root.findAllByType('Ionicons' as any);
+        const ionicons = screen.findAllByType('Ionicons' as any);
         expect(ionicons).toHaveLength(0);
     });
 
     it('renders a chevron only when onPress is provided', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item title="Title" onPress={() => {}} />,
-            );
-        });
+        const screen = await renderScreen(<Item title="Title" onPress={() => {}} />);
 
-        const pressable = (tree! as any).root.findByType('Pressable' as any);
+        const pressable = screen.findByType('Pressable' as any);
         expect(pressable).toBeTruthy();
 
-        const ionicons = (tree! as any).root.findAllByType('Ionicons' as any);
+        const ionicons = screen.findAllByType('Ionicons' as any);
         expect(ionicons).toHaveLength(1);
     });
 
-  it('wraps primitive children when subtitle is a ReactNode', async () => {
+    it('wraps primitive children when subtitle is a ReactNode', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Title"
-                    // Historically this shape can accidentally introduce raw text nodes into a <View>.
-                    subtitle={<>{'.'}</>}
-                    showChevron={false}
-                />
-            );
-        });
+        const screen = await renderScreen(
+            <Item
+                title="Title"
+                // Historically this shape can accidentally introduce raw text nodes into a <View>.
+                subtitle={<>{'.'}</>}
+                showChevron={false}
+            />,
+        );
 
-        const json = (tree! as any).toJSON();
-
-        const seen: { dotCount: number; badDotCount: number; badParents: Array<string | null> } = {
-            dotCount: 0,
-            badDotCount: 0,
-            badParents: [],
-        };
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string') {
-                if (node === '.') {
-                    seen.dotCount += 1;
-                    if (parentType !== 'Text') {
-                        seen.badDotCount += 1;
-                        seen.badParents.push(parentType);
-                    }
-                }
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : null;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
-
-        walk(json, null);
-
-        expect(seen.dotCount).toBeGreaterThan(0);
-        expect({ badDotCount: seen.badDotCount, badParents: seen.badParents }).toEqual({
-            badDotCount: 0,
-            badParents: [],
-        });
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     });
 
     it('renders detail even when rightElement is provided', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Title"
-                    subtitle="Subtitle"
-                    detail="Detail"
-                    rightElement={React.createElement('RightEl')}
-                    showChevron={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <Item
+                title="Title"
+                subtitle="Subtitle"
+                detail="Detail"
+                rightElement={React.createElement('RightEl')}
+                showChevron={false}
+            />,
+        );
 
-        const textNodes = (tree! as any).root.findAllByType('Text' as any);
-        const texts = textNodes.map((n: any) => n.props?.children);
-        expect(texts).toContain('Detail');
+        const detailNode = findTestInstanceByTypeWithProps(screen, 'Text', { children: 'Detail' });
+        expect(detailNode).toBeTruthy();
     });
 
     it('renders subtitleAccessory below the native subtitle text', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Title"
-                    subtitle="Subtitle"
-                    subtitleAccessory={React.createElement('SubtitleAccessory', { marker: 'chips' })}
-                    showChevron={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <Item
+                title="Title"
+                subtitle="Subtitle"
+                subtitleAccessory={React.createElement('SubtitleAccessory', { marker: 'chips' })}
+                showChevron={false}
+            />,
+        );
 
-        const textNodes = (tree! as any).root.findAllByType('Text' as any);
-        const subtitleNode = textNodes.find((node: any) => node.props?.children === 'Subtitle');
+        const subtitleNode = findTestInstanceByTypeContainingText(screen, 'Text', 'Subtitle');
         expect(subtitleNode).toBeTruthy();
 
-        const accessory = (tree! as any).root.findAllByType('SubtitleAccessory' as any)[0];
-        expect(accessory).toBeTruthy();
-        expect(accessory.props.marker).toBe('chips');
+        expect(screen.findByProps({ marker: 'chips' })).toBeTruthy();
     });
 
     it('wraps primitive accessory children before rendering them inside view slots', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Title"
-                    icon={<>{'.'}</>}
-                    rightElement={<>{'.'}</>}
-                    showChevron={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <Item
+                title="Title"
+                icon={<>{'.'}</>}
+                rightElement={<>{'.'}</>}
+                showChevron={false}
+            />,
+        );
 
-        const json = (tree! as any).toJSON();
-
-        const seen: { dotCount: number; badDotCount: number; badParents: Array<string | null> } = {
-            dotCount: 0,
-            badDotCount: 0,
-            badParents: [],
-        };
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string') {
-                if (node === '.') {
-                    seen.dotCount += 1;
-                    if (parentType !== 'Text') {
-                        seen.badDotCount += 1;
-                        seen.badParents.push(parentType);
-                    }
-                }
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : null;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
-
-        walk(json, null);
-
-        expect(seen.dotCount).toBeGreaterThan(0);
-        expect({ badDotCount: seen.badDotCount, badParents: seen.badParents }).toEqual({
-            badDotCount: 0,
-            badParents: [],
-        });
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     });
 
     it('adds spacing between detail and rightElement', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item
-                    title="Title"
-                    subtitle="Subtitle"
-                    detail="Detail"
-                    rightElement={React.createElement('RightEl')}
-                    showChevron={false}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <Item
+                title="Title"
+                subtitle="Subtitle"
+                detail="Detail"
+                rightElement={React.createElement('RightEl')}
+                showChevron={false}
+            />,
+        );
 
-        const detailNode = (tree! as any).root
-            .findAllByType('Text' as any)
-            .find((n: any) => n.props?.children === 'Detail');
+        const detailNode = findTestInstanceByTypeWithProps(screen, 'Text', { children: 'Detail' });
         expect(detailNode).toBeTruthy();
 
         const style = detailNode!.props?.style;
@@ -282,14 +209,9 @@ describe('Item', () => {
     it('uses a not-allowed cursor on web when disabled', async () => {
         const { Item } = await import('./Item');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <Item title="Title" onPress={() => {}} disabled showChevron={false} />,
-            );
-        });
+        const screen = await renderScreen(<Item title="Title" onPress={() => {}} disabled showChevron={false} />);
 
-        const pressable = (tree! as any).root.findByType('Pressable' as any);
+        const pressable = screen.findByType('Pressable' as any);
         const styleFn = pressable.props.style;
         expect(typeof styleFn).toBe('function');
 
