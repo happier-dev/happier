@@ -1,20 +1,25 @@
-import { cp, lstat, mkdir, rm } from 'node:fs/promises';
+import { lstat, mkdir, rm } from 'node:fs/promises';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
 import {
+  buildWorkspaceExportArtifactsWithBlobProviderFromSourceController,
   buildWorkspaceExportArtifactsWithSourceController,
   reconcilePostMaterializationWithSourceController,
 } from '@/scm/sourceController';
+import { applyWorkspaceSyncArtifacts } from '@/scm/sourceController/applyWorkspaceSyncArtifacts';
+import { prepareWorkspaceSyncTargetPath } from '@/scm/sourceController/prepareWorkspaceSyncTargetPath';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
 import { materializeWorkspaceExportArtifactsWithSourceController } from '@/scm/sourceController/workspaceExportMaterialization';
-import { resolveWorkspaceMaterializationTargetPath } from '@/scm/sourceController/workspaceMaterializationTargetPath';
+import {
+  createWorkspaceSyncArtifacts,
+  createWorkspaceSyncArtifactsFromManifest,
+} from '@/scm/sourceController/workspaceSyncArtifacts';
+import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import { createScmSourceControllerWorkspaceTransferRequest } from '@/scm/sourceController/workspaceTransfer';
 import type { SessionHandoffWorkspaceTransferInput } from '../sessionHandoffWorkspaceTransferInput';
 import { assertSupportedSessionHandoffWorkspaceTransferStrategy } from '../validateSessionHandoffWorkspaceTransferStrategy';
-import { applySessionHandoffWorkspaceSyncArtifacts } from '../workspaceSync/applySessionHandoffWorkspaceSyncArtifacts';
-import { createSessionHandoffWorkspaceSyncArtifacts } from '../workspaceSync/createSessionHandoffWorkspaceSyncArtifacts';
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
@@ -61,41 +66,11 @@ async function prepareSyncChangesTargetPath(params: Readonly<{
   cleanupOnFailure: boolean;
   previousTargetPath?: string;
 }>> {
-  const resolvedTargetPath = await resolveWorkspaceMaterializationTargetPath({
+  return await prepareWorkspaceSyncTargetPath({
     targetPath: params.targetPath,
     conflictPolicy: params.workspaceTransfer.conflictPolicy,
-    naming: {
-      siblingCopySuffixBase: 'handoff',
-    },
+    siblingCopySuffixBase: 'handoff',
   });
-
-  if (resolvedTargetPath === params.targetPath) {
-    return {
-      resolvedTargetPath,
-      cleanupOnFailure: false,
-    };
-  }
-
-  if (!(await pathExists(params.targetPath))) {
-    return {
-      resolvedTargetPath,
-      cleanupOnFailure: false,
-    };
-  }
-
-  await cp(params.targetPath, resolvedTargetPath, {
-    recursive: true,
-    dereference: false,
-    errorOnExist: true,
-    force: false,
-    preserveTimestamps: true,
-  });
-
-  return {
-    resolvedTargetPath,
-    cleanupOnFailure: true,
-    previousTargetPath: params.targetPath,
-  };
 }
 
 export async function buildSessionHandoffWorkspaceExportArtifacts(params: Readonly<{
@@ -114,11 +89,37 @@ export async function buildSessionHandoffWorkspaceExportArtifacts(params: Readon
   });
 }
 
+export async function buildSessionHandoffWorkspaceExportPayload(params: Readonly<{
+  activeServerDir: string;
+  sourcePath: string;
+  workspaceTransfer?: SessionHandoffWorkspaceTransferInput;
+  registry?: ScmBackendRegistry;
+}>): Promise<Readonly<{
+  workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
+  blobProvider?: WorkspaceExportBlobProvider;
+}>> {
+  if (!params.workspaceTransfer?.enabled) {
+    return {};
+  }
+  assertSupportedSessionHandoffWorkspaceTransferStrategy({
+    workspaceTransfer: params.workspaceTransfer,
+  });
+
+  return await buildWorkspaceExportArtifactsWithBlobProviderFromSourceController({
+    activeServerDir: params.activeServerDir,
+    sourcePath: params.sourcePath,
+    workspaceTransfer: createScmSourceControllerWorkspaceTransferRequest(params.workspaceTransfer),
+    registry: params.registry,
+  });
+}
+
 export async function importSessionHandoffWorkspaceArtifacts(params: Readonly<{
   workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
   targetPath: string;
   workspaceTransfer?: SessionHandoffWorkspaceTransferInput;
+  blobProvider?: WorkspaceExportBlobProvider;
   registry?: ScmBackendRegistry;
+  assertCanContinue?: () => Promise<void>;
 }>): Promise<Readonly<{ targetPath: string }>> {
   if (!params.workspaceExportArtifacts || !params.workspaceTransfer?.enabled) {
     return { targetPath: params.targetPath };
@@ -139,14 +140,23 @@ export async function importSessionHandoffWorkspaceArtifacts(params: Readonly<{
         workspaceTransfer: params.workspaceTransfer,
         registry: params.registry,
       });
-      const syncArtifacts = createSessionHandoffWorkspaceSyncArtifacts({
-        currentManifest,
-        workspaceExportArtifacts: params.workspaceExportArtifacts,
-      });
-      const imported = await applySessionHandoffWorkspaceSyncArtifacts({
+      const syncArtifacts =
+        params.blobProvider && params.workspaceExportArtifacts.blobContentsByDigest.size === 0
+          ? createWorkspaceSyncArtifactsFromManifest({
+            currentManifest,
+            nextManifest: params.workspaceExportArtifacts.manifest,
+            sourceControllerMetadata: params.workspaceExportArtifacts.sourceControllerMetadata ?? null,
+          })
+          : createWorkspaceSyncArtifacts({
+            currentManifest,
+            workspaceExportArtifacts: params.workspaceExportArtifacts,
+          });
+      const imported = await applyWorkspaceSyncArtifacts({
         targetPath: preparedTarget.resolvedTargetPath,
         syncArtifacts,
+        blobProvider: params.blobProvider,
         registry: params.registry,
+        assertCanContinue: params.assertCanContinue,
       });
       await reconcilePostMaterializationWithSourceController({
         targetPath: imported.targetPath,
@@ -167,7 +177,9 @@ export async function importSessionHandoffWorkspaceArtifacts(params: Readonly<{
     workspaceExportArtifacts: params.workspaceExportArtifacts,
     targetPath: params.targetPath,
     conflictPolicy: params.workspaceTransfer.conflictPolicy,
+    blobProvider: params.blobProvider,
     registry: params.registry,
+    assertCanContinue: params.assertCanContinue,
     naming: {
       siblingCopySuffixBase: 'handoff',
       backupDirectoryPrefix: 'session-handoff-backup',

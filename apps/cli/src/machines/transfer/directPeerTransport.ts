@@ -23,6 +23,7 @@ import {
   resolveTransferPayloadSizeBytes,
   type TransferPayloadSource,
 } from './transferPayloadSource';
+import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
 
 const DEFAULT_DIRECT_PEER_TTL_MS = 30_000;
 const DEFAULT_DIRECT_PEER_REQUEST_TIMEOUT_MS = 5_000;
@@ -30,6 +31,29 @@ const DEFAULT_DIRECT_PEER_CHUNK_BYTES = 256 * 1024;
 const DEFAULT_DIRECT_PEER_BIND_HOST = '0.0.0.0';
 const DIRECT_PEER_AUTH_SCHEME = 'Bearer';
 const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER = 'x-happier-transfer-recipient-public-key';
+
+function encodeDirectPeerTransferPathKey(transferId: string): string {
+  return Buffer.from(transferId, 'utf8').toString('base64url');
+}
+
+function decodeDirectPeerTransferPathKey(transferKey: string): string {
+  const normalizedTransferKey = transferKey.trim();
+  if (normalizedTransferKey.length === 0) {
+    return normalizedTransferKey;
+  }
+
+  try {
+    const decoded = Buffer.from(normalizedTransferKey, 'base64url').toString('utf8');
+    if (decoded.length === 0) {
+      return normalizedTransferKey;
+    }
+    return encodeDirectPeerTransferPathKey(decoded) === normalizedTransferKey
+      ? decoded
+      : normalizedTransferKey;
+  } catch {
+    return normalizedTransferKey;
+  }
+}
 
 function safeTokenEquals(left: string, right: string): boolean {
   const leftHash = createHash('sha256').update(left).digest();
@@ -182,10 +206,11 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
     const transferToken = randomBytes(24).toString('base64url');
     const expiresAt = now() + readDirectPeerTtlMs();
+    const transferPathKey = encodeDirectPeerTransferPathKey(input.transferId);
     const httpEndpointCandidates: TransferEndpointCandidate[] = readAdvertisedHosts(networkInterfacesFn)
       .map((host) => ({
         kind: 'http' as const,
-        url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/${encodeURIComponent(input.transferId)}`,
+        url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/${transferPathKey}`,
         authorizationToken: transferToken,
         expiresAt,
       }))
@@ -290,7 +315,12 @@ function isDirectPeerTransferProtocolError(error: unknown): boolean {
 export function createDirectPeerTransferApp(params: Readonly<{
   readPublishedTransfer: (input: Readonly<{ transferId: string; transferToken: string }>) => TransferPayloadSource | null;
 }>): FastifyInstance {
-  const app = fastify({ logger: false });
+  const app = fastify({
+    logger: false,
+    routerOptions: {
+      maxParamLength: 4 * 1024,
+    },
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const typed = app.withTypeProvider<ZodTypeProvider>();
@@ -311,9 +341,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
       },
     },
   }, async (request, reply) => {
+    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
     const transferToken = readDirectPeerAuthorizationToken(request.headers.authorization) ?? request.query.token ?? '';
     const payloadSource = params.readPublishedTransfer({
-      transferId: request.params.transferId,
+      transferId,
       transferToken,
     });
     if (!payloadSource) {
@@ -323,7 +354,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
     }
     try {
       createEncryptedTransferChunkEnvelope({
-        transferId: request.params.transferId,
+        transferId,
         sequence: 0,
         payload: Buffer.alloc(0),
         recipientPublicKeyBase64: request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER],
@@ -334,7 +365,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
     }
     const sizeBytes = await resolveTransferPayloadSizeBytes(payloadSource);
     return {
-      transferId: request.params.transferId,
+      transferId,
       manifestHash: await resolveTransferPayloadManifestHash(payloadSource),
       totalChunks: Math.max(1, Math.ceil(sizeBytes / readDirectPeerChunkBytes())),
     };
@@ -359,9 +390,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
       },
     },
   }, async (request, reply) => {
+    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
     const transferToken = readDirectPeerAuthorizationToken(request.headers.authorization) ?? request.query.token ?? '';
     const payloadSource = params.readPublishedTransfer({
-      transferId: request.params.transferId,
+      transferId,
       transferToken,
     });
     if (!payloadSource) {
@@ -381,7 +413,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
     try {
       const offset = request.params.sequence * chunkBytes;
       const encryptedChunk = createEncryptedTransferChunkEnvelope({
-        transferId: request.params.transferId,
+        transferId,
         sequence: request.params.sequence,
         payload: await readTransferPayloadChunk({
           source: payloadSource,
@@ -391,7 +423,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
         recipientPublicKeyBase64: request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER],
       });
       return {
-        transferId: request.params.transferId,
+        transferId,
         kind: 'chunk' as const,
         sequence: request.params.sequence,
         payloadBase64: encryptedChunk.payloadBase64,
@@ -440,12 +472,15 @@ export async function startTypedDirectPeerTransferServer<TPayload>(params: Reado
   });
 }
 
-export async function requestDirectPeerTransferPayload(params: Readonly<{
+async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   transferId: string;
   endpointCandidates: readonly TransferEndpointCandidate[];
   fetchFn?: typeof fetch;
   now?: () => number;
-}>): Promise<Buffer> {
+  onChunk: (chunk: Buffer) => Promise<void> | void;
+  onFinish: (manifestHash: string) => Promise<TPayload>;
+  onAbort?: () => Promise<void> | void;
+}>): Promise<TPayload> {
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? Date.now;
   let lastError: Error | null = null;
@@ -486,7 +521,6 @@ export async function requestDirectPeerTransferPayload(params: Readonly<{
       if (!parsed.success || parsed.data.transferId !== params.transferId) {
         throw createInvalidDirectPeerTransferResponseError(params.transferId);
       }
-      const decryptedChunks: Buffer[] = [];
       for (let sequence = 0; sequence < parsed.data.totalChunks; sequence += 1) {
         const chunkResponse = await fetchFn(`${auth.requestUrl}/chunks/${sequence}`, {
           method: 'GET',
@@ -518,7 +552,7 @@ export async function requestDirectPeerTransferPayload(params: Readonly<{
         ) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
-        decryptedChunks.push(decryptEncryptedTransferChunkEnvelope({
+        await params.onChunk(decryptEncryptedTransferChunkEnvelope({
           transferId: params.transferId,
           sequence,
           payloadBase64: parsedChunk.data.payloadBase64,
@@ -526,12 +560,9 @@ export async function requestDirectPeerTransferPayload(params: Readonly<{
           recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
         }));
       }
-      const payload = Buffer.concat(decryptedChunks);
-      if (createTransferManifestHash(payload) !== parsed.data.manifestHash) {
-        throw new Error(`Direct peer transfer manifest mismatch for ${params.transferId}`);
-      }
-      return payload;
+      return await params.onFinish(parsed.data.manifestHash);
     } catch (error) {
+      await params.onAbort?.();
       if (isDirectPeerTransferProtocolError(error)) {
         throw error;
       }
@@ -540,6 +571,50 @@ export async function requestDirectPeerTransferPayload(params: Readonly<{
   }
 
   throw lastError ?? new Error(`No reachable direct peer transfer candidate for ${params.transferId}`);
+}
+
+export async function requestDirectPeerTransferPayload(params: Readonly<{
+  transferId: string;
+  endpointCandidates: readonly TransferEndpointCandidate[];
+  fetchFn?: typeof fetch;
+  now?: () => number;
+}>): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  return await requestDirectPeerTransfer({
+    ...params,
+    onChunk: async (chunk) => {
+      chunks.push(chunk);
+    },
+    onFinish: async (manifestHash) => {
+      const payload = Buffer.concat(chunks);
+      if (createTransferManifestHash(payload) !== manifestHash) {
+        throw new Error(`Direct peer transfer manifest mismatch for ${params.transferId}`);
+      }
+      return payload;
+    },
+  });
+}
+
+export async function requestDirectPeerTransferToFile(params: Readonly<{
+  transferId: string;
+  endpointCandidates: readonly TransferEndpointCandidate[];
+  destinationPath: string;
+  fetchFn?: typeof fetch;
+  now?: () => number;
+}>): Promise<TransferPayloadFileResult> {
+  const sink = await createTransferPayloadFileSink({
+    destinationPath: params.destinationPath,
+  });
+  return await requestDirectPeerTransfer({
+    ...params,
+    onChunk: async (chunk) => {
+      await sink.appendChunk(chunk);
+    },
+    onFinish: async (manifestHash) => await sink.finalize(manifestHash),
+    onAbort: async () => {
+      await sink.abort();
+    },
+  });
 }
 
 export async function requestTypedDirectPeerTransferPayload<TPayload>(params: Readonly<{

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -125,6 +125,54 @@ describe('direct peer machine transfer', () => {
     }
   });
 
+  it('fetches a live published payload directly into a destination file with verified manifest metadata', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const {
+      createDirectPeerTransferRegistry,
+      requestDirectPeerTransferToFile,
+      startDirectPeerTransferServer,
+    } = await import('./directPeerTransport');
+    const { createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-file-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    let registry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
+    const server = await startDirectPeerTransferServer({
+      readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
+    });
+    registry = createDirectPeerTransferRegistry({
+      advertisedPort: server.port,
+      now: () => 2_500,
+    });
+
+    try {
+      const payload = Buffer.from('payload-from-live-server-file', 'utf8');
+      const published = registry.publishTransfer({
+        transferId: 'transfer_to_file',
+        payload,
+      });
+
+      const received = await requestDirectPeerTransferToFile({
+        transferId: 'transfer_to_file',
+        endpointCandidates: published.endpointCandidates,
+        destinationPath,
+        now: () => 2_500,
+      });
+
+      expect(received).toEqual({
+        destinationPath,
+        manifestHash: createTransferManifestHash(payload),
+        sizeBytes: payload.length,
+      });
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      await server.stop();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('publishes advertised http candidates for loading', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
@@ -153,7 +201,7 @@ describe('direct peer machine transfer', () => {
       expect(published.endpointCandidates).toEqual([
         {
           kind: 'http',
-          url: `http://127.0.0.1:${server.port}/machine-transfers/direct/transfer_3`,
+          url: `http://127.0.0.1:${server.port}/machine-transfers/direct/${Buffer.from('transfer_3', 'utf8').toString('base64url')}`,
           authorizationToken: published.transferToken,
           expiresAt: 33_000,
         },
@@ -322,13 +370,7 @@ describe('direct peer machine transfer', () => {
     try {
       const published = registry.publishTransfer({
         transferId: 'handoff_live_typed_roundtrip',
-        payload: {
-          providerBundle: {
-            providerId: 'claude',
-            remoteSessionId: 'claude_session_source',
-            transcriptBase64: 'e30K',
-          },
-        },
+        payload: {},
       });
 
       const loaded = await requestTypedDirectPeerTransferPayload({
@@ -338,13 +380,55 @@ describe('direct peer machine transfer', () => {
         now: () => 4_000,
       });
 
-      expect(loaded).toEqual({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'claude_session_source',
-          transcriptBase64: 'e30K',
-        },
+      expect(loaded).toEqual({});
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('rejects legacy json handoff transferred-bundle payloads through the typed direct-peer carrier', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const {
+      createDirectPeerTransferRegistry,
+      requestTypedDirectPeerTransferPayload,
+      startDirectPeerTransferServer,
+    } = await import('./directPeerTransport');
+    const {
+      createSessionHandoffTransferredBundlesCodec,
+    } = await import('../../session/handoff/transfer/sessionHandoffTransferredBundles');
+
+    const codec = createSessionHandoffTransferredBundlesCodec({
+      mapDecodeError: ({ transferId }) => new Error(`Invalid direct peer transfer response for ${transferId}`),
+    });
+
+    let registry: ReturnType<typeof createDirectPeerTransferRegistry> | null = null;
+    const server = await startDirectPeerTransferServer({
+      readPublishedTransfer: (input) => registry?.readPublishedTransfer(input) ?? null,
+    });
+    registry = createDirectPeerTransferRegistry({
+      advertisedPort: server.port,
+      now: () => 4_500,
+    });
+
+    try {
+      const published = registry.publishTransfer({
+        transferId: 'handoff_legacy_json',
+        payload: Buffer.from(JSON.stringify({
+          providerBundle: {
+            providerId: 'claude',
+            remoteSessionId: 'session_123',
+            transcriptBase64: 'e30K',
+          },
+        }), 'utf8'),
       });
+
+      await expect(requestTypedDirectPeerTransferPayload({
+        transferId: 'handoff_legacy_json',
+        endpointCandidates: published.endpointCandidates,
+        codec,
+        now: () => 4_500,
+      })).rejects.toThrow('Invalid direct peer transfer response for handoff_legacy_json');
     } finally {
       await server.stop();
     }

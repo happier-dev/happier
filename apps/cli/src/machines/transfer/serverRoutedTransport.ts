@@ -19,7 +19,8 @@ import {
   resolveTransferPayloadSizeBytes,
   type TransferPayloadSource,
 } from './transferPayloadSource';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
+import { createTransferPayloadFileSink, type TransferPayloadFileResult } from './transferPayloadFileSink';
+import { readPositiveIntEnv } from '../../utils/readPositiveIntEnv';
 
 const DEFAULT_TRANSFER_TIMEOUT_MS = 90_000;
 const DEFAULT_TRANSFER_CHUNK_BYTES = 256 * 1024;
@@ -206,6 +207,9 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
     if (!current || current.targetMachineId !== payload.sourceMachineId) {
       return;
     }
+    if (envelope.nextSequence <= current.nextSequenceToSend) {
+      return;
+    }
     const nextState: ActiveTransferState = {
       ...current,
       nextSequenceToSend: envelope.nextSequence,
@@ -263,20 +267,23 @@ export function registerTypedServerRoutedTransferResponder<TPayload>(params: Rea
   });
 }
 
-export async function requestServerRoutedTransferPayload(params: Readonly<{
+async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
   transferId: string;
   sourceMachineId: string;
   machineTransferChannel: MachineTransferChannel;
   timeoutMs?: number;
-}>): Promise<Buffer> {
+  onChunk: (chunk: Buffer, info: Readonly<{ sequence: number }>) => Promise<void> | void;
+  onFinish: (manifestHash: string) => Promise<TPayload>;
+  onAbort?: () => Promise<void> | void;
+}>): Promise<TPayload> {
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : readTransferTimeoutMs();
-  const maxBytes = resolveServerRoutedTransferMaxBytes();
   const recipientKeyPair = createTransferRecipientKeyPair();
-  return await new Promise<Buffer>((resolve, reject) => {
-    const chunks = new Map<number, Buffer>();
+  return await new Promise<TPayload>((resolve, reject) => {
     let settled = false;
     let unsubscribe: (() => void) | null = null;
     let timeout: NodeJS.Timeout | null = null;
+    let nextExpectedSequence = 0;
+    let envelopeQueue = Promise.resolve();
 
     const armTimeout = () => {
       if (settled) return;
@@ -302,58 +309,74 @@ export async function requestServerRoutedTransferPayload(params: Readonly<{
     unsubscribe = params.machineTransferChannel.onEnvelope((payload) => {
       if (payload.sourceMachineId !== params.sourceMachineId) return;
       if (payload.envelope.transferId !== params.transferId) return;
-      armTimeout();
+      envelopeQueue = envelopeQueue
+        .then(async () => {
+          if (settled) {
+            return;
+          }
+          armTimeout();
 
-      if (isReceiveChunkEnvelope(payload.envelope)) {
-        if (!payload.envelope.encryptedDataKeyEnvelopeBase64) {
+          if (isReceiveChunkEnvelope(payload.envelope)) {
+            const chunkEnvelope = payload.envelope;
+            if (chunkEnvelope.sequence < nextExpectedSequence) {
+              params.machineTransferChannel.sendEnvelope({
+                targetMachineId: params.sourceMachineId,
+                envelope: {
+                  transferId: params.transferId,
+                  kind: 'ack',
+                  nextSequence: nextExpectedSequence,
+                  windowBytes: nextExpectedSequence,
+                },
+              });
+              return;
+            }
+            if (chunkEnvelope.sequence > nextExpectedSequence) {
+              throw new Error(
+                `Machine transfer received out-of-order chunk ${chunkEnvelope.sequence} for ${params.transferId}; expected ${nextExpectedSequence}`,
+              );
+            }
+            const encryptedDataKeyEnvelopeBase64 = chunkEnvelope.encryptedDataKeyEnvelopeBase64;
+            if (!encryptedDataKeyEnvelopeBase64) {
+              throw new Error(`Machine transfer missing encrypted chunk key for ${params.transferId}`);
+            }
+            await params.onChunk(decryptEncryptedTransferChunkEnvelope({
+              transferId: params.transferId,
+              sequence: chunkEnvelope.sequence,
+              payloadBase64: chunkEnvelope.payloadBase64,
+              encryptedDataKeyEnvelopeBase64,
+              recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+            }), {
+              sequence: chunkEnvelope.sequence,
+            });
+            nextExpectedSequence = chunkEnvelope.sequence + 1;
+            params.machineTransferChannel.sendEnvelope({
+              targetMachineId: params.sourceMachineId,
+              envelope: {
+                transferId: params.transferId,
+                kind: 'ack',
+                nextSequence: nextExpectedSequence,
+                windowBytes: nextExpectedSequence,
+              },
+            });
+            return;
+          }
+
+          if (payload.envelope.kind === 'abort') {
+            throw new Error(`Machine transfer aborted: ${payload.envelope.reason}`);
+          }
+
+          if (payload.envelope.kind === 'finish') {
+            const result = await params.onFinish(payload.envelope.manifestHash);
+            cleanup();
+            resolve(result);
+          }
+        })
+        .catch((error) => {
           cleanup();
-          reject(new Error(`Machine transfer missing encrypted chunk key for ${params.transferId}`));
-          return;
-        }
-        chunks.set(payload.envelope.sequence, decryptEncryptedTransferChunkEnvelope({
-          transferId: params.transferId,
-          sequence: payload.envelope.sequence,
-          payloadBase64: payload.envelope.payloadBase64,
-          encryptedDataKeyEnvelopeBase64: payload.envelope.encryptedDataKeyEnvelopeBase64,
-          recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
-        }));
-        params.machineTransferChannel.sendEnvelope({
-          targetMachineId: params.sourceMachineId,
-          envelope: {
-            transferId: params.transferId,
-            kind: 'ack',
-            nextSequence: payload.envelope.sequence + 1,
-            windowBytes: chunks.size,
-          },
+          void Promise.resolve(params.onAbort?.()).finally(() => {
+            reject(error instanceof Error ? error : new Error(`Machine transfer failed for ${params.transferId}`));
+          });
         });
-        return;
-      }
-
-      if (payload.envelope.kind === 'abort') {
-        cleanup();
-        reject(new Error(`Machine transfer aborted: ${payload.envelope.reason}`));
-        return;
-      }
-
-      if (payload.envelope.kind === 'finish') {
-        try {
-          const orderedChunks = Array.from(chunks.entries())
-            .sort((left, right) => left[0] - right[0])
-            .map(([, buffer]) => buffer);
-          const transferPayload = Buffer.concat(orderedChunks);
-          if (isServerRoutedTransferOverSizeLimit(transferPayload.length, maxBytes)) {
-            throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
-          }
-          if (createTransferManifestHash(transferPayload) !== payload.envelope.manifestHash) {
-            throw new Error(`Machine transfer manifest mismatch for ${params.transferId}`);
-          }
-          cleanup();
-          resolve(transferPayload);
-        } catch (error) {
-          cleanup();
-          reject(error instanceof Error ? error : new Error(`Failed to assemble machine transfer ${params.transferId}`));
-        }
-      }
     });
 
     armTimeout();
@@ -366,6 +389,66 @@ export async function requestServerRoutedTransferPayload(params: Readonly<{
         recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
       }),
     });
+  });
+}
+
+export async function requestServerRoutedTransferPayload(params: Readonly<{
+  transferId: string;
+  sourceMachineId: string;
+  machineTransferChannel: MachineTransferChannel;
+  timeoutMs?: number;
+}>): Promise<Buffer> {
+  const maxBytes = resolveServerRoutedTransferMaxBytes();
+  const chunks = new Map<number, Buffer>();
+  const payload = await requestServerRoutedTransfer({
+    ...params,
+    onChunk: async (chunk, info) => {
+      chunks.set(info.sequence, chunk);
+    },
+    onFinish: async (manifestHash) => {
+      const transferPayload = Buffer.concat(
+        [...chunks.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, chunk]) => chunk),
+      );
+      if (isServerRoutedTransferOverSizeLimit(transferPayload.length, maxBytes)) {
+        throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      }
+      if (createTransferManifestHash(transferPayload) !== manifestHash) {
+        throw new Error(`Machine transfer manifest mismatch for ${params.transferId}`);
+      }
+      return transferPayload;
+    },
+  });
+  return payload;
+}
+
+export async function requestServerRoutedTransferToFile(params: Readonly<{
+  transferId: string;
+  sourceMachineId: string;
+  machineTransferChannel: MachineTransferChannel;
+  destinationPath: string;
+  timeoutMs?: number;
+}>): Promise<TransferPayloadFileResult> {
+  const maxBytes = resolveServerRoutedTransferMaxBytes();
+  const sink = await createTransferPayloadFileSink({
+    destinationPath: params.destinationPath,
+  });
+  return await requestServerRoutedTransfer({
+    ...params,
+    onChunk: async (chunk) => {
+      await sink.appendChunk(chunk);
+    },
+    onFinish: async (manifestHash) => {
+      const received = await sink.finalize(manifestHash);
+      if (isServerRoutedTransferOverSizeLimit(received.sizeBytes, maxBytes)) {
+        throw new Error(`${SERVER_ROUTED_TRANSFER_SIZE_LIMIT_ERROR}:${maxBytes}`);
+      }
+      return received;
+    },
+    onAbort: async () => {
+      await sink.abort();
+    },
   });
 }
 

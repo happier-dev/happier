@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from
 type Listener = (payload: MachineTransferReceiveEnvelope) => void;
 type MachineTransferSendOpenEnvelope = Extract<MachineTransferSendEnvelope['envelope'], { kind: 'open' }>;
 type MachineTransferSendChunkEnvelope = Extract<MachineTransferSendEnvelope['envelope'], { kind: 'chunk' }>;
+type MachineTransferSendAckEnvelope = Extract<MachineTransferSendEnvelope['envelope'], { kind: 'ack' }>;
 
 function isSendOpenEnvelope(
   envelope: MachineTransferSendEnvelope['envelope'],
@@ -19,6 +20,12 @@ function isChunkTransferEnvelope(
   entry: MachineTransferSendEnvelope,
 ): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } {
   return entry.envelope.kind === 'chunk';
+}
+
+function isAckTransferEnvelope(
+  entry: MachineTransferSendEnvelope,
+): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendAckEnvelope } {
+  return entry.envelope.kind === 'ack';
 }
 
 function createLoopbackChannels(options?: Readonly<{
@@ -142,6 +149,50 @@ describe('server routed machine transfer', () => {
             entry.envelope.transferId === 'transfer_1',
         ),
       ).toBe(true);
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('streams a payload directly to a destination file with verified manifest metadata', async () => {
+    const { source, target } = createLoopbackChannels();
+    const payload = Buffer.from('handoff-payload-file-'.repeat(64), 'utf8');
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-file-'));
+    const sourcePath = join(tempDir, 'payload-source.bin');
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    await writeFile(sourcePath, payload);
+
+    const {
+      registerServerRoutedTransferResponder,
+      requestServerRoutedTransferToFile,
+    } = await import('./serverRoutedTransport');
+    const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
+    const { createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId) =>
+        transferId === 'transfer_to_file'
+          ? createFileTransferPayloadSource({ filePath: sourcePath })
+          : null,
+      chunkBytes: 64,
+    });
+
+    try {
+      const received = await requestServerRoutedTransferToFile({
+        transferId: 'transfer_to_file',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+        destinationPath,
+      });
+
+      expect(received).toEqual({
+        destinationPath,
+        manifestHash: createTransferManifestHash(payload),
+        sizeBytes: payload.length,
+      });
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       unregister();
       await rm(tempDir, { recursive: true, force: true });
@@ -287,5 +338,188 @@ describe('server routed machine transfer', () => {
     } finally {
       unregister();
     }
+  });
+
+  it('ignores stale ack envelopes instead of rewinding chunk delivery', async () => {
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const payload = Buffer.from('abcdefghijklmno', 'utf8');
+
+    const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
+    const { createTransferRecipientKeyPair } = await import('./transferChunkEncryption');
+
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId) => (
+        transferId === 'transfer_stale_ack'
+          ? { kind: 'buffer', payload, sizeBytes: payload.length }
+          : null
+      ),
+      chunkBytes: 5,
+    });
+
+    try {
+      const recipient = createTransferRecipientKeyPair();
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_stale_ack',
+          kind: 'open',
+          manifestHash: 'transfer_stale_ack',
+          recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+        },
+      });
+
+      await expect.poll(() =>
+        sentEnvelopes.filter(
+          (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } =>
+            entry.targetMachineId === 'machine_target'
+            && isChunkTransferEnvelope(entry)
+            && entry.envelope.transferId === 'transfer_stale_ack',
+        ).map((entry) => entry.envelope.sequence),
+      ).toEqual([0]);
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_stale_ack',
+          kind: 'ack',
+          nextSequence: 1,
+          windowBytes: 1,
+        },
+      });
+
+      await expect.poll(() =>
+        sentEnvelopes.filter(
+          (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } =>
+            entry.targetMachineId === 'machine_target'
+            && isChunkTransferEnvelope(entry)
+            && entry.envelope.transferId === 'transfer_stale_ack',
+        ).map((entry) => entry.envelope.sequence),
+      ).toEqual([0, 1]);
+
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_stale_ack',
+          kind: 'ack',
+          nextSequence: 1,
+          windowBytes: 1,
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        sentEnvelopes.filter(
+          (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } =>
+            entry.targetMachineId === 'machine_target'
+            && isChunkTransferEnvelope(entry)
+            && entry.envelope.transferId === 'transfer_stale_ack',
+        ).map((entry) => entry.envelope.sequence),
+      ).toEqual([0, 1]);
+    } finally {
+      unregister();
+    }
+  });
+
+  it('ignores duplicate chunk envelopes when assembling a server-routed payload', async () => {
+    const listeners = new Set<Listener>();
+    const sentEnvelopes: MachineTransferSendEnvelope[] = [];
+
+    const target = {
+      onEnvelope(listener: Listener) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      sendEnvelope(payload: MachineTransferSendEnvelope) {
+        sentEnvelopes.push(payload);
+        if (payload.targetMachineId !== 'machine_source' || !isSendOpenEnvelope(payload.envelope)) {
+          return;
+        }
+        const recipientPublicKeyBase64 = payload.envelope.recipientPublicKeyBase64;
+
+        void (async () => {
+          const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+          const fullPayload = Buffer.from('duplicate-safe-payload', 'utf8');
+          const firstChunk = fullPayload.subarray(0, 9);
+          const secondChunk = fullPayload.subarray(9);
+          if (!recipientPublicKeyBase64) {
+            throw new Error('Expected recipient key');
+          }
+
+          const chunk0 = createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_duplicate_chunk',
+            sequence: 0,
+            payload: firstChunk,
+            recipientPublicKeyBase64,
+          });
+          const duplicateChunk0 = createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_duplicate_chunk',
+            sequence: 0,
+            payload: firstChunk,
+            recipientPublicKeyBase64,
+          });
+          const chunk1 = createEncryptedTransferChunkEnvelope({
+            transferId: 'transfer_duplicate_chunk',
+            sequence: 1,
+            payload: secondChunk,
+            recipientPublicKeyBase64,
+          });
+
+          for (const entry of [
+            { sequence: 0, envelope: chunk0 },
+            { sequence: 0, envelope: duplicateChunk0 },
+            { sequence: 1, envelope: chunk1 },
+          ]) {
+            for (const listener of listeners) {
+              listener({
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                envelope: {
+                  transferId: 'transfer_duplicate_chunk',
+                  kind: 'chunk',
+                  sequence: entry.sequence,
+                  payloadBase64: entry.envelope.payloadBase64,
+                  encryptedDataKeyEnvelopeBase64: entry.envelope.encryptedDataKeyEnvelopeBase64,
+                },
+              });
+            }
+          }
+
+          for (const listener of listeners) {
+            listener({
+              sourceMachineId: 'machine_source',
+              targetMachineId: 'machine_target',
+              envelope: {
+                transferId: 'transfer_duplicate_chunk',
+                kind: 'finish',
+                manifestHash: createTransferManifestHash(fullPayload),
+              },
+            });
+          }
+        })();
+      },
+    };
+
+    const { requestServerRoutedTransferPayload } = await import('./serverRoutedTransport');
+
+    await expect(
+      requestServerRoutedTransferPayload({
+        transferId: 'transfer_duplicate_chunk',
+        sourceMachineId: 'machine_source',
+        machineTransferChannel: target,
+      }),
+    ).resolves.toEqual(Buffer.from('duplicate-safe-payload', 'utf8'));
+
+    expect(
+      sentEnvelopes.filter(
+        (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendAckEnvelope } =>
+          entry.targetMachineId === 'machine_source'
+          && isAckTransferEnvelope(entry)
+          && entry.envelope.transferId === 'transfer_duplicate_chunk',
+      ).map((entry) => entry.envelope.nextSequence),
+    ).toEqual([1, 1, 2]);
   });
 });

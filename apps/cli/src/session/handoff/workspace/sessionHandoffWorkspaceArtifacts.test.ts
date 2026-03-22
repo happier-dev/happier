@@ -7,12 +7,14 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { ScmBackend } from '@/scm/types';
 import { createScmBackendRegistry } from '@/scm/registry';
 import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
+import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import {
     createSessionHandoffTransferredBundles,
     sessionHandoffTransferredBundlesCodec,
 } from '../transfer/sessionHandoffTransferredBundles';
 import {
     buildSessionHandoffWorkspaceExportArtifacts,
+    buildSessionHandoffWorkspaceExportPayload,
     importSessionHandoffWorkspaceArtifacts,
 } from './sessionHandoffWorkspaceArtifacts';
 import * as workspaceArtifactsModule from './sessionHandoffWorkspaceArtifacts';
@@ -313,6 +315,77 @@ describe('sessionHandoffWorkspaceArtifacts', () => {
     expect(new Set(shellEntries.map((entry) => entry.digest)).size).toBe(1);
     expect(artifacts.blobContentsByDigest.size).toBe(2);
     expect(Buffer.from(artifacts.blobContentsByDigest.get(shellEntries[0]!.digest) ?? []).toString('utf8')).toBe('#!/bin/sh\necho hi\n');
+  });
+
+  it('builds a manifest-only handoff export payload with a file-backed blob provider without eagerly seeding CAS', async () => {
+    const activeServerDir = await makeTempDir('handoff-export-payload-active-server-');
+    const root = await makeTempDir('handoff-export-payload-root-');
+    await mkdir(join(root, 'docs'), { recursive: true });
+    await writeFile(join(root, 'README.md'), 'hello\n');
+    await writeFile(join(root, 'docs', 'copy.md'), 'hello\n');
+    await symlink('../README.md', join(root, 'docs', 'readme-link'));
+
+    const exportPayload = await buildSessionHandoffWorkspaceExportPayload({
+      activeServerDir,
+      sourcePath: root,
+      workspaceTransfer: {
+        enabled: true,
+        conflictPolicy: 'create_sibling_copy',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+    });
+
+    expect(exportPayload.workspaceExportArtifacts).toEqual(expect.objectContaining({
+      manifest: expect.objectContaining({
+        entries: expect.arrayContaining([
+          {
+            kind: 'file',
+            relativePath: 'README.md',
+            digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+            executable: false,
+            sizeBytes: 6,
+          },
+          {
+            kind: 'directory',
+            relativePath: 'docs',
+          },
+          {
+            kind: 'file',
+            relativePath: 'docs/copy.md',
+            digest: 'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+            executable: false,
+            sizeBytes: 6,
+          },
+          {
+            kind: 'symlink',
+            relativePath: 'docs/readme-link',
+            target: '../README.md',
+          },
+        ]),
+        fingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      }),
+      blobContentsByDigest: new Map(),
+    }));
+    expect(exportPayload.blobProvider).toBeDefined();
+
+    const casStore = createWorkspaceReplicationCasStore({
+      activeServerDir,
+    });
+    await expect(casStore.contains('sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03')).resolves.toBe(false);
+    expect(
+      exportPayload.blobProvider!.getBlobFilePath(
+        'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+      ),
+    ).toBe(join(root, 'README.md'));
+    await expect(
+      readFile(
+        exportPayload.blobProvider!.getBlobFilePath(
+          'sha256:5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03',
+        )!,
+        'utf8',
+      ),
+    ).resolves.toBe('hello\n');
   });
 
   it('imports a linked worktree bundle as plain workspace content without git admin state', async () => {
@@ -843,6 +916,63 @@ describe('sessionHandoffWorkspaceArtifacts', () => {
     await expect(access(join(target, 'remove-me.txt'))).rejects.toThrow();
   });
 
+  it('applies sync-changes imports from a CAS-backed blob provider when export artifacts are manifest-only', async () => {
+    const root = await makeTempDir('handoff-sync-import-provider-');
+    const activeServerDir = await makeTempDir('handoff-sync-import-provider-cas-');
+    const source = join(root, 'source');
+    const target = join(root, 'repo');
+    await mkdir(source, { recursive: true });
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'README.md'), 'old\n');
+    await writeFile(join(source, 'README.md'), 'new\n');
+    await writeFile(join(source, 'keep.txt'), 'keep\n');
+
+    const workspaceExportArtifacts = await buildSessionHandoffWorkspaceExportArtifacts({
+      sourcePath: source,
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'sync_changes',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+    });
+    if (!workspaceExportArtifacts) throw new Error('Expected workspace export artifacts');
+
+    const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
+    for (const entry of workspaceExportArtifacts.manifest.entries) {
+      if (entry.kind !== 'file') {
+        continue;
+      }
+      await casStore.commitFile({
+        digest: entry.digest,
+        sourcePath: join(source, entry.relativePath),
+      });
+    }
+
+    const imported = await importSessionHandoffWorkspaceArtifacts({
+      workspaceExportArtifacts: {
+        ...workspaceExportArtifacts,
+        blobContentsByDigest: new Map(),
+      },
+      blobProvider: {
+        getBlobFilePath: (digest) => casStore.resolveBlobPath(digest),
+      },
+      targetPath: target,
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'sync_changes',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+    });
+
+    expect(imported.targetPath).toBe(target);
+    await expect(readFile(join(target, 'README.md'), 'utf8')).resolves.toBe('new\n');
+    await expect(readFile(join(target, 'keep.txt'), 'utf8')).resolves.toBe('keep\n');
+  });
+
   it('keeps target-only ignored files outside the sync scope during sync-changes import', async () => {
     const root = await makeTempDir('handoff-sync-import-ignored-target-');
     const source = join(root, 'source');
@@ -1201,6 +1331,62 @@ describe('sessionHandoffWorkspaceArtifacts', () => {
     }
   });
 
+  it('materializes snapshot imports from a CAS-backed blob provider when export artifacts are manifest-only', async () => {
+    const root = await makeTempDir('handoff-snapshot-import-provider-');
+    const activeServerDir = await makeTempDir('handoff-snapshot-import-provider-cas-');
+    const source = join(root, 'source');
+    const target = join(root, 'repo');
+    await mkdir(join(source, 'bin'), { recursive: true });
+    await writeFile(join(source, 'README.md'), 'hello\n');
+    await writeFile(join(source, 'bin', 'run.sh'), '#!/bin/sh\necho hi\n');
+    await chmod(join(source, 'bin', 'run.sh'), 0o755);
+
+    const workspaceExportArtifacts = await buildSessionHandoffWorkspaceExportArtifacts({
+      sourcePath: source,
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+    });
+    if (!workspaceExportArtifacts) throw new Error('Expected workspace export artifacts');
+
+    const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
+    for (const entry of workspaceExportArtifacts.manifest.entries) {
+      if (entry.kind !== 'file') {
+        continue;
+      }
+      await casStore.commitFile({
+        digest: entry.digest,
+        sourcePath: join(source, entry.relativePath),
+      });
+    }
+
+    const imported = await importSessionHandoffWorkspaceArtifacts({
+      workspaceExportArtifacts: {
+        ...workspaceExportArtifacts,
+        blobContentsByDigest: new Map(),
+      },
+      blobProvider: {
+        getBlobFilePath: (digest) => casStore.resolveBlobPath(digest),
+      },
+      targetPath: target,
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+    });
+
+    expect(imported.targetPath).toBe(target);
+    await expect(readFile(join(target, 'README.md'), 'utf8')).resolves.toBe('hello\n');
+    await expect(readFile(join(target, 'bin', 'run.sh'), 'utf8')).resolves.toBe('#!/bin/sh\necho hi\n');
+  });
+
   it('preserves executable files after transferred-bundle wire serialization and import reconstruction', async () => {
     const root = await makeTempDir('handoff-import-transferred-artifacts-');
     const source = join(root, 'source');
@@ -1223,11 +1409,6 @@ describe('sessionHandoffWorkspaceArtifacts', () => {
     const decoded = sessionHandoffTransferredBundlesCodec.decode({
       transferId: 'session_handoff_workspace_artifacts_test',
       payload: sessionHandoffTransferredBundlesCodec.encode(createSessionHandoffTransferredBundles({
-        providerBundle: {
-          providerId: 'claude',
-          remoteSessionId: 'session_123',
-          transcriptBase64: 'e30K',
-        },
         workspaceExportArtifacts,
       })),
     });
@@ -1379,5 +1560,47 @@ describe('sessionHandoffWorkspaceArtifacts', () => {
 
     await expect(readFile(join(target, 'old.txt'), 'utf8')).resolves.toBe('old\n');
     await expect(readFile(join(siblingTarget, 'README.md'), 'utf8')).rejects.toThrow();
+  });
+
+  it('keeps the existing target workspace intact when snapshot import is aborted before promotion', async () => {
+    const root = await makeTempDir('handoff-import-abort-replace-');
+    const target = join(root, 'repo');
+    const source = join(root, 'source');
+    await mkdir(target, { recursive: true });
+    await mkdir(source, { recursive: true });
+    await writeFile(join(target, 'old.txt'), 'old\n');
+    await writeFile(join(source, 'README.md'), 'new\n');
+
+    const workspaceExportArtifacts = await buildRequiredWorkspaceExportArtifacts({
+      sourcePath: source,
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+    });
+
+    const params: Parameters<typeof importSessionHandoffWorkspaceArtifacts>[0] & Readonly<{
+      assertCanContinue: () => Promise<void>;
+    }> = {
+      workspaceExportArtifacts,
+      targetPath: target,
+      workspaceTransfer: {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      },
+      assertCanContinue: async () => {
+        throw new Error('abort requested');
+      },
+    };
+
+    await expect(importSessionHandoffWorkspaceArtifacts(params)).rejects.toThrow('abort requested');
+    await expect(readFile(join(target, 'old.txt'), 'utf8')).resolves.toBe('old\n');
+    await expect(readFile(join(target, 'README.md'), 'utf8')).rejects.toThrow();
   });
 });
