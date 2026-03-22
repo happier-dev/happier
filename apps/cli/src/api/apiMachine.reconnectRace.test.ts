@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Machine } from '@/api/types';
+import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const {
@@ -41,14 +42,7 @@ const {
     let supervisorConfig: any = null;
     let currentState: State = initialState();
     const socketHarnesses: Array<{
-        socket: {
-            connected: boolean;
-            emit: ReturnType<typeof vi.fn>;
-            emitWithAck: ReturnType<typeof vi.fn>;
-            on: ReturnType<typeof vi.fn>;
-            removeAllListeners: ReturnType<typeof vi.fn>;
-            __trigger: (event: string, ...args: any[]) => void;
-        };
+        socket: ApiSessionSocketStub;
         transport: {
             connect: ReturnType<typeof vi.fn>;
             disconnect: ReturnType<typeof vi.fn>;
@@ -61,47 +55,48 @@ const {
     }> = [];
 
     function createSocketHarness() {
-        const socketHandlers = new Map<string, Set<SocketHandler>>();
         const transportDisconnectListeners = new Set<DisconnectListener>();
         const transportConnectedListeners = new Set<() => void>();
         const transportErrorListeners = new Set<(error: unknown) => void>();
 
-        const socket = {
-            connected: false,
-            emit: vi.fn(),
-            emitWithAck: vi.fn(async () => ({ result: 'success', version: 1 })),
-            on: vi.fn((event: string, handler: SocketHandler) => {
-                const handlers = socketHandlers.get(event) ?? new Set<SocketHandler>();
-                handlers.add(handler);
-                socketHandlers.set(event, handlers);
-            }),
-            removeAllListeners: vi.fn(() => {
-                socketHandlers.clear();
-            }),
-            __trigger: (event: string, ...args: any[]) => {
-                for (const handler of socketHandlers.get(event) ?? []) {
-                    handler(...args);
+        const socket = createApiSessionSocketStub({
+            emitWithAckResult: { result: 'success', version: 1 },
+        });
+
+        const triggerSocketEvent = (event: string, ...args: unknown[]) => {
+            socket.trigger(event, ...args);
+            if (event === 'connect') {
+                socket.connected = true;
+                for (const listener of transportConnectedListeners) {
+                    listener();
                 }
-                if (event === 'connect') {
-                    socket.connected = true;
-                    for (const listener of transportConnectedListeners) {
-                        listener();
-                    }
+            }
+            if (event === 'disconnect') {
+                socket.connected = false;
+                const reason = typeof args[0] === 'string' ? args[0] : null;
+                for (const listener of transportDisconnectListeners) {
+                    listener({ reason });
                 }
-                if (event === 'disconnect') {
-                    socket.connected = false;
-                    const reason = typeof args[0] === 'string' ? args[0] : null;
-                    for (const listener of transportDisconnectListeners) {
-                        listener({ reason });
-                    }
+            }
+            if (event === 'connect_error') {
+                for (const listener of transportErrorListeners) {
+                    listener(args[0]);
                 }
-                if (event === 'connect_error') {
-                    for (const listener of transportErrorListeners) {
-                        listener(args[0]);
-                    }
-                }
-            },
+            }
         };
+
+        socket.connect.mockImplementation(() => {
+            triggerSocketEvent('connect');
+            return socket;
+        });
+        socket.disconnect.mockImplementation(() => {
+            triggerSocketEvent('disconnect', 'io client disconnect');
+            return socket;
+        });
+        socket.close.mockImplementation(() => {
+            triggerSocketEvent('disconnect', 'io client disconnect');
+            return socket;
+        });
 
         const transport = {
             connect: vi.fn(async () => {}),
@@ -122,7 +117,7 @@ const {
             },
         };
 
-        return { socket, transport };
+        return { socket, transport, triggerSocketEvent };
     }
 
     function publishState(next: Partial<State>): void {
@@ -283,7 +278,7 @@ describe('ApiMachineClient reconnect race handling', () => {
         const firstSocket = harness.getSocket(0);
         const secondSocket = harness.getSocket(1);
 
-        firstSocket.__trigger('disconnect', 'transport closed');
+        firstSocket.trigger('disconnect', 'transport closed');
 
         client.sendMachineTransferEnvelope({
             targetMachineId: 'machine-2',
@@ -323,7 +318,7 @@ describe('ApiMachineClient reconnect race handling', () => {
         client.connect();
 
         const firstSocket = harness.getSocket(0);
-        firstSocket.__trigger('disconnect', 'transport closed');
+        firstSocket.trigger('disconnect', 'transport closed');
 
         client.sendMachineTransferEnvelope({
             targetMachineId: 'machine-2',

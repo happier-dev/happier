@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import type { Machine } from './types';
 
 const { configurationMock, mockIo } = vi.hoisted(() => ({
@@ -56,9 +57,9 @@ vi.mock('@/utils/time', () => ({ backoff: async <T>(fn: () => Promise<T>) => awa
 
 describe('ApiMachineClient transports', () => {
   beforeEach(() => {
-    mockIo.mockReset();
     configurationMock.apiServerUrl = 'http://localhost:3005';
     configurationMock.socketIoTransports = ['websocket', 'polling'];
+    bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
   });
 
   afterEach(() => {
@@ -115,16 +116,8 @@ describe('ApiMachineClient transports', () => {
   });
 
   it('emits and receives machine transfer envelopes over the machine-scoped socket', async () => {
-    const socketHandlers = new Map<string, (...args: any[]) => void>();
-    const socketEmit = vi.fn();
-    mockIo.mockImplementationOnce(() => ({
-      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
-        socketHandlers.set(event, handler);
-      }),
-      emit: socketEmit,
-      emitWithAck: vi.fn(),
-      io: { on: vi.fn() },
-    }));
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
 
     const mod = await import('./apiMachine');
     const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
@@ -156,7 +149,7 @@ describe('ApiMachineClient transports', () => {
       },
     });
 
-    expect(socketEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
+    expect(machineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
       targetMachineId: 'machine-target',
       envelope: {
         transferId: 'transfer_1',
@@ -166,7 +159,7 @@ describe('ApiMachineClient transports', () => {
       },
     });
 
-    socketHandlers.get(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE)?.({
+    machineSocket.trigger(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, {
       sourceMachineId: 'machine-source',
       targetMachineId: 'test-machine',
       envelope: {
@@ -188,5 +181,4 @@ describe('ApiMachineClient transports', () => {
       },
     ]);
   });
-
 });
