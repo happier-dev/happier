@@ -1,6 +1,14 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    createModalModuleMock,
+    createUseSettingMock,
+    flushHookEffects,
+    renderScreen,
+} from '@/dev/testkit';
+import type { useSettingMutable as useSettingMutableHook } from '@/sync/domains/state/storage';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,7 +24,10 @@ const state = vi.hoisted(() => ({
     activeServerUrl: 'https://stack-a.example.test',
     localSearchParams: {} as Record<string, unknown>,
     settings: {
-        serverSelectionGroups: [] as Array<{ id: string; name: string; serverIds: string[]; presentation?: 'grouped' | 'flat-with-badge' }>,
+        serverSelectionGroups: [] as Pick<
+            Settings,
+            'serverSelectionGroups'
+        >['serverSelectionGroups'],
         serverSelectionActiveTargetKind: null as 'server' | 'group' | null,
         serverSelectionActiveTargetId: null as string | null,
     },
@@ -26,6 +37,38 @@ const state = vi.hoisted(() => ({
         { id: 'server-c', serverUrl: 'https://stack-c.example.test', name: 'Server C', lastUsedAt: 800 },
     ],
 }));
+type ServerSelectionSettings = Pick<
+    Settings,
+    'serverSelectionGroups' | 'serverSelectionActiveTargetKind' | 'serverSelectionActiveTargetId'
+>;
+
+const useServerSelectionSettingMutableMock = ((key: keyof Settings) => {
+    switch (key) {
+        case 'serverSelectionGroups':
+            return [
+                state.settings.serverSelectionGroups,
+                (value: ServerSelectionSettings['serverSelectionGroups']) => {
+                    state.settings.serverSelectionGroups = value;
+                },
+            ] as const;
+        case 'serverSelectionActiveTargetKind':
+            return [
+                state.settings.serverSelectionActiveTargetKind,
+                (value: ServerSelectionSettings['serverSelectionActiveTargetKind']) => {
+                    state.settings.serverSelectionActiveTargetKind = value;
+                },
+            ] as const;
+        case 'serverSelectionActiveTargetId':
+            return [
+                state.settings.serverSelectionActiveTargetId,
+                (value: ServerSelectionSettings['serverSelectionActiveTargetId']) => {
+                    state.settings.serverSelectionActiveTargetId = value;
+                },
+            ] as const;
+        default:
+            throw new Error(`Unexpected setting key: ${String(key)}`);
+    }
+}) as typeof useSettingMutableHook;
 
 const navigationDispatchSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn());
@@ -39,25 +82,27 @@ const refreshMachinesThrottledSpy = vi.hoisted(() => vi.fn(async (_params: any) 
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    Pressable: 'Pressable',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#666',
-                header: { tint: '#111' },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
             },
-        },
-    }),
-}));
+            Pressable: 'Pressable',
+        }
+    );
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -72,15 +117,16 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => (state.settings as any)[key],
-    useSettingMutable: (key: string) => ([
-        (state.settings as any)[key],
-        (value: unknown) => {
-            (state.settings as any)[key] = value;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: createUseSettingMock({
+                values: state.settings,
+            }),
+            useSettingMutable: useServerSelectionSettingMutableMock,
         },
-    ] as const),
-}));
+    }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({
@@ -92,27 +138,54 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => state.profiles,
 }));
 
-vi.mock('expo-router', () => ({
-    Stack: Object.assign(
-        ({ children }: any) => React.createElement(React.Fragment, null, children),
-        { Screen: ({ children }: any) => React.createElement(React.Fragment, null, children) }
-    ),
-    useRouter: () => ({ back: routerBackSpy, replace: routerReplaceSpy }),
-    useNavigation: () => ({
-        getState: () => ({
-            index: 1,
-            routes: [{ key: 'prev-route' }, { key: 'current-route' }],
-        }),
-        dispatch: navigationDispatchSpy,
-    }),
-    useLocalSearchParams: () => state.localSearchParams,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const module = createExpoRouterMock({
+        navigation: {
+            getState: () => ({
+                index: 1,
+                routes: [
+                    {
+                        key: 'new-route',
+                        name: '(app)/new/index',
+                        path: '/new',
+                        params: {
+                            machineId: 'machine-1',
+                            spawnServerId: 'server-a',
+                        },
+                    },
+                    {
+                        key: 'current-route',
+                        name: '(app)/new/pick/server',
+                        path: '/new/pick/server',
+                    },
+                ],
+            }),
+            dispatch: navigationDispatchSpy,
+        },
+        router: {
+            push: vi.fn(),
+            back: routerBackSpy,
+            replace: routerReplaceSpy,
+            setParams: vi.fn(),
+        },
+    }).module;
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalConfirmSpy,
-    },
-}));
+    return {
+        ...module,
+        useLocalSearchParams: () => state.localSearchParams,
+    };
+});
+
+vi.mock('@/modal', () => {
+    const { module } = createModalModuleMock();
+    return {
+        Modal: {
+            ...module.Modal,
+            confirm: modalConfirmSpy,
+        },
+    };
+});
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
@@ -163,11 +236,9 @@ beforeEach(() => {
     state.localSearchParams = {};
     state.activeServerId = 'server-a';
     state.activeServerUrl = 'https://stack-a.example.test';
-    state.settings = {
-        serverSelectionGroups: [],
-        serverSelectionActiveTargetKind: null,
-        serverSelectionActiveTargetId: null,
-    };
+    state.settings.serverSelectionGroups = [];
+    state.settings.serverSelectionActiveTargetKind = null;
+    state.settings.serverSelectionActiveTargetId = null;
     state.profiles = [
         { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A', lastUsedAt: 1000 },
         { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B', lastUsedAt: 900 },
@@ -193,10 +264,7 @@ describe('new-session server picker targeting', () => {
         state.settings.serverSelectionActiveTargetId = 'grp-dev';
 
         const Screen = (await import('@/app/(app)/new/pick/server')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
         const titles = capture.rows.map((row) => row.title);
         expect(titles).toEqual(['Server A', 'Server C']);
@@ -218,16 +286,13 @@ describe('new-session server picker targeting', () => {
         const before = { ...state.settings };
 
         const Screen = (await import('@/app/(app)/new/pick/server')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
         const serverCRow = capture.rows.find((row) => row.title === 'Server C');
         expect(serverCRow).toBeTruthy();
         await act(async () => {
             serverCRow?.onPress?.();
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(navigationDispatchSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -258,16 +323,14 @@ describe('new-session server picker targeting', () => {
         state.settings.serverSelectionActiveTargetId = 'grp-dev';
 
         const Screen = (await import('@/app/(app)/new/pick/server')).default;
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
+        await flushHookEffects();
 
         const serverBRow = capture.rows.find((row) => row.title === 'Server B');
         expect(serverBRow).toBeTruthy();
         await act(async () => {
             serverBRow?.onPress?.();
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(modalConfirmSpy).toHaveBeenCalledTimes(1);

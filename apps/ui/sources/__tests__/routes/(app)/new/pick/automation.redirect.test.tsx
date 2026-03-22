@@ -1,17 +1,24 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useLocalSearchParamsMock = vi.fn();
 
-vi.mock('expo-router', () => ({
-    Redirect: (props: any) => React.createElement('Redirect', props),
-    useLocalSearchParams: () => useLocalSearchParamsMock(),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        params: useLocalSearchParamsMock(),
+    });
+    return expoRouterMock.module;
+});
 
 describe('legacy automation picker route', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('redirects to the inline new-session automation flow and preserves automation params', async () => {
         useLocalSearchParamsMock.mockReturnValue({
             automationEnabled: '1',
@@ -25,12 +32,9 @@ describe('legacy automation picker route', () => {
 
         const module = await import('@/app/(app)/new/pick/automation');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(module.default));
-        });
+        const screen = await renderScreen(React.createElement(module.default));
 
-        const redirect = tree.root.findByType('Redirect');
+        const redirect = screen.root.findByType('Redirect');
         expect(redirect.props.href).toEqual({
             pathname: '/new',
             params: {
