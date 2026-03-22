@@ -1,40 +1,19 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 
-import { initDbSqlite, db } from "@/storage/db";
-import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
+import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
-import { initEncrypt } from "@/modules/encrypt";
 import { encryptString } from "@/modules/encrypt";
-import { initFilesLocalFromEnv, loadFiles } from "@/storage/blob/files";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
-function runServerPrismaMigrateDeploySqlite(params: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    const res = spawnSync(
-        "yarn",
-        ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"],
-        {
-            cwd: params.cwd,
-            env: { ...(params.env as Record<string, string>), RUST_LOG: "info" },
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-        },
-    );
-    if (res.status !== 0) {
-        const out = `${res.stdout ?? ""}\n${res.stderr ?? ""}`.trim();
-        throw new Error(`prisma migrate deploy failed (status=${res.status}). ${out}`);
-    }
-}
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -59,58 +38,37 @@ function createAuthBody(seedByte = 7) {
     };
 }
 
+function applyGithubExternalAuthFinalizeEnv(
+    harness: LightSqliteHarness,
+    overrides: Record<string, string | undefined> = {},
+): void {
+    harness.resetEnv({
+        AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
+        AUTH_SIGNUP_PROVIDERS: "github",
+        ...overrides,
+    });
+}
+
 const ONE_BY_ONE_PNG = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Z9e8AAAAASUVORK5CYII=",
     "base64",
 );
 
 describe("connectRoutes (external auth finalize) (integration)", () => {
-    const envBackup = { ...process.env };
     const originalFetch = globalThis.fetch;
-    let testEnvBase: NodeJS.ProcessEnv;
-    let baseDir: string;
+    let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-auth-external-finalize-"));
-        const dbPath = join(baseDir, "test.sqlite");
-
-        process.env = {
-            ...process.env,
-            HAPPIER_DB_PROVIDER: "sqlite",
-            HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: `file:${dbPath}`,
-            HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-            HAPPIER_SERVER_LIGHT_DATA_DIR: baseDir,
-        };
-        applyLightDefaultEnv(process.env);
-        await ensureHandyMasterSecret(process.env);
-        testEnvBase = { ...process.env };
-
-        runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
-        await initDbSqlite();
-        await db.$connect();
-        await auth.init();
-        await initEncrypt();
-        initFilesLocalFromEnv(process.env);
-        await loadFiles();
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-auth-external-finalize-",
+            initAuth: true,
+            initEncrypt: true,
+            initFiles: true,
+        });
     }, 120_000);
-
-    const restoreEnv = (base: NodeJS.ProcessEnv) => {
-        for (const key of Object.keys(process.env)) {
-            if (!(key in base)) {
-                delete (process.env as any)[key];
-            }
-        }
-        for (const [key, value] of Object.entries(base)) {
-            if (typeof value === "string") {
-                process.env[key] = value;
-            }
-        }
-    };
-
     afterEach(async () => {
         await closeTrackedApps();
-        restoreEnv(testEnvBase);
+        harness.resetEnv();
         vi.unstubAllGlobals();
         globalThis.fetch = originalFetch;
         await db.userFeedItem.deleteMany();
@@ -122,10 +80,8 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     afterAll(async () => {
-        await db.$disconnect();
-        process.env = envBackup;
+        await harness.close();
         globalThis.fetch = originalFetch;
-        await rm(baseDir, { recursive: true, force: true });
     });
 
     it("POST /v1/auth/external/:provider/finalize returns 404 unsupported-provider for unknown providers", async () => {
@@ -257,8 +213,7 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("POST /v1/auth/external/github/finalize creates an account and returns a token", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        applyGithubExternalAuthFinalizeEnv(harness);
 
         const { body, publicKeyHex } = createAuthBody();
 
@@ -344,8 +299,7 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("returns 400 username-required when pending indicates username is required and no username is provided", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        applyGithubExternalAuthFinalizeEnv(harness);
 
         const { body, publicKeyHex } = createAuthBody(9);
 
@@ -420,8 +374,7 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("creates an account when username is provided for a username-required pending", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        applyGithubExternalAuthFinalizeEnv(harness);
 
         const { body, publicKeyHex } = createAuthBody(10);
 
@@ -502,8 +455,7 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("returns 409 provider-already-linked when an identity is linked to another account", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        applyGithubExternalAuthFinalizeEnv(harness);
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(7);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(8);
@@ -608,13 +560,12 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("resets the account and migrates social relationships when reset=true and the provider identity is already linked", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-
-        process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
-        process.env.GITHUB_CLIENT_ID = "cid";
-        process.env.GITHUB_CLIENT_SECRET = "secret";
-        process.env.GITHUB_REDIRECT_URL = "https://server.example.test/v1/oauth/github/callback";
+        applyGithubExternalAuthFinalizeEnv(harness, {
+            HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED: "1",
+            GITHUB_CLIENT_ID: "cid",
+            GITHUB_CLIENT_SECRET: "secret",
+            GITHUB_REDIRECT_URL: "https://server.example.test/v1/oauth/github/callback",
+        });
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(21);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(22);
@@ -765,13 +716,12 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("does not migrate social data when provider reset disableAccount fails (restores old identity, keeps pending)", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-
-        process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
-        process.env.GITHUB_CLIENT_ID = "cid";
-        process.env.GITHUB_CLIENT_SECRET = "secret";
-        process.env.GITHUB_REDIRECT_URL = "https://server.example.test/v1/oauth/github/callback";
+        applyGithubExternalAuthFinalizeEnv(harness, {
+            HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED: "1",
+            GITHUB_CLIENT_ID: "cid",
+            GITHUB_CLIENT_SECRET: "secret",
+            GITHUB_REDIRECT_URL: "https://server.example.test/v1/oauth/github/callback",
+        });
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(31);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(32);
@@ -939,12 +889,12 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("deletes the newly created account when identity detach fails during provider reset", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
-        process.env.GITHUB_CLIENT_ID = "cid";
-        process.env.GITHUB_CLIENT_SECRET = "secret";
-        process.env.GITHUB_REDIRECT_URL = "https://server.example.test/v1/oauth/github/callback";
+        applyGithubExternalAuthFinalizeEnv(harness, {
+            HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED: "1",
+            GITHUB_CLIENT_ID: "cid",
+            GITHUB_CLIENT_SECRET: "secret",
+            GITHUB_REDIRECT_URL: "https://server.example.test/v1/oauth/github/callback",
+        });
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(41);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(42);
@@ -1067,8 +1017,7 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     });
 
     it("cleans up newly created account when GitHub connect fails, leaving the pending key for retry", async () => {
-        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
-        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        applyGithubExternalAuthFinalizeEnv(harness);
 
         const { body, publicKeyHex } = createAuthBody(11);
 

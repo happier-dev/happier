@@ -2,9 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OAuthStateUnavailableError } from "@/app/auth/oauthStateErrors";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/registry";
 
+import { createDbMocks, installDbModuleMock } from "../../../testkit/dbMocks";
+
 const createOauthStateToken = vi.fn();
-const repeatKeyCreate = vi.fn();
-const repeatKeyDelete = vi.fn();
+const dbMocks = createDbMocks({
+    repeatKey: ["create", "delete"],
+} as const);
+const repeatKeyCreate = dbMocks.db.repeatKey.create;
+const repeatKeyDelete = dbMocks.db.repeatKey.delete;
 
 vi.mock("@/app/auth/auth", () => ({
     auth: {
@@ -12,13 +17,8 @@ vi.mock("@/app/auth/auth", () => ({
     },
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        repeatKey: {
-            create: repeatKeyCreate,
-            delete: repeatKeyDelete,
-        },
-    },
+installDbModuleMock(() => ({
+    db: dbMocks.db,
 }));
 
 vi.mock("@/app/oauth/pkce", () => ({
@@ -49,6 +49,7 @@ function createProviderStub(overrides: Partial<OAuthFlowProvider> = {}): OAuthFl
 describe("createExternalAuthorizeUrl", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        dbMocks.reset();
         repeatKeyCreate.mockResolvedValue(undefined);
         repeatKeyDelete.mockResolvedValue(undefined);
     });
