@@ -143,9 +143,7 @@ describe('RootLayout', () => {
                 expect(node).not.toBeNull();
                 expect(node.props?.style?.opacity).toBe(scenario.expectedOpacity);
             } finally {
-                act(() => {
-                    tree?.unmount();
-                });
+                await tree?.unmount();
             }
         });
     }
@@ -162,9 +160,7 @@ describe('RootLayout', () => {
             expect(screenNames).toContain('session/[id]/runs/new');
             expect(screenNames).toContain('session/[id]/runs/[runId]');
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            await tree?.unmount();
         }
     });
 });
