@@ -10,7 +10,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { makeToolCall } from './ToolView.testHelpers';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,23 +20,35 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: {
-                                            OS: 'ios',
-                                            select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
-                                        },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'toolViewDetailLevelDefault') return 'summary';
+                    if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                    if (key === 'toolViewDetailLevelByToolName') return {};
+                    if (key === 'toolViewShowDebugByDefault') return false;
+                    return null;
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -90,25 +102,6 @@ vi.mock('../presentation/ToolError', () => ({
 vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => {
-                if (key === 'toolViewDetailLevelDefault') return 'summary';
-                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-                if (key === 'toolViewDetailLevelByToolName') return {};
-                if (key === 'toolViewShowDebugByDefault') return false;
-                return null;
-            },
-        },
-    }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],

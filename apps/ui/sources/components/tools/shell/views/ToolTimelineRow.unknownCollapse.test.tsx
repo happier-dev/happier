@@ -12,11 +12,67 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { makeToolCall } from './ToolView.testHelpers';
+import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ensureSidechainMessagesLoadedMock = vi.fn();
+
+let settings: Record<string, any> = {};
+
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web' },
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            Animated: {
+                Value: class {
+                    constructor(_value: unknown) {}
+                    setValue(_value: unknown) {}
+                    interpolate(_config: unknown) {
+                        return 0;
+                    }
+                },
+                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                bezier: () => (t: number) => t,
+                linear: (t: number) => t,
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    text: '#111',
+                    textSecondary: '#555',
+                    textLink: '#09f',
+                    textDestructive: '#c00',
+                    divider: '#ddd',
+                    shadow: { color: '#000' },
+                    surfaceHigh: '#eee',
+                    surfaceHighest: '#fff',
+                    surfacePressedOverlay: '#ddd',
+                    warning: '#f90',
+                },
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => settings[key],
+            },
+        });
+    },
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -24,58 +80,10 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Platform: { OS: 'web' },
-                                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                        Animated: {
-                                            Value: class {
-                                                constructor(_value: unknown) {}
-                                                setValue(_value: unknown) {}
-                                                interpolate(_config: unknown) {
-                                                    return 0;
-                                                }
-                                            },
-                                            timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                                        },
-                                        Easing: {
-                                            bezier: () => (t: number) => t,
-                                            linear: (t: number) => t,
-                                        },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () =>
-    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#111',
-                textSecondary: '#555',
-                textLink: '#09f',
-                textDestructive: '#c00',
-                divider: '#ddd',
-                shadow: { color: '#000' },
-                surfaceHigh: '#eee',
-                surfaceHighest: '#fff',
-                surfacePressedOverlay: '#ddd',
-                warning: '#f90',
-            },
-        },
-    }));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
-
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {},
@@ -126,15 +134,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
     };
 });
-
-let settings: Record<string, any> = {};
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => settings[key],
-        },
-    }));
 
 describe('ToolTimelineRow (unknown tool collapse)', () => {
     beforeEach(() => {

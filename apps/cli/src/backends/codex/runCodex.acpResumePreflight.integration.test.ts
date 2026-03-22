@@ -1348,7 +1348,7 @@ describe('runCodex CodexACP resume behavior', () => {
     }
   });
 
-  it('queues mid-turn user messages for app-server sessions and publishes inFlightSteer=false', async () => {
+  it('steers mid-turn user messages for app-server sessions and publishes inFlightSteer=true', async () => {
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
@@ -1358,7 +1358,7 @@ describe('runCodex CodexACP resume behavior', () => {
     let observedQueuedMessageCount = 0;
     const appServerRuntime = {
       getSessionId: () => 'thread-app-server',
-      supportsInFlightSteer: () => false,
+      supportsInFlightSteer: () => true,
       isTurnInFlight: () => true,
       beginTurn: vi.fn(),
       cancel: vi.fn(async () => {}),
@@ -1383,9 +1383,9 @@ describe('runCodex CodexACP resume behavior', () => {
         meta: {},
         localId: 'local-user-message-1',
       });
+      await new Promise((resolve) => setTimeout(resolve, 0));
       observedQueuedMessageCount = opts.messageQueue.size();
-      const queued = await opts.messageQueue.waitForMessagesAndGetAsString(new AbortController().signal);
-      observedQueuedMessageText = queued?.message ?? null;
+      observedQueuedMessageText = null;
       throw new Error('wait-called');
     };
 
@@ -1405,13 +1405,13 @@ describe('runCodex CodexACP resume behavior', () => {
 
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalledTimes(1);
     expect(lastOnUserMessageHandler).toBeTypeOf('function');
-    expect(observedQueuedMessageCount).toBe(1);
-    expect(observedQueuedMessageText).toBe('queue now');
-    expect(appServerRuntime.steerPrompt).not.toHaveBeenCalled();
+    expect(observedQueuedMessageCount).toBe(0);
+    expect(observedQueuedMessageText).toBe(null);
+    expect(appServerRuntime.steerPrompt).toHaveBeenCalledWith('queue now');
     expect(appServerRuntime.sendPrompt).not.toHaveBeenCalled();
     expect(lastSessionClient?.updateAgentState).toHaveBeenCalled();
     const updatedAgentState = (lastSessionClient?.updateAgentState as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.({});
-    expect(updatedAgentState?.capabilities?.inFlightSteer).toBe(false);
+    expect(updatedAgentState?.capabilities?.inFlightSteer).toBe(true);
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.error).toEqual(expect.objectContaining({ message: 'wait-called' }));

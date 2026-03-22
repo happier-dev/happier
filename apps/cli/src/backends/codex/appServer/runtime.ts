@@ -903,10 +903,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     return {
         getSessionId: () => threadId,
-        // Codex app-server exposes turn/steer at the transport level, but live provider behavior still
-        // queues follow-up corrections until the active turn completes. Fail closed so Happier uses the
-        // normal pending-queue UX instead of promising immediate mid-turn steering that does not happen.
-        supportsInFlightSteer: () => false,
+        // Codex app-server exposes `turn/steer`, which appends user input to the active in-flight
+        // turn without interrupting it. This may not affect a currently-running tool until that
+        // tool finishes, but it should still be handled within the same turn.
+        supportsInFlightSteer: () => true,
         isTurnInFlight: () => turnInFlight,
         beginTurn: () => {
             turnChangeCollector.beginTurn();
@@ -921,18 +921,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 return;
             }
             const client = await ensureClient();
-            let interruptTurnId = activeTurn.turnId ?? latestPendingTurnId;
+            const interruptTurnId = activeTurn.turnId ?? latestPendingTurnId;
             if (!interruptTurnId) {
-                const waitStartedAt = Date.now();
-                while (!interruptTurnId && Date.now() - waitStartedAt < 150) {
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                    interruptTurnId = pendingTurn?.turnId ?? latestPendingTurnId;
-                }
+                // If we can't resolve the turn id, fall back to tearing down the runtime; this will
+                // abort the active work without relying on turn-scoped cancellation.
+                await disposeClient();
+                return;
             }
-            await client.request('turn/interrupt', {
-                threadId: activeTurn.threadId,
-                ...(interruptTurnId ? { turnId: interruptTurnId } : {}),
-            });
+            await client.request('turn/interrupt', { threadId: activeTurn.threadId, turnId: interruptTurnId });
             await finishPendingTurn({ flushReason: 'abort' });
         },
         reset: async () => {
@@ -1027,11 +1023,36 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 throw new Error('Codex app-server steerPrompt requires an active turn');
             }
             const client = await ensureClient();
-            await client.request('turn/steer', {
+            const expectedTurnId = activeTurn.turnId ?? latestPendingTurnId;
+            if (!expectedTurnId) {
+                throw new Error('Codex app-server steerPrompt requires an active turn id');
+            }
+
+            const payload = {
                 threadId: activeTurn.threadId,
-                ...(activeTurn.turnId ? { turnId: activeTurn.turnId } : {}),
                 input: [{ type: 'text', text: prompt }],
-            });
+            };
+            try {
+                await client.request('turn/steer', {
+                    ...payload,
+                    expectedTurnId,
+                });
+            } catch (error) {
+                // Backward compatibility: older experimental app-server builds used `turnId` instead
+                // of `expectedTurnId`.
+                const message = error instanceof Error ? error.message : String(error ?? '');
+                const normalized = message.toLowerCase();
+                const looksLikeParamMismatch =
+                    (normalized.includes('expectedturnid') || normalized.includes('expected turn') || normalized.includes('turnid'))
+                    && (normalized.includes('require') || normalized.includes('missing') || normalized.includes('unknown') || normalized.includes('invalid'));
+                if (!looksLikeParamMismatch) {
+                    throw error;
+                }
+                await client.request('turn/steer', {
+                    ...payload,
+                    turnId: expectedTurnId,
+                });
+            }
         },
         sendPrompt: async (prompt: string) => {
             const activeThreadId = threadId;

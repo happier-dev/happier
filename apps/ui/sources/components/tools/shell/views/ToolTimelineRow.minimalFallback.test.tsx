@@ -5,45 +5,52 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ensureSidechainMessagesLoadedMock = vi.fn();
+
+let settings: Record<string, unknown> = {};
+
+installToolShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+            Animated: {
+                Value: class {
+                    constructor(_value: unknown) {}
+                    setValue(_value: unknown) {}
+                    interpolate(_config: unknown) {
+                        return 0;
+                    }
+                },
+                timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            Easing: {
+                bezier: () => (t: number) => t,
+                linear: (t: number) => t,
+            },
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => settings[key],
+            },
+        });
+    },
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
         ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
     },
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-                                        Animated: {
-                                            Value: class {
-                                                constructor(_value: unknown) {}
-                                                setValue(_value: unknown) {}
-                                                interpolate(_config: unknown) {
-                                                    return 0;
-                                                }
-                                            },
-                                            timing: () => ({ start: (cb?: (result: { finished: boolean }) => void) => cb?.({ finished: true }) }),
-                                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-                                        },
-                                        Easing: {
-                                            bezier: () => (t: number) => t,
-                                            linear: (t: number) => t,
-                                        },
-                                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -110,33 +117,12 @@ vi.mock('@/components/ui/text/Text', async () => {
     };
 });
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
     DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-
-let settings: Record<string, unknown> = {};
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: (key: string) => settings[key],
-        },
-    });
-});
 
 describe('ToolTimelineRow (minimal fallback)', () => {
     beforeEach(() => {

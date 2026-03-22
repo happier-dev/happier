@@ -66,10 +66,13 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        const text = Array.isArray(msg.params?.input) ? String(msg.params.input[0]?.text ?? "unknown") : "unknown";',
         '        const turnId = `turn-${text}`;',
         '        const completionDelayMs = text === "cancel-me" ? 50 : 15;',
-        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: turnId }, threadId: msg.params?.threadId ?? null } }) + "\\n");',
+        '        const respondDelayMs = text === "steer-delay" ? 60 : 0;',
+        '        setTimeout(() => {',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: turnId }, threadId: msg.params?.threadId ?? null } }) + "\\n");',
+        '        }, respondDelayMs);',
         '        setTimeout(() => {',
             '            process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
-        '        }, 5);',
+        '        }, respondDelayMs + 5);',
         '        if (text === "bridge-streams") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { itemId: "msg_1", delta: "Hello " } }) + "\\n");',
@@ -243,7 +246,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        }',
         '        setTimeout(() => {',
         '            process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
-        '        }, completionDelayMs);',
+        '        }, respondDelayMs + completionDelayMs);',
         '        continue;',
         '    }',
         '    if (msg.method === "turn/interrupt") {',
@@ -255,7 +258,14 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "turn/steer") {',
-        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + "\\n");',
+        '        const expectedTurnId = typeof msg.params?.expectedTurnId === "string" ? msg.params.expectedTurnId : null;',
+        '        const turnId = typeof msg.params?.turnId === "string" ? msg.params.turnId : null;',
+        '        const selected = expectedTurnId ?? turnId;',
+        '        if (!selected) {',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "turn/steer requires expectedTurnId" } }) + "\\n");',
+        '            continue;',
+        '        }',
+        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { turnId: selected } }) + "\\n");',
         '        continue;',
         '    }',
         '    if (msg.method === "thread/rollback") {',
@@ -521,7 +531,7 @@ describe('createCodexAppServerRuntime', () => {
         ]);
     });
 
-    it('does not advertise in-flight steer support even though turn/steer is available at the transport level', async () => {
+    it('advertises in-flight steer support and can call turn/steer while a turn is in flight', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-');
 
         const runtime = createCodexAppServerRuntime({
@@ -531,7 +541,7 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
-        expect(runtime.supportsInFlightSteer()).toBe(false);
+        expect(runtime.supportsInFlightSteer()).toBe(true);
 
         const sendPromptPromise = runtime.sendPrompt('cancel-me');
         await new Promise((resolve) => setTimeout(resolve, 30));
@@ -545,12 +555,42 @@ describe('createCodexAppServerRuntime', () => {
             expect.objectContaining({
                 params: expect.objectContaining({
                     threadId: 'thread-started',
-                    turnId: 'turn-cancel-me',
+                    expectedTurnId: 'turn-cancel-me',
                     input: [{ type: 'text', text: 'nudge' }],
                 }),
             }),
         ]);
         expect(requestLog.filter((entry: { method: string }) => entry.method === 'turn/start')).toHaveLength(1);
+    });
+
+    it('waits for the active turn id before calling turn/steer', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-wait-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.startOrLoad({});
+
+        const sendPromptPromise = runtime.sendPrompt('steer-delay');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        expect(runtime.isTurnInFlight()).toBe(true);
+        await runtime.steerPrompt('nudge-early');
+        await sendPromptPromise;
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog.filter((entry: { method: string }) => entry.method === 'turn/steer')).toEqual([
+            expect.objectContaining({
+                params: expect.objectContaining({
+                    threadId: 'thread-started',
+                    expectedTurnId: 'turn-steer-delay',
+                    input: [{ type: 'text', text: 'nudge-early' }],
+                }),
+            }),
+        ]);
     });
 
     it('bridges stream notifications into transcript deltas and tool updates during sendPrompt', async () => {
