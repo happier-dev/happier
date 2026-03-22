@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,30 +21,32 @@ const localSettingsState = vi.hoisted(() => ({
     sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-    usePathname: () => '/',
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+        pathname: '/',
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-
-    return {
-        ...actual,
-    useFriendRequests: () => [],
-    useSocketStatus: () => ({ status: 'connected' }),
-    useRealtimeStatus: () => ({ status: 'idle' }),
-    useLocalSettingMutable: (name: string) => {
-        if (name === 'sessionsListStorageTab') {
-            return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
-        }
-        throw new Error(`Unexpected local setting: ${name}`);
-    },
-    };
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useFriendRequests: () => [],
+        useSocketStatus: () => ({ status: 'connected' }),
+        useRealtimeStatus: () => ({ status: 'idle' }),
+        useLocalSettingMutable: (name: string) => {
+            if (name === 'sessionsListStorageTab') {
+                return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
+            }
+            throw new Error(`Unexpected local setting: ${name}`);
+        },
+    });
 });
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
@@ -154,7 +158,7 @@ vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
 }));
 
 function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.root.find((node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === label);
+    return tree.find((node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === label);
 }
 
 describe('MainView sidebar actions', () => {
@@ -174,9 +178,7 @@ describe('MainView sidebar actions', () => {
 
     it('does not render sidebar action buttons (automations and new session)', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<MainView variant="sidebar" />);
-        });
+        tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
         expect(() => findPressableByLabel(tree!, 'New session')).toThrow();
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
@@ -184,11 +186,9 @@ describe('MainView sidebar actions', () => {
 
     it('does not duplicate getting started guidance when primary pane is visible (home route)', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<MainView variant="sidebar" />);
-        });
+        tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).toThrow();
+        expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 
     it('renders direct session storage tabs in the sidebar empty state when direct sessions are enabled', async () => {
@@ -196,11 +196,9 @@ describe('MainView sidebar actions', () => {
         localSettingsState.sessionsListStorageTab = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<MainView variant="sidebar" />);
-        });
+        tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.root.findByProps({ testID: 'sessions-list-storage-tab:direct' })).not.toThrow();
+        expect(() => tree!.findByProps({ testID: 'sessions-list-storage-tab:direct' })).not.toThrow();
     });
 
     it('renders the browse direct sessions action in the sidebar empty state when the direct tab is active', async () => {
@@ -208,10 +206,8 @@ describe('MainView sidebar actions', () => {
         localSettingsState.sessionsListStorageTab = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<MainView variant="sidebar" />);
-        });
+        tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.root.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
+        expect(() => tree!.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
     });
 });

@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,52 +16,54 @@ const buildPolicyState = vi.hoisted(() => ({
 
 const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        Platform: {
-            ...(actual.Platform ?? {}),
-            OS: 'ios',
-        },
-        View: 'View',
-        Text: 'Text',
-        Pressable: 'Pressable',
-        ActivityIndicator: 'ActivityIndicator',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'ios',
+                            },
+                            View: 'View',
+                            Text: 'Text',
+                            Pressable: 'Pressable',
+                            ActivityIndicator: 'ActivityIndicator',
+                        }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: async () => {} }),
-    usePathname: () => '/',
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: async () => {} },
+        pathname: '/',
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-
-    return {
-        ...actual,
-    useFriendRequests: () => [],
-    useSocketStatus: () => ({ status: 'connected' }),
-    useRealtimeStatus: () => ({ status: 'idle' }),
-    useLocalSettingMutable: (name: string) => {
-        if (name === 'sessionsListStorageTab') {
-            return ['persisted', setSessionsListStorageTabSpy] as const;
-        }
-        throw new Error(`Unexpected local setting: ${name}`);
-    },
-    useSetting: (key: string) => {
-        if (key === 'serverSelectionGroups') return [];
-        if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
-        if (key === 'serverSelectionActiveTargetId') return '';
-        return null;
-    },
-    useSettings: () => ({}),
-    };
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useFriendRequests: () => [],
+        useSocketStatus: () => ({ status: 'connected' }),
+        useRealtimeStatus: () => ({ status: 'idle' }),
+        useLocalSettingMutable: (name: string) => {
+            if (name === 'sessionsListStorageTab') {
+                return ['persisted', setSessionsListStorageTabSpy] as const;
+            }
+            throw new Error(`Unexpected local setting: ${name}`);
+        },
+        useSetting: (key: string) => {
+            if (key === 'serverSelectionGroups') return [];
+            if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
+            if (key === 'serverSelectionActiveTargetId') return '';
+            return null;
+        },
+        useSettings: () => ({}),
+    });
 });
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
@@ -177,11 +181,9 @@ describe('MainView (tablet primary pane)', () => {
         const { MainView } = await import('./MainView');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<MainView variant="phone" />);
-        });
+        tree = (await renderScreen(<MainView variant="phone" />)).tree;
 
-        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
+        expect(() => tree!.findByType('SessionGettingStartedGuidance')).not.toThrow();
     });
 
     it('shows a fallback view when getting started guidance is denied by build policy', async () => {
@@ -189,10 +191,8 @@ describe('MainView (tablet primary pane)', () => {
         const { MainView } = await import('./MainView');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(<MainView variant="phone" />);
-        });
+        tree = (await renderScreen(<MainView variant="phone" />)).tree;
 
-        expect(() => tree!.root.findByProps({ testID: 'mainview-tablet-primary-pane-fallback' })).not.toThrow();
+        expect(() => tree!.findByProps({ testID: 'mainview-tablet-primary-pane-fallback' })).not.toThrow();
     });
 });
