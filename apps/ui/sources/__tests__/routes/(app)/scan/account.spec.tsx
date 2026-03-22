@@ -1,32 +1,47 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: 'View',
+                }
+    );
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 const promptSpy = vi.fn(async (..._args: unknown[]) => null as string | null);
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: (...args: unknown[]) => promptSpy(...args),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: (...args: unknown[]) => promptSpy(...args),
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
 
 const routerBackSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: routerBackSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { back: routerBackSpy },
+    });
+    return routerMock.module;
+});
 
 const processAuthUrlSpy = vi.fn(async (_url: string) => true);
 vi.mock('@/hooks/auth/useConnectAccount', () => ({
@@ -50,9 +65,7 @@ describe('/scan/account', () => {
 
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
+        await renderScreen(<Screen />);
 
         expect(typeof lastScannerProps?.onScan).toBe('function');
 
@@ -74,17 +87,13 @@ describe('/scan/account', () => {
 
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
+        await renderScreen(<Screen />);
 
         const footerElement = lastScannerProps?.footer;
         expect(footerElement).toBeTruthy();
 
         let footerTree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            footerTree = renderer.create(footerElement);
-        });
+        footerTree = (await renderScreen(footerElement)).tree;
         if (!footerTree) throw new Error('Expected footer renderer');
 
         const button = footerTree.root.findByType('RoundButton');

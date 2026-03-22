@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,9 +35,7 @@ describe('/friends redirect', () => {
 
         const Page = (await import('@/app/(app)/friends/index')).default;
 
-        await act(async () => {
-            renderer.create(React.createElement(Page));
-        });
+        await renderScreen(React.createElement(Page));
 
         expect(replace).not.toHaveBeenCalledWith('/inbox');
     });
