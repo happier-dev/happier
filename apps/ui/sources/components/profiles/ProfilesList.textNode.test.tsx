@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 const actEnvironment = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -127,9 +129,7 @@ describe('ProfilesList', () => {
         const { ProfilesList } = await import('./ProfilesList');
 
         let tree!: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <ProfilesList
+        tree = (await renderScreen(<ProfilesList
                     customProfiles={[]}
                     favoriteProfileIds={[]}
                     onFavoriteProfileIdsChange={() => {}}
@@ -137,9 +137,7 @@ describe('ProfilesList', () => {
                     onPressDefaultEnvironment={() => {}}
                     machineId={null}
                     includeDefaultEnvironmentRow
-                />,
-            );
-        });
+                />)).tree;
 
         const badNodes: Array<{ parent: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {
