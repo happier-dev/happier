@@ -1,13 +1,25 @@
-import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { createWelcomeFeaturesResponse } from './index.testHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    flushHookEffects,
+    standardCleanup,
+} from '@/dev/testkit';
+
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createWelcomeFeaturesResponse, renderWelcomeScreen } from './index.testHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+const shared = vi.hoisted(() => ({
+    clearPendingExternalAuthMock: vi.fn(async () => true),
+    externalLoginUrl: 'https://example.test/oauth-login',
+    externalSignupUrl: 'https://example.test/oauth',
+    getSuppressedUntilMock: vi.fn(async () => 0),
+    openURL: vi.fn(async () => true),
+    setPendingExternalAuthMock: vi.fn(async () => true),
+}));
 
 let expoScheme: string | undefined = undefined;
 vi.mock('expo-constants', () => ({
@@ -30,26 +42,19 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-const openURL = vi.fn(async () => true);
-let externalSignupUrl = 'https://example.test/oauth';
-let externalLoginUrl = 'https://example.test/oauth-login';
-const getSuppressedUntilMock = vi.fn(async () => 0);
-const setPendingExternalAuthMock = vi.fn(async () => true);
-const clearPendingExternalAuthMock = vi.fn(async () => true);
-
-vi.mock('react-native', () => ({
-    ActivityIndicator: 'ActivityIndicator',
-    Text: 'Text',
-    View: 'View',
-    Image: 'Image',
-    useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
-    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    Platform: {
-        OS: 'ios',
-        select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? spec.ios : undefined),
-    },
-    Linking: { openURL },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                Platform: {
+                    OS: 'ios',
+                    select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? spec.ios : undefined),
+                },
+                Linking: { openURL: shared.openURL },
+                useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
+            }
+    );
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -82,9 +87,9 @@ vi.mock('@/encryption/libsodium.lib', () => ({
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        getAuthAutoRedirectSuppressedUntil: () => getSuppressedUntilMock(),
-        setPendingExternalAuth: () => setPendingExternalAuthMock(),
-        clearPendingExternalAuth: () => clearPendingExternalAuthMock(),
+        getAuthAutoRedirectSuppressedUntil: () => shared.getSuppressedUntilMock(),
+        setPendingExternalAuth: () => shared.setPendingExternalAuthMock(),
+        clearPendingExternalAuth: () => shared.clearPendingExternalAuthMock(),
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
@@ -94,8 +99,8 @@ vi.mock('@/auth/providers/registry', () => ({
         id: 'github',
         displayName: 'GitHub',
         getExternalAuthUrl: async (params: any) => {
-            if (params?.mode === 'keyless') return externalLoginUrl;
-            return externalSignupUrl;
+            if (params?.mode === 'keyless') return shared.externalLoginUrl;
+            return shared.externalSignupUrl;
         },
     }),
 }));
@@ -142,38 +147,52 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 describe('/ (welcome) auto redirect', () => {
     const testTimeoutMs = 60_000;
 
-    beforeEach(() => {
-        expoScheme = undefined;
-        openURL.mockClear();
-        getServerFeaturesMock.mockClear();
-        getServerFeaturesSnapshotMock.mockClear();
-        setPendingExternalAuthMock.mockClear();
-        clearPendingExternalAuthMock.mockClear();
-        getSuppressedUntilMock.mockReset();
-        getSuppressedUntilMock.mockResolvedValue(0);
-        externalSignupUrl = 'https://example.test/oauth';
-        externalLoginUrl = 'https://example.test/oauth-login';
+    afterEach(() => {
+        standardCleanup();
     });
 
-    async function renderWelcomeScreen(): Promise<void> {
-        const { default: Screen } = await import('@/app/(app)/index');
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            act(() => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
-    }
+    beforeEach(() => {
+        expoScheme = undefined;
+        shared.openURL.mockClear();
+        getServerFeaturesMock.mockReset();
+        getServerFeaturesMock.mockImplementation(async () =>
+            createWelcomeFeaturesResponse({
+                signupMethods: [
+                    { id: 'anonymous', enabled: false },
+                    { id: 'github', enabled: true },
+                ],
+                requiredProviders: ['github'],
+                autoRedirectEnabled: true,
+                autoRedirectProviderId: 'github',
+                providerOffboardingIntervalSeconds: 86400,
+            }),
+        );
+        getServerFeaturesSnapshotMock.mockReset();
+        getServerFeaturesSnapshotMock.mockImplementation(async (_params?: unknown): Promise<ServerFeaturesSnapshot> => ({
+            status: 'ready',
+            features: createWelcomeFeaturesResponse({
+                signupMethods: [
+                    { id: 'anonymous', enabled: false },
+                    { id: 'github', enabled: true },
+                ],
+                requiredProviders: ['github'],
+                autoRedirectEnabled: true,
+                autoRedirectProviderId: 'github',
+                providerOffboardingIntervalSeconds: 86400,
+            }),
+        }));
+        shared.setPendingExternalAuthMock.mockClear();
+        shared.clearPendingExternalAuthMock.mockClear();
+        shared.getSuppressedUntilMock.mockReset();
+        shared.getSuppressedUntilMock.mockResolvedValue(0);
+        shared.externalSignupUrl = 'https://example.test/oauth';
+        shared.externalLoginUrl = 'https://example.test/oauth-login';
+    });
 
     it('auto-starts provider signup when server enables auth.ui.autoRedirect', async () => {
         vi.resetModules();
         await renderWelcomeScreen();
-        expect(openURL).toHaveBeenCalledWith('https://example.test/oauth');
+        expect(shared.openURL).toHaveBeenCalledWith('https://example.test/oauth');
     }, testTimeoutMs);
 
     it('does not double-trigger auto-redirect when the effect runs twice before suppression is resolved', async () => {
@@ -183,38 +202,23 @@ describe('/ (welcome) auto redirect', () => {
         const suppressedUntilPromise = new Promise<number>((resolve) => {
             resolveSuppressedUntil = resolve;
         });
-        getSuppressedUntilMock.mockImplementationOnce(async () => await suppressedUntilPromise);
+        shared.getSuppressedUntilMock.mockImplementationOnce(async () => await suppressedUntilPromise);
 
-        const { default: Screen } = await import('@/app/(app)/index');
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            act(() => {
-                tree = renderer.create(
-                    <React.StrictMode>
-                        <Screen />
-                    </React.StrictMode>,
-                );
-            });
+        await renderWelcomeScreen({ strictMode: true });
+        expect(shared.openURL).not.toHaveBeenCalled();
 
-            expect(openURL).not.toHaveBeenCalled();
+        resolveSuppressedUntil?.(0);
+        await flushHookEffects();
 
-            resolveSuppressedUntil?.(0);
-            await act(async () => {});
-
-            expect(openURL).toHaveBeenCalledTimes(1);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(shared.openURL).toHaveBeenCalledTimes(1);
     }, testTimeoutMs);
 
     it('does not auto-start provider signup when auto-redirect is temporarily suppressed', async () => {
         vi.resetModules();
-        getSuppressedUntilMock.mockResolvedValue(Date.now() + 60_000);
+        shared.getSuppressedUntilMock.mockResolvedValue(Date.now() + 60_000);
 
         await renderWelcomeScreen();
-        expect(openURL).not.toHaveBeenCalled();
+        expect(shared.openURL).not.toHaveBeenCalled();
     }, testTimeoutMs);
 
     it('does not throw when server features fetch fails', async () => {
@@ -223,14 +227,47 @@ describe('/ (welcome) auto redirect', () => {
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'error', reason: 'network' });
 
         await renderWelcomeScreen();
-        expect(openURL).not.toHaveBeenCalled();
+        expect(shared.openURL).not.toHaveBeenCalled();
+    }, testTimeoutMs);
+
+    it('retries one transient server features failure before surfacing unavailable state', async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = '1';
+
+        getServerFeaturesSnapshotMock
+            .mockResolvedValueOnce({ status: 'error', reason: 'network' })
+            .mockResolvedValueOnce({
+                status: 'ready',
+                features: createWelcomeFeaturesResponse({
+                    signupMethods: [{ id: 'anonymous', enabled: false }],
+                    loginMethods: [{ id: 'mtls', enabled: true }],
+                    autoRedirectEnabled: true,
+                    autoRedirectProviderId: 'mtls',
+                    providerOffboardingIntervalSeconds: 86400,
+                }),
+            });
+
+        try {
+            await renderWelcomeScreen();
+            await flushHookEffects();
+            expect(shared.openURL).not.toHaveBeenCalled();
+
+            await flushHookEffects({ advanceTimersMs: 1 });
+
+            expect(shared.openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
+        } finally {
+            delete process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
     }, testTimeoutMs);
 
     it('refuses unsafe external signup URLs', async () => {
         vi.resetModules();
-        externalSignupUrl = 'javascript:alert(1)';
+        shared.externalSignupUrl = 'javascript:alert(1)';
         await renderWelcomeScreen();
-        expect(openURL).not.toHaveBeenCalled();
+        expect(shared.openURL).not.toHaveBeenCalled();
     }, testTimeoutMs);
 
     it('auto-starts mTLS login when server enables auth.ui.autoRedirect=mtls', async () => {
@@ -247,7 +284,7 @@ describe('/ (welcome) auto redirect', () => {
         });
 
         await renderWelcomeScreen();
-        expect(openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
+        expect(shared.openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
     }, testTimeoutMs);
 
     it('uses the configured app scheme for the mTLS returnTo deep link', async () => {
@@ -266,7 +303,7 @@ describe('/ (welcome) auto redirect', () => {
         });
 
         await renderWelcomeScreen();
-        expect(openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier-dev%3A%2F%2F%2Fmtls');
+        expect(shared.openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier-dev%3A%2F%2F%2Fmtls');
     }, testTimeoutMs);
 
     it('auto-starts keyless provider login when server enables auth.ui.autoRedirect for a keyless login method', async () => {
@@ -298,6 +335,6 @@ describe('/ (welcome) auto redirect', () => {
         });
 
         await renderWelcomeScreen();
-        expect(openURL).toHaveBeenCalledWith('https://example.test/oauth-login');
+        expect(shared.openURL).toHaveBeenCalledWith('https://example.test/oauth-login');
     }, testTimeoutMs);
 });

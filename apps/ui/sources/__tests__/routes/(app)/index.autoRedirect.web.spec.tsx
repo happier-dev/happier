@@ -1,13 +1,31 @@
-import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { createWelcomeFeaturesResponse } from './index.testHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { standardCleanup } from '@/dev/testkit';
+import { createWelcomeFeaturesResponse, renderWelcomeScreen } from './index.testHelpers';
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mockState = vi.hoisted(() => ({
+    clearPendingExternalAuthMock: vi.fn(async () => true),
+    externalSignupUrl: 'https://example.test/oauth',
+    getSuppressedUntilMock: vi.fn(async () => 0),
+    openURL: vi.fn(async () => true),
+    setPendingExternalAuthMock: vi.fn(async () => true),
+}));
+let expoScheme: string | undefined = undefined;
+
+vi.mock('expo-constants', () => ({
+    default: {
+        expoConfig: {
+            get scheme() {
+                return expoScheme;
+            },
+        },
+    },
+}));
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
@@ -19,25 +37,20 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-const openURL = vi.fn(async () => true);
-let externalSignupUrl = 'https://example.test/oauth';
-const getSuppressedUntilMock = vi.fn(async () => 0);
-const setPendingExternalAuthMock = vi.fn(async () => true);
-const clearPendingExternalAuthMock = vi.fn(async () => true);
-
-vi.mock('react-native', () => ({
-    ActivityIndicator: 'ActivityIndicator',
-    Text: 'Text',
-    View: 'View',
-    Image: 'Image',
-    useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
-    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    Platform: {
-        OS: 'web',
-        select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? spec.web : undefined),
-    },
-    Linking: { openURL },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
+                AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+                Platform: {
+                    OS: 'web',
+                    select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? spec.web : undefined),
+                },
+                Linking: { openURL: mockState.openURL },
+            }
+    );
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -74,9 +87,9 @@ vi.mock('@/encryption/libsodium.lib', () => ({
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        getAuthAutoRedirectSuppressedUntil: () => getSuppressedUntilMock(),
-        setPendingExternalAuth: () => setPendingExternalAuthMock(),
-        clearPendingExternalAuth: () => clearPendingExternalAuthMock(),
+        getAuthAutoRedirectSuppressedUntil: () => mockState.getSuppressedUntilMock(),
+        setPendingExternalAuth: () => mockState.setPendingExternalAuthMock(),
+        clearPendingExternalAuth: () => mockState.clearPendingExternalAuthMock(),
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
@@ -85,10 +98,9 @@ vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: () => ({
         id: 'github',
         displayName: 'GitHub',
-        getExternalAuthUrl: async () => externalSignupUrl,
+        getExternalAuthUrl: async () => mockState.externalSignupUrl,
     }),
 }));
-
 const getServerFeaturesMock = vi.fn(async () =>
     createWelcomeFeaturesResponse({
         signupMethods: [
@@ -124,33 +136,22 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
 }));
 
-async function renderWelcomeScreen(): Promise<void> {
-    const { default: Screen } = await import('@/app/(app)/index');
-    let tree: ReturnType<typeof renderer.create> | undefined;
-    try {
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-    } finally {
-        act(() => {
-            tree?.unmount();
-        });
-    }
-}
-
 describe('/ (welcome) auto redirect on web', () => {
     const testTimeoutMs = 60_000;
 
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
-        openURL.mockClear();
+        mockState.openURL.mockClear();
         getServerFeaturesMock.mockClear();
         getServerFeaturesSnapshotMock.mockClear();
-        setPendingExternalAuthMock.mockClear();
-        clearPendingExternalAuthMock.mockClear();
-        getSuppressedUntilMock.mockReset();
-        getSuppressedUntilMock.mockResolvedValue(0);
-        externalSignupUrl = 'https://example.test/oauth';
+        mockState.setPendingExternalAuthMock.mockClear();
+        mockState.clearPendingExternalAuthMock.mockClear();
+        mockState.getSuppressedUntilMock.mockReset();
+        mockState.getSuppressedUntilMock.mockResolvedValue(0);
+        mockState.externalSignupUrl = 'https://example.test/oauth';
     });
 
     it('navigates in the current tab on web to avoid popup-blocker failures', async () => {
@@ -160,20 +161,11 @@ describe('/ (welcome) auto redirect on web', () => {
         const originalWindow = (globalThis as any).window;
         (globalThis as any).window = { location: { assign } };
 
-        const { default: Screen } = await import('@/app/(app)/index');
-        let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
-
+            await renderWelcomeScreen();
             expect(assign).toHaveBeenCalledWith('https://example.test/oauth');
-            expect(openURL).not.toHaveBeenCalled();
+            expect(mockState.openURL).not.toHaveBeenCalled();
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
             (globalThis as any).window = originalWindow;
         }
     });

@@ -2,6 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { t } from '@/text';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -92,9 +94,7 @@ describe('/ (welcome) terminal connect intent notice', () => {
         const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
+        tree = (await renderScreen(<Screen />)).tree;
         await act(async () => {});
 
         const intentBlocks = tree!.root.findAll((n) => n.props?.testID === 'welcome-terminal-connect-intent');

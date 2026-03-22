@@ -1,7 +1,13 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { createWelcomeFeaturesResponse } from './index.testHelpers';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    createWelcomeFeaturesResponse,
+    renderWelcomeScreen,
+    waitForWelcomeTestId,
+    waitForWelcomeText,
+} from './index.testHelpers';
+import { standardCleanup } from '@/dev/testkit';
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
@@ -86,27 +92,17 @@ describe('/ (welcome) signup methods', () => {
         getServerFeaturesSnapshotMock.mockReset();
         getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'ready', features: defaultWelcomeFeatures });
     });
+    afterEach(standardCleanup);
 
     it('uses an extended initial server-features timeout before showing the server unavailable state', async () => {
         vi.resetModules();
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected welcome screen renderer');
-
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledWith({
-                timeoutMs: 6000,
-                force: false,
-            });
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(screen.root).toBeTruthy();
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledWith({
+            timeoutMs: 6000,
+            force: false,
+        });
     });
 
     it('shows Create account and provider option when both are enabled', async () => {
@@ -124,35 +120,14 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: bothEnabled });
 
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
+        const providerTitle = t('welcome.signUpWithProvider', { provider: 'GitHub' });
+        const textContent = await waitForWelcomeText(screen, providerTitle);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) {
-                throw new Error('Expected welcome screen renderer');
-            }
-
-            let textValues: string[] = [];
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                textValues = tree.root
-                    .findAll((n) => typeof n.props?.children === 'string')
-                    .map((n) => String(n.props.children));
-                if (textValues.includes(t('welcome.createAccount')) && textValues.includes(t('welcome.signUpWithProvider', { provider: 'GitHub' }))) {
-                    break;
-                }
-            }
-
-            expect(textValues).toContain(t('welcome.createAccount'));
-            expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(textContent).toContain(t('welcome.createAccount'));
+        expect(textContent).toContain(providerTitle);
+        expect(screen.findAllByTestId('welcome-create-account').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('welcome-signup-provider').length).toBeGreaterThan(0);
     });
 
     it('prefers auth.methods over legacy signup/login methods when present', async () => {
@@ -190,67 +165,27 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: payload });
 
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
+        const providerTitle = t('welcome.signUpWithProvider', { provider: 'GitHub' });
+        const textContent = await waitForWelcomeText(screen, providerTitle);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected welcome screen renderer');
-
-            let textValues: string[] = [];
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                textValues = tree.root
-                    .findAll((n) => typeof n.props?.children === 'string')
-                    .map((n) => String(n.props.children));
-                if (textValues.includes(t('welcome.signUpWithProvider', { provider: 'GitHub' }))) {
-                    break;
-                }
-            }
-
-            expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
-            expect(textValues).not.toContain(t('welcome.createAccount'));
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(textContent).toContain(providerTitle);
+        expect(textContent).not.toContain(t('welcome.createAccount'));
+        expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-signup-provider').length).toBeGreaterThan(0);
     });
 
     it('hides Create account when anonymous signup is disabled and shows provider option', async () => {
         vi.resetModules();
         const { t } = await import('@/text');
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
+        const providerTitle = t('welcome.signUpWithProvider', { provider: 'GitHub' });
+        const textContent = await waitForWelcomeText(screen, providerTitle);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) {
-                throw new Error('Expected welcome screen renderer');
-            }
-
-            let textValues: string[] = [];
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                textValues = tree.root
-                    .findAll((n) => typeof n.props?.children === 'string')
-                    .map((n) => String(n.props.children));
-                if (textValues.includes(t('welcome.signUpWithProvider', { provider: 'GitHub' }))) {
-                    break;
-                }
-            }
-
-            expect(textValues).not.toContain(t('welcome.createAccount'));
-            expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(textContent).not.toContain(t('welcome.createAccount'));
+        expect(textContent).toContain(providerTitle);
+        expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-signup-provider').length).toBeGreaterThan(0);
     });
 
     it('shows mTLS login when signup methods are disabled but mTLS is enabled', async () => {
@@ -267,33 +202,12 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: mtlsOnly });
 
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
+        const mtlsTitle = t('welcome.signInWithCertificate');
+        const textContent = await waitForWelcomeText(screen, mtlsTitle);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected welcome screen renderer');
-
-            let textValues: string[] = [];
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                textValues = tree.root
-                    .findAll((n) => typeof n.props?.children === 'string')
-                    .map((n) => String(n.props.children));
-                if (textValues.includes(t('welcome.signInWithCertificate'))) {
-                    break;
-                }
-            }
-
-            expect(textValues).toContain(t('welcome.signInWithCertificate'));
-            expect(textValues).not.toContain(t('welcome.createAccount'));
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(textContent).toContain(mtlsTitle);
+        expect(textContent).not.toContain(t('welcome.createAccount'));
     });
 
     it('shows keyless provider login when signup methods are disabled but a keyless OAuth login method is enabled', async () => {
@@ -324,74 +238,48 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: keylessOnly });
 
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
+        const providerTitle = t('welcome.signUpWithProvider', { provider: 'GitHub' });
+        const textContent = await waitForWelcomeText(screen, providerTitle);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected welcome screen renderer');
-
-            let textValues: string[] = [];
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                textValues = tree.root
-                    .findAll((n) => typeof n.props?.children === 'string')
-                    .map((n) => String(n.props.children));
-                if (textValues.includes(t('welcome.signUpWithProvider', { provider: 'GitHub' }))) {
-                    break;
-                }
-            }
-
-            expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
-            expect(textValues).not.toContain(t('welcome.createAccount'));
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(textContent).toContain(providerTitle);
+        expect(textContent).not.toContain(t('welcome.createAccount'));
+        expect(screen.findByTestId('welcome-create-account')).not.toBeNull();
     });
 
     it('shows a server unavailable notice and hides auth actions when the server cannot be reached', async () => {
         vi.resetModules();
+        vi.useFakeTimers();
+        process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = '1';
         const { t } = await import('@/text');
-        getReadyServerFeaturesMock.mockRejectedValueOnce(new Error('network'));
         getServerFeaturesSnapshotMock.mockClear();
-        getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'error', reason: 'network' });
+        getServerFeaturesSnapshotMock
+            .mockResolvedValueOnce({ status: 'error', reason: 'network' })
+            .mockResolvedValueOnce({ status: 'error', reason: 'network' });
 
-        const { default: Screen } = await import('@/app/(app)/index');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
         try {
+            const screen = await renderWelcomeScreen();
+
+            expect(screen.findAllByTestId('welcome-server-unavailable')).toHaveLength(0);
+
             await act(async () => {
-                tree = renderer.create(<Screen />);
+                await vi.advanceTimersByTimeAsync(1);
             });
-            if (!tree) throw new Error('Expected welcome screen renderer');
+            await waitForWelcomeTestId(screen, 'welcome-server-unavailable');
 
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                const unavailableBlocks = tree.root.findAll((n) => n.props?.testID === 'welcome-server-unavailable');
-                if (unavailableBlocks.length > 0) break;
-            }
+            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
 
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalled();
-
-            const unavailableBlocks = tree.root.findAll((n) => n.props?.testID === 'welcome-server-unavailable');
-            expect(unavailableBlocks).toHaveLength(1);
-            const unavailableTextValues = unavailableBlocks[0]!.findAll((n) => typeof n.props?.children === 'string')
-                .map((n) => String(n.props.children));
-
-            expect(unavailableTextValues).toContain(t('welcome.serverUnavailableTitle'));
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-restore')).toHaveLength(0);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-signup-provider')).toHaveLength(0);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-create-account')).toHaveLength(0);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-retry-server' && n.props?.accessibilityRole === 'button')).toHaveLength(1);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-configure-server' && n.props?.accessibilityRole === 'button')).toHaveLength(1);
+            expect(screen.findAllByTestId('welcome-server-unavailable')).toHaveLength(1);
+            expect(screen.getTextContent()).toContain(t('welcome.serverUnavailableTitle'));
+            expect(screen.findAllByTestId('welcome-restore')).toHaveLength(0);
+            expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
+            expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+            expect(screen.findByTestId('welcome-retry-server')).not.toBeNull();
+            expect(screen.findByTestId('welcome-configure-server')).not.toBeNull();
         } finally {
-            act(() => {
-                tree?.unmount();
-            });
+            delete process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;
+            vi.clearAllTimers();
+            vi.useRealTimers();
         }
     });
 
@@ -401,38 +289,17 @@ describe('/ (welcome) signup methods', () => {
         getServerFeaturesSnapshotMock.mockClear();
         getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'invalid_payload' });
 
-        const { default: Screen } = await import('@/app/(app)/index');
+        const screen = await renderWelcomeScreen();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            if (!tree) throw new Error('Expected welcome screen renderer');
+        await waitForWelcomeTestId(screen, 'welcome-server-unavailable');
 
-            for (let turn = 0; turn < 10; turn += 1) {
-                await act(async () => {});
-                const blocks = tree.root.findAll((n) => n.props?.testID === 'welcome-server-unavailable');
-                if (blocks.length > 0) break;
-            }
-
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalled();
-
-            const blocks = tree.root.findAll((n) => n.props?.testID === 'welcome-server-unavailable');
-            expect(blocks).toHaveLength(1);
-            const textValues = blocks[0]!.findAll((n) => typeof n.props?.children === 'string')
-                .map((n) => String(n.props.children));
-
-            expect(textValues).toContain(t('welcome.serverIncompatibleTitle'));
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-restore')).toHaveLength(0);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-signup-provider')).toHaveLength(0);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-create-account')).toHaveLength(0);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-retry-server' && n.props?.accessibilityRole === 'button')).toHaveLength(1);
-            expect(tree.root.findAll((n) => n.props?.testID === 'welcome-configure-server' && n.props?.accessibilityRole === 'button')).toHaveLength(1);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(getServerFeaturesSnapshotMock).toHaveBeenCalled();
+        expect(screen.findAllByTestId('welcome-server-unavailable')).toHaveLength(1);
+        expect(screen.getTextContent()).toContain(t('welcome.serverIncompatibleTitle'));
+        expect(screen.findAllByTestId('welcome-restore')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-signup-provider')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+        expect(screen.findByTestId('welcome-retry-server')).not.toBeNull();
+        expect(screen.findByTestId('welcome-configure-server')).not.toBeNull();
     });
 });

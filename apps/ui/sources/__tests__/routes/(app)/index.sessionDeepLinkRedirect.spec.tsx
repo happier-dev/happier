@@ -1,17 +1,33 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerReplaceSpy = vi.fn();
-let mockSearchParams: { id?: string; messageId?: string; jumpChildId?: string } = { id: 'session-1', messageId: 'message-1' };
-
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ replace: routerReplaceSpy }),
-  router: { replace: routerReplaceSpy },
-  useLocalSearchParams: () => mockSearchParams,
+const shared = vi.hoisted(() => ({
+  routerReplaceSpy: vi.fn(),
+  searchParams: { id: 'session-1', messageId: 'message-1' } as { id?: string; messageId?: string; jumpChildId?: string },
 }));
+
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  const routerMock = createExpoRouterMock({
+    params: shared.searchParams,
+    router: {
+      push: vi.fn(),
+      back: vi.fn(),
+      replace: shared.routerReplaceSpy,
+      setParams: vi.fn(),
+    },
+  });
+
+  return {
+    ...routerMock.module,
+    useLocalSearchParams: () => shared.searchParams,
+    useGlobalSearchParams: () => shared.searchParams,
+  };
+});
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
@@ -36,23 +52,28 @@ vi.mock('@/encryption/libsodium.lib', () => ({ default: {} }));
 describe('/ authenticated deep link redirects', () => {
   it('redirects to /session/:id/message/:messageId when query params are present', async () => {
     vi.resetModules();
-    routerReplaceSpy.mockClear();
-    mockSearchParams = { id: 'session-1', messageId: 'message-1' };
+    shared.routerReplaceSpy.mockClear();
+    shared.searchParams = { id: 'session-1', messageId: 'message-1' };
 
     const { default: Screen } = await import('@/app/(app)/index');
+    let tree: renderer.ReactTestRenderer | null = null;
 
-    await act(async () => {
-      renderer.create(<Screen />);
-    });
-    await act(async () => {});
+    try {
+      tree = (await renderScreen(<Screen />)).tree;
+      await flushHookEffects();
 
-    expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1/message/message-1');
+      expect(shared.routerReplaceSpy).toHaveBeenCalledWith('/session/session-1/message/message-1');
+    } finally {
+      act(() => {
+        tree?.unmount();
+      });
+    }
   });
 
   it('does not collapse a non-root web deep link to the session root', async () => {
     vi.resetModules();
-    routerReplaceSpy.mockClear();
-    mockSearchParams = { id: 'session-1' };
+    shared.routerReplaceSpy.mockClear();
+    shared.searchParams = { id: 'session-1' };
 
     const originalWindow = globalThis.window;
     Object.defineProperty(globalThis, 'window', {
@@ -66,13 +87,18 @@ describe('/ authenticated deep link redirects', () => {
 
     try {
       const { default: Screen } = await import('@/app/(app)/index');
+      let tree: renderer.ReactTestRenderer | null = null;
 
-      await act(async () => {
-        renderer.create(<Screen />);
-      });
-      await act(async () => {});
+      try {
+        tree = (await renderScreen(<Screen />)).tree;
+        await flushHookEffects();
 
-      expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
+      } finally {
+        act(() => {
+          tree?.unmount();
+        });
+      }
     } finally {
       Object.defineProperty(globalThis, 'window', {
         configurable: true,
