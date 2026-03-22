@@ -1,11 +1,19 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 describe('workspaceReplicationJobStore', () => {
-  it('persists handoff prepare-target jobs and finds them by correlation id', async () => {
+  it('does not depend on SessionHandoff protocol schemas (import-boundary)', async () => {
+    const sourcePath = fileURLToPath(new URL('./workspaceReplicationJobStore.ts', import.meta.url));
+    const contents = await readFile(sourcePath, 'utf8');
+    expect(contents).not.toContain('SessionHandoffStatusSchema');
+    expect(contents).not.toContain('SessionHandoffPrepareTargetResultGetResponseSchema');
+  });
+
+  it('persists engine-native replication jobs, strips unknown legacy fields, and finds them by correlation id', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-jobs-'));
 
     try {
@@ -22,12 +30,13 @@ describe('workspaceReplicationJobStore', () => {
         correlationId: 'handoff_123',
         createdAtMs: 100,
         updatedAtMs: 100,
+        // Unknown legacy/handoff-only fields must be stripped by the engine store.
+        prepareTargetResult: { success: true },
         status: {
-          handoffId: 'handoff_123',
-          jobId: 'job_prepare_1',
           status: 'pending',
-          phase: 'staging_target',
-          recoveryActions: [],
+          phase: 'planning',
+          // Unknown handoff-shaped keys must be stripped.
+          handoffId: 'handoff_123',
         },
       });
 
@@ -35,12 +44,13 @@ describe('workspaceReplicationJobStore', () => {
         jobId: 'job_prepare_1',
         correlationId: 'handoff_123',
         status: {
-          handoffId: 'handoff_123',
-          jobId: 'job_prepare_1',
           status: 'pending',
-          phase: 'staging_target',
+          phase: 'planning',
         },
       });
+      await expect(store.read('job_prepare_1')).resolves.not.toHaveProperty('prepareTargetResult');
+      const loaded = await store.read('job_prepare_1');
+      expect(loaded?.status).not.toHaveProperty('handoffId');
       await expect(store.findByCorrelationId('handoff_123')).resolves.toMatchObject({
         jobId: 'job_prepare_1',
         correlationId: 'handoff_123',
