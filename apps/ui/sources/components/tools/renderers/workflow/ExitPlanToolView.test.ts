@@ -281,7 +281,7 @@ describe('ExitPlanToolView', () => {
         expect(sessionAllow).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
 
-        const buttonsAfter = tree.root.findAllByType('TouchableOpacity' as any);
+        const buttonsAfter = tree.findAllByType('TouchableOpacity' as any);
         expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -295,7 +295,7 @@ describe('ExitPlanToolView', () => {
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
 
-        const buttonsAfter = tree.root.findAllByType('TouchableOpacity' as any);
+        const buttonsAfter = tree.findAllByType('TouchableOpacity' as any);
         expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -321,7 +321,7 @@ describe('ExitPlanToolView', () => {
         safeParsePlan.mockReturnValueOnce({ success: true, data: {} });
         const tree = await renderView(makeRunningTool({ input: {} }));
 
-        const markdownNode = tree.root.findByType('MarkdownView' as any);
+        const markdownNode = tree.findByType('MarkdownView' as any);
         expect(markdownNode.props.markdown).toBe('tools.exitPlanMode.planMissing');
     });
 
@@ -329,7 +329,7 @@ describe('ExitPlanToolView', () => {
         safeParsePlan.mockReturnValueOnce({ success: false });
         const tree = await renderView(makeRunningTool({ input: { unexpected: true } }));
 
-        const markdownNode = tree.root.findByType('MarkdownView' as any);
+        const markdownNode = tree.findByType('MarkdownView' as any);
         expect(markdownNode.props.markdown).toBe('tools.exitPlanMode.planMissing');
     });
 });

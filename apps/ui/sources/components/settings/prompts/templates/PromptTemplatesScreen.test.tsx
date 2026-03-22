@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,7 +57,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null),
+    Item: (props: any) => React.createElement('Item', props, props.title ?? null, props.subtitle ?? null, props.rightElement ?? null),
 }));
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
@@ -132,18 +131,18 @@ describe('PromptTemplatesScreen', () => {
     it('renders template entries before the add item and exposes row actions', async () => {
         const { PromptTemplatesScreen } = await import('./PromptTemplatesScreen');
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptTemplatesScreen))).tree;
+        const screen = await renderScreen(React.createElement(PromptTemplatesScreen));
 
-        const items = tree.root.findAllByType('Item');
-        expect(items.map((node) => node.props?.testID)).toEqual([
-            'promptTemplates.entry.template-1',
-            'promptTemplates.add',
-        ]);
+        expect(screen.findByTestId('promptTemplates.entry.template-1')).toBeTruthy();
+        expect(screen.findByTestId('promptTemplates.add')).toBeTruthy();
+        const textContent = screen.getTextContent();
+        expect(textContent.indexOf('Daily')).toBeLessThan(textContent.indexOf('promptLibrary.newTemplate'));
 
-        const actions = tree.root.findAllByType('ItemRowActions');
-        expect(actions).toHaveLength(1);
-        expect(actions[0]?.props?.actions?.map((action: any) => action.id)).toEqual([
+        const actions = findTestInstanceByTypeWithProps(screen.tree, 'ItemRowActions' as any, {
+            title: 'Daily',
+        }) as any;
+        expect(actions).toBeTruthy();
+        expect(actions.props?.actions?.map((action: any) => action.id)).toEqual([
             'edit',
             'delete',
         ]);

@@ -12,6 +12,13 @@ function findTextNode(screen: Pick<ReactTestRenderer | ReactTestInstance, 'findA
     return findTestInstanceByTypeWithProps(screen, 'Text' as any, { children: text });
 }
 
+function findHostNodeByTestID(
+    screen: { findAllByTestId: (testID: string) => ReactTestInstance[] },
+    testID: string,
+) {
+    return screen.findAllByTestId(testID).find((node) => typeof node.type === 'string');
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -86,16 +93,14 @@ describe('Item mode prop', () => {
 
     it('renders a Pressable when mode is undefined and onPress is set', async () => {
         const { Item } = await import('../Item');
-        const screen = await renderScreen(<Item title="Test" onPress={() => {}} />);
-        const pressables = screen.findAllByType('Pressable' as any);
-        expect(pressables.length).toBeGreaterThan(0);
+        const screen = await renderScreen(<Item title="Test" testID="item-default" onPress={() => {}} />);
+        expect(findHostNodeByTestID(screen, 'item-default')?.type).toBe('Pressable');
     });
 
     it('renders a View (not Pressable) when mode="info" even with onPress', async () => {
         const { Item } = await import('../Item');
-        const screen = await renderScreen(<Item title="Info Item" mode="info" onPress={() => {}} />);
-        const pressables = screen.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(0);
+        const screen = await renderScreen(<Item title="Info Item" testID="item-info" mode="info" onPress={() => {}} />);
+        expect(findHostNodeByTestID(screen, 'item-info')?.type).toBe('View');
     });
 
     it('never shows chevron when mode="info" regardless of showChevron prop', async () => {
@@ -106,25 +111,30 @@ describe('Item mode prop', () => {
 
     it('does NOT reduce opacity when mode="info" (unlike disabled)', async () => {
         const { Item } = await import('../Item');
-        const screen = await renderScreen(<Item title="Info" mode="info" />);
-        const root = screen.findByType('View' as any);
+        const screen = await renderScreen(<Item title="Info" testID="item-info-opacity" mode="info" />);
+        const root = findHostNodeByTestID(screen, 'item-info-opacity');
+        if (!root) {
+            throw new Error('Expected info item host node to render');
+        }
         const flattened = flattenTestStyle(root.props.style);
         expect(flattened.opacity).not.toBe(0.5);
     });
 
     it('reduces opacity when disabled (not mode="info")', async () => {
         const { Item } = await import('../Item');
-        const screen = await renderScreen(<Item title="Disabled" disabled={true} />);
-        const root = screen.findByType('View' as any);
+        const screen = await renderScreen(<Item title="Disabled" testID="item-disabled-opacity" disabled={true} />);
+        const root = findHostNodeByTestID(screen, 'item-disabled-opacity');
+        if (!root) {
+            throw new Error('Expected disabled item host node to render');
+        }
         const flattened = flattenTestStyle(root.props.style);
         expect(flattened.opacity).toBe(0.5);
     });
 
     it('renders a Pressable when mode="interactive" with onPress', async () => {
         const { Item } = await import('../Item');
-        const screen = await renderScreen(<Item title="Interactive" mode="interactive" onPress={() => {}} />);
-        const pressables = screen.findAllByType('Pressable' as any);
-        expect(pressables.length).toBeGreaterThan(0);
+        const screen = await renderScreen(<Item title="Interactive" testID="item-interactive" mode="interactive" onPress={() => {}} />);
+        expect(findHostNodeByTestID(screen, 'item-interactive')?.type).toBe('Pressable');
     });
 
     it('uses the middle global item density when density prop is omitted', async () => {

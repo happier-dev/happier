@@ -1,10 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import type { ReactTestRenderer } from 'react-test-renderer';
 
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { makeToolCall, makeToolViewProps, findPressableByText } from '../../shell/views/ToolView.testHelpers';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -113,21 +113,16 @@ describe('AskUserQuestionView legacy request-kind fallback', () => {
             permission: { id: 'toolu_1', status: 'pending' },
         });
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        let tree: ReactTestRenderer | null = null;
         tree = (await renderScreen(React.createElement(AskUserQuestionView, makeToolViewProps(tool, { sessionId: 's1' })))).tree;
 
         const option = findPressableByText(tree!, 'A');
         expect(option).toBeTruthy();
-        await act(async () => {
-            option!.props.onPress();
-        });
+        await pressTestInstanceAsync(option, 'A');
 
         const submit = findPressableByText(tree!, 'tools.askUserQuestion.submit');
         expect(submit).toBeTruthy();
-        await act(async () => {
-            submit!.props.onPress();
-            await Promise.resolve();
-        });
+        await pressTestInstanceAsync(submit, 'tools.askUserQuestion.submit');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });

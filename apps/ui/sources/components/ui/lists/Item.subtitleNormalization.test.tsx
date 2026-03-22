@@ -101,10 +101,9 @@ describe('Item', () => {
         const screen = await renderScreen(<Item title="Title" />);
 
         // Non-interactive rows should not be pressable on web.
-        expect(() => screen.findByType('Pressable' as any)).toThrow();
+        expect(findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' })).toBeUndefined();
 
-        const ionicons = screen.findAllByType('Ionicons' as any);
-        expect(ionicons).toHaveLength(0);
+        expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeUndefined();
     });
 
     it('renders a chevron only when onPress is provided', async () => {
@@ -112,11 +111,10 @@ describe('Item', () => {
 
         const screen = await renderScreen(<Item title="Title" onPress={() => {}} />);
 
-        const pressable = screen.findByType('Pressable' as any);
+        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
         expect(pressable).toBeTruthy();
 
-        const ionicons = screen.findAllByType('Ionicons' as any);
-        expect(ionicons).toHaveLength(1);
+        expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeTruthy();
     });
 
     it('wraps primitive children when subtitle is a ReactNode', async () => {
@@ -166,7 +164,7 @@ describe('Item', () => {
         const subtitleNode = findTestInstanceByTypeContainingText(screen, 'Text', 'Subtitle');
         expect(subtitleNode).toBeTruthy();
 
-        expect(screen.findByProps({ marker: 'chips' })).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(screen, 'SubtitleAccessory' as any, { marker: 'chips' })).toBeTruthy();
     });
 
     it('wraps primitive accessory children before rendering them inside view slots', async () => {
@@ -211,7 +209,9 @@ describe('Item', () => {
 
         const screen = await renderScreen(<Item title="Title" onPress={() => {}} disabled showChevron={false} />);
 
-        const pressable = screen.findByType('Pressable' as any);
+        const pressable = findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' });
+        expect(pressable).toBeTruthy();
+        if (!pressable) throw new Error('Pressable not found');
         const styleFn = pressable.props.style;
         expect(typeof styleFn).toBe('function');
 

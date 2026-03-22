@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -109,21 +108,35 @@ describe('PromptStackEditorScreen', () => {
     it('renders stack entries with row actions and keeps add item at the bottom', async () => {
         const { PromptStackEditorScreen } = await import('./PromptStackEditorScreen');
 
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptStackEditorScreen, {
+        const screen = await renderScreen(React.createElement(PromptStackEditorScreen, {
                 surface: 'coding',
                 title: 'System Prompt Additions',
-            }))).tree;
+            }));
 
-        const items = tree.root.findAllByType('Item');
-        expect(items.map((node) => node.props?.testID)).toEqual([
+        const group = screen.findAllByType('ItemGroup' as any)[0];
+        expect(group).toBeTruthy();
+        if (!group) {
+            throw new Error('Expected stack entries group');
+        }
+        expect(React.Children.toArray(group.props.children).map((child: any) => child.props?.testID)).toEqual([
             'promptStack.entry.entry-1',
+        ]);
+
+        const addGroup = screen.findAllByType('ItemGroup' as any)[1];
+        expect(addGroup).toBeTruthy();
+        if (!addGroup) {
+            throw new Error('Expected add group');
+        }
+        expect(React.Children.toArray(addGroup.props.children).map((child: any) => child.props?.testID)).toEqual([
             'promptStack.add',
         ]);
 
-        const actions = tree.root.findAllByType('ItemRowActions');
-        expect(actions).toHaveLength(1);
-        expect(actions[0]?.props?.actions?.map((action: any) => action.id)).toEqual([
+        expect(screen.findByTestId('promptStack.entry.entry-1')).toBeTruthy();
+        expect(screen.findByTestId('promptStack.add')).toBeTruthy();
+
+        const actions = screen.findAllByType('ItemRowActions' as any)[0];
+        expect(actions).toBeTruthy();
+        expect(actions?.props?.actions?.map((action: any) => action.id)).toEqual([
             'edit',
             'moveUp',
             'moveDown',

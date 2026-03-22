@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -29,17 +28,21 @@ vi.mock('react-native-unistyles', async () => {
 describe('RoundButton', () => {
     it('forwards testID to the Pressable', async () => {
         const { RoundButton } = await import('./RoundButton');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<RoundButton title="Hello" testID="round-button" />)).tree;
-        const pressable = tree.root.findByType('Pressable' as any);
+        const screen = await renderScreen(<RoundButton title="Hello" testID="round-button" />);
+        const pressable = screen.findByTestId('round-button');
+        if (!pressable) {
+            throw new Error('Expected round button pressable to render');
+        }
         expect(pressable.props.testID).toBe('round-button');
     });
 
     it('applies a reduced effective opacity when disabled', async () => {
         const { RoundButton } = await import('./RoundButton');
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<RoundButton title="Disabled" disabled={true} testID="disabled-round-button" />)).tree;
-        const pressable = tree.root.findByType('Pressable' as any);
+        const screen = await renderScreen(<RoundButton title="Disabled" disabled={true} testID="disabled-round-button" />);
+        const pressable = screen.findByTestId('disabled-round-button');
+        if (!pressable) {
+            throw new Error('Expected disabled round button pressable to render');
+        }
         const styleOutput = pressable.props.style({ pressed: false });
         const flattened = Array.isArray(styleOutput)
             ? styleOutput.reduce((acc: Record<string, unknown>, next: Record<string, unknown> | null | undefined) => ({ ...acc, ...(next ?? {}) }), {})
