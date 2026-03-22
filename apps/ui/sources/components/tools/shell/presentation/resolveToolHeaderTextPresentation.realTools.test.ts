@@ -4,9 +4,10 @@ import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 
 import { resolveToolHeaderTextPresentation } from './resolveToolHeaderTextPresentation';
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 function makeToolCall(overrides: Partial<ToolCall>): ToolCall {
     const now = 1;

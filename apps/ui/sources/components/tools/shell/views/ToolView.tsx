@@ -278,7 +278,12 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     return (
         <View style={styles.container}>
             <View style={[styles.header, timelineDensity === 'compact' ? styles.headerCompact : null]}>
-                <TouchableOpacity style={styles.headerMain} onPress={primaryOnPress} activeOpacity={0.8}>
+                <TouchableOpacity
+                    testID="tool-view-header-primary"
+                    style={styles.headerMain}
+                    onPress={primaryOnPress}
+                    activeOpacity={0.8}
+                >
                     <View style={[styles.iconContainer, timelineDensity === 'compact' ? styles.iconContainerCompact : null]}>
                         {icon}
                     </View>
@@ -315,6 +320,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
                     {secondaryOnPress ? (
                         <TouchableOpacity
+                            testID="tool-view-header-secondary"
                             onPress={secondaryOnPress}
                             activeOpacity={0.8}
                             style={styles.secondaryAction}

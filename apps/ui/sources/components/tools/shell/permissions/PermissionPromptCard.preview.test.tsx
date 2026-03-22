@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,34 +12,53 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+            AppState: {
+                currentState: 'active',
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        }
+    );
+});
 
 const routerPush = vi.fn();
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPush }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPush },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 let toolDetailSetting: any = 'summary';
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'toolViewDetailLevelDefault') return toolDetailSetting;
         if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
         if (key === 'toolViewDetailLevelByToolName') return {};
         return null;
     },
-}));
+});
+});
 
 let mockedToolName = 'edit';
 let mockedToolInput: any = { path: 'file.ts' };
@@ -62,7 +83,7 @@ vi.mock('@/components/tools/shell/permissions/presentation/buildPermissionPrompt
 }));
 
 vi.mock('@/components/tools/shell/views/ToolInlineBody', () => ({
-    ToolInlineBody: (props: any) => React.createElement('ToolInlineBody', props),
+    ToolInlineBody: (props: any) => React.createElement('ToolInlineBody', { ...props, testID: 'permission-prompt-tool-inline-body' }),
 }));
 
 vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
@@ -79,10 +100,7 @@ describe('PermissionPromptCard (preview)', () => {
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <PermissionPromptCard
+        const screen = await renderScreen(<PermissionPromptCard
                     request={request}
                     location={{
                         kind: 'top',
@@ -92,11 +110,9 @@ describe('PermissionPromptCard (preview)', () => {
                     sessionId="session-1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />);
 
-        expect(() => tree!.root.findByProps({ testID: 'permission-prompt-view-tool' })).toThrow();
+        expect(screen.findByTestId('permission-prompt-view-tool')).toBeNull();
     });
 
     it('opens nested tool routes with stable encoded route ids', async () => {
@@ -109,10 +125,7 @@ describe('PermissionPromptCard (preview)', () => {
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <PermissionPromptCard
+        const screen = await renderScreen(<PermissionPromptCard
                     request={request}
                     location={{
                         kind: 'nested',
@@ -123,14 +136,13 @@ describe('PermissionPromptCard (preview)', () => {
                     sessionId="session-1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />);
 
-        const viewToolButton = tree!.root.findByProps({ testID: 'permission-prompt-view-tool' });
+        const viewToolButton = screen.findByTestId('permission-prompt-view-tool');
+        expect(viewToolButton).toBeTruthy();
 
         await act(async () => {
-            viewToolButton.props.onPress();
+            viewToolButton!.props.onPress();
         });
 
         expect(routerPush).toHaveBeenCalledWith('/session/session-1/message/tool%3Acall%3Aparent%2F1?jumpChildId=tool%3Acall%3Achild%2F2');
@@ -145,20 +157,15 @@ describe('PermissionPromptCard (preview)', () => {
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <PermissionPromptCard
+        const screen = await renderScreen(<PermissionPromptCard
                     request={request}
                     location={null}
                     sessionId="s1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />);
 
-        expect(tree!.root.findAllByType('ToolInlineBody' as any)).toHaveLength(1);
+        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeTruthy();
     });
 
     it('hides the tool preview when detail level is title', async () => {
@@ -170,20 +177,15 @@ describe('PermissionPromptCard (preview)', () => {
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <PermissionPromptCard
+        const screen = await renderScreen(<PermissionPromptCard
                     request={request}
                     location={null}
                     sessionId="s1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />);
 
-        expect(tree!.root.findAllByType('ToolInlineBody' as any)).toHaveLength(0);
+        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeNull();
     });
 
     it('hides the tool preview when detail level is compact', async () => {
@@ -195,20 +197,15 @@ describe('PermissionPromptCard (preview)', () => {
 
         const request = { id: 'perm1', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <PermissionPromptCard
+        const screen = await renderScreen(<PermissionPromptCard
                     request={request}
                     location={null}
                     sessionId="s1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />);
 
-        expect(tree!.root.findAllByType('ToolInlineBody' as any)).toHaveLength(0);
+        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeNull();
     });
 
     it('does not repeat a shell command subtitle when a preview is visible', async () => {
@@ -220,26 +217,21 @@ describe('PermissionPromptCard (preview)', () => {
 
         const request = { id: 'perm1', tool: 'Bash', arguments: { command: 'COMMAND_SUBTITLE' } } as PendingPermissionRequest;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <PermissionPromptCard
+        const screen = await renderScreen(<PermissionPromptCard
                     request={request}
                     location={null}
                     sessionId="s1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />);
 
-        const texts = tree!.root.findAllByType('Text' as any);
+        const texts = screen.findAllByType('Text' as any);
         const flattened = texts
             .map((t) => t.props.children)
             .flat()
             .filter((c) => typeof c === 'string') as string[];
 
         expect(flattened).not.toContain('COMMAND_SUBTITLE');
-        expect(tree!.root.findAllByType('ToolInlineBody' as any)).toHaveLength(1);
+        expect(screen.findByTestId('permission-prompt-tool-inline-body')).toBeTruthy();
     });
 });

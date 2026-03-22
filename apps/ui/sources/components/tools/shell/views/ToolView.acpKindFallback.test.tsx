@@ -1,6 +1,15 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import {
+    afterEach,
+    describe,
+    expect,
+    it,
+    vi,
+} from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,40 +20,42 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return { ...rn, Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios } };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        Platform: {
+                                            OS: 'ios',
+                                            select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null,
+                                        },
+                                    }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                warning: '#f00',
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
 
+const renderedSpecificToolViewSpy = vi.fn();
+const getToolViewComponentSpy = vi.fn((toolName: string) =>
+    toolName === 'execute'
+        ? (props: any) => {
+              renderedSpecificToolViewSpy(props);
+              return React.createElement('SpecificToolView', { resolvedName: props.tool?.name });
+          }
+        : null,
+);
+
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
-    getToolViewComponent: (toolName: string) =>
-        toolName === 'execute'
-            ? (props: any) => React.createElement('SpecificToolView', { resolvedName: props.tool?.name })
-            : null,
+    getToolViewComponent: getToolViewComponentSpy,
 }));
 
 vi.mock('@/components/tools/catalog', () => ({
@@ -80,28 +91,40 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'summary';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewShowDebugByDefault') return false;
-        return null;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return 'summary';
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                if (key === 'toolViewShowDebugByDefault') return false;
+                return null;
+            },
+        },
+    }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
     resolveAgentIdFromFlavor: () => null,
 }));
 
+afterEach(() => {
+    standardCleanup();
+});
+
 describe('ToolView (ACP kind fallback)', () => {
     it('uses tool.input._acp.kind to pick a specific view when tool.name is not a stable key', async () => {
+        renderedSpecificToolViewSpy.mockReset();
+        getToolViewComponentSpy.mockClear();
         const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
@@ -111,15 +134,18 @@ describe('ToolView (ACP kind fallback)', () => {
             description: 'Run echo hello',
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+        );
 
-        const specificViews = tree!.root.findAllByType('SpecificToolView' as any);
+        const specificViews = screen.findAllByType('SpecificToolView' as any);
         expect(specificViews).toHaveLength(1);
         expect(specificViews[0].props.resolvedName).toBe('Run echo hello');
+        expect(getToolViewComponentSpy).toHaveBeenCalledWith('execute');
+        expect(renderedSpecificToolViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tool: expect.objectContaining({ name: 'Run echo hello' }),
+            }),
+        );
     });
 });

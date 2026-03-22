@@ -1,6 +1,10 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  findTestInstanceByTypeWithProps,
+  renderScreen,
+  standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,11 +45,16 @@ vi.mock('@/agents/catalog/catalog', () => ({
   getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('ToolInlineBody (text selection scope)', () => {
+  afterEach(() => {
+    standardCleanup();
+  });
+
   it('wraps tool body output in a TextSelectabilityScope so content defaults to selectable', async () => {
     const { ToolInlineBody } = await import('./ToolInlineBody');
 
@@ -61,24 +70,24 @@ describe('ToolInlineBody (text selection scope)', () => {
       permission: { kind: 'filesystem', status: 'denied' },
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ToolInlineBody
-          mode="card"
-          tool={tool}
-          normalizedToolName="unknown"
-          metadata={null}
-          messages={[]}
-          detailLevel="summary"
-          setHeaderActions={() => {}}
-        />
-      );
-    });
+    const screen = await renderScreen(
+      <ToolInlineBody
+        mode="card"
+        tool={tool}
+        normalizedToolName="unknown"
+        metadata={null}
+        messages={[]}
+        detailLevel="summary"
+        setHeaderActions={() => {}}
+      />
+    );
 
-    const scopes = tree.root.findAllByType('TextSelectabilityScope' as any);
-    expect(scopes.length).toBeGreaterThan(0);
-    expect(tree.root.findAllByType('ToolError' as any).length).toBe(1);
+    expect(
+      findTestInstanceByTypeWithProps(screen, 'TextSelectabilityScope', {
+        selectable: true,
+      }),
+    ).toBeTruthy();
+    expect(screen.findByType('ToolError' as any)).toBeTruthy();
   });
 
   it('uses structured fallback instead of raw ToolError for SubAgentRun error rows without specific renderer', async () => {
@@ -96,23 +105,20 @@ describe('ToolInlineBody (text selection scope)', () => {
       permission: undefined,
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ToolInlineBody
-          mode="card"
-          tool={tool}
-          normalizedToolName="SubAgentRun"
-          metadata={null}
-          messages={[]}
-          detailLevel="summary"
-          setHeaderActions={() => {}}
-        />
-      );
-    });
+    const screen = await renderScreen(
+      <ToolInlineBody
+        mode="card"
+        tool={tool}
+        normalizedToolName="SubAgentRun"
+        metadata={null}
+        messages={[]}
+        detailLevel="summary"
+        setHeaderActions={() => {}}
+      />
+    );
 
-    expect(tree.root.findAllByType('StructuredResultView' as any).length).toBe(1);
-    expect(tree.root.findAllByType('ToolError' as any).length).toBe(0);
+    expect(screen.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+    expect(screen.findAllByType('ToolError' as any)).toHaveLength(0);
   });
 
   it('uses SubAgentRun fallback even when normalized tool name is not SubAgentRun', async () => {
@@ -130,23 +136,20 @@ describe('ToolInlineBody (text selection scope)', () => {
       permission: undefined,
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ToolInlineBody
-          mode="card"
-          tool={tool}
-          normalizedToolName="UnknownTool"
-          metadata={null}
-          messages={[]}
-          detailLevel="summary"
-          setHeaderActions={() => {}}
-        />
-      );
-    });
+    const screen = await renderScreen(
+      <ToolInlineBody
+        mode="card"
+        tool={tool}
+        normalizedToolName="UnknownTool"
+        metadata={null}
+        messages={[]}
+        detailLevel="summary"
+        setHeaderActions={() => {}}
+      />
+    );
 
-    expect(tree.root.findAllByType('StructuredResultView' as any).length).toBe(1);
-    expect(tree.root.findAllByType('ToolError' as any).length).toBe(0);
+    expect(screen.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+    expect(screen.findAllByType('ToolError' as any)).toHaveLength(0);
   });
 
   it('uses structured fallback for error payloads that match SubAgentRun result shape', async () => {
@@ -169,22 +172,19 @@ describe('ToolInlineBody (text selection scope)', () => {
       permission: undefined,
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(
-        <ToolInlineBody
-          mode="card"
-          tool={tool}
-          normalizedToolName="UnknownTool"
-          metadata={null}
-          messages={[]}
-          detailLevel="summary"
-          setHeaderActions={() => {}}
-        />
-      );
-    });
+    const screen = await renderScreen(
+      <ToolInlineBody
+        mode="card"
+        tool={tool}
+        normalizedToolName="UnknownTool"
+        metadata={null}
+        messages={[]}
+        detailLevel="summary"
+        setHeaderActions={() => {}}
+      />
+    );
 
-    expect(tree.root.findAllByType('StructuredResultView' as any).length).toBe(1);
-    expect(tree.root.findAllByType('ToolError' as any).length).toBe(0);
+    expect(screen.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+    expect(screen.findAllByType('ToolError' as any)).toHaveLength(0);
   });
 });

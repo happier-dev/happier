@@ -1,6 +1,12 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,15 +26,23 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', warning: '#f90', surfaceHigh: '#fff', surfaceHighest: '#fff' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 const pushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: pushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        router: {
+            push: pushSpy,
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
@@ -56,21 +70,28 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'title';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewTapAction') return 'expand';
-        if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-        return null;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return 'title';
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                if (key === 'toolViewTapAction') return 'expand';
+                if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+                if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+                return null;
+            },
+        },
+    });
+});
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -93,6 +114,10 @@ vi.mock('@/hooks/ui/useElapsedTime', () => ({
     useElapsedTime: () => 0,
 }));
 
+afterEach(() => {
+    standardCleanup();
+});
+
 describe('ToolView (tap action: expand)', () => {
     it('toggles inline expansion even without navigation params', async () => {
         pushSpy.mockReset();
@@ -110,21 +135,15 @@ describe('ToolView (tap action: expand)', () => {
             result: { file: { content: 'hello' } },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
-        });
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null }));
 
-        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
-
-        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
-        expect(touchables.length).toBeGreaterThan(0);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);
 
         await act(async () => {
-            touchables[0].props.onPress?.();
+            screen.pressByTestId('tool-view-header-primary');
         });
 
-        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(1);
     });
 
     it('preloads sidechain messages when expanding Task tools', async () => {
@@ -144,20 +163,16 @@ describe('ToolView (tap action: expand)', () => {
             result: null,
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }));
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }),
+        );
 
         expect(ensureSidechainMessagesLoadedMock).not.toHaveBeenCalled();
 
-        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
-        expect(touchables.length).toBeGreaterThan(0);
-
         await act(async () => {
-            touchables[0].props.onPress?.();
-            await Promise.resolve();
+            screen.pressByTestId('tool-view-header-primary');
         });
+        await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
     });
@@ -179,20 +194,16 @@ describe('ToolView (tap action: expand)', () => {
             result: { sidechainId: 'sidechain_run_123' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }));
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }),
+        );
 
         expect(ensureSidechainMessagesLoadedMock).not.toHaveBeenCalled();
 
-        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
-        expect(touchables.length).toBeGreaterThan(0);
-
         await act(async () => {
-            touchables[0].props.onPress?.();
-            await Promise.resolve();
+            screen.pressByTestId('tool-view-header-primary');
         });
+        await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'sidechain_run_123');
     });
@@ -213,13 +224,11 @@ describe('ToolView (tap action: expand)', () => {
             result: { file: { content: 'hello' } },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }));
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }),
+        );
 
-        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
-        const secondaryAction = touchables.find((t) => t.props.accessibilityLabel === 'toolView.open');
+        const secondaryAction = screen.findByTestId('tool-view-header-secondary');
         expect(secondaryAction?.props.hitSlop).toBe(15);
     });
 
@@ -235,24 +244,20 @@ describe('ToolView (tap action: expand)', () => {
             result: { file: { content: 'hello' } },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, {
-                    tool,
-                    metadata: null,
-                    sessionId: 's1',
-                    messageId: 'server:server-msg-1',
-                }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, {
+                tool,
+                metadata: null,
+                sessionId: 's1',
+                messageId: 'server:server-msg-1',
+            }),
+        );
 
-        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
-        const secondaryAction = touchables.find((t) => t.props.accessibilityLabel === 'toolView.open');
+        const secondaryAction = screen.findByTestId('tool-view-header-secondary');
         expect(secondaryAction).toBeTruthy();
 
         await act(async () => {
-            secondaryAction!.props.onPress?.();
+            screen.pressByTestId('tool-view-header-secondary');
         });
 
         expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/server%3Aserver-msg-1');
@@ -270,20 +275,15 @@ describe('ToolView (tap action: expand)', () => {
             result: { sidechainId: 'sidechain_run_1' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, {
-                    tool,
-                    metadata: null,
-                    sessionId: 's1',
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, {
+                tool,
+                metadata: null,
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            }),
+        );
 
-        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
-        const secondaryAction = touchables.find((t) => t.props.accessibilityLabel === 'toolView.open');
-        expect(secondaryAction).toBeUndefined();
+        expect(screen.findByTestId('tool-view-header-secondary')).toBeNull();
     });
 });

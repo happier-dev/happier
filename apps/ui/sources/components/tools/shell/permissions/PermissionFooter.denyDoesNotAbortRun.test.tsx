@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { PermissionFooter } from '../permissions/PermissionFooter';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,32 +30,32 @@ const syncMock = vi.hoisted(() => ({
     sendMessage: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-    Alert: { alert: vi.fn() },
-    Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
-    StyleSheet: { create: <T,>(styles: T) => styles },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: <T,>(styles: T) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                permissionButton: {
-                    allow: { background: '#0f0' },
-                    deny: { background: '#f00' },
-                    allowAll: { background: '#00f' },
-                },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            TouchableOpacity: 'TouchableOpacity',
+            ActivityIndicator: 'ActivityIndicator',
+            Alert: {
+                alert: vi.fn(),
             },
-        },
-    }),
-}));
+            Platform: {
+                OS: 'ios',
+                select: <T,>(value: { ios?: T }) => value.ios,
+            },
+            StyleSheet: {
+                create: <T,>(styles: T) => styles,
+            },
+        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -66,9 +68,12 @@ vi.mock('@/sync/ops', () => ({
     sessionAbort: ops.sessionAbort,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: { getState: () => sessionStore },
-}));
+});
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -76,9 +81,10 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/agents/catalog/resolve', () => ({
     resolveAgentIdForPermissionUi: () => runtime.flavor,
@@ -126,17 +132,13 @@ describe('PermissionFooter deny action', () => {
         sessionStore.updateSessionPermissionMode.mockClear();
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PermissionFooter, {
+        tree = (await renderScreen(React.createElement(PermissionFooter, {
                     permission: { id: 'p1', status: 'pending' },
                     sessionId: 's1',
                     toolName,
                     toolInput,
                     metadata: { flavor },
-                }),
-            );
-        });
+                }))).tree;
 
         const buttons = tree?.root.findAllByType('TouchableOpacity') ?? [];
         const noButton = buttons.find((btn) => {

@@ -1,15 +1,18 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const ensureSidechainMessagesLoadedMock = vi.fn();
-
 vi.mock('@/sync/sync', () => ({
     sync: {
-        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+        ensureSidechainMessagesLoaded: vi.fn(),
     },
 }));
 
@@ -21,15 +24,22 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: () => false,
-    useSetting: () => false,
-    useSessionTranscriptDraftMessages: () => [],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useLocalSetting: <K extends keyof typeof localSettingsDefaults>(name: K) => localSettingsDefaults[name],
+            useSetting: <K extends keyof typeof settingsDefaults>(name: K) => settingsDefaults[name],
+            useSessionTranscriptDraftMessages: () => [],
+        },
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => null,
@@ -74,6 +84,10 @@ vi.mock('../permissions/PermissionFooter', () => ({
 }));
 
 describe('ToolFullView (inference + view selection)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('uses tool.input._acp.kind to select a renderer and forces detailLevel=full', async () => {
         renderedFullViewSpy.mockReset();
         renderedViewSpy.mockReset();
@@ -87,12 +101,9 @@ describe('ToolFullView (inference + view selection)', () => {
             description: 'Run echo hello',
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
-        });
+        const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
 
-        expect(tree.root.findAllByType('FullToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('FullToolView' as any)).toHaveLength(1);
         expect(renderedFullViewSpy).toHaveBeenCalled();
         expect(getToolViewComponentSpy).toHaveBeenCalledWith('execute');
         expect(renderedFullViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'full' }));
@@ -110,12 +121,9 @@ describe('ToolFullView (inference + view selection)', () => {
             result: { content: 'hello' },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
-        });
+        const screen = await renderScreen(React.createElement(ToolFullView, { tool, metadata: null, messages: [] }));
 
-        expect(tree.root.findAllByType('ToolView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('ToolView' as any)).toHaveLength(1);
         expect(renderedViewSpy).toHaveBeenCalled();
         expect(renderedFullViewSpy).not.toHaveBeenCalled();
         expect(getToolViewComponentSpy).toHaveBeenCalledWith('Read');

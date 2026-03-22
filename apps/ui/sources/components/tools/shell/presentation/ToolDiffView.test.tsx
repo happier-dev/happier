@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,17 +11,17 @@ let wrapLinesSetting: boolean = true;
 let inlineVirtualizationThresholdSetting: number | undefined = undefined;
 let inlineVirtualizationByteThresholdSetting: number | undefined = undefined;
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        Platform: {
-            ...(actual.Platform ?? {}),
-            OS: 'web',
-            select: (actual.Platform?.select ?? ((value: any) => value?.web ?? value?.default ?? null)),
-        },
-        useWindowDimensions: actual.useWindowDimensions ?? (() => ({ width: 1024, height: 768, scale: 1, fontScale: 1 })),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Platform: {
+                OS: 'web',
+                select: ((value: any) => value?.web ?? value?.default ?? null),
+            },
+            useWindowDimensions: (() => ({ width: 1024, height: 768, scale: 1, fontScale: 1 })),
+        }
+    );
 });
 
 vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
@@ -29,14 +31,17 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'wrapLinesInDiffs') return wrapLinesSetting;
         if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationThresholdSetting;
         if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
         return undefined;
     },
-}));
+});
+});
 
 const toolDiffViewModule = import('./ToolDiffView');
 
@@ -46,15 +51,11 @@ describe('ToolDiffView', () => {
         diffViewerSpy.mockClear();
         const { ToolDiffView } = await toolDiffViewModule;
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolDiffView, {
+        await renderScreen(React.createElement(ToolDiffView, {
                     filePath: 'src/foo.ts',
                     oldText: 'const x = 1;\n',
                     newText: 'const x = 2;\n',
-                }),
-            );
-        });
+                }));
 
         expect(diffViewerSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -70,15 +71,11 @@ describe('ToolDiffView', () => {
         diffViewerSpy.mockClear();
         const { ToolDiffView } = await toolDiffViewModule;
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolDiffView, {
+        await renderScreen(React.createElement(ToolDiffView, {
                     filePath: 'src/foo.ts',
                     oldText: 'const x = 1;\n',
                     newText: 'const x = 2;\n',
-                }),
-            );
-        });
+                }));
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ wrapLines: false }));
     });
@@ -96,15 +93,11 @@ describe('ToolDiffView', () => {
             newLines.push(`const a${i} = ${i + 1};`);
         }
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolDiffView, {
+        await renderScreen(React.createElement(ToolDiffView, {
                     filePath: 'src/huge.ts',
                     oldText: oldLines.join('\n') + '\n',
                     newText: newLines.join('\n') + '\n',
-                }),
-            );
-        });
+                }));
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualized: true }));
     });
@@ -123,15 +116,11 @@ describe('ToolDiffView', () => {
             newLines.push(`const a${i} = ${i + 1};`);
         }
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolDiffView, {
+        await renderScreen(React.createElement(ToolDiffView, {
                     filePath: 'src/huge.ts',
                     oldText: oldLines.join('\n') + '\n',
                     newText: newLines.join('\n') + '\n',
-                }),
-            );
-        });
+                }));
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualized: false }));
     });
@@ -143,15 +132,11 @@ describe('ToolDiffView', () => {
         diffViewerSpy.mockClear();
         const { ToolDiffView } = await toolDiffViewModule;
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolDiffView, {
+        await renderScreen(React.createElement(ToolDiffView, {
                     filePath: 'src/minified.js',
                     oldText: 'a'.repeat(2_000),
                     newText: 'b',
-                }),
-            );
-        });
+                }));
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualized: true }));
     });
@@ -161,15 +146,11 @@ describe('ToolDiffView', () => {
         diffViewerSpy.mockClear();
         const { ToolDiffView } = await toolDiffViewModule;
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(ToolDiffView, {
+        await renderScreen(React.createElement(ToolDiffView, {
                     filePath: 'src/new.ts',
                     oldText: '',
                     newText: 'export const x = 1;\n',
-                }),
-            );
-        });
+                }));
 
         expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ presentationStyleOverride: 'unified' }));
     });

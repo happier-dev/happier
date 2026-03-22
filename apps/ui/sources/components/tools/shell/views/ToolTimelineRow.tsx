@@ -255,6 +255,7 @@ export const ToolTimelineRow = React.memo((props: {
         <View style={styles.container}>
             <ToolTimelineRowHeader
                 testID="tool-timeline-row"
+                openActionTestID="tool-timeline-row-open"
                 density={density}
                 icon={icon}
                 title={title}

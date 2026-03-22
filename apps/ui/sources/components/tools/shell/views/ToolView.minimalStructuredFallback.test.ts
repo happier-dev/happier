@@ -1,6 +1,9 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,34 +19,28 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => (
         expanded ? React.createElement(React.Fragment, null, children) : null,
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-    NativeModules: {},
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        Text: 'Text',
+                                        TouchableOpacity: 'TouchableOpacity',
+                                        ActivityIndicator: 'ActivityIndicator',
+                                        NativeModules: {},
+                                        Platform: { OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? value?.web ?? null },
+                                    }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surfaceHigh: '#fff',
-                surfaceHighest: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                warning: '#f00',
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -92,27 +89,39 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'summary';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewShowDebugByDefault') return false;
-        return null;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return 'summary';
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                if (key === 'toolViewShowDebugByDefault') return false;
+                return null;
+            },
+        },
+    });
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
     resolveAgentIdFromFlavor: () => null,
 }));
 
 describe('ToolView (minimal tools)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('renders a structured fallback view for minimal tools without a specific view', async () => {
         const { ToolView } = await import('./ToolView');
 
@@ -122,17 +131,14 @@ describe('ToolView (minimal tools)', () => {
             result: { stdout: 'hello\n', stderr: '' },
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+        );
 
-        const flattened = collectHostText(tree!);
+        const flattened = collectHostText(screen.tree);
         expect(flattened.some((item) => item.includes('stdout'))).toBe(true);
         expect(flattened).not.toContain('toolView.input');
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);
     });
 
     it('hides body for minimal tools with no output payload', async () => {
@@ -145,14 +151,11 @@ describe('ToolView (minimal tools)', () => {
             result: null,
         });
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+        );
 
-        const flattened = collectHostText(tree!);
+        const flattened = collectHostText(screen.tree);
         expect(flattened).not.toContain('stdout');
         expect(flattened).not.toContain('toolView.input');
     });

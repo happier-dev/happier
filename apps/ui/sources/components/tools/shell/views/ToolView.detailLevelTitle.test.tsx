@@ -1,7 +1,10 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { makeToolCall } from './ToolView.testHelpers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,26 +14,22 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-}));
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', warning: '#f90', surfaceHigh: '#fff', surfaceHighest: '#fff' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: [],
+    DEFAULT_AGENT_ID: 'claude',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
@@ -66,19 +65,21 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 // Force the default tool detail level to "title" so the body is hidden.
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'title';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        return null;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'toolViewDetailLevelDefault') return 'title';
+                if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+                if (key === 'toolViewDetailLevelByToolName') return {};
+                return null;
+            },
+        },
+    }));
 
 vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
@@ -102,6 +103,10 @@ vi.mock('@/hooks/ui/useElapsedTime', () => ({
 }));
 
 describe('ToolView (detail level: title)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('hides the tool body even when a tool renderer exists', async () => {
         renderedToolViewSpy.mockReset();
         renderedStructuredSpy.mockReset();
@@ -114,21 +119,18 @@ describe('ToolView (detail level: title)', () => {
             result: { file: { content: 'hello' } },
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
-        });
+        const screen = await renderScreen(React.createElement(ToolView, { tool, metadata: null }));
 
         // Header still renders (baseline sanity).
-        expect(tree.root.findAllByType('Text' as any).length).toBeGreaterThan(0);
+        expect(collectHostText(screen.tree).length).toBeGreaterThan(0);
 
         // Title-only should not render subtitles/status text (only title + icon chrome).
-        expect(tree.root.findAllByProps({ testID: 'tool-card-subtitle' })).toHaveLength(0);
+        expect(screen.findAllByTestId('tool-card-subtitle')).toHaveLength(0);
 
         // Body renderers should not run at title-level.
         expect(renderedToolViewSpy).not.toHaveBeenCalled();
         expect(renderedStructuredSpy).not.toHaveBeenCalled();
-        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
-        expect(tree.root.findAllByType('StructuredResultView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('StructuredResultView' as any)).toHaveLength(0);
     });
 });

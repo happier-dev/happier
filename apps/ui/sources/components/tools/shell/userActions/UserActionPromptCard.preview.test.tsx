@@ -10,23 +10,39 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            Text: 'Text',
+            Pressable: 'Pressable',
+            Platform: {
+                OS: 'ios',
+                select: (v: any) => v.ios,
+            },
+            AppState: {
+                currentState: 'active',
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        }
+    );
+});
 
 const routerPush = vi.fn();
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPush }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPush },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/components/tools/shell/permissions/presentation/buildPermissionPromptModel', () => ({
     buildPermissionPromptModel: () => ({
