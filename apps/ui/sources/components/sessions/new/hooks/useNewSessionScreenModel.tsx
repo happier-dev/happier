@@ -48,9 +48,8 @@ import { coerceNewSessionModelMode } from '@/components/sessions/new/hooks/newSe
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { useNewSessionSimplePanelProps } from '@/components/sessions/new/hooks/useNewSessionSimplePanelProps';
 import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNewSessionWizardProps';
+import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { useNewSessionAgentPickerControls } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerControls';
-import { useNewSessionProfileEnvVars } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileEnvVars';
-import { useNewSessionRouteHandlers } from '@/components/sessions/new/hooks/screenModel/useNewSessionRouteHandlers';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import {
@@ -94,6 +93,11 @@ import { useNewSessionSecretSelectionState } from '@/components/sessions/new/hoo
 import { useNewSessionHappyRouteFlag } from '@/components/sessions/new/hooks/screenModel/useNewSessionHappyRouteFlag';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { randomUUID } from '@/platform/randomUUID';
+import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
+import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
+import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
+import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 
 
 // Configuration constants
@@ -469,6 +473,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         machineIdParam: effectiveMachineIdParam,
         pathParam: effectivePathParam,
     });
+    const [pathPickerSearchQuery, setPathPickerSearchQuery] = React.useState('');
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
         machineId: selectedMachineId,
         path: selectedPath,
@@ -550,6 +555,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
+        codexBackendModeOverride,
     });
 
     const { preflightModes: preflightSessionModes, modeOptions: acpSessionModeOptions, probe: acpSessionModeProbeState } =
@@ -800,6 +806,125 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         refreshMachineEnvPresence,
     });
 
+    const selectedServerId = targetServerId;
+    const machinePopoverServerIds = allowedTargetServerIds.length > 0
+        ? allowedTargetServerIds
+        : resolvedSettingsTarget.allowedServerIds;
+    const machinePopoverGroups = useServerScopedMachineOptions({
+        allowedServerIds: machinePopoverServerIds,
+        activeServerId: activeServerSnapshot.serverId,
+        activeMachines: machines,
+        refreshToken: activeServerSnapshot.generation,
+    });
+
+    const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
+        renderContent: ({ requestClose }) => (
+            <NewSessionPathSelectionContent
+                machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
+                selectedPath={selectedPath}
+                onChangeSelectedPath={setSelectedPath}
+                submitBehavior="confirm"
+                onSubmitSelectedPath={(nextPath) => {
+                    setSelectedPath(nextPath);
+                    requestClose();
+                }}
+                recentPaths={recentPaths}
+                usePickerSearch={usePathPickerSearch}
+                searchQuery={pathPickerSearchQuery}
+                onChangeSearchQuery={setPathPickerSearchQuery}
+                favoriteDirectories={favoriteDirectories}
+                onChangeFavoriteDirectories={setFavoriteDirectories}
+                focusInputOnSelect={false}
+                machineBrowse={{
+                    enabled: true,
+                    machineId: selectedMachine?.id ?? null,
+                    serverId: targetServerId ?? null,
+                }}
+            />
+        ),
+        maxHeightCap: 560,
+        maxWidthCap: 560,
+        keyboardShouldPersistTaps: 'handled',
+        edgeFades: { top: true, bottom: true, size: 28 },
+        edgeIndicators: true,
+        initialVisibility: { top: true, bottom: true },
+    }), [
+        favoriteDirectories,
+        pathPickerSearchQuery,
+        recentPaths,
+        selectedMachine?.id,
+        selectedMachine?.metadata?.homeDir,
+        selectedPath,
+        setFavoriteDirectories,
+        setSelectedPath,
+        targetServerId,
+        usePathPickerSearch,
+    ]);
+
+    const machinePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
+        renderContent: ({ requestClose }) => (
+            <NewSessionMachineSelectionContent
+                groups={machinePopoverGroups}
+                selectedMachine={selectedMachine ?? null}
+                selectedServerId={selectedServerId}
+                recentMachines={recentMachines}
+                favoriteMachines={favoriteMachineItems}
+                serverId={selectedServerId}
+                onSelectMachine={(machine) => {
+                    setSelectedMachineId(machine.id);
+                    setSelectedPath(getBestPathForMachine(machine.id));
+                    requestClose();
+                }}
+                onSelectScopedMachine={(machine) => {
+                    setSelectedMachineId(machine.id);
+                    setSelectedPath(getBestPathForMachine(machine.id));
+                    requestClose();
+                }}
+                showSearch={useMachinePickerSearch}
+                searchPlacement="header"
+            />
+        ),
+        maxHeightCap: 560,
+        maxWidthCap: 560,
+        keyboardShouldPersistTaps: 'handled',
+        edgeFades: { top: true, bottom: true, size: 28 },
+        edgeIndicators: true,
+        initialVisibility: { top: true, bottom: true },
+    }), [
+        favoriteMachineItems,
+        getBestPathForMachine,
+        machinePopoverGroups,
+        recentMachines,
+        selectedMachine,
+        selectedServerId,
+        setSelectedMachineId,
+        setSelectedPath,
+        useMachinePickerSearch,
+    ]);
+
+    const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
+        renderContent: ({ requestClose }) => (
+            <NewSessionResumeSelectionContent
+                value={resumeSessionId}
+                onChangeValue={setResumeSessionId}
+                onSave={(nextValue) => {
+                    setResumeSessionId(nextValue);
+                    requestClose();
+                }}
+                onClear={() => {
+                    setResumeSessionId('');
+                    requestClose();
+                }}
+                onClose={requestClose}
+                agentType={agentType}
+                maxHeight={460}
+                showInlineHeader={false}
+            />
+        ),
+        maxHeightCap: 460,
+        maxWidthCap: 460,
+    }), [agentType, resumeSessionId]);
+
     React.useEffect(() => {
         if (!selectedProfileId) return;
         const pending = pendingProfileSelectionRef.current;
@@ -985,22 +1110,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [agentType, modelMode, preflightModels]);
 
     const {
-        handleProfileClick,
-        handlePathClick,
-        handleResumeClick,
-        handleMachineClick,
-        handleServerClick,
-    } = useNewSessionRouteHandlers({
-        dataId: effectiveDataId,
-        selectedProfileId,
-        selectedMachineId,
-        selectedPath,
-        targetServerId,
-        resumeSessionId,
-        agentType,
-    });
-
-    const {
         agentPickerOptions,
         handleAgentPickerSelect,
         handleAgentClick,
@@ -1020,22 +1129,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setAcpSessionModeId,
         sessionConfigOptionOverrides,
         setSessionConfigOptionOverrides,
+        codexBackendModeOverride,
         selectedMachineId,
         capabilityServerId,
         selectedPath,
-        handleProfileClick,
-    });
-
-    const {
-        selectedProfileEnvVarsCount,
-        envVarsPopover,
-    } = useNewSessionProfileEnvVars({
-        useProfiles,
-        selectedProfileId,
-        profileMap,
-        selectedMachineId,
-        selectedMachine,
-        capabilityServerId,
     });
 
     const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
@@ -1179,8 +1276,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         connectedServicesAuthChip,
         showAutomationActionChips: newSessionAuthoringContext.showAutomationActionChips,
         showServerPickerChip,
+        targetServerId,
         targetServerName,
-        handleServerClick,
         mcpChip,
         directSessionsFeatureEnabled,
         supportsDirectTranscriptStorage,
@@ -1300,6 +1397,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setSelectedMachineId,
         getBestPathForMachine,
         setSelectedPath,
+        pathPopover,
         favoriteMachines,
         setFavoriteMachines,
         selectedPath,
@@ -1317,17 +1415,32 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         emptyAutocompletePrefixes,
         emptyAutocompleteSuggestions,
         connectionStatus,
-        selectedProfileEnvVarsCount,
-        envVarsPopover,
+        machinePopover,
         resumeSessionId,
-        showResumePicker,
-        handleResumeClick,
+        resumePopover,
         isResumeSupportChecking,
         sessionPromptInputMaxHeight,
         automationSection,
         agentInputExtraActionChips,
         attachmentFlowId: effectiveDataId,
     });
+
+    const { profilePopover } = React.useMemo(() => {
+        return buildNewSessionProfileSelectionPopover({
+            useProfiles,
+            profilesProps: wizardProfilesProps,
+            serverId: targetServerId,
+            machineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host,
+            popoverBoundaryRef,
+        });
+    }, [
+        popoverBoundaryRef,
+        selectedMachine?.metadata?.displayName,
+        selectedMachine?.metadata?.host,
+        targetServerId,
+        useProfiles,
+        wizardProfilesProps,
+    ]);
 
     const simplePanelProps = useNewSessionSimplePanelProps({
         popoverBoundaryRef,
@@ -1380,18 +1493,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setAcpConfigOptionOverride,
         connectionStatus,
         machineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host,
-        handleMachineClick,
+        machinePopover,
         selectedPath,
-        handlePathClick,
+        pathPopover,
         showResumePicker,
         resumeSessionId,
-        handleResumeClick,
+        resumePopover,
         isResumeSupportChecking,
         useProfiles,
         selectedProfileId,
-        handleProfileClick,
-        selectedProfileEnvVarsCount,
-        envVarsPopover,
+        profilePopover,
         agentInputExtraActionChips,
         targetServerId,
         attachmentFlowId: effectiveDataId,

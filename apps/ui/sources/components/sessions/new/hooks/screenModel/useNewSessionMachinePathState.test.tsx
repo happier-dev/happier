@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
 import { useNewSessionMachinePathState } from './useNewSessionMachinePathState';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,18 +50,13 @@ describe('useNewSessionMachinePathState', () => {
             { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
         ];
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(Probe, {
+        await renderScreen(React.createElement(Probe, {
                     machines,
                     recentMachinePaths: [
                         { machineId: 'machine-offline', path: '/repo/offline' },
                         { machineId: 'machine-online', path: '/repo/online' },
                     ],
-                }),
-            );
-            await flushEffects(4);
-        });
+                }));
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-online',
@@ -97,15 +94,10 @@ describe('useNewSessionMachinePathState', () => {
             { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
         ];
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(Probe, {
+        await renderScreen(React.createElement(Probe, {
                     machines,
                     machineIdParam: 'machine-offline',
-                }),
-            );
-            await flushEffects(4);
-        });
+                }));
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-offline',
@@ -145,15 +137,10 @@ describe('useNewSessionMachinePathState', () => {
         ];
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(Probe, {
+        tree = (await renderScreen(React.createElement(Probe, {
                     machines: initialMachines,
                     recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
-                }),
-            );
-            await flushEffects(4);
-        });
+                }))).tree;
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-old',
@@ -216,15 +203,10 @@ describe('useNewSessionMachinePathState', () => {
         ];
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(Probe, {
+        tree = (await renderScreen(React.createElement(Probe, {
                     machines: initialMachines,
                     recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
-                }),
-            );
-            await flushEffects(4);
-        });
+                }))).tree;
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-old',
@@ -282,12 +264,9 @@ describe('useNewSessionMachinePathState', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe, {
+        tree = (await renderScreen(React.createElement(Probe, {
                 pathParam: '/repo/custom',
-            }));
-            await flushEffects(4);
-        });
+            }))).tree;
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-1',
@@ -356,14 +335,91 @@ describe('useNewSessionMachinePathState', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await flushEffects(4);
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-1',
             selectedPath: '/repo/custom',
+        });
+    });
+
+    it('does not reapply an unchanged machine param after the user selects another available machine', async () => {
+        const snapshots: Array<{ selectedMachineId: string | null; selectedPath: string }> = [];
+        const stateRef: { current: ReturnType<typeof useNewSessionMachinePathState> | null } = { current: null };
+        const now = Date.now();
+
+        function Probe(props: Readonly<{
+            machineIdParam: string | null;
+        }>) {
+            const state = useNewSessionMachinePathState({
+                machines: [
+                    { id: 'machine-offline', metadata: { homeDir: '/offline' }, activeAt: now - 3 * 60_000 },
+                    { id: 'machine-online', metadata: { homeDir: '/online' }, activeAt: now - 10_000 },
+                ] as any,
+                recentMachinePaths: [],
+                machineIdParam: props.machineIdParam,
+                pathParam: null,
+            });
+
+            stateRef.current = state;
+
+            React.useEffect(() => {
+                snapshots.push({
+                    selectedMachineId: state.selectedMachineId,
+                    selectedPath: state.selectedPath,
+                });
+            }, [state.selectedMachineId, state.selectedPath]);
+
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(React.createElement(Probe, {
+            machineIdParam: 'machine-offline',
+        }))).tree;
+
+        expect(snapshots.at(-1)).toEqual({
+            selectedMachineId: 'machine-offline',
+            selectedPath: '/offline',
+        });
+
+        await act(async () => {
+            stateRef.current?.setSelectedMachineId('machine-online');
+            await flushEffects(4);
+        });
+
+        expect(snapshots.at(-1)).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/offline',
+        });
+
+        await act(async () => {
+            tree?.update(React.createElement(Probe, {
+                machineIdParam: 'machine-offline',
+            }));
+            await flushEffects(4);
+        });
+
+        expect(snapshots.at(-1)).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/offline',
+        });
+
+        await act(async () => {
+            tree?.update(React.createElement(Probe, {
+                machineIdParam: 'machine-offline-next',
+            }));
+            await flushEffects(4);
+        });
+
+        expect(snapshots.at(-1)).toEqual({
+            selectedMachineId: 'machine-online',
+            selectedPath: '/offline',
+        });
+
+        await act(async () => {
+            tree?.unmount();
+            await flushEffects(2);
         });
     });
 
@@ -391,12 +447,9 @@ describe('useNewSessionMachinePathState', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe, {
+        tree = (await renderScreen(React.createElement(Probe, {
                 machines: [{ id: 'machine-1', metadata: { homeDir: null } }],
-            }));
-            await flushEffects(4);
-        });
+            }))).tree;
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-1',
@@ -442,12 +495,9 @@ describe('useNewSessionMachinePathState', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe, {
+        tree = (await renderScreen(React.createElement(Probe, {
                 machines: [{ id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } }],
-            }));
-            await flushEffects(4);
-        });
+            }))).tree;
 
         expect(snapshots.at(-1)).toEqual({
             selectedMachineId: 'machine-1',
@@ -503,16 +553,11 @@ describe('useNewSessionMachinePathState', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(Probe, {
+        tree = (await renderScreen(React.createElement(Probe, {
                     machines: [],
                     machineIdParam: 'machine-a',
                     pathParam: '/repo',
-                }),
-            );
-            await flushEffects(4);
-        });
+                }))).tree;
 
         await act(async () => {
             tree?.update(

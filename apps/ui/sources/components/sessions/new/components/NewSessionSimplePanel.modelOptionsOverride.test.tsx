@@ -1,23 +1,33 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const AgentInputMock = vi.fn((_props: any) => null);
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-    },
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            AppState: {
+                                            addEventListener: () => ({ remove: () => {} }),
+                                        },
+                                            Platform: {
+                                            OS: 'ios',
+                                            select: (v: any) => v.ios,
+                                        },
+                                        }
+    );
+});
 
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -40,9 +50,10 @@ vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: AgentInputMock,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
     it('passes modelOptions to AgentInput as modelOptionsOverride', async () => {
@@ -51,9 +62,7 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
         AgentInputMock.mockClear();
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(
-                    React.createElement(NewSessionSimplePanel, {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
                         // Test harness: the implementation only forwards this ref to a View.
                         popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                         headerHeight: 44,
@@ -83,21 +92,16 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                         ],
                         connectionStatus: undefined,
                         machineName: undefined,
-                        handleMachineClick: () => {},
+                        machinePopover: {
+                            renderContent: () => null,
+                        },
                         selectedPath: '',
-                        handlePathClick: () => {},
                         showResumePicker: false,
                         resumeSessionId: null,
-                        handleResumeClick: () => {},
                         isResumeSupportChecking: false,
                         useProfiles: false,
                         selectedProfileId: null,
-                        handleProfileClick: () => {},
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
-                    }),
-                );
-            });
+                    }))).tree;
 
             expect(AgentInputMock).toHaveBeenCalled();
             const firstCall = AgentInputMock.mock.calls[0];
@@ -107,6 +111,7 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                 { value: 'default', label: 'Default', description: '' },
                 { value: 'm1', label: 'Model 1', description: '' },
             ]);
+            expect(typeof props.machinePopover?.renderContent).toBe('function');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -114,15 +119,13 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
         }
     });
 
-    it('passes env popover config through to AgentInput when profile env vars are available', async () => {
+    it('passes the shared profile popover to AgentInput and suppresses separate env/profile click handlers', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         AgentInputMock.mockClear();
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(
-                    React.createElement(NewSessionSimplePanel, {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
                         popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                         headerHeight: 44,
                         safeAreaTop: 0,
@@ -148,30 +151,135 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                         modelOptions: [{ value: 'default', label: 'Default', description: '' }],
                         connectionStatus: undefined,
                         machineName: undefined,
-                        handleMachineClick: () => {},
                         selectedPath: '',
-                        handlePathClick: () => {},
                         showResumePicker: false,
                         resumeSessionId: null,
-                        handleResumeClick: () => {},
                         isResumeSupportChecking: false,
                         useProfiles: true,
                         selectedProfileId: 'profile-1',
-                        handleProfileClick: () => {},
-                        selectedProfileEnvVarsCount: 2,
-                        envVarsPopover: {
+                        profilePopover: {
                             renderContent: () => null,
                         },
-                    } as any),
-                );
-            });
+                    } as any))).tree;
 
             expect(AgentInputMock).toHaveBeenCalled();
             const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
             expect(props.profileId).toBe('profile-1');
-            expect(props.envVarsCount).toBe(2);
-            expect(typeof props.envVarsPopover?.renderContent).toBe('function');
+            expect(typeof props.profilePopover?.renderContent).toBe('function');
+            expect(props.onProfileClick).toBeUndefined();
+            expect(props.envVarsCount).toBeUndefined();
+            expect(props.envVarsPopover).toBeUndefined();
             expect(props.onEnvVarsClick).toBeUndefined();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('passes the core machine, path, and resume popover configs through to AgentInput when provided', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+
+        AgentInputMock.mockClear();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
+                        popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
+                        headerHeight: 44,
+                        safeAreaTop: 0,
+                        safeAreaBottom: 0,
+                        newSessionTopPadding: 0,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                        containerStyle: {},
+                        sessionPrompt: '',
+                        setSessionPrompt: () => {},
+                        handleCreateSession: () => {},
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        sessionPromptInputMaxHeight: 200,
+                        agentType: 'codex',
+                        handleAgentClick: () => {},
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        connectionStatus: undefined,
+                        machineName: 'Builder',
+                        machinePopover: { renderContent: () => null },
+                        selectedPath: '/repo',
+                        pathPopover: { renderContent: () => null },
+                        showResumePicker: true,
+                        resumeSessionId: 'resume-1',
+                        resumePopover: { renderContent: () => null },
+                        isResumeSupportChecking: false,
+                        useProfiles: false,
+                        selectedProfileId: null,
+                    } as any))).tree;
+
+            const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+            expect(typeof props.machinePopover?.renderContent).toBe('function');
+            expect(typeof props.pathPopover?.renderContent).toBe('function');
+            expect(typeof props.resumePopover?.renderContent).toBe('function');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('passes the resume popover config through to AgentInput when resume selection is available', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+
+        AgentInputMock.mockClear();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
+                        popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
+                        headerHeight: 44,
+                        safeAreaTop: 0,
+                        safeAreaBottom: 0,
+                        newSessionTopPadding: 0,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                        containerStyle: {},
+                        sessionPrompt: '',
+                        setSessionPrompt: () => {},
+                        handleCreateSession: () => {},
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        sessionPromptInputMaxHeight: 200,
+                        agentType: 'codex',
+                        handleAgentClick: () => {},
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        connectionStatus: undefined,
+                        machineName: undefined,
+                        selectedPath: '',
+                        showResumePicker: true,
+                        resumeSessionId: 'resume-42',
+                        resumePopover: {
+                            renderContent: () => null,
+                        },
+                        isResumeSupportChecking: false,
+                        useProfiles: false,
+                        selectedProfileId: null,
+                    } as any))).tree;
+
+            expect(AgentInputMock).toHaveBeenCalled();
+            const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+            expect(props.resumeSessionId).toBe('resume-42');
+            expect(props.resumePopover).toBeTruthy();
+            expect(typeof props.resumePopover?.renderContent).toBe('function');
+            expect(props.onResumeClick).toBeUndefined();
         } finally {
             act(() => {
                 tree?.unmount();
@@ -185,9 +293,7 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
         AgentInputMock.mockClear();
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(
-                    React.createElement(NewSessionSimplePanel, {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
                         popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                         headerHeight: 44,
                         safeAreaTop: 0,
@@ -221,21 +327,13 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                         setAcpSessionModeId: () => {},
                         connectionStatus: undefined,
                         machineName: undefined,
-                        handleMachineClick: () => {},
                         selectedPath: '',
-                        handlePathClick: () => {},
                         showResumePicker: false,
                         resumeSessionId: null,
-                        handleResumeClick: () => {},
                         isResumeSupportChecking: false,
                         useProfiles: false,
                         selectedProfileId: null,
-                        handleProfileClick: () => {},
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
-                    } as any),
-                );
-            });
+                    } as any))).tree;
 
             expect(AgentInputMock).toHaveBeenCalled();
             const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -260,9 +358,7 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         const onConfigChange = vi.fn();
         try {
-            act(() => {
-                tree = renderer.create(
-                    React.createElement(NewSessionSimplePanel, {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
                         popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                         headerHeight: 44,
                         safeAreaTop: 0,
@@ -309,21 +405,13 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                         setAcpConfigOptionOverride: onConfigChange,
                         connectionStatus: undefined,
                         machineName: undefined,
-                        handleMachineClick: () => {},
                         selectedPath: '',
-                        handlePathClick: () => {},
                         showResumePicker: false,
                         resumeSessionId: null,
-                        handleResumeClick: () => {},
                         isResumeSupportChecking: false,
                         useProfiles: false,
                         selectedProfileId: null,
-                        handleProfileClick: () => {},
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
-                    } as any),
-                );
-            });
+                    } as any))).tree;
 
             expect(AgentInputMock).toHaveBeenCalled();
             const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -365,9 +453,7 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         const onAgentPickerSelect = vi.fn();
         try {
-            act(() => {
-                tree = renderer.create(
-                    React.createElement(NewSessionSimplePanel, {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
                         popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                         headerHeight: 44,
                         safeAreaTop: 0,
@@ -400,21 +486,13 @@ describe('NewSessionSimplePanel (modelOptionsOverride)', () => {
                         modelOptions: [{ value: 'default', label: 'Default', description: '' }],
                         connectionStatus: undefined,
                         machineName: undefined,
-                        handleMachineClick: () => {},
                         selectedPath: '',
-                        handlePathClick: () => {},
                         showResumePicker: false,
                         resumeSessionId: null,
-                        handleResumeClick: () => {},
                         isResumeSupportChecking: false,
                         useProfiles: false,
                         selectedProfileId: null,
-                        handleProfileClick: () => {},
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
-                    } as any),
-                );
-            });
+                    } as any))).tree;
 
             expect(AgentInputMock).toHaveBeenCalled();
             const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;

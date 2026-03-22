@@ -1,7 +1,5 @@
 import * as React from 'react';
 
-import { Modal } from '@/modal';
-import { t } from '@/text';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -9,6 +7,7 @@ import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { buildAcpConfigOptionOverridesV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { t } from '@/text';
 
 type EngineSelection = Readonly<{
     modelId: string;
@@ -32,10 +31,10 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
     sessionConfigOptionOverrides: ReturnType<typeof buildAcpConfigOptionOverridesV1> | null;
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
+    codexBackendModeOverride: 'mcp' | 'acp' | 'appServer' | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     selectedPath: string | null;
-    handleProfileClick: () => void;
 }>): Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
     handleAgentPickerSelect: (selectedId: string) => void;
@@ -46,15 +45,25 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         return params.profileMap.get(params.selectedProfileId) || getBuiltInProfile(params.selectedProfileId);
     }, [params.profileMap, params.selectedProfileId, params.useProfiles]);
 
-    const candidateBackendEntries = React.useMemo(() => {
+    const compatibleBackendEntries = React.useMemo(() => {
         return profileForAgentSelection
             ? params.getCompatibleProfileBackendEntries(profileForAgentSelection)
             : params.resolvedBackendEntries;
     }, [params.getCompatibleProfileBackendEntries, profileForAgentSelection, params.resolvedBackendEntries]);
 
+    const compatibleBackendTargetKeys = React.useMemo(() => {
+        return new Set(compatibleBackendEntries.map((entry) => entry.targetKey));
+    }, [compatibleBackendEntries]);
+
     const selectableBackendEntries = React.useMemo(() => {
-        return candidateBackendEntries.filter((entry) => params.isBackendEntrySelectable(entry));
-    }, [candidateBackendEntries, params]);
+        return params.resolvedBackendEntries.filter((entry) => (
+            params.isBackendEntrySelectable(entry)
+            && (
+                !profileForAgentSelection
+                || compatibleBackendTargetKeys.has(entry.targetKey)
+            )
+        ));
+    }, [compatibleBackendTargetKeys, params, profileForAgentSelection]);
 
     const engineSelectionByTargetKeyRef = React.useRef(new Map<string, EngineSelection>());
 
@@ -113,17 +122,23 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     }, [params]);
 
     const agentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption> | undefined>(() => {
-        if (profileForAgentSelection && candidateBackendEntries.length <= 1) {
+        if (params.resolvedBackendEntries.length <= 1) {
             return undefined;
         }
-        if (selectableBackendEntries.length <= 1) {
-            return undefined;
-        }
-        return selectableBackendEntries.map((entry) => ({
+        return params.resolvedBackendEntries.map((entry) => {
+            const isCompatibleWithSelectedProfile = !profileForAgentSelection || compatibleBackendTargetKeys.has(entry.targetKey);
+            const disabled = !params.isBackendEntrySelectable(entry) || !isCompatibleWithSelectedProfile;
+            const subtitle = !isCompatibleWithSelectedProfile
+                ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
+                : undefined;
+
+            return {
             id: entry.targetKey,
             label: entry.title,
-            subtitle: entry.subtitle ?? undefined,
-            onApply: () => {
+            subtitle,
+            disabled,
+            onSelectImmediate: () => {
+                if (disabled) return;
                 const nextSelection = getEngineSelectionForTargetKey(entry.targetKey);
                 applyEngineSelection(entry, nextSelection);
             },
@@ -135,47 +150,41 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
                         selectedMachineId={params.selectedMachineId}
                         capabilityServerId={params.capabilityServerId}
                         cwd={params.selectedPath}
+                        codexBackendModeOverride={params.codexBackendModeOverride}
                         selectedModelId={selection.modelId}
                         selectedSessionModeId={selection.sessionModeId}
                         selectedConfigOverrides={selection.configOverrides}
                         onSelectionChange={(nextSelection) => {
                             engineSelectionByTargetKeyRef.current.set(entry.targetKey, nextSelection);
+                            applyEngineSelection(entry, nextSelection);
                         }}
                     />
                 );
             },
-        }));
+            };
+        });
     }, [
-        profileForAgentSelection,
-        candidateBackendEntries.length,
-        selectableBackendEntries,
-        getEngineSelectionForTargetKey,
         applyEngineSelection,
-        params.selectedMachineId,
+        compatibleBackendTargetKeys,
+        getEngineSelectionForTargetKey,
         params.capabilityServerId,
+        params.codexBackendModeOverride,
+        params.isBackendEntrySelectable,
+        params.resolvedBackendEntries,
+        params.selectedMachineId,
         params.selectedPath,
+        profileForAgentSelection,
     ]);
 
     const handleAgentPickerSelect = React.useCallback((selectedId: string) => {
         const nextEntry = selectableBackendEntries.find((entry) => entry.targetKey === selectedId) ?? null;
         if (nextEntry) {
-            params.setBackendTarget(nextEntry.target);
+            const nextSelection = getEngineSelectionForTargetKey(nextEntry.targetKey);
+            applyEngineSelection(nextEntry, nextSelection);
         }
-    }, [params.setBackendTarget, selectableBackendEntries]);
+    }, [applyEngineSelection, getEngineSelectionForTargetKey, selectableBackendEntries]);
 
     const handleAgentClick = React.useCallback(() => {
-        if (profileForAgentSelection && candidateBackendEntries.length <= 1) {
-            Modal.alert(
-                t('profiles.aiBackend.title'),
-                t('newSession.aiBackendSelectedByProfile'),
-                [
-                    { text: t('common.ok'), style: 'cancel' },
-                    { text: t('newSession.changeProfile'), onPress: params.handleProfileClick },
-                ],
-            );
-            return;
-        }
-
         if (selectableBackendEntries.length === 0) {
             return;
         }
@@ -187,12 +196,9 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             }
         }
     }, [
-        candidateBackendEntries.length,
-        params.handleProfileClick,
         params.selectedBackendEntry,
         params.selectedBackendTargetKey,
         params.setBackendTarget,
-        profileForAgentSelection,
         selectableBackendEntries,
     ]);
 

@@ -56,19 +56,16 @@ export type NewSessionSimplePanelProps = Readonly<{
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     machineName: string | undefined;
-    handleMachineClick: React.ComponentProps<typeof AgentInput>['onMachineClick'];
+    machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedPath: string;
-    handlePathClick: React.ComponentProps<typeof AgentInput>['onPathClick'];
+    pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     showResumePicker: boolean;
     resumeSessionId: string | null;
-    handleResumeClick: React.ComponentProps<typeof AgentInput>['onResumeClick'];
+    resumePopover?: React.ComponentProps<typeof AgentInput>['resumePopover'];
     isResumeSupportChecking: boolean;
     useProfiles: boolean;
     selectedProfileId: string | null;
-    handleProfileClick: React.ComponentProps<typeof AgentInput>['onProfileClick'];
     profilePopover?: React.ComponentProps<typeof AgentInput>['profilePopover'];
-    selectedProfileEnvVarsCount: number;
-    envVarsPopover?: React.ComponentProps<typeof AgentInput>['envVarsPopover'];
     targetServerId?: string | null;
     attachmentFlowId?: string | null;
 }>;
@@ -185,11 +182,14 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                             onAcpConfigOptionChange={props.setAcpConfigOptionOverride}
                                             connectionStatus={props.connectionStatus}
                                             machineName={props.machineName}
-                                            onMachineClick={props.handleMachineClick}
+                                            machinePopover={props.machinePopover}
+                                            onMachineClick={undefined}
                                             currentPath={props.selectedPath}
-                                            onPathClick={props.handlePathClick}
+                                            onPathClick={undefined}
+                                            pathPopover={props.pathPopover}
                                             resumeSessionId={props.showResumePicker ? props.resumeSessionId : undefined}
-                                            onResumeClick={props.showResumePicker ? props.handleResumeClick : undefined}
+                                            onResumeClick={undefined}
+                                            resumePopover={props.showResumePicker ? props.resumePopover : undefined}
                                             resumeIsChecking={props.isResumeSupportChecking}
                                             contentPaddingHorizontal={0}
                                             maxWidthCap={null}
@@ -197,11 +197,10 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                                                 ? {
                                                     profileId: props.selectedProfileId,
                                                     profilePopover: props.profilePopover,
-                                                    onProfileClick: props.profilePopover ? undefined : props.handleProfileClick,
-                                                    envVarsCount: props.selectedProfileEnvVarsCount || undefined,
-                                                    envVarsPopover: props.selectedProfileEnvVarsCount > 0
-                                                        ? props.envVarsPopover
-                                                        : undefined,
+                                                    onProfileClick: undefined,
+                                                    envVarsCount: undefined,
+                                                    envVarsPopover: undefined,
+                                                    onEnvVarsClick: undefined,
                                                 }
                                                 : {})}
                                         />

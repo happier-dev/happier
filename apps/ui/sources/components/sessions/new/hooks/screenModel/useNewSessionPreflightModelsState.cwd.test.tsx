@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -40,10 +42,7 @@ describe('useNewSessionPreflightModelsState', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root.unmount();
     });
@@ -54,6 +53,41 @@ describe('useNewSessionPreflightModelsState', () => {
       id: 'cli.opencode',
       method: 'probeModels',
       params: expect.objectContaining({ cwd: '/repo' }),
+    });
+  });
+
+  it('forwards the Codex backend mode override to capabilities.invoke(cli.codex probeModels)', async () => {
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    function Harness() {
+      useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+        codexBackendModeOverride: 'appServer',
+      } as any);
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+    const request = machineCapabilitiesInvokeMock.mock.calls[0]?.[1];
+    expect(request).toMatchObject({
+      id: 'cli.codex',
+      method: 'probeModels',
+      params: expect.objectContaining({
+        cwd: '/repo',
+        codexBackendModeOverride: 'appServer',
+      }),
     });
   });
 
@@ -75,10 +109,7 @@ describe('useNewSessionPreflightModelsState', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root.unmount();
     });
@@ -106,10 +137,7 @@ describe('useNewSessionPreflightModelsState', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root.unmount();
     });

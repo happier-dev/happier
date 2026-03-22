@@ -1,5 +1,4 @@
-import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { renderHook } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import type { NewSessionConnectedServicesResult } from './useNewSessionConnectedServices';
 
@@ -25,36 +24,39 @@ const profileState = vi.hoisted(() => ({
                 ],
             },
         ],
-    } as any,
+    },
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
         Pressable: 'Pressable',
         Platform: {
-            ...actual.Platform,
             OS: 'web',
-            select: (spec: Record<string, unknown>) =>
-                spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
+            select: (spec: Record<string, unknown>) => spec.web ?? spec.default,
         },
-    };
+    });
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (...args: any[]) => modalShowMock(...args),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (...args: any[]) => modalShowMock(...args),
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
     normalizeNodeForView: (node: React.ReactNode) => node,
@@ -81,13 +83,12 @@ describe('useNewSessionConnectedServices', () => {
     it('returns a connected-services chip with canonical control metadata and a collapsed action', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
-        let result: NewSessionConnectedServicesResult | null = null;
         const dismiss = vi.fn();
         const routerPush = vi.fn();
         const setAgentOptionStateForCurrentAgent = vi.fn();
 
-        function Probe() {
-            result = useNewSessionConnectedServices({
+        const hook = await renderHook(() =>
+            useNewSessionConnectedServices({
                 agentCore: {
                     connectedServices: {
                         supportedServiceIds: ['anthropic'],
@@ -101,24 +102,16 @@ describe('useNewSessionConnectedServices', () => {
                 },
                 router: { push: routerPush },
                 setAgentOptionStateForCurrentAgent,
-            });
-            return null;
-        }
+            }),
+        );
 
-        await act(async () => {
-            renderer.create(<Probe />);
-            await Promise.resolve();
-        });
-
-        if (result === null) {
-            throw new Error('expected hook result');
-        }
-        const resolvedResult: NewSessionConnectedServicesResult = result;
-        const chip = resolvedResult.connectedServicesAuthChip;
-        expect(chip).toEqual(expect.objectContaining({
-            key: 'new-session-connected-services-auth',
-            controlId: 'connectedServices',
-        }));
+        const chip = hook.getCurrent().connectedServicesAuthChip;
+        expect(chip).toEqual(
+            expect.objectContaining({
+                key: 'new-session-connected-services-auth',
+                controlId: 'connectedServices',
+            }),
+        );
         expect(typeof chip?.collapsedAction).toBe('function');
         if (!chip?.collapsedAction) {
             throw new Error('expected connectedServicesAuthChip.collapsedAction');
@@ -137,12 +130,10 @@ describe('useNewSessionConnectedServices', () => {
             throw new Error('expected connectedServicesAuthChip.collapsedAction.onPress');
         }
 
-        await act(async () => {
-            collapsedAction.onPress();
-            await Promise.resolve();
-        });
+        collapsedAction.onPress();
 
         expect(dismiss).toHaveBeenCalledTimes(1);
         expect(modalShowMock).toHaveBeenCalledTimes(1);
+        await hook.unmount();
     });
 });

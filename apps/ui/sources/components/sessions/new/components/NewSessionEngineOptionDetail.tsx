@@ -5,7 +5,6 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
-import { Modal } from '@/modal';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
@@ -17,6 +16,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    codexBackendModeOverride?: 'mcp' | 'acp' | 'appServer' | null;
     selectedModelId?: string | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
@@ -51,6 +51,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
+        codexBackendModeOverride: props.codexBackendModeOverride ?? null,
     });
     const { modeOptions } = useNewSessionPreflightSessionModesState({
         backendTarget: props.backendTarget,
@@ -128,23 +129,6 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         [modelOptions, selectedModelId],
     );
 
-    const requestCustomModel = React.useCallback(async () => {
-        const next = await Modal.prompt(
-            t('profiles.model'),
-            t('agentInput.model.customPromptBody'),
-            {
-                placeholder: t('agentInput.model.customPlaceholder'),
-                confirmText: t('common.save'),
-            },
-        );
-        const normalized = typeof next === 'string' ? next.trim() : '';
-        if (!normalized) return;
-        publishSelection({
-            ...selectionRef.current,
-            modelId: normalized,
-        });
-    }, [publishSelection]);
-
     const configControls = React.useMemo(
         () => computeAcpConfigOptionControlsForProvider({
             providerId:
@@ -158,6 +142,21 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         }) ?? [],
         [configOptions, props.backendTarget, selectedConfigOverrides],
     );
+
+    const selectedModelOptionControls = React.useMemo(() => {
+        const selectedModel = modelOptions.find((option) => option.value === selectedModelId) ?? null;
+        if (!selectedModel?.modelOptions?.length) return null;
+        return computeAcpConfigOptionControlsForProvider({
+            providerId:
+                props.backendTarget.kind === 'configuredAcpBackend'
+                    ? props.backendTarget.backendId
+                    : props.backendTarget.agentId,
+            configOptions: selectedModel.modelOptions,
+            overrides: Object.fromEntries(
+                Object.entries(selectedConfigOverrides).map(([optionId, value]) => [optionId, { value }]),
+            ),
+        }) ?? null;
+    }, [modelOptions, props.backendTarget, selectedConfigOverrides, selectedModelId]);
 
     return (
         <AgentInputEngineDetail
@@ -174,7 +173,22 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     modelId,
                 });
             }}
-            onRequestCustomModel={canEnterCustomModel ? requestCustomModel : undefined}
+            onSubmitCustomModel={canEnterCustomModel ? (modelId) => {
+                publishSelection({
+                    ...selectionRef.current,
+                    modelId,
+                });
+            } : undefined}
+            selectedModelOptionControls={selectedModelOptionControls}
+            onSelectModelOptionValue={(configId, valueId) => {
+                publishSelection({
+                    ...selectionRef.current,
+                    configOverrides: {
+                        ...selectionRef.current.configOverrides,
+                        [configId]: valueId,
+                    },
+                });
+            }}
             sessionModeOptions={modeOptions}
             selectedSessionModeId={selectedSessionModeId}
             onSelectSessionMode={(optionId) => {

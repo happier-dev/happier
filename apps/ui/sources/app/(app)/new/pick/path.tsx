@@ -7,13 +7,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { layout } from '@/components/ui/layout/layout';
-import { PathSelector } from '@/components/sessions/new/components/PathSelector';
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -171,35 +169,23 @@ export default React.memo(function PathPickerScreen() {
             <Stack.Screen
                 options={screenOptions}
             />
-            <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-                {usePathPickerSearch && (
-                    <SearchHeader
-                        value={pathSearchQuery}
-                        onChangeText={setPathSearchQuery}
-                        placeholder={t('newSession.searchPathsPlaceholder')}
-                    />
-                )}
-                <View style={styles.contentWrapper}>
-                    <PathSelector
-                        machineHomeDir={machineHomeDir}
-                        selectedPath={customPath}
-                        onChangeSelectedPath={setCustomPath}
-                        submitBehavior="confirm"
-                        onSubmitSelectedPath={handleSelectPath}
-                        recentPaths={recentPaths}
-                        usePickerSearch={usePathPickerSearch}
-                        searchVariant="none"
-                        searchQuery={pathSearchQuery}
-                        onChangeSearchQuery={setPathSearchQuery}
-                        favoriteDirectories={favoriteDirectories}
-                        onChangeFavoriteDirectories={setFavoriteDirectories}
-                        machineBrowse={{
-                            enabled: true,
-                            machineId: machine.id,
-                        }}
-                    />
-                </View>
-            </ItemList>
+            <NewSessionPathSelectionContent
+                machineHomeDir={machineHomeDir}
+                selectedPath={customPath}
+                onChangeSelectedPath={setCustomPath}
+                submitBehavior="confirm"
+                onSubmitSelectedPath={handleSelectPath}
+                recentPaths={recentPaths}
+                usePickerSearch={usePathPickerSearch}
+                searchQuery={pathSearchQuery}
+                onChangeSearchQuery={setPathSearchQuery}
+                favoriteDirectories={favoriteDirectories}
+                onChangeFavoriteDirectories={setFavoriteDirectories}
+                machineBrowse={{
+                    enabled: true,
+                    machineId: machine.id,
+                }}
+            />
         </>
     );
 });
@@ -216,27 +202,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         textAlign: 'center',
         ...Typography.default(),
-    },
-    contentWrapper: {
-        width: '100%',
-        maxWidth: layout.maxWidth,
-        alignSelf: 'center',
-    },
-    pathInputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 16,
-    },
-    pathInput: {
-        flex: 1,
-        backgroundColor: theme.colors.input.background,
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        minHeight: 36,
-        position: 'relative',
-        borderWidth: 0.5,
-        borderColor: theme.colors.divider,
     },
 }));

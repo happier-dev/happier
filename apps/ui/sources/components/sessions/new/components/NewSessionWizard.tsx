@@ -32,9 +32,8 @@ import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { CreatedSessionFollowUpContext } from '../hooks/useCreateNewSession';
-import { buildNewSessionProfilesListProps } from '@/components/sessions/new/components/buildNewSessionProfilesListProps';
+import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/components/NewSessionProfilesBrowserContent';
-import { NewSessionProfilePopoverBrowserContent } from '@/components/sessions/new/components/NewSessionProfilePopoverBrowserContent';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 
@@ -136,11 +135,11 @@ export interface NewSessionWizardFooterProps {
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
+    machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
+    pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     resumeSessionId?: string | null;
-    onResumeClick?: () => void;
+    resumePopover?: React.ComponentProps<typeof AgentInput>['resumePopover'];
     resumeIsChecking?: boolean;
-    selectedProfileEnvVarsCount: number;
-    envVarsPopover?: React.ComponentProps<typeof AgentInput>['envVarsPopover'];
     inputMaxHeight?: number;
     automationSection?: React.ReactNode;
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
@@ -309,129 +308,24 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
           setSessionPrompt,
           canCreate,
           isCreating,
-          emptyAutocompletePrefixes,
-          emptyAutocompleteSuggestions,
+        emptyAutocompletePrefixes,
+        emptyAutocompleteSuggestions,
         connectionStatus,
         resumeSessionId,
-        onResumeClick,
         resumeIsChecking,
-        selectedProfileEnvVarsCount,
-        envVarsPopover,
         inputMaxHeight,
     } = props.footer;
 
     const machineDisplayName = selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host;
-
-    const handleProfileSecretBadgePress = React.useCallback((profile: AIBackendProfile) => {
-        const satisfaction = getSecretSatisfactionForProfile(profile);
-        const isMissingForSelectedProfile =
-            profile.id === selectedProfileId && !satisfaction.isSatisfied;
-        openSecretRequirementModal(profile, { revertOnCancel: isMissingForSelectedProfile });
-    }, [getSecretSatisfactionForProfile, openSecretRequirementModal, selectedProfileId]);
-
-    const sharedProfilesListProps = React.useMemo(() => {
-        return buildNewSessionProfilesListProps({
-            profiles,
-            favoriteProfileIds,
-            setFavoriteProfileIds,
-            selectedProfileId,
-            selectedMachineId,
-            onPressDefaultEnvironment,
-            onPressProfile,
-            getProfileDisabled,
-            getProfileSubtitleExtra,
-            handleAddProfile,
-            openProfileEdit,
-            handleDuplicateProfile,
-            handleDeleteProfile,
-            onViewEnvironmentVariables: () => {},
-            onSecretBadgePress: handleProfileSecretBadgePress,
-            profilesGroupTitles,
-            getSecretOverrideReady,
-            getSecretMachineEnvOverride,
+    const { sharedProfilesListProps, profilePopover } = React.useMemo(() => {
+        return buildNewSessionProfileSelectionPopover({
+            useProfiles,
+            profilesProps: props.profiles,
+            serverId,
+            machineName: machineDisplayName,
             popoverBoundaryRef: scrollViewRef,
         });
-    }, [
-        favoriteProfileIds,
-        getProfileDisabled,
-        getProfileSubtitleExtra,
-        getSecretMachineEnvOverride,
-        getSecretOverrideReady,
-        handleAddProfile,
-        handleDeleteProfile,
-        handleDuplicateProfile,
-        handleProfileSecretBadgePress,
-        onPressDefaultEnvironment,
-        onPressProfile,
-        openProfileEdit,
-        profiles,
-        profilesGroupTitles,
-        selectedMachineId,
-        selectedProfileId,
-        setFavoriteProfileIds,
-    ]);
-
-    const profilePopover = React.useMemo<React.ComponentProps<typeof AgentInput>['profilePopover']>(() => {
-        if (!useProfiles) return undefined;
-
-        return {
-            maxHeightCap: 560,
-            maxWidthCap: 600,
-            renderContent: ({ maxHeight, requestClose }) => (
-                <NewSessionProfilePopoverBrowserContent
-                    maxHeight={maxHeight}
-                    profilesListProps={{
-                        ...sharedProfilesListProps,
-                        popoverBoundaryRef: null,
-                        onPressDefaultEnvironment: () => {
-                            requestClose();
-                            onPressDefaultEnvironment();
-                        },
-                        onPressProfile: (profile) => {
-                            requestClose();
-                            return onPressProfile(profile);
-                        },
-                        onAddProfilePress: () => {
-                            requestClose();
-                            handleAddProfile();
-                        },
-                        onEditProfile: (profile) => {
-                            requestClose();
-                            openProfileEdit({ profileId: profile.id });
-                        },
-                        onDuplicateProfile: (profile) => {
-                            requestClose();
-                            handleDuplicateProfile(profile);
-                        },
-                        onDeleteProfile: (profile) => {
-                            requestClose();
-                            handleDeleteProfile(profile);
-                        },
-                        onSecretBadgePress: (profile) => {
-                            requestClose();
-                            handleProfileSecretBadgePress(profile);
-                        },
-                    }}
-                    machineId={selectedMachineId}
-                    serverId={serverId}
-                    machineName={machineDisplayName}
-                />
-            ),
-        };
-    }, [
-        handleAddProfile,
-        handleDeleteProfile,
-        handleDuplicateProfile,
-        handleProfileSecretBadgePress,
-        machineDisplayName,
-        onPressDefaultEnvironment,
-        onPressProfile,
-        openProfileEdit,
-        serverId,
-        selectedMachineId,
-        sharedProfilesListProps,
-        useProfiles,
-    ]);
+    }, [machineDisplayName, props.profiles, scrollViewRef, serverId]);
 
     return (
         <KeyboardAvoidingView
@@ -616,6 +510,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 return (
                                                     <Item
                                                         key={option.value}
+                                                        testID={`new-session-model:${option.value}`}
                                                         title={option.label}
                                                         subtitle={option.description}
                                                         leftElement={renderIconNode('sparkles-outline', 24, theme.colors.textSecondary)}
@@ -875,18 +770,22 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
                                 connectionStatus={connectionStatus}
                                 machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
-                                onMachineClick={handleAgentInputMachineClick}
+                                machinePopover={props.footer.machinePopover}
+                                onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}
                                 currentPath={selectedPath}
-                                onPathClick={handleAgentInputPathClick}
+                                pathPopover={props.footer.pathPopover}
+                                onPathClick={props.footer.pathPopover ? undefined : handleAgentInputPathClick}
                                 resumeSessionId={resumeSessionId}
-                                onResumeClick={onResumeClick}
+                                onResumeClick={undefined}
+                                resumePopover={props.footer.resumePopover}
                                 resumeIsChecking={resumeIsChecking}
                                   contentPaddingHorizontal={0}
                                   {...(useProfiles ? {
                                       profileId: selectedProfileId,
                                       profilePopover,
-                                      envVarsCount: selectedProfileEnvVarsCount || undefined,
-                                      envVarsPopover: selectedProfileEnvVarsCount > 0 ? envVarsPopover : undefined,
+                                      envVarsCount: undefined,
+                                      envVarsPopover: undefined,
+                                      onEnvVarsClick: undefined,
                                   } : {})}
                               />
                               {props.footer.automationSection ?? null}

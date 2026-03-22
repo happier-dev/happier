@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,24 +10,49 @@ const mockEnv = vi.hoisted(() => ({
     windowWidth: 800,
 }));
 const agentInputPropsRef: { current: Record<string, unknown> | null } = { current: null };
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) =>
-        React.createElement('ActivityIndicator', props, null),
-    Platform: { OS: 'web', select: (v: any) => v.web ?? v.default ?? v.ios },
-    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
-    Dimensions: {
-        get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
-    },
-}));
+
+function stubQueuedRequestAnimationFrame(): { readonly queuedFrame: FrameRequestCallback | null } {
+    const state = { queuedFrame: null as FrameRequestCallback | null };
+    vi.stubGlobal('requestAnimationFrame', vi.fn((cb: FrameRequestCallback) => {
+        state.queuedFrame = cb;
+        return 1;
+    }));
+
+    return {
+        get queuedFrame() {
+            return state.queuedFrame;
+        },
+    };
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('ScrollView', props, props.children),
+                                            ActivityIndicator: (props: Record<string, unknown>) =>
+                                                React.createElement('ActivityIndicator', props, null),
+                                            Platform: {
+                                            OS: 'web',
+                                            select: (v: any) => v.web ?? v.default ?? v.ios,
+                                        },
+                                            AppState: {
+                                            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                                        },
+                                            useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
+                                            Dimensions: {
+                                                get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
+                                            },
+                                        }
+    );
+});
 
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -146,9 +173,10 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
@@ -159,9 +187,8 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
         useSetting: (key: string) => {
             if (key === 'profiles') return [];
             if (key === 'agentInputEnterToSend') return true;
@@ -182,7 +209,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         useSessionMessagesById: () => ({}),
         useSessionMessagesVersion: () => 0,
         useSessionMessagesReducerState: () => null,
-    };
+    });
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
@@ -220,9 +247,10 @@ vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
     describeEffectivePermissionMode: () => ({ effectiveMode: 'default' }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
@@ -265,257 +293,196 @@ describe('NewSessionSimplePanel', () => {
     it('does not render the legacy visible session type selector even when the feature flag is enabled', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
-        let tree!: renderer.ReactTestRenderer;
-        try {
-            await act(async () => {
-                tree = renderer.create(
-                    <NewSessionSimplePanel
-                        popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
-                        headerHeight={44}
-                        safeAreaTop={0}
-                        safeAreaBottom={0}
-                        newSessionTopPadding={0}
-                        newSessionSidePadding={0}
-                        newSessionBottomPadding={0}
-                        containerStyle={{}}
-                        sessionPrompt=""
-                        setSessionPrompt={() => {}}
-                        handleCreateSession={() => {}}
-                        canCreate={true}
-                        isCreating={false}
-                        emptyAutocompletePrefixes={[]}
-                        emptyAutocompleteSuggestions={async () => []}
-                        sessionPromptInputMaxHeight={200}
-                        agentInputExtraActionChips={[]}
-                        agentType="codex"
-                        handleAgentClick={() => {}}
-                        permissionMode="default"
-                        handlePermissionModeChange={() => {}}
-                        modelMode="default"
-                        setModelMode={() => {}}
-                        modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
-                        connectionStatus={undefined}
-                        machineName={undefined}
-                        handleMachineClick={() => {}}
-                        selectedPath=""
-                        handlePathClick={() => {}}
-                        showResumePicker={false}
-                        resumeSessionId={null}
-                        handleResumeClick={() => {}}
-                        isResumeSupportChecking={false}
-                        useProfiles={false}
-                        selectedProfileId={null}
-                        handleProfileClick={() => {}}
-                        selectedProfileEnvVarsCount={0}
-                        envVarsPopover={undefined}
-                    />,
-                );
-            });
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={0}
+                newSessionSidePadding={0}
+                newSessionBottomPadding={0}
+                containerStyle={{}}
+                sessionPrompt=""
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+            />,
+        );
 
-            const textNodes = tree.root.findAllByType('Text' as any).map((node) => node.props.children).flat().filter(Boolean);
-            expect(textNodes).not.toContain('newSession.sessionType.title');
-            expect(textNodes).not.toContain('newSession.selectSessionTypeTitle');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const textContent = screen.getTextContent();
+        expect(textContent).not.toContain('newSession.sessionType.title');
+        expect(textContent).not.toContain('newSession.selectSessionTypeTitle');
+        await screen.unmount();
     });
 
     it('does not emit raw text nodes under non-Text parents when icons render as text on web', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionSimplePanel
-                    popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
-                    headerHeight={44}
-                    safeAreaTop={0}
-                    safeAreaBottom={0}
-                    newSessionTopPadding={0}
-                    newSessionSidePadding={0}
-                    newSessionBottomPadding={0}
-                    containerStyle={{}}
-                    sessionPrompt=""
-                    setSessionPrompt={() => {}}
-                    handleCreateSession={() => {}}
-                    canCreate={true}
-                    isCreating={false}
-                    emptyAutocompletePrefixes={[]}
-                    emptyAutocompleteSuggestions={async () => []}
-                    sessionPromptInputMaxHeight={200}
-                    agentInputExtraActionChips={[]}
-                    agentType="codex"
-                    handleAgentClick={() => {}}
-                    permissionMode="default"
-                    handlePermissionModeChange={() => {}}
-                    modelMode="default"
-                    setModelMode={() => {}}
-                    modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
-                    connectionStatus={undefined}
-                    machineName={undefined}
-                    handleMachineClick={() => {}}
-                    selectedPath=""
-                    handlePathClick={() => {}}
-                    showResumePicker={false}
-                    resumeSessionId={null}
-                    handleResumeClick={() => {}}
-                    isResumeSupportChecking={false}
-                    useProfiles={false}
-                    selectedProfileId={null}
-                    handleProfileClick={() => {}}
-                    selectedProfileEnvVarsCount={0}
-                    envVarsPopover={undefined}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={0}
+                newSessionSidePadding={0}
+                newSessionBottomPadding={0}
+                containerStyle={{}}
+                sessionPrompt=""
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+            />,
+        );
 
-        const badNodes: Array<{ parent: string | null; value: string }> = [];
-        const walk = (node: any, parentType: string | null) => {
-            if (node == null) return;
-            if (typeof node === 'string' || typeof node === 'number') {
-                const value = String(node);
-                if (parentType !== 'Text' && value.trim().length > 0) badNodes.push({ parent: parentType, value });
-                return;
-            }
-            if (Array.isArray(node)) {
-                for (const item of node) walk(item, parentType);
-                return;
-            }
-            const nextParent = typeof node.type === 'string' ? node.type : parentType;
-            const children = Array.isArray(node.children) ? node.children : [];
-            for (const child of children) walk(child, nextParent);
-        };
+        expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
 
-        walk(tree.toJSON(), null);
-        expect(badNodes).toEqual([]);
-
-        act(() => {
-            tree.unmount();
-        });
+        await screen.unmount();
     });
 
     it('renders an inline automation section when provided by the shared composer model', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionSimplePanel
-                    popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
-                    headerHeight={44}
-                    safeAreaTop={0}
-                    safeAreaBottom={0}
-                    newSessionTopPadding={0}
-                    newSessionSidePadding={0}
-                    newSessionBottomPadding={0}
-                    containerStyle={{}}
-                    sessionPrompt=""
-                    setSessionPrompt={() => {}}
-                    handleCreateSession={() => {}}
-                    canCreate={true}
-                    isCreating={false}
-                    emptyAutocompletePrefixes={[]}
-                    emptyAutocompleteSuggestions={async () => []}
-                    sessionPromptInputMaxHeight={200}
-                    automationSection={React.createElement('AutomationSection')}
-                    agentInputExtraActionChips={[]}
-                    agentType="codex"
-                    handleAgentClick={() => {}}
-                    permissionMode="default"
-                    handlePermissionModeChange={() => {}}
-                    modelMode="default"
-                    setModelMode={() => {}}
-                    modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
-                    connectionStatus={undefined}
-                    machineName={undefined}
-                    handleMachineClick={() => {}}
-                    selectedPath=""
-                    handlePathClick={() => {}}
-                    showResumePicker={false}
-                    resumeSessionId={null}
-                    handleResumeClick={() => {}}
-                    isResumeSupportChecking={false}
-                    useProfiles={false}
-                    selectedProfileId={null}
-                    handleProfileClick={() => {}}
-                    selectedProfileEnvVarsCount={0}
-                    envVarsPopover={undefined}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={0}
+                newSessionSidePadding={0}
+                newSessionBottomPadding={0}
+                containerStyle={{}}
+                sessionPrompt=""
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                automationSection={React.createElement('AutomationSection')}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+            />,
+        );
 
-        expect(() => tree.root.findByType('AutomationSection' as any)).not.toThrow();
+        expect(screen.findByType('AutomationSection' as any)).toBeTruthy();
+        await screen.unmount();
     });
 
     it('renders the automation section after the agent input', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionSimplePanel
-                    popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
-                    headerHeight={44}
-                    safeAreaTop={0}
-                    safeAreaBottom={0}
-                    newSessionTopPadding={0}
-                    newSessionSidePadding={0}
-                    newSessionBottomPadding={0}
-                    containerStyle={{}}
-                    sessionPrompt=""
-                    setSessionPrompt={() => {}}
-                    handleCreateSession={() => {}}
-                    canCreate={true}
-                    isCreating={false}
-                    emptyAutocompletePrefixes={[]}
-                    emptyAutocompleteSuggestions={async () => []}
-                    sessionPromptInputMaxHeight={200}
-                    automationSection={React.createElement('AutomationSection')}
-                    agentInputExtraActionChips={[]}
-                    agentType="codex"
-                    handleAgentClick={() => {}}
-                    permissionMode="default"
-                    handlePermissionModeChange={() => {}}
-                    modelMode="default"
-                    setModelMode={() => {}}
-                    modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
-                    connectionStatus={undefined}
-                    machineName={undefined}
-                    handleMachineClick={() => {}}
-                    selectedPath=""
-                    handlePathClick={() => {}}
-                    showResumePicker={false}
-                    resumeSessionId={null}
-                    handleResumeClick={() => {}}
-                    isResumeSupportChecking={false}
-                    useProfiles={false}
-                    selectedProfileId={null}
-                    handleProfileClick={() => {}}
-                    selectedProfileEnvVarsCount={0}
-                    envVarsPopover={undefined}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={0}
+                newSessionSidePadding={0}
+                newSessionBottomPadding={0}
+                containerStyle={{}}
+                sessionPrompt=""
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                automationSection={React.createElement('AutomationSection')}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+            />,
+        );
 
-        const renderedOrder = tree.root.findAll((node) => (
-            String(node.type) === 'AutomationSection' || String(node.type) === 'AgentInput'
-        )).map((node) => String(node.type));
+        const agentInput = screen.findByType('AgentInput' as any);
+        const automationSection = screen.findByType('AutomationSection' as any);
 
-        expect(renderedOrder).toEqual(['AgentInput', 'AutomationSection']);
+        expect(agentInput).toBeTruthy();
+        expect(automationSection).toBeTruthy();
+        expect(agentInput?.parent?.children.indexOf(agentInput)).toBeLessThan(
+            automationSection?.parent?.children.indexOf(automationSection) ?? -1,
+        );
+        await screen.unmount();
     });
 
     it('uses the latest handleCreateSession callback after rerendering', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const firstHandleCreateSession = vi.fn();
         const secondHandleCreateSession = vi.fn();
-        const previousRaf = (globalThis as any).requestAnimationFrame;
-        let queuedFrame: null | FrameRequestCallback = null;
-        (globalThis as any).requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
-            queuedFrame = cb;
-            return 1;
-        });
+        const raf = stubQueuedRequestAnimationFrame();
 
         let tree!: renderer.ReactTestRenderer;
         const renderPanel = (handleCreateSession: () => void) => (
@@ -546,56 +513,40 @@ describe('NewSessionSimplePanel', () => {
                 modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
                 connectionStatus={undefined}
                 machineName={undefined}
-                handleMachineClick={() => {}}
                 selectedPath=""
-                handlePathClick={() => {}}
                 showResumePicker={false}
                 resumeSessionId={null}
-                handleResumeClick={() => {}}
                 isResumeSupportChecking={false}
                 useProfiles={false}
                 selectedProfileId={null}
-                handleProfileClick={() => {}}
-                selectedProfileEnvVarsCount={0}
-                envVarsPopover={undefined}
             />
         );
 
-        await act(async () => {
-            tree = renderer.create(renderPanel(firstHandleCreateSession));
-        });
+        tree = (await renderScreen(renderPanel(firstHandleCreateSession))).tree;
 
         await act(async () => {
             tree.update(renderPanel(secondHandleCreateSession));
         });
 
-        const send = tree.root.find((node) =>
-            node.props?.testID === 'new-session-composer-send'
-            && typeof node.props?.onPress === 'function'
-        );
-        expect(send).toBeTruthy();
+        expect(tree.findByTestId('new-session-composer-send')).toBeTruthy();
 
         try {
             await act(async () => {
-                send.props.onPress();
+                tree.pressByTestId('new-session-composer-send');
             });
 
             expect(firstHandleCreateSession).not.toHaveBeenCalled();
             expect(secondHandleCreateSession).not.toHaveBeenCalled();
-            expect(queuedFrame).toBeTypeOf('function');
+            expect(raf.queuedFrame).toBeTypeOf('function');
 
             await act(async () => {
-                queuedFrame?.(16);
+                raf.queuedFrame?.(16);
             });
 
             expect(firstHandleCreateSession).not.toHaveBeenCalled();
             expect(secondHandleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
-            if (previousRaf === undefined) {
-                delete (globalThis as any).requestAnimationFrame;
-            } else {
-                (globalThis as any).requestAnimationFrame = previousRaf;
-            }
+            vi.unstubAllGlobals();
             act(() => {
                 tree.unmount();
             });
@@ -605,18 +556,11 @@ describe('NewSessionSimplePanel', () => {
     it('defers web submission by one animation frame before invoking handleCreateSession', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const handleCreateSession = vi.fn();
-        const previousRaf = (globalThis as any).requestAnimationFrame;
-        let queuedFrame: null | FrameRequestCallback = null;
-        (globalThis as any).requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
-            queuedFrame = cb;
-            return 1;
-        });
+        const raf = stubQueuedRequestAnimationFrame();
 
-        let tree!: renderer.ReactTestRenderer;
+        let screen = undefined as Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(
-                    <NewSessionSimplePanel
+            screen = await renderScreen(<NewSessionSimplePanel
                         popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
                         headerHeight={44}
                         safeAreaTop={0}
@@ -643,48 +587,31 @@ describe('NewSessionSimplePanel', () => {
                         modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
                         connectionStatus={undefined}
                         machineName={undefined}
-                        handleMachineClick={() => {}}
                         selectedPath=""
-                        handlePathClick={() => {}}
                         showResumePicker={false}
                         resumeSessionId={null}
-                        handleResumeClick={() => {}}
                         isResumeSupportChecking={false}
                         useProfiles={false}
                         selectedProfileId={null}
-                        handleProfileClick={() => {}}
-                        selectedProfileEnvVarsCount={0}
-                        envVarsPopover={undefined}
-                    />,
-                );
-            });
-
-            const send = tree.root.find((node) =>
-                node.props?.testID === 'new-session-composer-send'
-                && typeof node.props?.onPress === 'function'
-            );
+            />);
 
             await act(async () => {
-                send.props.onPress();
+                screen?.findByTestId('new-session-composer-send')?.props.onPress();
             });
 
             expect(handleCreateSession).not.toHaveBeenCalled();
-            expect(queuedFrame).toBeTypeOf('function');
+            expect(raf.queuedFrame).toBeTypeOf('function');
 
             await act(async () => {
-                queuedFrame?.(16);
+                raf.queuedFrame?.(16);
             });
 
             expect(handleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
-            if (previousRaf === undefined) {
-                delete (globalThis as any).requestAnimationFrame;
-            } else {
-                (globalThis as any).requestAnimationFrame = previousRaf;
+            vi.unstubAllGlobals();
+            if (screen) {
+                await screen.unmount();
             }
-            act(() => {
-                tree?.unmount();
-            });
         }
     });
 });

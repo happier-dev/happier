@@ -1,35 +1,43 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props),
-    Dimensions: {
-        get: () => ({ width: 1440, height: 900 }),
-    },
-    Platform: {
-        OS: 'web',
-        select: (value: Record<string, unknown>) => value.web ?? value.default ?? value.ios ?? value.android,
-    },
-    Linking: { openURL: vi.fn() },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props),
+                                            Dimensions: {
+                                                get: () => ({ width: 1440, height: 900 }),
+                                            },
+                                            Platform: {
+                                            OS: 'web',
+                                            select: (value: Record<string, unknown>) => value.web ?? value.default ?? value.ios ?? value.android,
+                                        },
+                                            Linking: { openURL: vi.fn() },
+                                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) =>
-        params ? `${key}:${JSON.stringify(params)}` : key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) =>
+        params ? `${key}:${JSON.stringify(params)}` : key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -85,11 +93,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex'],
@@ -109,9 +116,7 @@ describe('CliNotDetectedBanner', () => {
         const { CliNotDetectedBanner } = await import('./CliNotDetectedBanner');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <CliNotDetectedBanner
+        tree = (await renderScreen(<CliNotDetectedBanner
                     agentId={'codex' as any}
                     theme={{
                         colors: {
@@ -123,9 +128,7 @@ describe('CliNotDetectedBanner', () => {
                         },
                     }}
                     onDismiss={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const badNodes: Array<{ parent: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {
@@ -152,9 +155,7 @@ describe('CliNotDetectedBanner', () => {
         const { CliNotDetectedBanner } = await import('./CliNotDetectedBanner');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <CliNotDetectedBanner
+        tree = (await renderScreen(<CliNotDetectedBanner
                     agentId={'codex' as any}
                     theme={{
                         colors: {
@@ -166,9 +167,7 @@ describe('CliNotDetectedBanner', () => {
                         },
                     }}
                     onDismiss={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         const groups = tree.root.findAllByType('ItemGroup' as any);
         const items = tree.root.findAllByType('Item' as any);

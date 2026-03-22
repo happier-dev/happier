@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
+import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,7 +13,23 @@ const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: an
   supported: true as const,
   response: {
     ok: true as const,
-    result: { availableModels: [{ id: 'm1', name: 'Model 1' }], supportsFreeform: false },
+    result: {
+      availableModels: [{
+        id: 'm1',
+        name: 'Model 1',
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Thinking',
+          type: 'select',
+          currentValue: 'medium',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'medium', name: 'Medium' },
+          ],
+        }],
+      }],
+      supportsFreeform: false,
+    },
   },
 }));
 
@@ -34,21 +53,19 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
 
     const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
+    let latestPreflightModels: any = null;
     function Harness() {
-      useNewSessionPreflightModelsState({
+      latestPreflightModels = useNewSessionPreflightModelsState({
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
-      });
+      }).preflightModels;
       return null;
     }
 
     let root1!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root1 = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root1 = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root1.unmount();
     });
@@ -58,25 +75,170 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
 
     const { useNewSessionPreflightModelsState: useNewSessionPreflightModelsState2 } = await import('./useNewSessionPreflightModelsState');
 
+    let latestPreflightModelsAfterReload: any = null;
     function Harness2() {
-      useNewSessionPreflightModelsState2({
+      latestPreflightModelsAfterReload = useNewSessionPreflightModelsState2({
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
-      });
+      }).preflightModels;
       return null;
     }
 
     let root2!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root2 = renderer.create(React.createElement(Harness2));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root2 = (await renderScreen(React.createElement(Harness2))).tree;
     await act(async () => {
       root2.unmount();
     });
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+    expect(latestPreflightModels).toEqual({
+      availableModels: [{
+        id: 'm1',
+        name: 'Model 1',
+        modelOptions: [{
+          id: 'reasoning_effort',
+          name: 'Thinking',
+          type: 'select',
+          currentValue: 'medium',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'medium', name: 'Medium' },
+          ],
+        }],
+      }],
+      supportsFreeform: false,
+    });
+    expect(latestPreflightModelsAfterReload).toEqual(latestPreflightModels);
+  });
+
+  it('ignores legacy persisted model-option cache entries after the model-option contract changes', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+
+    const cacheKey = buildDynamicModelProbeCacheKey({
+      machineId: 'machine-1',
+      targetKey: 'agent:codex',
+      serverId: 'server-1',
+      cwd: '/repo',
+    });
+    if (!cacheKey) {
+      throw new Error('expected dynamic model cache key');
+    }
+
+    const previousWindow = (globalThis as Record<string, unknown>).window;
+    const previousDocument = (globalThis as Record<string, unknown>).document;
+    const storageEntries = new Map<string, string>();
+    const localStorage = {
+      getItem(key: string): string | null {
+        return storageEntries.get(key) ?? null;
+      },
+      setItem(key: string, value: string): void {
+        storageEntries.set(key, value);
+      },
+      removeItem(key: string): void {
+        storageEntries.delete(key);
+      },
+    };
+    (globalThis as Record<string, unknown>).window = { localStorage };
+    (globalThis as Record<string, unknown>).document = {};
+    localStorage.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
+      version: 2,
+      entries: {
+        [cacheKey]: {
+          updatedAt: Date.now(),
+          value: {
+            availableModels: [{
+              id: 'gpt-5.4',
+              name: 'gpt-5.4',
+              modelOptions: [{
+                id: 'speed',
+                name: 'Fast',
+                type: 'boolean',
+                currentValue: false,
+              }],
+            }],
+            supportsFreeform: false,
+          },
+        },
+      },
+    }));
+
+    try {
+      machineCapabilitiesInvokeMock.mockResolvedValueOnce({
+        supported: true as const,
+        response: {
+          ok: true as const,
+          result: {
+            availableModels: [{
+              id: 'gpt-5.4',
+              name: 'gpt-5.4',
+              modelOptions: [{
+                id: 'speed',
+                name: 'Fast',
+                type: 'boolean',
+                currentValue: 'standard',
+                options: [
+                  { value: 'standard', name: 'Standard' },
+                  { value: 'fast', name: 'Fast' },
+                ],
+              }],
+            }],
+            supportsFreeform: false,
+          },
+        },
+      });
+
+      const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+      let latestPreflightModels: any = null;
+      function Harness() {
+        latestPreflightModels = useNewSessionPreflightModelsState({
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          selectedMachineId: 'machine-1',
+          capabilityServerId: 'server-1',
+          cwd: '/repo',
+        }).preflightModels;
+        return null;
+      }
+
+      let root!: renderer.ReactTestRenderer;
+      root = (await renderScreen(React.createElement(Harness))).tree;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        root.unmount();
+      });
+
+      expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+      expect(latestPreflightModels).toEqual({
+        availableModels: [{
+          id: 'gpt-5.4',
+          name: 'gpt-5.4',
+          modelOptions: [{
+            id: 'speed',
+            name: 'Fast',
+            type: 'boolean',
+            currentValue: 'standard',
+            options: [
+              { value: 'standard', name: 'Standard' },
+              { value: 'fast', name: 'Fast' },
+            ],
+          }],
+        }],
+        supportsFreeform: false,
+      });
+    } finally {
+      if (previousWindow === undefined) {
+        delete (globalThis as Record<string, unknown>).window;
+      } else {
+        (globalThis as Record<string, unknown>).window = previousWindow;
+      }
+      if (previousDocument === undefined) {
+        delete (globalThis as Record<string, unknown>).document;
+      } else {
+        (globalThis as Record<string, unknown>).document = previousDocument;
+      }
+    }
   });
 });

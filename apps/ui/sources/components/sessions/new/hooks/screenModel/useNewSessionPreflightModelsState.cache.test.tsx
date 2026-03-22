@@ -2,6 +2,8 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -74,19 +76,13 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
     }
 
     let root1!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root1 = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root1 = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root1.unmount();
     });
 
     let root2!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root2 = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root2 = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root2.unmount();
     });
@@ -121,10 +117,7 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     expect(latestPreflightModels).toEqual({
@@ -161,10 +154,7 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness, { agentId: 'codex' }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness, { agentId: 'codex' }))).tree;
 
     expect(latestProbePhase).toBe('loading');
 

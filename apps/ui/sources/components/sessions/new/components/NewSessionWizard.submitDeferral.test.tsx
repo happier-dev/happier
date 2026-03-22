@@ -1,21 +1,31 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    Platform: { OS: 'web', select: (value: any) => value.web ?? value.default ?? null },
-    Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('ScrollView', props, props.children),
+                                            Platform: {
+                                            OS: 'web',
+                                            select: (value: any) => value.web ?? value.default ?? null,
+                                        },
+                                            Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
+                                        }
+    );
+});
 
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -37,9 +47,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => React.createElement('Ionicons'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
@@ -107,145 +118,124 @@ vi.mock('@/sync/sync', () => ({
     sync: { sendMessage: vi.fn() },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), confirm: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(),
+        },
+    }).module;
+});
 
 describe('NewSessionWizard submit deferral', () => {
     it('defers web submission by one animation frame before invoking handleCreateSession', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const handleCreateSession = vi.fn();
-        const previousRaf = (globalThis as any).requestAnimationFrame;
-        let queuedFrame: null | FrameRequestCallback = null;
-        (globalThis as any).requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
-            queuedFrame = cb;
-            return 1;
-        });
+        vi.useFakeTimers();
 
-        let tree!: renderer.ReactTestRenderer;
+        const screen = await renderScreen(<NewSessionWizard
+                    layout={{
+                        theme: {
+                            colors: {
+                                divider: '#ddd',
+                                shadow: { color: '#000' },
+                                groupped: { background: '#fff' },
+                                text: '#000',
+                                textSecondary: '#666',
+                                input: { background: '#fff' },
+                                button: { secondary: { tint: '#000' } },
+                                warning: '#d97706',
+                                box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                            },
+                        } as any,
+                        styles: {} as any,
+                        safeAreaBottom: 0,
+                        headerHeight: 44,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                    }}
+                    profiles={{
+                        useProfiles: false,
+                        profiles: [],
+                        favoriteProfileIds: [],
+                        setFavoriteProfileIds: () => {},
+                        selectedProfileId: null,
+                        onPressDefaultEnvironment: () => {},
+                        onPressProfile: () => {},
+                        selectedMachineId: 'machine-1',
+                        getProfileDisabled: () => false,
+                        getProfileSubtitleExtra: () => null,
+                        handleAddProfile: () => {},
+                        openProfileEdit: () => {},
+                        handleDuplicateProfile: () => {},
+                        handleDeleteProfile: () => {},
+                        openProfileEnvVarsPreview: () => {},
+                        suppressNextSecretAutoPromptKeyRef: { current: null },
+                        openSecretRequirementModal: () => {},
+                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                        getSecretOverrideReady: () => false,
+                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true }),
+                    } as any}
+                    agent={{
+                        cliAvailability: { available: true },
+                        tmuxRequested: false,
+                        enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
+                        isCliBannerDismissed: () => true,
+                        dismissCliBanner: () => {},
+                        agentType: 'codex',
+                        setAgentType: () => {},
+                        selectedIndicatorColor: '#000',
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelOptions: [],
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                    } as any}
+                    machine={{
+                        machines: [],
+                        serverId: null,
+                        selectedMachine: null,
+                        recentMachines: [],
+                        favoriteMachineItems: [],
+                        useMachinePickerSearch: false,
+                        onRefreshMachines: () => {},
+                        setSelectedMachineId: () => {},
+                        getBestPathForMachine: () => '',
+                        setSelectedPath: () => {},
+                        favoriteMachines: [],
+                        setFavoriteMachines: () => {},
+                        selectedPath: '',
+                        recentPaths: [],
+                        usePathPickerSearch: false,
+                        favoriteDirectories: [],
+                        setFavoriteDirectories: () => {},
+                    } as any}
+                    footer={{
+                        sessionPrompt: 'hello',
+                        setSessionPrompt: () => {},
+                        handleCreateSession,
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        agentInputExtraActionChips: [],
+                    }}
+                />);
         try {
-            await act(async () => {
-                tree = renderer.create(
-                    <NewSessionWizard
-                        layout={{
-                            theme: {
-                                colors: {
-                                    divider: '#ddd',
-                                    shadow: { color: '#000' },
-                                    groupped: { background: '#fff' },
-                                    text: '#000',
-                                    textSecondary: '#666',
-                                    input: { background: '#fff' },
-                                    button: { secondary: { tint: '#000' } },
-                                    warning: '#d97706',
-                                    box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
-                                },
-                            } as any,
-                            styles: {} as any,
-                            safeAreaBottom: 0,
-                            headerHeight: 44,
-                            newSessionSidePadding: 0,
-                            newSessionBottomPadding: 0,
-                        }}
-                        profiles={{
-                            useProfiles: false,
-                            profiles: [],
-                            favoriteProfileIds: [],
-                            setFavoriteProfileIds: () => {},
-                            selectedProfileId: null,
-                            onPressDefaultEnvironment: () => {},
-                            onPressProfile: () => {},
-                            selectedMachineId: 'machine-1',
-                            getProfileDisabled: () => false,
-                            getProfileSubtitleExtra: () => null,
-                            handleAddProfile: () => {},
-                            openProfileEdit: () => {},
-                            handleDuplicateProfile: () => {},
-                            handleDeleteProfile: () => {},
-                            openProfileEnvVarsPreview: () => {},
-                            suppressNextSecretAutoPromptKeyRef: { current: null },
-                            openSecretRequirementModal: () => {},
-                            profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
-                            getSecretOverrideReady: () => false,
-                            getSecretSatisfactionForProfile: () => ({ isSatisfied: true }),
-                        } as any}
-                        agent={{
-                            cliAvailability: { available: true },
-                            tmuxRequested: false,
-                            enabledAgentIds: ['codex'],
-                            isAgentSelectable: () => true,
-                            isCliBannerDismissed: () => true,
-                            dismissCliBanner: () => {},
-                            agentType: 'codex',
-                            setAgentType: () => {},
-                            selectedIndicatorColor: '#000',
-                            permissionMode: 'default',
-                            handlePermissionModeChange: () => {},
-                            modelOptions: [],
-                            modelMode: 'default',
-                            setModelMode: () => {},
-                        } as any}
-                        machine={{
-                            machines: [],
-                            serverId: null,
-                            selectedMachine: null,
-                            recentMachines: [],
-                            favoriteMachineItems: [],
-                            useMachinePickerSearch: false,
-                            onRefreshMachines: () => {},
-                            setSelectedMachineId: () => {},
-                            getBestPathForMachine: () => '',
-                            setSelectedPath: () => {},
-                            favoriteMachines: [],
-                            setFavoriteMachines: () => {},
-                            selectedPath: '',
-                            recentPaths: [],
-                            usePathPickerSearch: false,
-                            favoriteDirectories: [],
-                            setFavoriteDirectories: () => {},
-                        } as any}
-                        footer={{
-                            sessionPrompt: 'hello',
-                            setSessionPrompt: () => {},
-                            handleCreateSession,
-                            canCreate: true,
-                            isCreating: false,
-                            emptyAutocompletePrefixes: [],
-                            emptyAutocompleteSuggestions: async () => [],
-                            selectedProfileEnvVarsCount: 0,
-                            envVarsPopover: undefined,
-                            agentInputExtraActionChips: [],
-                        }}
-                    />,
-                );
-            });
-
-            const send = tree.root.find((node) =>
-                node.props?.testID === 'wizard-send'
-                && typeof node.props?.onPress === 'function'
-            );
-
-            await act(async () => {
-                send.props.onPress();
-            });
+            await screen.pressByTestIdAsync('wizard-send');
 
             expect(handleCreateSession).not.toHaveBeenCalled();
-            expect(queuedFrame).toBeTypeOf('function');
 
-            await act(async () => {
-                queuedFrame?.(16);
-            });
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 0, frames: 1 });
 
             expect(handleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
-            if (previousRaf === undefined) {
-                delete (globalThis as any).requestAnimationFrame;
-            } else {
-                (globalThis as any).requestAnimationFrame = previousRaf;
-            }
-            act(() => {
-                tree?.unmount();
+            await act(async () => {
+                screen.tree.unmount();
             });
+            vi.useRealTimers();
         }
     });
 });

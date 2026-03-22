@@ -1,13 +1,20 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            Pressable: 'Pressable',
+                                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
@@ -22,9 +29,7 @@ describe('WizardSectionHeaderRow', () => {
         const { WizardSectionHeaderRow } = await import('./WizardSectionHeaderRow');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <WizardSectionHeaderRow
+        tree = (await renderScreen(<WizardSectionHeaderRow
                     rowStyle={{}}
                     iconName="folder-outline"
                     title="Section"
@@ -33,9 +38,7 @@ describe('WizardSectionHeaderRow', () => {
                         iconName: 'refresh-outline',
                         onPress: () => {},
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
         const badNodes: Array<{ parent: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {

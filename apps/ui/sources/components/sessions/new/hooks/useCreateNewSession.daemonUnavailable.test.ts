@@ -5,6 +5,8 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,14 +18,17 @@ async function setupHarness() {
     errorMessage: 'Daemon RPC is not available',
   }));
 
-  vi.doMock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+  vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: Record<string, unknown>) => {
       if (key === 'status.lastSeen') return `status.lastSeen:${String(params?.time ?? '')}`;
       if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
       if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
       return key;
     },
-  }));
+    });
+});
   vi.doMock('@/modal', () => ({ Modal: { alert: modalAlertSpy, confirm: vi.fn(async () => false) } }));
   vi.doMock('@/sync/sync', () => ({
     sync: {
@@ -39,7 +44,9 @@ async function setupHarness() {
   vi.doMock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => vi.fn(),
   }));
-  vi.doMock('@/sync/domains/state/storage', () => ({
+  vi.doMock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
       getState: () => ({
         settings: {},
@@ -49,7 +56,8 @@ async function setupHarness() {
         updateSessionDraft: vi.fn(),
       }),
     },
-  }));
+});
+});
   vi.doMock('@/sync/domains/state/persistence', () => ({
     clearNewSessionDraft: vi.fn(),
     loadSettings: () => ({ settings: {}, version: null }),
@@ -201,9 +209,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test));
-    });
+    tree = (await renderScreen(React.createElement(Test))).tree;
 
     await act(async () => {
       const p = handleCreateSession();
@@ -273,9 +279,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Test));
-    });
+    tree = (await renderScreen(React.createElement(Test))).tree;
 
     await act(async () => {
       const p = handleCreateSession();
@@ -355,9 +359,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       return null;
     }
 
-    await act(async () => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       const p = handleCreateSession();

@@ -2,6 +2,11 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey, type AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import {
+    flushHookEffects,
+    renderHook,
+    renderScreen,
+} from '@/dev/testkit';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
 import { useNewSessionScreenModel } from './useNewSessionScreenModel';
@@ -151,16 +156,43 @@ const persistedDraft = vi.hoisted(() => ({
     updatedAt: 123,
 }));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
-    Text: 'Text',
-    View: 'View',
-    Pressable: 'Pressable',
-    Dimensions: { get: () => ({ width: 900, height: 800 }) },
-    // Simulate a web environment where InteractionManager callbacks may never fire.
-    InteractionManager: { runAfterInteractions: () => ({ cancel: () => {} }) },
-    useWindowDimensions: () => ({ width: 900, height: 800 }),
-}));
+const initialHookFlushOptions = { cycles: 2, turns: 2 } as const;
+
+async function renderNewSessionScreenModel() {
+    return renderHook<any>(() => useNewSessionScreenModel() as any, {
+        flushOptions: initialHookFlushOptions,
+    });
+}
+
+async function invokeHookAction(action: () => void | Promise<void>) {
+    await act(async () => {
+        await action();
+    });
+    await flushHookEffects({ cycles: 1, turns: 2 });
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                                    },
+                                    Text: 'Text',
+                                    TextInput: 'TextInput',
+                                    View: 'View',
+                                    Pressable: 'Pressable',
+                                    Dimensions: {
+                                        get: () => ({ width: 900, height: 800 }),
+                                    },
+                                    InteractionManager: {
+                                        runAfterInteractions: () => ({ cancel: () => {} }),
+                                    },
+                                    useWindowDimensions: () => ({ width: 900, height: 800 }),
+                                }
+    );
+});
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -170,8 +202,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 0,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -194,50 +227,28 @@ vi.mock('react-native-unistyles', () => ({
             },
         },
         rt: { themeName: 'light' },
-    }),
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                colors: {
-                    text: '#000',
-                    textSecondary: '#666',
-                    shadow: { color: '#000' },
-                    modal: { border: '#ddd' },
-                    button: { primary: { background: '#00f', tint: '#fff' } },
-                    groupped: { sectionTitle: '#999', background: '#fff' },
-                    input: { background: '#fff', placeholder: '#999' },
-                    radio: { active: '#00f' },
-                    divider: '#ddd',
-                    surface: '#fff',
-                    surfaceHigh: '#f2f2f2',
-                    surfaceHighest: '#e9e9e9',
-                    surfacePressed: '#ececec',
-                    surfacePressedOverlay: '#eee',
-                    surfaceSelected: '#f7f7f7',
-                    accent: { blue: '#00f' },
-                    textDestructive: '#c00',
-                },
-            };
-            const runtime = { themeName: 'light' };
-            return typeof styles === 'function' ? styles(theme, runtime) : styles;
-        },
-    },
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
-    useNavigation: () => ({}),
-    usePathname: () => '/new',
-    useLocalSearchParams: () => ({}),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
+        params: {},
+        navigation: {},
+        pathname: '/new',
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (_fn: any) => {},
@@ -252,18 +263,23 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
     };
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => machineState.value,
-    storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => selector(getMockStorageState()), {
-        getState: () => getMockStorageState(),
-    }),
-    useSetting: (key: string) => (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
-    useSettingMutable: (key: string) => [
-        (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
-        vi.fn(),
-    ],
-    useSettings: () => settingsRuntimeState.current ?? testSettingsDefaults,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/createPartialStorageModuleMock');
+    return createPartialStorageModuleMock(importOriginal, {
+        // Boundary fixture: this suite only consumes the machine id + metadata shape.
+        useAllMachines: (() => machineState.value as any) as any,
+        storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => selector(getMockStorageState()), {
+            getState: () => getMockStorageState(),
+        }) as any,
+        useSetting: (key: string) => (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
+        useSettingMutable: (key: string) => [
+            (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
+            vi.fn(),
+        ],
+        // Boundary fixture: the suite overrides only the settings fields it actually reads.
+        useSettings: (() => (settingsRuntimeState.current ?? testSettingsDefaults) as any) as any,
+    });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -369,9 +385,17 @@ vi.mock('@/components/sessions/new/modules/useNewSessionConnectedServices', () =
     }),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { show: modalShowMock, alert: modalAlertMock },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: modalShowMock,
+            alert: modalAlertMock,
+            prompt: vi.fn(async () => null),
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
 
 vi.mock('@/components/sessions/new/modules/profileHelpers', () => ({
     useProfileMap: (profiles: Array<{ id: string }>) => new Map(profiles.map((profile) => [profile.id, profile])),
@@ -576,25 +600,12 @@ describe('useNewSessionScreenModel (installables)', () => {
     });
 
     it('renders without throwing during initial new-session screen model setup', async () => {
-        function Probe() {
-            useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            expect(() => renderer.create(React.createElement(Probe))).not.toThrow();
-        });
+        const hook = await renderNewSessionScreenModel();
+        expect(hook.getCurrent()).toBeTruthy();
     });
 
     it('reads sessions.direct in target-server spawn scope', async () => {
-        function Probe() {
-            useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderNewSessionScreenModel();
 
         expect(featureEnabledCalls).toContainEqual({
             featureId: 'sessions.direct',
@@ -603,21 +614,11 @@ describe('useNewSessionScreenModel (installables)', () => {
     });
 
     it('triggers background codex-acp install even when codex CLI is not detected', async () => {
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        await act(async () => {
-            await Promise.allSettled(pendingFireAndForget);
-        });
+        await flushHookEffects();
+        await Promise.allSettled(pendingFireAndForget);
 
         expect(model).toBeTruthy();
         expect(model?.variant).toBe('simple');
@@ -631,47 +632,25 @@ describe('useNewSessionScreenModel (installables)', () => {
     it('falls back to default settings when settings are temporarily unavailable during startup', async () => {
         settingsRuntimeState.current = undefined;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model).toBeTruthy();
         expect(model?.variant).toBe('simple');
     });
 
     it('does not change hook order when the enhanced wizard flag toggles after mount', async () => {
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
         settingsState.useEnhancedSessionWizard = false;
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.variant).toBe('simple');
 
         settingsState.useEnhancedSessionWizard = true;
 
-        await act(async () => {
-            tree!.update(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await hook.rerender();
+        model = hook.getCurrent();
 
         expect(model?.variant).toBe('wizard');
     });
@@ -686,29 +665,19 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: true, codex: false, opencode: true },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentPickerOptions?.map((option: { id: string }) => option.id)).toEqual([
             'agent:claude',
+            'agent:codex',
             'agent:opencode',
         ]);
 
-        await act(async () => {
-            model?.simpleProps?.onAgentPickerSelect?.('agent:opencode');
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.('agent:opencode'));
+
+        model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('opencode');
     });
@@ -733,17 +702,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             ],
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const opencodeOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
             option.id === buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'opencode' }));
@@ -752,15 +712,10 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(opencodeDetailContent).toBeTruthy();
 
         let detailTree: renderer.ReactTestRenderer;
-        await act(async () => {
-            detailTree = renderer.create(React.createElement(React.Fragment, null, opencodeDetailContent));
-            await Promise.resolve();
-        });
+        detailTree = (await renderScreen(<>{opencodeDetailContent}</>)).tree;
 
         const previewItems = detailTree!.root.findAll((node) => node.props?.testID === 'model-picker-overlay-option:opencode-fast');
         expect(previewItems).toHaveLength(1);
-        const previewItem = previewItems.at(0);
-        expect(previewItem).toBeDefined();
         const previewTexts = detailTree!.root.findAll((node) => typeof node.props?.children === 'string')
             .map((node) => node.props.children);
         expect(previewTexts).toContain('OpenCode Fast');
@@ -804,17 +759,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             ],
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
             option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
@@ -822,16 +768,9 @@ describe('useNewSessionScreenModel (installables)', () => {
         const customPresetDetailContent = customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent ?? null;
         expect(customPresetDetailContent).toBeTruthy();
 
-        let detailTree: renderer.ReactTestRenderer;
-        await act(async () => {
-            detailTree = renderer.create(React.createElement(React.Fragment, null, customPresetDetailContent));
-            await Promise.resolve();
-        });
-
-        const modePreviewItems = detailTree!.root.findAll((node) => node.props?.testID === 'agent-input-session-mode-option:review');
+        const detailScreen = await renderScreen(<>{customPresetDetailContent}</>);
+        const modePreviewItems = detailScreen.findAllByTestId('agent-input-session-mode-option:review');
         expect(modePreviewItems).toHaveLength(1);
-        const modePreviewItem = modePreviewItems.at(0);
-        expect(modePreviewItem).toBeDefined();
     });
 
     it('applies backend-specific model and ACP mode selections from the engine picker detail pane', async () => {
@@ -876,17 +815,8 @@ describe('useNewSessionScreenModel (installables)', () => {
                 { id: 'review', name: 'Review', description: 'Review and critique mode.' },
             ],
         };
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.modelMode).toBe('default');
@@ -899,15 +829,15 @@ describe('useNewSessionScreenModel (installables)', () => {
         }> | undefined;
         expect(detailElement).toBeTruthy();
 
-        await act(async () => {
+        await invokeHookAction(() => {
             detailElement?.props.onSelectionChange?.({
                 modelId: 'preset-fast',
                 sessionModeId: 'review',
             });
             customPresetOption?.onApply?.();
-            await Promise.resolve();
-            await Promise.resolve();
         });
+
+        model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('customAcp');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
@@ -946,17 +876,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: true, customAcp: false, codex: false, opencode: null },
         } as any;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string; renderDetailContent?: () => React.ReactNode }) =>
             option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
@@ -970,13 +891,11 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(firstDetailElement?.props.selectedModelId).toBe('default');
 
-        act(() => {
-            firstDetailElement?.props.onSelectionChange?.({
-                modelId: 'preset-fast',
-                sessionModeId: 'default',
-                configOverrides: {},
-            });
-        });
+        await invokeHookAction(() => firstDetailElement?.props.onSelectionChange?.({
+            modelId: 'preset-fast',
+            sessionModeId: 'default',
+            configOverrides: {},
+        }));
 
         const updatedDetailElement = customPresetOption?.renderDetailContent?.() as React.ReactElement<{
             selectedModelId?: string;
@@ -1030,17 +949,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             ],
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const customPresetOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) =>
             option.id === buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' }));
@@ -1048,13 +958,8 @@ describe('useNewSessionScreenModel (installables)', () => {
         const customPresetDetailContent = customPresetOption?.renderDetailContent?.() ?? customPresetOption?.detailContent ?? null;
         expect(customPresetDetailContent).toBeTruthy();
 
-        let detailTree: renderer.ReactTestRenderer;
-        await act(async () => {
-            detailTree = renderer.create(React.createElement(React.Fragment, null, customPresetDetailContent));
-            await Promise.resolve();
-        });
-
-        const configPreviewItems = detailTree!.root.findAll((node) => node.props?.testID === 'agent-input-config-option:speed');
+        const detailScreen = await renderScreen(<>{customPresetDetailContent}</>);
+        const configPreviewItems = detailScreen.findAllByTestId('agent-input-config-option:speed');
         expect(configPreviewItems).toHaveLength(1);
     });
 
@@ -1102,17 +1007,8 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             ],
         };
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.acpConfigOptionOverrides).toBeNull();
 
@@ -1123,16 +1019,16 @@ describe('useNewSessionScreenModel (installables)', () => {
         }> | undefined;
         expect(detailElement).toBeTruthy();
 
-        await act(async () => {
+        await invokeHookAction(() => {
             detailElement?.props.onSelectionChange?.({
                 modelId: 'default',
                 sessionModeId: 'default',
                 configOverrides: { speed: 'fast' },
             });
             customPresetOption?.onApply?.();
-            await Promise.resolve();
-            await Promise.resolve();
         });
+
+        model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('customAcp');
         expect(model?.simpleProps?.acpConfigOptionOverrides).toEqual({
@@ -1157,26 +1053,15 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: false, codex: false, opencode: null },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         const applySettingsCallsBeforeClick = applySettingsMock.mock.calls.length;
 
-        await act(async () => {
-            model?.simpleProps?.handleAgentClick?.();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await invokeHookAction(() => model?.simpleProps?.handleAgentClick?.());
+
+        model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         expect(applySettingsMock.mock.calls.length).toBe(applySettingsCallsBeforeClick);
@@ -1192,17 +1077,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: false, codex: false, opencode: null },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('codex');
     });
@@ -1214,17 +1090,8 @@ describe('useNewSessionScreenModel (installables)', () => {
         };
         delete (persistedDraft as { permissionMode?: string }).permissionMode;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.permissionMode).toBe('read-only');
     });
@@ -1268,17 +1135,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { customAcp: false, claude: true, codex: false, opencode: null },
         } as any;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('customAcp');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
@@ -1321,17 +1179,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: true, customAcp: false, codex: false, opencode: null },
         } as any;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         expect(model?.simpleProps?.agentLabel).toBe('agentInput.agent.claude');
@@ -1394,17 +1243,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: true, customAcp: false, codex: false, opencode: null },
         } as any;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('customAcp');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
@@ -1421,28 +1261,17 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { claude: true, codex: true, opencode: true, gemini: true },
         } as any;
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('claude');
         const geminiOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { label: string }) =>
             option?.label === 'agentInput.agent.gemini');
         expect(geminiOption).toBeTruthy();
 
-        await act(async () => {
-            model?.simpleProps?.onAgentPickerSelect?.(geminiOption?.id ?? 'agent:gemini');
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(geminiOption?.id ?? 'agent:gemini'));
+
+        model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('gemini');
     });
@@ -1458,17 +1287,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { codex: true, claude: true, opencode: true },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         expect(chips.some((chip: { key: string }) => chip.key === 'new-session-storage')).toBe(true);
@@ -1477,17 +1297,8 @@ describe('useNewSessionScreenModel (installables)', () => {
     it('seeds execution-run action chips with UI-normalized permission defaults', async () => {
         agentInputActionChipActionIdsState.value = ['review.start'];
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         const reviewChip = chips.find((chip: { key: string }) => chip.key === 'new-session-action:review.start');
@@ -1504,11 +1315,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             popoverAnchorRef: { current: null },
         }) as React.ReactElement<{ onPress?: () => void }>;
 
-        await act(async () => {
-            rendered.props.onPress?.();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await invokeHookAction(() => rendered.props.onPress?.());
 
         expect(handleCreateSessionMock).toHaveBeenCalledTimes(1);
         expect(createSessionActionDraftMock).toHaveBeenCalledWith(
@@ -1538,17 +1345,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { codex: true, claude: true, opencode: true },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         const storageChip = chips.find((chip: { key: string }) => chip.key === 'new-session-storage');
@@ -1556,17 +1354,13 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(storageChip?.controlId).toBe('storage');
         expect(typeof storageChip?.collapsedAction).toBe('function');
 
-        let chipTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            chipTree = renderer.create(storageChip.render({
-                chipStyle: () => null,
-                iconColor: '#000',
-                showLabel: true,
-                textStyle: {},
-            }));
-            await Promise.resolve();
-        });
-        expect(JSON.stringify(chipTree!.toJSON())).toContain('sessionsList.storageDirectTab');
+        const chipScreen = await renderScreen(storageChip.render({
+            chipStyle: () => null,
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+        }));
+        expect(chipScreen.getTextContent()).toContain('sessionsList.storageDirectTab');
     });
 
     it('prefers selected profile storage defaults over account defaults', async () => {
@@ -1599,33 +1393,20 @@ describe('useNewSessionScreenModel (installables)', () => {
             available: { codex: true, claude: true, opencode: true },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         const storageChip = chips.find((chip: { key: string }) => chip.key === 'new-session-storage');
         expect(storageChip).toBeTruthy();
 
-        let chipTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            chipTree = renderer.create(storageChip.render({
-                chipStyle: () => null,
-                iconColor: '#000',
-                showLabel: true,
-                textStyle: {},
-            }));
-            await Promise.resolve();
-        });
-        expect(JSON.stringify(chipTree!.toJSON())).toContain('sessionsList.storageDirectTab');
+        const chipScreen = await renderScreen(storageChip.render({
+            chipStyle: () => null,
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+        }));
+        expect(chipScreen.getTextContent()).toContain('sessionsList.storageDirectTab');
     });
 
     it('recomputes transcript storage when switching configured ACP backend targets through the backend picker', async () => {
@@ -1684,52 +1465,35 @@ describe('useNewSessionScreenModel (installables)', () => {
             timestamp: 1,
             available: { customAcp: false, codex: false, claude: false, opencode: null },
         } as any;
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        const renderStorageChipText = () => {
+        const renderStorageChipText = async () => {
             const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
             const storageChip = chips.find((chip: { key: string }) => chip.key === 'new-session-storage');
             expect(storageChip).toBeTruthy();
-            let chipTree: renderer.ReactTestRenderer | null = null;
-            void act(() => {
-                chipTree = renderer.create(storageChip.render({
-                    chipStyle: () => null,
-                    iconColor: '#000',
-                    showLabel: true,
-                    textStyle: {},
-                }));
-            });
-            return JSON.stringify(chipTree!.toJSON());
+            const chipScreen = await renderScreen(storageChip.render({
+                chipStyle: () => null,
+                iconColor: '#000',
+                showLabel: true,
+                textStyle: {},
+            }));
+            return chipScreen.getTextContent();
         };
 
-        expect(renderStorageChipText()).toContain('sessionsList.storagePersistedTab');
+        expect(await renderStorageChipText()).toContain('sessionsList.storagePersistedTab');
 
-        await act(async () => {
-            model?.simpleProps?.onAgentPickerSelect?.(buildBackendTargetKey({
-                kind: 'configuredAcpBackend',
-                backendId: 'custom-preset-b',
-            }));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await invokeHookAction(() => model?.simpleProps?.onAgentPickerSelect?.(buildBackendTargetKey({
+            kind: 'configuredAcpBackend',
+            backendId: 'custom-preset-b',
+        })));
+
+        model = hook.getCurrent();
 
         expect(model?.simpleProps?.agentType).toBe('customAcp');
         expect(model?.simpleProps?.agentLabel).toBe('Custom Preset B');
-        expect(renderStorageChipText()).toContain('sessionsList.storageDirectTab');
-        act(() => {
-            tree?.unmount();
-        });
+        expect(await renderStorageChipText()).toContain('sessionsList.storageDirectTab');
+        await hook.unmount();
     });
 
     it('shows a Windows session-mode chip on Windows machines through the canonical control and shared options popover', async () => {
@@ -1758,17 +1522,8 @@ describe('useNewSessionScreenModel (installables)', () => {
             },
         };
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
 
         let chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         const windowsChip = chips.find((chip: { key: string }) => chip.key === 'new-session-windows-remote-session-launch-mode');
@@ -1780,24 +1535,19 @@ describe('useNewSessionScreenModel (installables)', () => {
         }));
 
         let chipTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            chipTree = renderer.create(windowsChip.render({
+        chipTree = (await renderScreen(windowsChip.render({
                 chipStyle: () => null,
                 iconColor: '#000',
                 showLabel: true,
                 textStyle: {},
                 countTextStyle: {},
                 popoverAnchorRef: { current: null },
-            }));
-            await Promise.resolve();
-        });
+            }))).tree;
         expect(JSON.stringify(chipTree!.toJSON())).toContain('windowsRemoteSessionLaunchMode.shortConsole');
 
-        await act(async () => {
-            windowsChip.collapsedOptionsPopover?.onSelect('hidden');
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await invokeHookAction(() => windowsChip.collapsedOptionsPopover?.onSelect('hidden'));
+
+        model = hook.getCurrent();
 
         chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         const updatedChip = chips.find((chip: { key: string }) => chip.key === 'new-session-windows-remote-session-launch-mode');
@@ -1806,17 +1556,14 @@ describe('useNewSessionScreenModel (installables)', () => {
             selectedOptionId: 'hidden',
         }));
 
-        await act(async () => {
-            chipTree = renderer.create(updatedChip.render({
+        chipTree = (await renderScreen(updatedChip.render({
                 chipStyle: () => null,
                 iconColor: '#000',
                 showLabel: true,
                 textStyle: {},
                 countTextStyle: {},
                 popoverAnchorRef: { current: null },
-            }));
-            await Promise.resolve();
-        });
+            }))).tree;
         expect(JSON.stringify(chipTree!.toJSON())).toContain('windowsRemoteSessionLaunchMode.shortHidden');
     });
 

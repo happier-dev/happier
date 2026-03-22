@@ -1,10 +1,12 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+
 import { buildNewSessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,13 +20,21 @@ async function setupHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const createdAutomationTemplate: { value: Record<string, unknown> | null } = { value: null };
 
-    vi.doMock('@/text', () => ({ t: (key: string) => key }));
-    vi.doMock('@/modal', () => ({
-        Modal: {
+    vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
+    vi.doMock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
             alert: vi.fn(),
             confirm: vi.fn(async () => false),
         },
-    }));
+    }).module;
+});
     vi.doMock('@/sync/sync', () => ({
         sync: {
             getCredentials: vi.fn(() => ({ token: 't' })),
@@ -45,15 +55,18 @@ async function setupHarness() {
     vi.doMock('@/sync/store/settingsWriters', () => ({
         useApplySettings: () => applySettingsMock,
     }));
-    vi.doMock('@/sync/domains/state/storage', () => ({
-        storage: {
+    vi.doMock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
             getState: () => ({
                 settings: {},
                 updateSessionPermissionMode: vi.fn(),
                 updateSessionModelMode: vi.fn(),
             }),
         },
-    }));
+});
+});
     vi.doMock('@/sync/domains/state/persistence', () => ({
         loadSettings: () => ({ settings: {}, version: null }),
         loadDeviceAnalyticsId: () => null,
@@ -249,9 +262,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(handleCreateSession).toBeTruthy();
         await handleCreateSession!();
@@ -351,9 +362,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(handleCreateSession).toBeTruthy();
         await handleCreateSession!();
@@ -450,9 +459,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         expect(handleCreateSession).toBeTruthy();
         await handleCreateSession!();

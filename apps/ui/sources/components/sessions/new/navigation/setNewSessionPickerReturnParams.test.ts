@@ -46,6 +46,16 @@ describe('resolveNewSessionPickerReturnRouteKey', () => {
             ],
         })).toBeNull();
     });
+
+    it('falls back to the immediate previous route when expo-router state is sparse but the current route is a new-session picker', () => {
+        expect(resolveNewSessionPickerReturnRouteKey({
+            index: 1,
+            routes: [
+                { key: 'new-route' },
+                { key: 'server-picker-route', name: '(app)/new/pick/server', path: '/new/pick/server' },
+            ],
+        })).toBe('new-route');
+    });
 });
 
 describe('setNewSessionPickerReturnParams', () => {

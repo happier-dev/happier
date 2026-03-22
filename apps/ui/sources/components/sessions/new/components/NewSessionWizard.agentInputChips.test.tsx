@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,18 +10,26 @@ const AgentInputMock = vi.fn((_props: any) => null);
 const ProfilesListMock = vi.fn((_props: any) => null);
 const EnvironmentVariablesPreviewPanelMock = vi.fn((_props: any) => null);
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    Platform: { OS: 'web', select: (value: any) => value.web ?? value.default ?? null },
-    Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('ScrollView', props, props.children),
+                                            Platform: {
+                                            OS: 'web',
+                                            select: (value: any) => value.web ?? value.default ?? null,
+                                        },
+                                            Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
+                                        }
+    );
+});
 
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -41,9 +51,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => React.createElement('Ionicons'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
@@ -92,9 +103,15 @@ vi.mock('@/sync/sync', () => ({
     sync: { sendMessage: vi.fn() },
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), confirm: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/components/profiles/ProfilesList', () => ({
     ProfilesList: ProfilesListMock,
@@ -207,10 +224,6 @@ function buildProps() {
             isCreating: false,
             emptyAutocompletePrefixes: [],
             emptyAutocompleteSuggestions: async () => [],
-            selectedProfileEnvVarsCount: 2,
-            envVarsPopover: {
-                renderContent: () => null,
-            },
             agentInputExtraActionChips: [],
         } as any,
     };
@@ -223,8 +236,7 @@ describe('NewSessionWizard agent input chips', () => {
 
         AgentInputMock.mockClear();
 
-        await act(async () => {
-            renderer.create(React.createElement(NewSessionWizard, {
+        await renderScreen(React.createElement(NewSessionWizard, {
                 ...buildProps(),
                 agent: {
                     ...buildProps().agent,
@@ -237,7 +249,6 @@ describe('NewSessionWizard agent input chips', () => {
                     onAgentPickerSelect,
                 },
             } as any));
-        });
 
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -252,16 +263,14 @@ describe('NewSessionWizard agent input chips', () => {
         expect(props.onAgentClick).toBeUndefined();
     });
 
-    it('passes Profile and Env popover configs to AgentInput instead of legacy click handlers', async () => {
+    it('passes the profile popover to AgentInput and omits the redundant env chip props', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         AgentInputMock.mockClear();
         ProfilesListMock.mockClear();
         EnvironmentVariablesPreviewPanelMock.mockClear();
 
-        await act(async () => {
-            renderer.create(React.createElement(NewSessionWizard, buildProps() as any));
-        });
+        await renderScreen(React.createElement(NewSessionWizard, buildProps() as any));
 
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -269,10 +278,32 @@ describe('NewSessionWizard agent input chips', () => {
         expect(props.profilePopover).toBeTruthy();
         expect(typeof props.profilePopover?.renderContent).toBe('function');
         expect(props.onProfileClick).toBeUndefined();
-
-        expect(props.envVarsPopover).toBeTruthy();
-        expect(typeof props.envVarsPopover?.renderContent).toBe('function');
+        expect(props.envVarsCount).toBeUndefined();
+        expect(props.envVarsPopover).toBeUndefined();
         expect(props.onEnvVarsClick).toBeUndefined();
+    });
+
+    it('passes machine, path, and resume popover props to AgentInput and drops the legacy chip handlers when provided', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const props = buildProps();
+        props.footer.machinePopover = { renderContent: () => null };
+        props.footer.pathPopover = { renderContent: () => null };
+        props.footer.resumePopover = { renderContent: () => null };
+        props.footer.resumeSessionId = 'resume-1';
+        props.footer.onResumeClick = () => {};
+
+        AgentInputMock.mockClear();
+
+        await renderScreen(React.createElement(NewSessionWizard, props as any));
+
+        const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+
+        expect(typeof agentInputProps.machinePopover?.renderContent).toBe('function');
+        expect(typeof agentInputProps.pathPopover?.renderContent).toBe('function');
+        expect(typeof agentInputProps.resumePopover?.renderContent).toBe('function');
+        expect(agentInputProps.onMachineClick).toBeUndefined();
+        expect(agentInputProps.onPathClick).toBeUndefined();
+        expect(agentInputProps.onResumeClick).toBeUndefined();
     });
 
     it('passes ACP config probe props through to AgentInput for the wizard action menu popover', async () => {
@@ -295,9 +326,7 @@ describe('NewSessionWizard agent input chips', () => {
 
         AgentInputMock.mockClear();
 
-        await act(async () => {
-            renderer.create(React.createElement(NewSessionWizard, props as any));
-        });
+        await renderScreen(React.createElement(NewSessionWizard, props as any));
 
         expect(AgentInputMock).toHaveBeenCalled();
         const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -314,9 +343,7 @@ describe('NewSessionWizard agent input chips', () => {
         ProfilesListMock.mockClear();
         EnvironmentVariablesPreviewPanelMock.mockClear();
 
-        await act(async () => {
-            renderer.create(React.createElement(NewSessionWizard, props as any));
-        });
+        await renderScreen(React.createElement(NewSessionWizard, props as any));
 
         const profilesListProps = ProfilesListMock.mock.calls[0]?.[0] as
             | React.ComponentProps<typeof import('@/components/profiles/ProfilesList').ProfilesList>
@@ -340,23 +367,17 @@ describe('NewSessionWizard agent input chips', () => {
         ProfilesListMock.mockClear();
         EnvironmentVariablesPreviewPanelMock.mockClear();
 
-        await act(async () => {
-            renderer.create(React.createElement(NewSessionWizard, props as any));
-        });
+        await renderScreen(React.createElement(NewSessionWizard, props as any));
 
         const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as {
             profilePopover?: { renderContent?: (args: { maxHeight: number; requestClose: () => void }) => React.ReactNode };
         };
         let popoverTree: renderer.ReactTestRenderer | null = null;
 
-        await act(async () => {
-            popoverTree = renderer.create(
-                agentInputProps.profilePopover?.renderContent?.({
+        popoverTree = (await renderScreen(agentInputProps.profilePopover?.renderContent?.({
                     maxHeight: 420,
                     requestClose: () => {},
-                }) as React.ReactElement,
-            );
-        });
+                }) as React.ReactElement)).tree;
 
         const popoverProfilesListProps = ProfilesListMock.mock.calls.at(-1)?.[0] as
             | React.ComponentProps<typeof import('@/components/profiles/ProfilesList').ProfilesList>

@@ -3,11 +3,9 @@ import React from 'react';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createMcpActionChip } from '@/components/sessions/agentInput/definitions/createMcpActionChip';
-import { NewSessionMcpSelectionModal } from '@/components/sessions/new/components/NewSessionMcpSelectionModal';
+import { NewSessionMcpSelectionContent } from '@/components/sessions/new/components/NewSessionMcpSelectionContent';
 import { countSelectedSessionMcpPreviewEntries } from '@/components/sessions/new/modules/sessionMcpSelectionState';
-import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { Modal } from '@/modal';
 import { machineMcpServersPreview } from '@/sync/ops/machineMcpServers';
 import { t } from '@/text';
 import type { DaemonMcpServersPreviewResponse, SessionMcpSelectionV1 } from '@happier-dev/protocol';
@@ -34,7 +32,6 @@ export function useNewSessionMcpSelection(params: Readonly<{
     const [mcpPreview, setMcpPreview] = React.useState<PreviewSuccess | null>(null);
     const [mcpPreviewLoading, setMcpPreviewLoading] = React.useState(false);
     const [mcpPreviewError, setMcpPreviewError] = React.useState<string | null>(null);
-    const modalIdRef = React.useRef<string | null>(null);
 
     const refreshPreview = React.useCallback(async () => {
         if (!mcpServersEnabled || !params.selectedMachineId || params.selectedPath.trim().length === 0) {
@@ -128,7 +125,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
         params.targetServerId,
     ]);
 
-    const modalProps = React.useMemo(() => ({
+    const contentProps = React.useMemo(() => ({
         machineName: params.selectedMachineName,
         directory: params.selectedPath.trim(),
         agentType: params.agentType,
@@ -150,18 +147,6 @@ export function useNewSessionMcpSelection(params: Readonly<{
         refreshPreview,
     ]);
 
-    React.useEffect(() => {
-        if (!modalIdRef.current) return;
-        Modal.update(modalIdRef.current, modalProps);
-    }, [modalProps]);
-
-    const openMcpModal = React.useCallback(() => {
-        modalIdRef.current = Modal.show({
-            component: NewSessionMcpSelectionModal,
-            props: modalProps,
-        });
-    }, [modalProps]);
-
     const selectedCount = countSelectedSessionMcpPreviewEntries(mcpPreview);
     const chipLabel = t('newSession.mcpChipLabel');
 
@@ -171,9 +156,17 @@ export function useNewSessionMcpSelection(params: Readonly<{
         return createMcpActionChip({
             label: chipLabel,
             selectedCount,
-            onPress: openMcpModal,
+            popoverContent: ({ requestClose, maxHeight }) => (
+                <NewSessionMcpSelectionContent
+                    {...contentProps}
+                    onClose={requestClose}
+                    maxHeight={Math.min(760, Math.max(420, maxHeight))}
+                />
+            ),
+            maxHeightCap: 760,
+            maxWidthCap: 620,
         });
-    }, [chipLabel, mcpServersEnabled, openMcpModal, selectedCount]);
+    }, [chipLabel, contentProps, mcpServersEnabled, selectedCount]);
 
     return { mcpChip, mcpPreview, mcpPreviewLoading };
 }

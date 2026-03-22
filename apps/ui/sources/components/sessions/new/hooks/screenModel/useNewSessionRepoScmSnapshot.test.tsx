@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { useNewSessionRepoScmSnapshot } from './useNewSessionRepoScmSnapshot';
+import { renderScreen } from '@/dev/testkit';
+
 
 const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn());
 const fetchSnapshotForMachinePathMock = vi.hoisted(() => vi.fn());
@@ -91,10 +93,7 @@ async function renderHook<T>(useValue: () => T): Promise<{
     }
 
     let root: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        root = renderer.create(React.createElement(Test));
-        await flushAsync();
-    });
+    root = (await renderScreen(React.createElement(Test))).tree;
 
     await act(async () => {
         focusEffectRunnerState.callback?.();

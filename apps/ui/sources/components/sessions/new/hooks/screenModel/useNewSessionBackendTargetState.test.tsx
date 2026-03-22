@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 
 import { useNewSessionBackendTargetState } from './useNewSessionBackendTargetState';
+import { renderScreen } from '@/dev/testkit';
+
 
 const applySettingsMock = vi.fn();
 
@@ -40,7 +42,7 @@ describe('useNewSessionBackendTargetState', () => {
         applySettingsMock.mockReset();
     });
 
-    it('restores the last used configured ACP backend target instead of the provider sentinel', () => {
+    it('restores the last used configured ACP backend target instead of the provider sentinel', async () => {
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
         function Probe() {
@@ -52,14 +54,12 @@ describe('useNewSessionBackendTargetState', () => {
             return null;
         }
 
-        act(() => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
     });
 
-    it('persists the exact configured ACP backend target when selection changes', () => {
+    it('persists the exact configured ACP backend target when selection changes', async () => {
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
         function Probe() {
@@ -72,9 +72,7 @@ describe('useNewSessionBackendTargetState', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(Probe));
-        });
+        tree = (await renderScreen(React.createElement(Probe))).tree;
 
         applySettingsMock.mockClear();
 

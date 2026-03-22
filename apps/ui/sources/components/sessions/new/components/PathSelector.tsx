@@ -6,6 +6,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Typography } from '@/constants/Typography';
+import { layout } from '@/components/ui/layout/layout';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { t } from '@/text';
@@ -23,7 +24,7 @@ type PathSelectorBaseProps = {
     submitBehavior?: 'showRow' | 'confirm';
     recentPaths: ReadonlyArray<string>;
     usePickerSearch: boolean;
-    searchVariant?: 'header' | 'group' | 'none';
+    searchVariant?: 'header' | 'group' | 'belowInput' | 'none';
     favoriteDirectories: ReadonlyArray<string>;
     onChangeFavoriteDirectories: (dirs: string[]) => void;
     /**
@@ -56,22 +57,49 @@ export type PathSelectorProps =
 const ITEM_RIGHT_GAP = 16;
 
 const stylesheet = StyleSheet.create((theme) => ({
+    pathEntrySection: {
+        backgroundColor: theme.colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.divider,
+    },
+    pathEntryContent: {
+        width: '100%',
+        maxWidth: layout.maxWidth,
+        alignSelf: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
     pathInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 16,
     },
     pathInput: {
         flex: 1,
         backgroundColor: theme.colors.input.background,
         borderRadius: 10,
         paddingHorizontal: 12,
-        minHeight: 36,
+        paddingVertical: 8,
+        minHeight: 40,
         position: 'relative',
         borderWidth: 0.5,
         borderColor: theme.colors.divider,
+        justifyContent: 'center',
+    },
+    pathTextInput: {
+        flex: 1,
+        color: theme.colors.input.text,
+        paddingVertical: 0,
+        minHeight: 24,
+        textAlignVertical: 'center',
+        ...Typography.default(),
+        ...(Platform.OS === 'web'
+            ? ({
+                outlineStyle: 'none',
+                outlineWidth: 0,
+                boxShadow: 'none',
+            } as any)
+            : undefined),
     },
     searchHeaderContainer: {
         backgroundColor: 'transparent',
@@ -274,9 +302,13 @@ export function PathSelector({
 
     const setPathAndFocus = React.useCallback((path: string) => {
         onChangeSelectedPath(path);
+        if (submitBehavior === 'confirm') {
+            onSubmitSelectedPath?.(path);
+            return;
+        }
         setSubmittedCustomPath(null);
         focusInputAtEnd(path);
-    }, [focusInputAtEnd, onChangeSelectedPath]);
+    }, [focusInputAtEnd, onChangeSelectedPath, onSubmitSelectedPath, submitBehavior]);
 
     const handleSubmitPath = React.useCallback(() => {
         const trimmed = selectedPath.trim();
@@ -394,50 +426,46 @@ export function PathSelector({
                 />
             )}
 
-            <ItemGroup title={t('newSession.pathPicker.enterPathTitle')}>
-                <View style={styles.pathInputContainer}>
-                    <View style={[styles.pathInput, { paddingVertical: 8 }]}>
-                        <TextInput
-                            testID="path-selector-input"
-                            ref={inputRef}
-                            value={selectedPath}
-                            onChangeText={handleChangeSelectedPath}
-                            placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
-                            placeholderTextColor={theme.colors.input.placeholder}
-                            style={[
-                                {
-                                    color: theme.colors.input.text,
-                                    paddingTop: 8,
-                                    paddingBottom: 8,
-                                },
-                                Typography.default(),
-                                Platform.OS === 'web'
-                                    ? ({
-                                        outlineStyle: 'none',
-                                        outlineWidth: 0,
-                                        boxShadow: 'none',
-                                    } as any)
-                                    : undefined,
-                            ]}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            autoComplete="off"
-                            textContentType="none"
-                            importantForAutofill="no"
-                            returnKeyType="done"
-                            blurOnSubmit={true}
-                            multiline={false}
-                            onSubmitEditing={handleSubmitPath}
-                        />
+            <View style={styles.pathEntrySection}>
+                <View style={styles.pathEntryContent}>
+                    <View style={styles.pathInputContainer}>
+                        <View style={styles.pathInput}>
+                            <TextInput
+                                testID="path-selector-input"
+                                ref={inputRef}
+                                value={selectedPath}
+                                onChangeText={handleChangeSelectedPath}
+                                placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                style={styles.pathTextInput}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                autoComplete="off"
+                                textContentType="none"
+                                importantForAutofill="no"
+                                returnKeyType="done"
+                                blurOnSubmit={true}
+                                multiline={false}
+                                onSubmitEditing={handleSubmitPath}
+                            />
+                        </View>
+                        {machineBrowse?.enabled ? (
+                            <PathInputBrowseButton
+                                onPress={handleBrowseMachinePath}
+                                disabled={!machineBrowse.machineId}
+                            />
+                        ) : null}
                     </View>
-                    {machineBrowse?.enabled ? (
-                        <PathInputBrowseButton
-                            onPress={handleBrowseMachinePath}
-                            disabled={!machineBrowse.machineId}
-                        />
-                    ) : null}
                 </View>
-            </ItemGroup>
+            </View>
+
+            {usePickerSearch && searchVariant === 'belowInput' && (
+                <SearchHeader
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder={t('newSession.searchPathsPlaceholder')}
+                />
+            )}
 
             {showSubmittedCustomPathRow && (
                 <ItemGroup title={t('newSession.pathPicker.customPathTitle')}>

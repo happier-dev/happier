@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,20 +18,28 @@ const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => ''));
 const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    Platform: { OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-    Dimensions: {
-        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('ScrollView', props, props.children),
+                                            Platform: {
+                                            OS: 'web',
+                                            select: (v: any) => v.web ?? v.default ?? null,
+                                        },
+                                            Dimensions: {
+                                                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                            },
+                                        }
+    );
+});
 
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -110,9 +120,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
@@ -133,9 +144,15 @@ vi.mock('@/components/sessions/new/components/WizardSectionHeaderRow', () => ({
 vi.mock('@/components/profiles/ProfilesList', () => ({
     ProfilesList: () => null,
 }));
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), confirm: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(),
+        },
+    }).module;
+});
 
 describe('NewSessionWizard (attachments.uploads)', () => {
     it('wires AgentInput attachments handlers and attach action when enabled', async () => {
@@ -143,9 +160,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
 
         AgentInputMock.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(NewSessionWizard, {
+        await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -234,13 +249,9 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         isCreating: false,
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
                         agentInputExtraActionChips: [],
                     },
-                }),
-            );
-        });
+                }));
 
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -259,9 +270,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(NewSessionWizard, {
+        tree = (await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -350,14 +359,10 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         isCreating: false,
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
                         automationSection: React.createElement('AutomationSection'),
                         agentInputExtraActionChips: [],
                     },
-                }),
-            );
-        });
+                }))).tree;
 
         expect(() => tree!.root.findByType('AutomationSection' as any)).not.toThrow();
     });
@@ -367,9 +372,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         AgentInputMock.mockImplementation(() => React.createElement('AgentInput', null));
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(NewSessionWizard, {
+        tree = (await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -458,14 +461,10 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         isCreating: false,
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
                         automationSection: React.createElement('AutomationSection'),
                         agentInputExtraActionChips: [],
                     },
-                }),
-            );
-        });
+                }))).tree;
 
         const renderedOrder = tree!.root.findAll((node) => (
             String(node.type) === 'AutomationSection' || String(node.type) === 'AgentInput'
@@ -480,9 +479,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(NewSessionWizard, {
+        tree = (await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -611,13 +608,9 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         isCreating: false,
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
                         agentInputExtraActionChips: [],
                     },
-                }),
-            );
-        });
+                }))).tree;
 
         const textValues = tree!.root
             .findAllByType('Text')
@@ -636,9 +629,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(NewSessionWizard, {
+        tree = (await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -727,13 +718,9 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         isCreating: false,
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
                         agentInputExtraActionChips: [],
                     },
-                }),
-            );
-        });
+                }))).tree;
 
         const invalidStrings: Array<{ parentType: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {
@@ -784,9 +771,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
 
         const handleCreateSession = vi.fn();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(NewSessionWizard, {
+        await renderScreen(React.createElement(NewSessionWizard, {
                     layout: {
                         theme: {
                             colors: {
@@ -875,13 +860,9 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         isCreating: false,
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
                         agentInputExtraActionChips: [],
                     },
-                }),
-            );
-        });
+                }));
 
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
         await act(async () => {

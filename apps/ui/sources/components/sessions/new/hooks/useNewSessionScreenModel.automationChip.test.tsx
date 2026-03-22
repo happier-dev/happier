@@ -2,14 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: { minutes?: number }) => {
-        if (key === 'newSession.automationChip.default') return 'Automate';
-        if (key === 'newSession.automationChip.cron') return 'Cron schedule';
-        if (key === 'newSession.automationChip.interval') return `Every ${params?.minutes}m`;
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key, params) => {
+            switch (key) {
+                case 'newSession.automationChip.default':
+                    return 'Automate';
+                case 'newSession.automationChip.interval':
+                    return `Every ${String(params?.minutes ?? '')}m`;
+                case 'newSession.automationChip.cron':
+                    return 'Cron schedule';
+                default:
+                    return key;
+            }
+        },
+    });
+});
 
 describe('automation chip label', () => {
     it('shows a neutral label when automation is disabled', () => {

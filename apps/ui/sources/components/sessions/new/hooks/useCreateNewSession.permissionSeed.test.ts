@@ -12,6 +12,8 @@ import {
     type SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -150,7 +152,12 @@ async function setupUseCreateNewSessionHarness() {
         exitCode: 0,
     }));
 
-    vi.doMock('@/text', () => ({ t: (key: string) => key }));
+    vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
     vi.doMock('@/modal', () => ({
         Modal: {
             alert: modalAlertSpy,
@@ -401,9 +408,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -462,9 +467,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -527,9 +530,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -596,9 +597,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -659,9 +658,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -721,9 +718,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -788,9 +783,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -860,9 +853,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -945,9 +936,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -1027,9 +1016,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -1147,9 +1134,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -1265,9 +1250,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -1377,9 +1360,7 @@ describe('useCreateNewSession permission seeding', () => {
         };
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(Test, { automationDraft: initialDraft }));
-        });
+        tree = (await renderScreen(React.createElement(Test, { automationDraft: initialDraft }))).tree;
         act(() => {
             tree.update(React.createElement(Test, { automationDraft: updatedDraft }));
         });
@@ -1483,9 +1464,7 @@ describe('useCreateNewSession permission seeding', () => {
         };
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(Test, { automationDraft: initialDraft }));
-        });
+        tree = (await renderScreen(React.createElement(Test, { automationDraft: initialDraft }))).tree;
         if (!initialHandleCreateSession) {
             throw new Error('expected initial handleCreateSession');
         }
@@ -1567,9 +1546,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -1657,9 +1634,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.();
@@ -1731,9 +1706,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.({ initialMessage: 'skip' });
@@ -1802,9 +1775,7 @@ describe('useCreateNewSession permission seeding', () => {
             return React.createElement('View');
         }
 
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        await renderScreen(React.createElement(Test));
 
         await act(async () => {
             await handleCreateSession?.({ initialMessage: 'skip' });

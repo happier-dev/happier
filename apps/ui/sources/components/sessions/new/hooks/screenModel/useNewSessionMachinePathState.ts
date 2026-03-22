@@ -72,6 +72,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
         return getBestPathForMachine(selectedMachineId);
     });
     const hasUserEditedPathRef = React.useRef(false);
+    const lastAppliedMachineParamRef = React.useRef<string>('');
     const lastAppliedPathParamRef = React.useRef<string>('');
 
     const setSelectedPath = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((next) => {
@@ -87,6 +88,11 @@ export function useNewSessionMachinePathState(params: Readonly<{
     // Handle machine route param from picker screens (main's navigation pattern)
     React.useEffect(() => {
         const machineId = normalizeMachineIdParam(params.machineIdParam);
+        if (machineId === lastAppliedMachineParamRef.current) {
+            return;
+        }
+
+        lastAppliedMachineParamRef.current = machineId;
         if (!machineId) return;
         if (!hasMachine(machineId)) return;
         if (machineId === selectedMachineId) return;

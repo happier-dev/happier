@@ -56,6 +56,12 @@ function routeIsNestedNewSessionPicker(routeName: string, routePath: string): bo
     return routeName.includes('/new/pick') || routeName.includes('(app)/new/pick') || routePath.startsWith('/new/pick');
 }
 
+function routeHasExplicitDescriptor(route: RouteLike | null | undefined): boolean {
+    if (!route) return false;
+    if (isNonEmptyString(route.name) || isNonEmptyString(route.path)) return true;
+    return Boolean(route.params && typeof route.params === 'object' && Object.keys(route.params).length > 0);
+}
+
 function routeLooksLikeNewSession(route: RouteLike | null | undefined): boolean {
     if (!route) return false;
 
@@ -83,6 +89,17 @@ export function resolveNewSessionPickerReturnRouteKey(state: NavigationStateLike
         if (!routeLooksLikeNewSession(route)) continue;
         if (isNonEmptyString(route?.key)) return route.key;
     }
+
+    const currentRoute = state.routes[currentIndex];
+    const currentName = String(currentRoute?.name ?? '').trim().toLowerCase();
+    const currentPath = String(currentRoute?.path ?? '').trim().toLowerCase();
+    if (!routeIsNestedNewSessionPicker(currentName, currentPath)) return null;
+
+    const immediatePreviousRoute = currentIndex > 0 ? state.routes[currentIndex - 1] : null;
+    if (!isNonEmptyString(immediatePreviousRoute?.key)) return null;
+    if (routeLooksLikeNewSession(immediatePreviousRoute)) return immediatePreviousRoute.key;
+    if (!routeHasExplicitDescriptor(immediatePreviousRoute)) return immediatePreviousRoute.key;
+
     return null;
 }
 

@@ -1,9 +1,11 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,8 +41,21 @@ async function setupHarness(options?: Readonly<{
     ...(options?.storageState ?? {}),
   };
 
-  vi.doMock('@/text', () => ({ t: (key: string) => key }));
-  vi.doMock('@/modal', () => ({ Modal: { alert: vi.fn(), confirm: vi.fn(async () => false) } }));
+  vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
+  vi.doMock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(async () => false),
+        },
+    }).module;
+});
   vi.doMock('@/sync/sync', () => ({
     sync: {
       applySettings: vi.fn(),
@@ -223,9 +238,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       return React.createElement('View');
     }
 
-    act(() => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       await handleCreateSession?.();
@@ -288,9 +301,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       return React.createElement('View');
     }
 
-    act(() => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       await handleCreateSession?.();
@@ -350,9 +361,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       return React.createElement('View');
     }
 
-    act(() => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       await handleCreateSession?.();
@@ -419,9 +428,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       return React.createElement('View');
     }
 
-    act(() => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       await handleCreateSession?.();
@@ -493,9 +500,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       return React.createElement('View');
     }
 
-    act(() => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       await handleCreateSession?.();
@@ -584,9 +589,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       return React.createElement('View');
     }
 
-    act(() => {
-      renderer.create(React.createElement(Test));
-    });
+    await renderScreen(React.createElement(Test));
 
     await act(async () => {
       await handleCreateSession?.();

@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,9 +15,12 @@ vi.mock('@/sync/ops/capabilities', () => ({
   machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
 }));
 
-vi.mock('@/text', () => ({
-  tLoose: (key: string) => `t:${key}`,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translateLoose: (key: string) => `t:${key}`,
+    });
+});
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
@@ -52,10 +57,7 @@ describe('useNewSessionPreflightSessionModesState (staticAgentModes)', () => {
     }
 
     let root!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root = (await renderScreen(React.createElement(Harness))).tree;
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
     expect(latest.probe.phase).toBe('idle');

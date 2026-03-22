@@ -6,6 +6,7 @@ import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import {
     readDynamicModelProbeCache,
     runDynamicModelProbeDedupe,
@@ -18,6 +19,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    codexBackendModeOverride?: 'mcp' | 'acp' | 'appServer' | null;
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
@@ -59,8 +61,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             targetKey: backendTargetKey,
             serverId: params.capabilityServerId,
             cwd: params.cwd ?? null,
+            codexBackendModeOverride: params.codexBackendModeOverride ?? null,
         });
-    }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId]);
+    }, [backendTargetKey, params.capabilityServerId, params.codexBackendModeOverride, params.cwd, params.selectedMachineId]);
 
     React.useEffect(() => {
         if (!preflightModelsKey) {
@@ -105,6 +108,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                     params: {
                         timeoutMs: 15_000,
                         backendTarget,
+                        ...(params.codexBackendModeOverride ? { codexBackendModeOverride: params.codexBackendModeOverride } : {}),
                         ...(cwd ? { cwd } : {}),
                     },
                 }, {
@@ -126,6 +130,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                             id: String(m.id),
                             name: String(m.name),
                             ...(typeof m.description === 'string' ? { description: m.description } : {}),
+                            ...(Array.isArray(m.modelOptions) && m.modelOptions.length > 0
+                                ? { modelOptions: m.modelOptions as readonly AcpConfigOption[] }
+                                : {}),
                         })),
                     supportsFreeform: Boolean(supportsFreeformRaw),
                 };
@@ -158,7 +165,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         void run();
         return () => { cancelled = true; };
-    }, [agentType, backendTarget, preflightModelsKey, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce]);
+    }, [agentType, backendTarget, preflightModelsKey, params.capabilityServerId, params.codexBackendModeOverride, params.cwd, params.selectedMachineId, refreshNonce]);
 
     const modelOptions = React.useMemo(
         () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),

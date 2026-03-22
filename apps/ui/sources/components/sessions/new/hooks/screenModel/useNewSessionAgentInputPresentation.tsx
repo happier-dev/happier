@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { ActionId, BackendTargetRefV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { Router } from 'expo-router';
 
-import { AutomationSettingsForm, type AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
+import type { AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
 import { useNewSessionCheckoutActionChip } from '@/components/sessions/new/hooks/screenModel/useNewSessionCheckoutActionChip';
 import { useNewSessionAgentInputExtraActionChips } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputExtraActionChips';
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
@@ -56,8 +56,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
     showAutomationActionChips: boolean;
     showServerPickerChip: boolean;
+    targetServerId: string | null;
     targetServerName: string;
-    handleServerClick: () => void;
     mcpChip?: AgentInputExtraActionChip | null;
     directSessionsFeatureEnabled: boolean;
     supportsDirectTranscriptStorage: boolean;
@@ -90,36 +90,11 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         };
     }, [params.selectedMachine, params.theme.colors.success, params.theme.colors.textDestructive]);
 
-    const handleAutomationToggle = React.useCallback((next: boolean) => {
-        if (!params.automationFeatureEnabled) return;
-        params.setAutomationDraft((prev) => sanitizeNewSessionAutomationDraft({
-            ...prev,
-            enabled: next,
-        }));
-    }, [params.automationFeatureEnabled, params.setAutomationDraft]);
-
     const handleAutomationSettingsChange = React.useCallback((next: AutomationSettingsValue) => {
         params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));
     }, [params.setAutomationDraft]);
 
-    const automationSection = React.useMemo(() => {
-        if (!params.automationFeatureEnabled || !params.effectiveAutomationDraft.enabled) {
-            return null;
-        }
-
-        return (
-            <AutomationSettingsForm
-                variant="new-session"
-                showEnabledToggle={false}
-                value={params.effectiveAutomationDraft}
-                onChange={handleAutomationSettingsChange}
-            />
-        );
-    }, [
-        handleAutomationSettingsChange,
-        params.automationFeatureEnabled,
-        params.effectiveAutomationDraft,
-    ]);
+    const automationSection = null;
 
     const toggleTranscriptStorage = React.useCallback(() => {
         params.hasUserSelectedTranscriptStorageRef.current = true;
@@ -168,13 +143,13 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         setAgentOptionState: params.setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip: params.connectedServicesAuthChip,
         showAutomationActionChips: params.showAutomationActionChips,
-        automationEnabled: params.automationDraft.enabled,
+        automationDraft: params.effectiveAutomationDraft,
         automationLabel: getAutomationChipLabel(params.automationDraft),
-        onAutomationToggle: handleAutomationToggle,
+        onAutomationChange: handleAutomationSettingsChange,
         checkoutActionChip,
         showServerPickerChip: params.showServerPickerChip,
+        targetServerId: params.targetServerId,
         targetServerName: params.targetServerName,
-        onServerClick: params.handleServerClick,
         mcpChip: params.mcpChip,
         directSessionsFeatureEnabled: params.directSessionsFeatureEnabled,
         supportsDirectTranscriptStorage: params.supportsDirectTranscriptStorage,

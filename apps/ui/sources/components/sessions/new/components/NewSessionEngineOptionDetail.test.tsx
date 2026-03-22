@@ -1,9 +1,11 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { NewSessionEngineOptionDetail } from './NewSessionEngineOptionDetail';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,39 +40,53 @@ const configOptionsState = vi.hoisted(() => ({
 }));
 let lastModelPickerOverlayProps: any = null;
 
-vi.mock('react-native', () => ({
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: 'Pressable',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            ActivityIndicator: 'ActivityIndicator',
+                                            Pressable: 'Pressable',
+                                            Platform: {
+                                            OS: 'ios',
+                                            select: (value: Record<string, unknown>) => value.ios ?? value.default,
+                                        },
+                                            View: 'View',
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                colors: {
-                    divider: '#ddd',
-                    surface: '#fff',
-                    text: '#000',
-                    textSecondary: '#666',
-                    radio: {
-                        active: '#06f',
-                    },
-                },
-            };
-            return typeof styles === 'function' ? styles(theme) : styles;
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
+            colors: {
+                surface: '#fff',
+                divider: '#ddd',
+                text: '#000',
+                textSecondary: '#666',
+                button: { primary: { background: '#06f', text: '#fff' } },
+                warningCritical: '#c00',
+                success: '#0a0',
+            },
         },
-    },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/constants/Typography', () => ({
+    Typography: {
+        default: () => ({}),
+    },
 }));
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({
@@ -84,11 +100,14 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     resolveProviderAgentIdForBackendTarget: () => 'claude',
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: (props: any) => {
@@ -152,13 +171,11 @@ describe('NewSessionEngineOptionDetail', () => {
         lastModelPickerOverlayProps = null;
     });
 
-    it('publishes the selected mode synchronously so a following model click preserves it', () => {
+    it('publishes the selected mode synchronously so a following model click preserves it', async () => {
         let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
         let tree: ReactTestRenderer | undefined;
 
-        act(() => {
-            tree = renderer.create(
-                <NewSessionEngineOptionDetail
+        tree = (await renderScreen(<NewSessionEngineOptionDetail
                     backendTarget={backendTarget}
                     selectedMachineId="machine-1"
                     capabilityServerId="server-1"
@@ -169,17 +186,15 @@ describe('NewSessionEngineOptionDetail', () => {
                     onSelectionChange={(selection) => {
                         latestSelection = selection;
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
         act(() => {
-            tree!.root.findByProps({ testID: 'agent-input-session-mode-option:review' }).props.onPress();
+            tree!.pressByTestId('agent-input-session-mode-option:review');
             expect(latestSelection?.sessionModeId).toBe('review');
         });
 
         act(() => {
-            tree!.root.findByProps({ testID: 'model-picker-overlay-option:preset-fast' }).props.onPress();
+            tree!.pressByTestId('model-picker-overlay-option:preset-fast');
             expect(latestSelection).toEqual({
                 modelId: 'preset-fast',
                 sessionModeId: 'review',
@@ -188,7 +203,7 @@ describe('NewSessionEngineOptionDetail', () => {
         });
     });
 
-    it('passes the full model list and custom-model capability through to ModelPickerOverlay', () => {
+    it('passes the full model list and custom-model capability through to ModelPickerOverlay', async () => {
         modelOptionsState.value = Array.from({ length: 12 }, (_, index) => ({
             value: `model-${index + 1}`,
             label: `Model ${index + 1}`,
@@ -199,9 +214,7 @@ describe('NewSessionEngineOptionDetail', () => {
             supportsFreeform: true,
         };
 
-        act(() => {
-            renderer.create(
-                <NewSessionEngineOptionDetail
+        await renderScreen(<NewSessionEngineOptionDetail
                     backendTarget={backendTarget}
                     selectedMachineId="machine-1"
                     capabilityServerId="server-1"
@@ -209,25 +222,21 @@ describe('NewSessionEngineOptionDetail', () => {
                     selectedModelId="model-1"
                     selectedSessionModeId="default"
                     selectedConfigOverrides={{}}
-                />,
-            );
-        });
+                />);
 
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.options).toHaveLength(12);
         expect(lastModelPickerOverlayProps.canEnterCustomModel).toBe(true);
     });
 
-    it('still renders the model section when only custom model entry is available', () => {
+    it('still renders the model section when only custom model entry is available', async () => {
         modelOptionsState.value = [];
         preflightModelsState.value = {
             availableModels: [],
             supportsFreeform: true,
         };
 
-        act(() => {
-            renderer.create(
-                <NewSessionEngineOptionDetail
+        await renderScreen(<NewSessionEngineOptionDetail
                     backendTarget={backendTarget}
                     selectedMachineId="machine-1"
                     capabilityServerId="server-1"
@@ -235,16 +244,14 @@ describe('NewSessionEngineOptionDetail', () => {
                     selectedModelId="default"
                     selectedSessionModeId="default"
                     selectedConfigOverrides={{}}
-                />,
-            );
-        });
+                />);
 
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.options).toEqual([]);
         expect(lastModelPickerOverlayProps.canEnterCustomModel).toBe(true);
     });
 
-    it('keeps custom model entry available when the provider catalog supports freeform even if preflight does not', () => {
+    it('keeps custom model entry available when the provider catalog supports freeform even if preflight does not', async () => {
         preflightModelsState.value = {
             availableModels: [
                 { id: 'claude-opus-4-6', name: 'claude-opus-4-6' },
@@ -252,9 +259,7 @@ describe('NewSessionEngineOptionDetail', () => {
             supportsFreeform: false,
         };
 
-        act(() => {
-            renderer.create(
-                <NewSessionEngineOptionDetail
+        await renderScreen(<NewSessionEngineOptionDetail
                     backendTarget={backendTarget}
                     selectedMachineId="machine-1"
                     capabilityServerId="server-1"
@@ -262,15 +267,46 @@ describe('NewSessionEngineOptionDetail', () => {
                     selectedModelId="default"
                     selectedSessionModeId="default"
                     selectedConfigOverrides={{}}
-                />,
-            );
-        });
+                />);
 
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.canEnterCustomModel).toBe(true);
     });
 
-    it('renders ACP config options with the shared current-value summary and publishes overrides', () => {
+    it('publishes inline custom model submissions through the shared model picker surface', async () => {
+        preflightModelsState.value = {
+            availableModels: [],
+            supportsFreeform: true,
+        };
+        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+
+        await renderScreen(<NewSessionEngineOptionDetail
+                    backendTarget={backendTarget}
+                    selectedMachineId="machine-1"
+                    capabilityServerId="server-1"
+                    cwd="/repo"
+                    selectedModelId="default"
+                    selectedSessionModeId="default"
+                    selectedConfigOverrides={{}}
+                    onSelectionChange={(selection) => {
+                        latestSelection = selection;
+                    }}
+                />);
+
+        expect(typeof lastModelPickerOverlayProps?.onSubmitCustomModel).toBe('function');
+
+        act(() => {
+            lastModelPickerOverlayProps.onSubmitCustomModel('custom-model');
+        });
+
+        expect(latestSelection).toEqual({
+            modelId: 'custom-model',
+            sessionModeId: 'default',
+            configOverrides: {},
+        });
+    });
+
+    it('renders ACP config options with the shared current-value summary and publishes overrides', async () => {
         configOptionsState.value = [
             {
                 id: 'thinking',
@@ -288,9 +324,7 @@ describe('NewSessionEngineOptionDetail', () => {
         let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
         let tree: ReactTestRenderer;
 
-        act(() => {
-            tree = renderer.create(
-                <NewSessionEngineOptionDetail
+        tree = (await renderScreen(<NewSessionEngineOptionDetail
                     backendTarget={backendTarget}
                     selectedMachineId="machine-1"
                     capabilityServerId="server-1"
@@ -301,16 +335,14 @@ describe('NewSessionEngineOptionDetail', () => {
                     onSelectionChange={(selection) => {
                         latestSelection = selection;
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(() => tree!.root.findByProps({ testID: 'agent-input-config-option:thinking' })).not.toThrow();
         expect(() => tree!.root.findByProps({ testID: 'agent-input-config-option-summary:thinking' })).not.toThrow();
         expect(tree!.root.findAllByProps({ children: 'agentInput.acp.currentValue' }).length).toBeGreaterThan(0);
 
         act(() => {
-            tree!.root.findByProps({ testID: 'agent-input-config-option-option:thinking:high' }).props.onPress();
+            tree!.pressByTestId('agent-input-config-option-option:thinking:high');
         });
 
         expect(latestSelection).toEqual({

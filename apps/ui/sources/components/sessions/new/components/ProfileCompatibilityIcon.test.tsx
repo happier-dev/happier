@@ -1,22 +1,24 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({ colors: { textSecondary: '#666' } })
-                : input,
-    },
-    useUnistyles: () => ({}),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -64,29 +66,31 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode', 'auggie'],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: () => ({
         v: 2,
         backends: [{ id: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [] }],
     }),
-}));
+});
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('ProfileCompatibilityIcon', () => {
     it('shows only the first two compatible backend glyphs followed by ellipsis when more than two backends are supported', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ProfileCompatibilityIcon
+        tree = (await renderScreen(<ProfileCompatibilityIcon
                     profile={{
                         isBuiltIn: false,
                         compatibility: {
@@ -97,9 +101,7 @@ describe('ProfileCompatibilityIcon', () => {
                         },
                         compatibilityByTargetKey: {},
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
         const glyphs = tree.root.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['CL', 'CX', '...']);
@@ -109,9 +111,7 @@ describe('ProfileCompatibilityIcon', () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ProfileCompatibilityIcon
+        tree = (await renderScreen(<ProfileCompatibilityIcon
                     profile={{
                         isBuiltIn: false,
                         compatibility: {},
@@ -119,9 +119,7 @@ describe('ProfileCompatibilityIcon', () => {
                             'acpBackend:custom-acp': true,
                         },
                     }}
-                />,
-            );
-        });
+                />)).tree;
 
         const glyphs = tree.root.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['CA']);

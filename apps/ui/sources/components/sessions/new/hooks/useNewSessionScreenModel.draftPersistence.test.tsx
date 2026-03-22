@@ -1,6 +1,11 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FlushHookEffectsOptions } from '@/dev/testkit';
+import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -319,7 +324,7 @@ const createSessionActionDraftMock = vi.hoisted(() => vi.fn());
 
 function getMockStorageState() {
     return {
-        settings: settingsState,
+        settings: { ...settingsDefaults, ...settingsState },
         createSessionActionDraft: createSessionActionDraftMock,
         workspaceLocations: workspaceGraphState.workspaceLocations,
         workspaceCheckouts: workspaceGraphState.workspaceCheckouts,
@@ -332,7 +337,8 @@ function notifyMockStorageSubscribers() {
     }
 }
 
-const settingsState = vi.hoisted(() => ({
+const settingsState = {
+    ...settingsDefaults,
     recentMachinePaths: [] as Array<{ machineId: string; path: string }>,
     lastUsedAgent: 'codex',
     lastUsedProfile: null as string | null,
@@ -343,7 +349,7 @@ const settingsState = vi.hoisted(() => ({
     actionsSettingsV1: {},
     experiments: false,
     featureToggles: {},
-    dismissedCLIWarnings: {},
+    dismissedCLIWarnings: settingsDefaults.dismissedCLIWarnings,
     sessionUseTmux: false,
     sessionTmuxByMachineId: {},
     favoriteDirectories: [],
@@ -359,31 +365,38 @@ const settingsState = vi.hoisted(() => ({
         v: 2 as const,
         backends: [],
     },
-}));
+};
 
-vi.mock('react-native', () => ({
-    Platform: {
-        get OS() {
-            return platformOsState.value;
-        },
-        select: (options: any) => options?.[platformOsState.value] ?? options?.default ?? options?.ios ?? options?.android,
-    },
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Dimensions: { get: () => ({ width: 900, height: 800 }) },
-    InteractionManager: {
-        runAfterInteractions: (fn: () => void) => {
-            interactionQueueState.callbacks.push(fn);
-            return {
-                cancel: () => {
-                    interactionQueueState.callbacks = interactionQueueState.callbacks.filter((callback) => callback !== fn);
-                },
-            };
-        },
-    },
-    useWindowDimensions: () => ({ width: 900, height: 800 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                            Platform: {
+                                                                get OS() {
+                                                                            return platformOsState.value;
+                                                                        },
+                                                                select: (options: any) => options?.[platformOsState.value] ?? options?.default ?? options?.ios ?? options?.android,
+                                                            },
+                                                            View: 'View',
+                                                            Text: 'Text',
+                                                            Pressable: 'Pressable',
+                                                            Dimensions: {
+                                                                get: () => ({ width: 900, height: 800 }),
+                                                            },
+                                                            InteractionManager: {
+                                                                runAfterInteractions: (fn: () => void) => {
+                                                                    interactionQueueState.callbacks.push(fn);
+                                                                    return {
+                                                                        cancel: () => {
+                                                                            interactionQueueState.callbacks = interactionQueueState.callbacks.filter((callback) => callback !== fn);
+                                                                        },
+                                                                    };
+                                                                },
+                                                            },
+                                                            useWindowDimensions: () => ({ width: 900, height: 800 }),
+                                                        }
+    );
+});
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -393,8 +406,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 0,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             dark: false,
             colors: {
@@ -418,40 +432,13 @@ vi.mock('react-native-unistyles', () => ({
             },
         },
         rt: { themeName: 'light' },
-    }),
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                dark: false,
-                colors: {
-                    accent: { blue: '#00f' },
-                    input: { placeholder: '#999' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    button: { primary: { background: '#00f', tint: '#fff' } },
-                    groupped: { sectionTitle: '#999', background: '#fff' },
-                    divider: '#ddd',
-                    surface: '#fff',
-                    surfaceHigh: '#f5f5f5',
-                    surfaceHighest: '#f0f0f0',
-                    surfaceSelected: '#eef4ff',
-                    surfacePressed: '#eee',
-                    surfacePressedOverlay: '#eee',
-                    modal: { border: '#ddd' },
-                    radio: { active: '#00f' },
-                    shadow: { color: '#000', opacity: 0.2 },
-                    textDestructive: '#c00',
-                },
-            };
-            const runtime = { themeName: 'light' };
-            return typeof styles === 'function' ? styles(theme, runtime) : styles;
-        },
-    },
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -466,17 +453,16 @@ vi.mock('@/components/automations/editor/AutomationSettingsForm', () => ({
     AutomationSettingsForm: (props: Record<string, unknown>) => React.createElement('AutomationSettingsForm', props),
 }));
 
-vi.mock('@/components/sessions/authoring/automation/SessionAuthoringAutomationToggleChip', () => ({
-    SessionAuthoringAutomationToggleChip: (props: Record<string, unknown>) =>
-        React.createElement('SessionAuthoringAutomationToggleChip', props),
-}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushMock, replace: vi.fn(), back: vi.fn(), setParams: routerSetParamsMock }),
-    useNavigation: () => ({}),
-    usePathname: () => '/new',
-    useLocalSearchParams: () => searchParamsState.value,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: { push: routerPushMock, replace: vi.fn(), back: vi.fn(), setParams: routerSetParamsMock },
+        params: () => searchParamsState.value as Record<string, string | string[] | undefined>,
+        navigation: {},
+        pathname: '/new',
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: (fn: any) => {
@@ -494,11 +480,15 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
     };
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAllMachines: () => ([
-        { id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } },
-        { id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } },
+        createMachineFixture({ id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } as any }),
+        createMachineFixture({ id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } as any }),
     ]),
+    useMachineListByServerId: () => ({}),
+    useMachineListStatusByServerId: () => ({}),
     storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => React.useSyncExternalStore(
         (listener: () => void) => {
             storageSubscriptionState.listeners.add(listener);
@@ -510,11 +500,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
         () => selector(getMockStorageState()),
     ), {
         getState: () => getMockStorageState(),
-    }),
-    useSetting: (key: string) => (settingsState as any)[key],
+    }) as unknown as typeof import('@/sync/domains/state/storage').storage,
+    useSetting: (key: string) => ({ ...settingsDefaults, ...settingsState } as any)[key],
     useSettingMutable: (key: string) => [(settingsState as any)[key], vi.fn()],
-    useSettings: () => settingsState,
-}));
+    useSettings: () => ({ ...settingsDefaults, ...settingsState }) as unknown as import('@/sync/domains/settings/settings').Settings,
+});
+});
 
 vi.mock('@/scm/scmRepositoryService', () => ({
     scmRepositoryService: {
@@ -716,9 +707,15 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { show: modalShowMock, alert: modalAlertMock },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: modalShowMock,
+            alert: modalAlertMock,
+        },
+    }).module;
+});
 
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
     tryShowDaemonUnavailableAlertForRpcError: (args: unknown) => tryShowDaemonUnavailableAlertForRpcErrorMock(args),
@@ -825,6 +822,10 @@ async function runFocusEffects(): Promise<Array<void | (() => void)>> {
 }
 
 describe('useNewSessionScreenModel (draft hydration)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         platformOsState.value = 'web';
         modalShowMock.mockReset();
@@ -1010,24 +1011,50 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         while (interactionQueueState.callbacks.length > 0) {
             const callback = interactionQueueState.callbacks.shift();
             callback?.();
-            await Promise.resolve();
+            await settleNewSessionScreenModel();
         }
     }
 
-    it('hydrates permission, agent, and path from the persisted draft', async () => {
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+    async function settleNewSessionScreenModel(options: FlushHookEffectsOptions = {}) {
+        await flushHookEffects({
+            cycles: options.cycles ?? 3,
+            turns: options.turns ?? 2,
+            advanceTimersMs: options.advanceTimersMs,
+            runAllTimers: options.runAllTimers,
+            frames: options.frames,
+        });
+    }
 
-        let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
+    async function runFocusEffectsAndSettle() {
+        let cleanups: Array<void | (() => void)> = [];
 
         await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
+            cleanups = await runFocusEffects();
+        });
+        await settleNewSessionScreenModel();
+
+        return cleanups;
+    }
+
+    async function renderNewSessionScreenModel(assignModel: (nextModel: unknown) => void) {
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        return renderHook(() => {
+            const nextModel = useNewSessionScreenModel();
+            assignModel(nextModel);
+            return nextModel;
+        }, {
+            flushOptions: {
+                cycles: 3,
+                turns: 2,
+            },
+        });
+    }
+
+    it('hydrates permission, agent, and path from the persisted draft', async () => {
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.variant).toBe('simple');
@@ -1042,6 +1069,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             },
         });
         expect(model?.simpleProps?.machineName).toBe('Machine Two');
+        expect(typeof model?.simpleProps?.machinePopover?.renderContent).toBe('function');
         expect(model?.simpleProps?.selectedPath).toBe('/repo/custom');
         expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
@@ -1083,18 +1111,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             defaultCheckoutId: null as any,
         } as TestWorkspace];
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(loadNewSessionDraftMock).toHaveBeenCalled();
@@ -1105,7 +1124,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
         const getServerChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-target-server');
         expect(getServerChip()?.controlId).toBe('server');
-        expect(typeof getServerChip()?.collapsedAction).toBe('function');
+        expect(getServerChip()?.collapsedContentPopover).toEqual(expect.objectContaining({
+            title: 'Server B',
+            label: 'Server B',
+        }));
     });
 
     it('infers linked workspace context on first render when the selected path already belongs to a workspace', async () => {
@@ -1114,18 +1136,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.selectedWorkspaceCheckoutId = null as any;
         persistedDraft.checkoutCreationDraft = null;
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
@@ -1143,18 +1156,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.backendTarget = { kind: 'builtInAgent', agentId: 'codex' };
         (persistedDraft as any).codexBackendMode = 'appServer';
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
@@ -1186,18 +1190,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             cronExpr: '0 * * * *',
             timezone: null,
         };
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.submitAccessibilityLabel).toBe('automations.create.createButtonTitle');
@@ -1217,18 +1212,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         searchParamsState.value = {
             automation: '1',
         };
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.submitAccessibilityLabel).toBe('automations.create.createButtonTitle');
@@ -1263,19 +1249,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         searchParamsState.value = {
             automation: '1',
         };
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        let tree: renderer.ReactTestRenderer | null = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.submitAccessibilityLabel).toBe('automations.create.createButtonTitle');
@@ -1292,15 +1268,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         };
         persistedDraft.updatedAt = 456;
 
-        await act(async () => {
-            tree!.update(React.createElement(Probe));
-            const cleanups = await runFocusEffects();
-            await Promise.resolve();
-            await Promise.resolve();
-            for (const cleanup of cleanups) {
-                if (typeof cleanup === 'function') cleanup();
-            }
-        });
+        await hook.rerender();
+        const cleanups = await runFocusEffectsAndSettle();
+        for (const cleanup of cleanups) {
+            if (typeof cleanup === 'function') cleanup();
+        }
 
         expect(model?.simpleProps?.submitAccessibilityLabel).toBeUndefined();
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
@@ -1325,24 +1297,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             automation: '1',
         };
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let automationRouteModel: any = null;
         let plainRouteModel: any = null;
-        function AutomationRouteProbe() {
-            automationRouteModel = useNewSessionScreenModel();
-            return null;
-        }
-        function PlainRouteProbe() {
-            plainRouteModel = useNewSessionScreenModel();
-            return null;
-        }
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AutomationRouteProbe));
-            await Promise.resolve();
-            await Promise.resolve();
+        const automationRouteHook = await renderNewSessionScreenModel((nextModel) => {
+            automationRouteModel = nextModel;
         });
 
         expect(automationRouteModel?.simpleProps?.submitAccessibilityLabel).toBe('automations.create.createButtonTitle');
@@ -1364,15 +1322,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.updatedAt = Number(savedAutomationDraft?.updatedAt ?? 456);
         searchParamsState.value = {};
 
-        await act(async () => {
-            tree?.unmount();
-            await Promise.resolve();
-        });
-
-        await act(async () => {
-            renderer.create(React.createElement(PlainRouteProbe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await automationRouteHook.unmount();
+        await renderNewSessionScreenModel((nextModel) => {
+            plainRouteModel = nextModel;
         });
 
         expect(plainRouteModel?.simpleProps?.submitAccessibilityLabel).toBeUndefined();
@@ -1410,18 +1362,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             },
         };
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.agentType).toBe('codex');
@@ -1465,18 +1408,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.checkoutCreationDraft = null;
         persistedDraft.updatedAt = 123;
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
@@ -1491,14 +1425,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         };
         persistedDraft.updatedAt = 456;
 
-        await act(async () => {
-            const cleanups = await runFocusEffects();
-            await Promise.resolve();
-            await Promise.resolve();
-            for (const cleanup of cleanups) {
-                if (typeof cleanup === 'function') cleanup();
-            }
-        });
+        const cleanups = await runFocusEffectsAndSettle();
+        for (const cleanup of cleanups) {
+            if (typeof cleanup === 'function') cleanup();
+        }
 
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
         expect(model?.simpleProps?.selectedWorkspaceLocationId).toBeUndefined();
@@ -1516,18 +1446,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.resumeSessionId = 'sess_old';
         persistedDraft.updatedAt = 123;
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.sessionPrompt).toBe('Old persisted prompt');
@@ -1547,14 +1468,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         persistedDraft.selectedWorkspaceCheckoutId = 'checkout_feature_auth';
         persistedDraft.updatedAt = 456;
 
-        await act(async () => {
-            const cleanups = await runFocusEffects();
-            await Promise.resolve();
-            await Promise.resolve();
-            for (const cleanup of cleanups) {
-                if (typeof cleanup === 'function') cleanup();
-            }
-        });
+        const cleanups = await runFocusEffectsAndSettle();
+        for (const cleanup of cleanups) {
+            if (typeof cleanup === 'function') cleanup();
+        }
 
         expect(model?.simpleProps?.sessionPrompt).toBe('Focused draft prompt');
         expect(model?.simpleProps?.resumeSessionId).toBe('sess_new');
@@ -1590,11 +1507,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(machineMcpServersPreviewMock).toHaveBeenCalledWith(
             'machine-2',
@@ -1638,11 +1551,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         await act(async () => {
             persistDraftNowRef.current?.();
@@ -1671,11 +1580,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(model?.variant).toBe('wizard');
         expect(typeof model?.wizardProps?.profiles?.openProfileEdit).toBe('function');
@@ -1703,7 +1608,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
     });
 
-    it('keeps the current route stable while still passing a flow dataId into picker navigation when the new-session route starts without one', async () => {
+    it('keeps the current route stable and exposes a shared path popover when the new-session route starts without a dataId', async () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
@@ -1712,26 +1617,48 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
-        expect(typeof model?.simpleProps?.handlePathClick).toBe('function');
-
-        await act(async () => {
-            model?.simpleProps?.handlePathClick?.();
-            await Promise.resolve();
-        });
-
+        expect(model?.simpleProps?.handlePathClick).toBeUndefined();
+        expect(typeof model?.simpleProps?.pathPopover?.renderContent).toBe('function');
         expect(routerSetParamsMock).not.toHaveBeenCalled();
-        expect(routerPushMock).toHaveBeenCalledWith(expect.objectContaining({
-            pathname: '/new/pick/path',
-            params: expect.objectContaining({
-                dataId: expect.any(String),
-            }),
-        }));
+        expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the current route stable and exposes a shared resume popover in the simple panel when resume is available', async () => {
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(model?.simpleProps?.showResumePicker).toBe(true);
+        expect(typeof model?.simpleProps?.resumePopover?.renderContent).toBe('function');
+        expect(routerSetParamsMock).not.toHaveBeenCalled();
+        expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the profile picker on the current route and exposes a shared profile popover in the simple panel', async () => {
+        settingsState.useProfiles = true;
+        settingsState.useEnhancedSessionWizard = false;
+
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(typeof model?.simpleProps?.profilePopover?.renderContent).toBe('function');
+        expect(routerSetParamsMock).not.toHaveBeenCalled();
+        expect(routerPushMock).not.toHaveBeenCalled();
     });
 
     it('drops already-queued profile-edit draft persistence after draft persistence is disabled and cleared', async () => {
@@ -1746,15 +1673,11 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         await act(async () => {
             model?.wizardProps?.profiles?.openProfileEdit?.({});
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(routerPushMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -1766,7 +1689,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         await act(async () => {
             (useCreateNewSessionArgsRef.current?.disableDraftPersistence as (() => void) | undefined)?.();
             clearNewSessionDraftMock();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         await act(async () => {
@@ -1795,12 +1718,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(model?.variant).toBe('wizard');
         expect(model?.wizardProps?.profiles?.selectedProfileId).toBeNull();
@@ -1809,8 +1727,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         await act(async () => {
             model?.wizardProps?.profiles?.onPressDefaultEnvironment?.();
-            await Promise.resolve();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 2 });
         });
 
         expect(model?.wizardProps?.profiles?.selectedProfileId).toBeNull();
@@ -1888,25 +1805,15 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        let tree: renderer.ReactTestRenderer | null = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.wizardProps?.profiles?.selectedProfileId).toBeNull();
 
         await act(async () => {
             model?.wizardProps?.profiles?.onPressDefaultEnvironment?.();
-            await Promise.resolve();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 2 });
         });
 
         expect(model?.wizardProps?.profiles?.selectedProfileId).toBeNull();
@@ -1916,12 +1823,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             path: '/repo/docs',
         };
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await hook.rerender();
 
         expect(model?.wizardProps?.profiles?.selectedProfileId).toBeNull();
         expect(model?.wizardProps?.profiles?.getProfileSubtitleExtra?.({ id: 'profile_docs' })).toBeNull();
@@ -1937,11 +1839,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         await act(async () => {
             model?.simpleProps?.setCheckoutCreationDraft?.({
@@ -1949,7 +1847,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 displayName: 'feature/payment-sync',
                 baseRef: 'develop',
             });
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         await act(async () => {
@@ -1974,11 +1872,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(model?.simpleProps?.setSelectedWorkspaceId).toBeUndefined();
         expect(model?.simpleProps?.setSelectedWorkspaceLocationId).toBeUndefined();
@@ -2003,16 +1897,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        let tree: renderer.ReactTestRenderer | null = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
@@ -2024,11 +1910,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             path: '/repo/unlinked',
         };
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await hook.rerender();
 
         expect(model?.simpleProps?.selectedPath).toBe('/repo/unlinked');
         expect(model?.simpleProps?.selectedWorkspaceId).toBeUndefined();
@@ -2068,27 +1950,15 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        let tree: renderer.ReactTestRenderer | null = null;
-        function Probe() {
-            model = useNewSessionScreenModel();
-            return null;
-        }
-
-        await act(async () => {
-            tree = renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
         });
 
         searchParamsState.value = {
             machineId: 'machine-1',
         };
 
-        await act(async () => {
-            tree?.update(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await hook.rerender();
 
         expect(model?.simpleProps?.machineName).toBe('Machine One');
         expect(model?.simpleProps?.selectedPath).toBe('/home/one');
@@ -2133,11 +2003,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(model?.simpleProps?.selectedPath).toBe('/repo/unlinked');
         const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -2170,11 +2036,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(model?.simpleProps?.selectedPath).toBe('/repo/from-directory');
     });
@@ -2192,18 +2054,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         try {
-            await act(async () => {
-                model?.simpleProps?.setCheckoutCreationDraft?.(null);
-                await Promise.resolve();
-                await Promise.resolve();
-            });
+        await act(async () => {
+            model?.simpleProps?.setCheckoutCreationDraft?.(null);
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
 
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
             expect(checkoutChip).toBeTruthy();
@@ -2236,10 +2093,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 : undefined;
             expect(renderedLabel).toBe('newSession.checkout.noWorktree');
 
-            await act(async () => {
-                chipPressable?.props?.onPress?.();
-                await Promise.resolve();
-            });
+        await act(async () => {
+            chipPressable?.props?.onPress?.();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
 
             expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
 
@@ -2319,11 +2176,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         try {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -2471,11 +2324,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         try {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -2498,10 +2347,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
             expect(typeof chipPressable?.props?.onPress).toBe('function');
 
-            await act(async () => {
-                chipPressable?.props?.onPress?.();
-                await Promise.resolve();
-            });
+        await act(async () => {
+            chipPressable?.props?.onPress?.();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
 
             const updatedCheckoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
             const updatedChipElement = updatedCheckoutChip.render({
@@ -2607,11 +2456,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         try {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -2634,7 +2479,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
             await act(async () => {
                 chipPressable?.props?.onPress?.();
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
 
             expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
@@ -2753,11 +2598,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         try {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -2771,20 +2612,20 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             }> | undefined;
             expect(detailElement?.props?.onSelectionChange).toBeTypeOf('function');
 
-            await act(async () => {
-                detailElement?.props?.onSelectionChange?.({
-                    baseRef: 'origin/release',
-                    sourceKind: 'remote',
-                });
-                await Promise.resolve();
+        await act(async () => {
+            detailElement?.props?.onSelectionChange?.({
+                baseRef: 'origin/release',
+                sourceKind: 'remote',
             });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
 
-            expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
+        expect(model?.simpleProps?.checkoutCreationDraft).toBeNull();
 
-            await act(async () => {
-                createOption.onApply?.();
-                await Promise.resolve();
-            });
+        await act(async () => {
+            createOption.onApply?.();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
 
             expect(model?.simpleProps?.checkoutCreationDraft).toEqual({
                 kind: 'git_worktree',
@@ -2864,11 +2705,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
         const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -2930,8 +2767,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 },
             };
             notifyMockStorageSubscribers();
-            await Promise.resolve();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 2 });
         });
 
         expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.noWorktree');
@@ -2965,11 +2801,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
         expect(getCheckoutChip()).toBeTruthy();
@@ -3022,11 +2854,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
 
         const getCheckoutChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
         expect(getCheckoutChip()?.controlId).toBe('checkout');

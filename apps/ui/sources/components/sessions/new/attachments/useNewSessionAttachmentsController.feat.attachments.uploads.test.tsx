@@ -1,3 +1,4 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
@@ -40,13 +41,17 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (callback: () => void) => callback(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 type HookValue = ReturnType<typeof import('./useNewSessionAttachmentsController').useNewSessionAttachmentsController>;
 
@@ -63,7 +68,7 @@ async function renderHook(
     let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
         tree = renderer.create(<Probe />);
-        await Promise.resolve();
+        await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
     return {
@@ -74,13 +79,13 @@ async function renderHook(
         rerender: async () => {
             await act(async () => {
                 tree!.update(<Probe />);
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
         },
         unmount: async () => {
             await act(async () => {
                 tree?.unmount();
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
         },
     };
@@ -119,7 +124,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
 
         await act(async () => {
             first.getCurrent().addPickedAttachments(picked);
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(first.getCurrent().drafts).toHaveLength(1);
@@ -177,12 +182,12 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
                 sizeBytes: 12,
                 mimeType: 'text/plain',
             }]);
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         await act(async () => {
             hook.getCurrent().handleSend();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
         expect(handleCreateSession).toHaveBeenCalledWith(expect.objectContaining({

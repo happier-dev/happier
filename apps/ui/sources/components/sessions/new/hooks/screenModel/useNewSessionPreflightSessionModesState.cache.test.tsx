@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicSessionModeProbeCacheForTests } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,19 +46,13 @@ describe('useNewSessionPreflightSessionModesState (cache)', () => {
     }
 
     let root1!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root1 = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root1 = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root1.unmount();
     });
 
     let root2!: renderer.ReactTestRenderer;
-    await act(async () => {
-      root2 = renderer.create(React.createElement(Harness));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    root2 = (await renderScreen(React.createElement(Harness))).tree;
     await act(async () => {
       root2.unmount();
     });

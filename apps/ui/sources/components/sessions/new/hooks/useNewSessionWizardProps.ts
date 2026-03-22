@@ -128,11 +128,10 @@ export function useNewSessionWizardProps(params: Readonly<{
     emptyAutocompletePrefixes: any;
     emptyAutocompleteSuggestions: any;
     connectionStatus?: any;
-    selectedProfileEnvVarsCount: number;
-    envVarsPopover?: NewSessionWizardFooterProps['envVarsPopover'];
+    machinePopover?: NewSessionWizardFooterProps['machinePopover'];
+    pathPopover?: NewSessionWizardFooterProps['pathPopover'];
     resumeSessionId: string;
-    showResumePicker: boolean;
-    handleResumeClick: () => void;
+    resumePopover?: NewSessionWizardFooterProps['resumePopover'];
     isResumeSupportChecking: boolean;
     sessionPromptInputMaxHeight: number;
     automationSection?: React.ReactNode;
@@ -417,10 +416,10 @@ export function useNewSessionWizardProps(params: Readonly<{
             emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
             connectionStatus: params.connectionStatus,
-            selectedProfileEnvVarsCount: params.selectedProfileEnvVarsCount,
-            envVarsPopover: params.envVarsPopover,
+            machinePopover: params.machinePopover,
+            pathPopover: params.pathPopover,
             resumeSessionId: params.resumeSessionId,
-            onResumeClick: params.showResumePicker ? params.handleResumeClick : undefined,
+            resumePopover: params.resumePopover,
             resumeIsChecking: params.isResumeSupportChecking,
             inputMaxHeight: params.sessionPromptInputMaxHeight,
             automationSection: params.automationSection,
@@ -439,16 +438,15 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.connectionStatus,
         params.emptyAutocompletePrefixes,
         params.emptyAutocompleteSuggestions,
-        params.envVarsPopover,
         params.handleCreateSession,
-        params.handleResumeClick,
         params.isCreating,
         params.isResumeSupportChecking,
+        params.machinePopover,
+        params.pathPopover,
+        params.resumePopover,
         params.resumeSessionId,
-        params.selectedProfileEnvVarsCount,
         params.sessionPrompt,
         params.sessionPromptInputMaxHeight,
-        params.showResumePicker,
         params.setSessionPrompt,
     ]);
 

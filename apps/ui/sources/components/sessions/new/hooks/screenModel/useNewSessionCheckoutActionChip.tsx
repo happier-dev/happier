@@ -149,6 +149,9 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                                     : []),
                             ]
                             : [],
+                        onSelectImmediate: () => {
+                            applyCheckoutChipOption(option.id);
+                        },
                     };
                 }
 
@@ -263,6 +266,9 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                             ? t('newSession.checkout.detailPath', { path: option.path })
                             : t('newSession.checkout.detailLinkedWorkspace'),
                     ],
+                    onSelectImmediate: () => {
+                        applyCheckoutChipOption(option.id);
+                    },
                 };
             })
             : [];

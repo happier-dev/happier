@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,15 +21,23 @@ const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => ''));
 const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Platform: { OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('View', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Pressable', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                React.createElement('Text', props, props.children),
+                                            Platform: {
+                                            OS: 'web',
+                                            select: (v: any) => v.web ?? v.default ?? null,
+                                        },
+                                        }
+    );
+});
 
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -109,9 +119,10 @@ vi.mock('@expo/vector-icons', () => ({
     ),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('NewSessionSimplePanel (attachments.uploads)', () => {
     it('wires AgentInput attachments handlers and attach action when enabled', async () => {
@@ -119,9 +130,7 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
 
         AgentInputMock.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(NewSessionSimplePanel, {
+        await renderScreen(React.createElement(NewSessionSimplePanel, {
                     popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                     headerHeight: 44,
                     safeAreaTop: 0,
@@ -148,21 +157,13 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
                     modelOptions: [{ value: 'default', label: 'Default', description: '' }],
                     connectionStatus: undefined,
                     machineName: undefined,
-                    handleMachineClick: () => {},
                     selectedPath: '',
-                    handlePathClick: () => {},
                     showResumePicker: false,
                     resumeSessionId: null,
-                    handleResumeClick: () => {},
                     isResumeSupportChecking: false,
                     useProfiles: false,
                     selectedProfileId: null,
-                    handleProfileClick: () => {},
-                    selectedProfileEnvVarsCount: 0,
-                    envVarsPopover: undefined,
-                }),
-            );
-        });
+                }));
 
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
@@ -185,9 +186,7 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(
-                    React.createElement(NewSessionSimplePanel, {
+            tree = (await renderScreen(React.createElement(NewSessionSimplePanel, {
                         popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                         headerHeight: 44,
                         safeAreaTop: 0,
@@ -214,36 +213,24 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
                         modelOptions: [{ value: 'default', label: 'Default', description: '' }],
                         connectionStatus: undefined,
                         machineName: undefined,
-                        handleMachineClick: () => {},
                         selectedPath: '',
-                        handlePathClick: () => {},
                         showResumePicker: false,
                         resumeSessionId: null,
-                        handleResumeClick: () => {},
                         isResumeSupportChecking: false,
                         useProfiles: false,
                         selectedProfileId: null,
-                        handleProfileClick: () => {},
-                        selectedProfileEnvVarsCount: 0,
-                        envVarsPopover: undefined,
-                    }),
-                );
-            });
+                    }))).tree;
 
             const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
             const attachmentChip = props.extraActionChips.find((chip: any) => chip?.key === 'attachments-add');
             expect(attachmentChip).toBeTruthy();
 
-            await act(async () => {
-                tree = renderer.create(
-                    attachmentChip.render({
+            tree = (await renderScreen(attachmentChip.render({
                         chipStyle: () => ({}),
                         iconColor: '#000',
                         showLabel: false,
                         textStyle: {},
-                    }),
-                );
-            });
+                    }))).tree;
 
             const badNodes: Array<{ parent: string | null; value: string }> = [];
             const walk = (node: any, parentType: string | null) => {
@@ -298,9 +285,7 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
 
         const handleCreateSession = vi.fn();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(NewSessionSimplePanel, {
+        await renderScreen(React.createElement(NewSessionSimplePanel, {
                     popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
                     headerHeight: 44,
                     safeAreaTop: 0,
@@ -327,22 +312,14 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
                     modelOptions: [{ value: 'default', label: 'Default', description: '' }],
                     connectionStatus: undefined,
                     machineName: undefined,
-                    handleMachineClick: () => {},
                     selectedPath: '',
-                    handlePathClick: () => {},
                     showResumePicker: false,
                     resumeSessionId: null,
-                    handleResumeClick: () => {},
                     isResumeSupportChecking: false,
                     useProfiles: true,
                     selectedProfileId: 'profile-work',
-                    handleProfileClick: () => {},
-                    selectedProfileEnvVarsCount: 0,
-                    envVarsPopover: undefined,
                     targetServerId: 'server-b',
-                }),
-            );
-        });
+                }));
 
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
         await act(async () => {

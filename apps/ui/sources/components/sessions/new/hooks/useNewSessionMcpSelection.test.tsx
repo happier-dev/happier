@@ -1,8 +1,11 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -53,38 +56,40 @@ const previewSpy = vi.hoisted(() => vi.fn(async (_machineId: string, _request: u
         sourcePath: '/Users/test/.codex/config.toml',
     }],
 })));
-const modalShowSpy = vi.hoisted(() => vi.fn((_config: unknown) => 'modal-id'));
-const modalUpdateSpy = vi.hoisted(() => vi.fn());
-
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    View: 'View',
-    useWindowDimensions: () => ({ width: 900, height: 800 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                Pressable: 'Pressable',
+                                ScrollView: 'ScrollView',
+                                View: 'View',
+                                Dimensions: {
+                                    get: () => ({ width: 900, height: 800 }),
+                                    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                                },
+                                useWindowDimensions: () => ({ width: 900, height: 800 }),
+                            }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
-        if (key === 'newSession.mcpChipLabel') return 'MCP';
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => {
+            if (key === 'newSession.mcpChipLabel') return 'MCP';
+            return key;
+        },
+    });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (config: unknown) => modalShowSpy(config),
-        update: (id: string, props: unknown) => modalUpdateSpy(id, props),
-    },
-}));
-
-vi.mock('@/components/sessions/new/components/NewSessionMcpSelectionModal', () => ({
-    NewSessionMcpSelectionModal: () => null,
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'mcp.servers',
@@ -94,8 +99,8 @@ vi.mock('@/sync/ops/machineMcpServers', () => ({
     machineMcpServersPreview: (...args: [string, unknown, unknown?]) => previewSpy(...args),
 }));
 
-vi.mock('@/components/sessions/new/components/NewSessionMcpSelectionModal', () => ({
-    NewSessionMcpSelectionModal: 'NewSessionMcpSelectionModal',
+vi.mock('@/components/sessions/new/components/NewSessionMcpSelectionContent', () => ({
+    NewSessionMcpSelectionContent: (props: Record<string, unknown>) => React.createElement('NewSessionMcpSelectionContent', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -105,14 +110,14 @@ vi.mock('@/components/ui/text/Text', () => ({
 describe('useNewSessionMcpSelection', () => {
     beforeEach(() => {
         previewSpy.mockClear();
-        modalShowSpy.mockClear();
-        modalUpdateSpy.mockClear();
     });
 
-    it('renders an MCP chip with the effective selected count and opens the picker modal', async () => {
+    it('renders an MCP chip with the effective selected count and routes visible-chip presses through the shared collapsed popover path', async () => {
         const { useNewSessionMcpSelection } = await import('./useNewSessionMcpSelection');
 
         let chip: any = null;
+        const toggleCollapsedPopover = vi.fn();
+
         function Probe() {
             const [selection, setSelection] = React.useState(() => SessionMcpSelectionV1Schema.parse({}));
             const result = useNewSessionMcpSelection({
@@ -126,14 +131,20 @@ describe('useNewSessionMcpSelection', () => {
                 onOpenSettings: vi.fn(),
             });
             chip = result.mcpChip;
-            return null;
+            return result.mcpChip?.render({
+                chipStyle: () => null,
+                iconColor: '#000',
+                showLabel: true,
+                textStyle: null,
+                countTextStyle: null,
+                chipAnchorRef: { current: null },
+                popoverAnchorRef: { current: null },
+                toggleCollapsedPopover,
+            }) ?? null;
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Probe));
+        await flushHookEffects();
 
         expect(previewSpy).toHaveBeenCalledWith(
             'machine-1',
@@ -147,61 +158,78 @@ describe('useNewSessionMcpSelection', () => {
 
         expect(chip?.key).toBe('new-session-mcp');
         expect(chip?.controlId).toBe('mcp');
-        let chipTree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            chipTree = renderer.create(chip.render({
-                chipStyle: () => null,
-                iconColor: '#000',
-                showLabel: true,
-                textStyle: null,
-                countTextStyle: null,
-                popoverAnchorRef: { current: null },
-            }));
-        });
-        expect(chipTree!.root.findByType('Pressable')).toBeTruthy();
-        expect(chipTree!.root.findAllByType('Text').map((node: any) => node.props.children).flat().join('')).toContain('MCP');
-        expect(chipTree!.root.findAllByType('Text').map((node: any) => node.props.children).flat().join('')).toContain('(3)');
-
-        await act(async () => {
-            chipTree!.root.findByType('Pressable').props.onPress();
-        });
-
-        chip?.collapsedAction?.({
-            tint: '#000',
-            dismiss: () => {},
-            blurInput: () => {},
-        }).onPress();
-
-        expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
-            component: 'NewSessionMcpSelectionModal',
-            props: expect.objectContaining({
-                preview: expect.objectContaining({ managed: expect.any(Array), detected: expect.any(Array) }),
-                selection: expect.objectContaining({ managedServersEnabled: true }),
-                machineName: 'Machine One',
-                directory: '/workspace',
-            }),
+        expect(chip?.collapsedContentPopover).toEqual(expect.objectContaining({
+            title: 'MCP',
+            maxHeightCap: 760,
+            maxWidthCap: 620,
+            renderContent: expect.any(Function),
         }));
-        expect(modalShowSpy).toHaveBeenCalledTimes(2);
 
-        const modalConfig = modalShowSpy.mock.calls[0]?.[0] as { props: { onSelectionChange: (selection: any) => void } };
+        const renderedChip = chip!.render({
+            chipStyle: () => null,
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: null,
+            countTextStyle: null,
+            chipAnchorRef: { current: null },
+            popoverAnchorRef: { current: null },
+            toggleCollapsedPopover,
+        }) as React.ReactElement<{
+            onPress?: () => void;
+            testID?: string;
+            children?: React.ReactNode;
+        }>;
+
+        expect(renderedChip.props.testID).toBe('new-session-mcp-chip');
+        expect(React.isValidElement(renderedChip.props.children)).toBe(false);
+
+        const renderedChipChildren = React.Children.toArray(renderedChip.props.children);
+        const labelNode = renderedChipChildren[1];
+        expect(React.isValidElement(labelNode)).toBe(true);
+        expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.label).toBe('MCP');
+        expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.count).toBe(3);
+
         await act(async () => {
-            modalConfig.props.onSelectionChange({
+            renderedChip.props.onPress?.();
+        });
+
+        expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-mcp');
+
+        const renderedContent = chip!.collapsedContentPopover.renderContent({
+            requestClose: () => {},
+            maxHeight: 420,
+        });
+        expect(React.isValidElement(renderedContent)).toBe(true);
+        const contentNode = renderedContent as React.ReactElement<{
+            onSelectionChange: (selection: unknown) => void;
+        }>;
+
+        await act(async () => {
+            contentNode.props.onSelectionChange({
                 v: 1,
                 managedServersEnabled: true,
                 forceIncludeServerIds: [],
                 forceExcludeServerIds: ['server-playwright'],
             });
-            await Promise.resolve();
-            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 2 });
         });
 
-        expect(modalUpdateSpy).toHaveBeenCalledWith(
-            'modal-id',
-            expect.objectContaining({
-                selection: expect.objectContaining({
-                    forceExcludeServerIds: ['server-playwright'],
-                }),
-            }),
-        );
+        const updatedContent = chip!.collapsedContentPopover.renderContent({
+            requestClose: () => {},
+            maxHeight: 420,
+        });
+        expect(React.isValidElement(updatedContent)).toBe(true);
+        const updatedContentNode = updatedContent as React.ReactElement<{
+            preview: unknown;
+            selection: unknown;
+        }>;
+
+        expect(updatedContentNode.props.preview).toEqual(expect.objectContaining({
+            managed: expect.any(Array),
+            detected: expect.any(Array),
+        }));
+        expect(updatedContentNode.props.selection).toEqual(expect.objectContaining({
+            forceExcludeServerIds: ['server-playwright'],
+        }));
     });
 });

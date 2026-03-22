@@ -1,20 +1,23 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const fetchBranchesForMachinePathMock = vi.hoisted(() => vi.fn());
 const readCachedBranchesForMachinePathMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => {
         if (key === 'files.branchMenu.branch.upstream') {
             return `Upstream: ${String(params?.upstream ?? '')}`;
         }
         return key;
-    },
-}));
+    } });
+});
 
 vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: (props: Record<string, unknown>) => React.createElement('ModelPickerOverlay', props),
@@ -48,18 +51,12 @@ describe('NewSessionWorktreeBranchDetail', () => {
         const { NewSessionWorktreeBranchDetail } = await import('./NewSessionWorktreeBranchDetail');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionWorktreeBranchDetail
+        tree = (await renderScreen(<NewSessionWorktreeBranchDetail
                     machineId="machine-a"
                     path="~/repo"
                     selectedBaseRef={null}
                     onSelectionChange={() => {}}
-                />,
-            );
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                />)).tree;
 
         const overlay = tree.root.findByType('ModelPickerOverlay' as any);
         expect(fetchBranchesForMachinePathMock).toHaveBeenCalledWith({
@@ -106,18 +103,12 @@ describe('NewSessionWorktreeBranchDetail', () => {
         const { NewSessionWorktreeBranchDetail } = await import('./NewSessionWorktreeBranchDetail');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionWorktreeBranchDetail
+        tree = (await renderScreen(<NewSessionWorktreeBranchDetail
                     machineId="machine-a"
                     path="/repo"
                     selectedBaseRef="main"
                     onSelectionChange={onSelectionChange}
-                />,
-            );
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                />)).tree;
 
         const overlay = tree.root.findByType('ModelPickerOverlay' as any);
         await act(async () => {
@@ -144,17 +135,12 @@ describe('NewSessionWorktreeBranchDetail', () => {
         const { NewSessionWorktreeBranchDetail } = await import('./NewSessionWorktreeBranchDetail');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionWorktreeBranchDetail
+        tree = (await renderScreen(<NewSessionWorktreeBranchDetail
                     machineId="machine-a"
                     path="~/repo"
                     selectedBaseRef={null}
                     onSelectionChange={() => {}}
-                />,
-            );
-            await Promise.resolve();
-        });
+                />)).tree;
 
         const overlay = tree.root.findByType('ModelPickerOverlay' as any);
         expect(overlay.props.options).toEqual([
@@ -182,18 +168,12 @@ describe('NewSessionWorktreeBranchDetail', () => {
         const { NewSessionWorktreeBranchDetail } = await import('./NewSessionWorktreeBranchDetail');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <NewSessionWorktreeBranchDetail
+        tree = (await renderScreen(<NewSessionWorktreeBranchDetail
                     machineId="machine-a"
                     path="~/repo"
                     selectedBaseRef={null}
                     onSelectionChange={() => {}}
-                />,
-            );
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                />)).tree;
 
         const overlay = tree.root.findByType('ModelPickerOverlay' as any);
         expect(overlay.props.options).toEqual([

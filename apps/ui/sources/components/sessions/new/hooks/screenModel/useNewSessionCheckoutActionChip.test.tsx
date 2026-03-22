@@ -1,12 +1,15 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/sessions/new/components/NewSessionWorktreeBranchDetail', () => ({
     NewSessionWorktreeBranchDetail: (props: Record<string, unknown>) => React.createElement('NewSessionWorktreeBranchDetail', props),
@@ -15,6 +18,90 @@ vi.mock('@/components/sessions/new/components/NewSessionWorktreeBranchDetail', (
 describe('useNewSessionCheckoutActionChip', () => {
     afterEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('applies pure selection checkout options immediately without requiring the detail apply action', async () => {
+        const setSelectedPath = vi.fn();
+        const setCheckoutCreationDraft = vi.fn();
+        const setCheckoutPickerOpen = vi.fn();
+        const shouldReconcileInitialHydratedCheckoutCreationDraftRef = { current: true };
+
+        const { useNewSessionCheckoutActionChip } = await import('./useNewSessionCheckoutActionChip');
+
+        let chip: any = null;
+        function Probe() {
+            chip = useNewSessionCheckoutActionChip({
+                repoScmSnapshot: {
+                    repo: {
+                        isRepo: true,
+                        rootPath: '/repo',
+                        backendId: 'git',
+                        mode: '.git',
+                        worktrees: [
+                            { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                            { path: '/repo/.worktrees/release', branch: 'release', isCurrent: false },
+                        ],
+                    },
+                    branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                } as any,
+                checkoutChipModel: {
+                    selectedOptionId: 'current_path',
+                    options: [
+                        { id: 'current_path', kind: 'current_path', path: '/repo/packages/app' },
+                        { id: 'create_git_worktree', kind: 'create_git_worktree' },
+                        {
+                            id: 'checkout:/repo/.worktrees/release',
+                            kind: 'linked_checkout',
+                            path: '/repo/.worktrees/release',
+                            displayName: 'release',
+                            gitBranch: 'release',
+                            checkoutKind: 'git_worktree',
+                        },
+                    ],
+                },
+                checkoutPickerOpen: true,
+                setCheckoutPickerOpen,
+                checkoutCreationDraft: { kind: 'git_worktree', displayName: 'feature-auth', baseRef: 'main', branchMode: 'new' },
+                selectedMachineId: 'machine-1',
+                selectedPath: '/repo/packages/app',
+                setSelectedPath,
+                setCheckoutCreationDraft,
+                pendingGitWorktreeBaseRefRef: { current: null },
+                pendingGitWorktreeSourceKindRef: { current: 'current' },
+                shouldReconcileInitialHydratedCheckoutCreationDraftRef,
+                router: { push: vi.fn() },
+            });
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+
+        const currentPathOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'current_path');
+        const linkedCheckoutOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'checkout:/repo/.worktrees/release');
+
+        expect(currentPathOption.onSelectImmediate).toBeTypeOf('function');
+        expect(linkedCheckoutOption.onSelectImmediate).toBeTypeOf('function');
+
+        await act(async () => {
+            currentPathOption.onSelectImmediate();
+        });
+
+        expect(setCheckoutCreationDraft).toHaveBeenCalledWith(null);
+        expect(setSelectedPath).toHaveBeenCalledWith('/repo/packages/app');
+        expect(setCheckoutPickerOpen).toHaveBeenCalledWith(false);
+        expect(shouldReconcileInitialHydratedCheckoutCreationDraftRef.current).toBe(false);
+
+        vi.clearAllMocks();
+        shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = true;
+
+        await act(async () => {
+            linkedCheckoutOption.onSelectImmediate();
+        });
+
+        expect(setCheckoutCreationDraft).toHaveBeenCalledWith(null);
+        expect(setSelectedPath).toHaveBeenCalledWith('/repo/.worktrees/release');
+        expect(setCheckoutPickerOpen).toHaveBeenCalledWith(false);
+        expect(shouldReconcileInitialHydratedCheckoutCreationDraftRef.current).toBe(false);
     });
 
     it('offers to reuse an existing sibling worktree when the selected branch already has one', async () => {
@@ -62,9 +149,7 @@ describe('useNewSessionCheckoutActionChip', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
         const newWorktreeOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'create_git_worktree');
         expect(newWorktreeOption.detailActionLabel).toBe('newSession.checkout.useExistingWorktreeAction');
@@ -120,9 +205,7 @@ describe('useNewSessionCheckoutActionChip', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
         const newWorktreeOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'create_git_worktree');
         await act(async () => {
@@ -186,9 +269,7 @@ describe('useNewSessionCheckoutActionChip', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
         const getCreateOption = () => chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'create_git_worktree');
 
@@ -254,9 +335,7 @@ describe('useNewSessionCheckoutActionChip', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Probe />);
-        });
+        await renderScreen(<Probe />);
 
         const newWorktreeOption = chip.collapsedOptionsPopover.options.find((option: any) => option.id === 'create_git_worktree');
         expect(newWorktreeOption.detailActionLabel).toBe('newSession.checkout.useExistingBranchAction');

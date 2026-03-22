@@ -20,6 +20,7 @@ type ServerScopedMachineSelectorProps = Readonly<{
     selectedMachineId: string | null;
     selectedServerId: string | null;
     onSelect: (machine: ServerScopedMachine) => void;
+    testIdPrefix?: string;
 }>;
 
 const emptyTextStyle = {
@@ -68,6 +69,7 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                                 return (
                                     <Item
                                         key={`${group.serverId}::${machine.id}`}
+                                        testID={props.testIdPrefix ? `${props.testIdPrefix}:${machine.id}` : undefined}
                                         title={machine.metadata?.displayName || machine.metadata?.host || machine.id}
                                         subtitle={machine.metadata?.host || machine.id}
                                         icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.textSecondary} />}

@@ -3,15 +3,18 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useNewSessionWizardProps } from './useNewSessionWizardProps';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('useNewSessionWizardProps', () => {
-    it('updates the wizard agent label when the configured ACP backend label changes', () => {
+    it('updates the wizard agent label when the configured ACP backend label changes', async () => {
         let observed: ReturnType<typeof useNewSessionWizardProps> | null = null;
 
         function Probe({ agentLabel }: Readonly<{ agentLabel: string }>) {
@@ -87,11 +90,7 @@ describe('useNewSessionWizardProps', () => {
                 isCreating: false,
                 emptyAutocompletePrefixes: [],
                 emptyAutocompleteSuggestions: vi.fn(),
-                selectedProfileEnvVarsCount: 0,
-                envVarsPopover: undefined,
                 resumeSessionId: '',
-                showResumePicker: false,
-                handleResumeClick: () => {},
                 isResumeSupportChecking: false,
                 sessionPromptInputMaxHeight: 0,
             } as any);
@@ -99,9 +98,7 @@ describe('useNewSessionWizardProps', () => {
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(Probe, { agentLabel: 'Preset A' }));
-        });
+        tree = (await renderScreen(React.createElement(Probe, { agentLabel: 'Preset A' }))).tree;
 
         expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.agentLabel).toBe('Preset A');
 
