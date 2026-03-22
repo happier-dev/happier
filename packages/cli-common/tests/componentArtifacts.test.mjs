@@ -383,6 +383,96 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
   }
 });
 
+test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so later live-dist churn does not break packaging', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-cli-dist-snapshot-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const cliDistDir = join(repoRoot, 'apps', 'cli', 'dist');
+    const cliScriptsDir = join(repoRoot, 'apps', 'cli', 'scripts');
+    const cliRuntimeDir = join(cliScriptsDir, 'runtime');
+    const cliShimsDir = join(cliScriptsDir, 'shims');
+    const transformersDir = join(repoRoot, 'node_modules', '@huggingface', 'transformers');
+    const ortDir = join(repoRoot, 'node_modules', 'onnxruntime-node');
+    const ortCommonDir = join(repoRoot, 'node_modules', 'onnxruntime-common');
+    const nodePtyDir = join(repoRoot, 'node_modules', 'node-pty');
+    const homebridgePtyDir = join(repoRoot, 'node_modules', '@homebridge', 'node-pty-prebuilt-multiarch');
+
+    mkdirSync(cliScriptsDir, { recursive: true });
+    mkdirSync(cliRuntimeDir, { recursive: true });
+    mkdirSync(cliShimsDir, { recursive: true });
+    mkdirSync(transformersDir, { recursive: true });
+    mkdirSync(ortDir, { recursive: true });
+    mkdirSync(ortCommonDir, { recursive: true });
+    mkdirSync(nodePtyDir, { recursive: true });
+    mkdirSync(homebridgePtyDir, { recursive: true });
+
+    writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'repo', private: true }, null, 2));
+    writeCliRuntimePackageFixture(repoRoot);
+    writeFileSync(join(cliScriptsDir, 'childProcessOptions.cjs'), 'module.exports = { withWindowsHide: (input) => input };\n', 'utf8');
+    writeFileSync(join(cliScriptsDir, 'claude_version_utils.cjs'), 'module.exports = { getClaudeCliPath: () => "claude", runClaudeCli: () => {} };\n', 'utf8');
+    writeFileSync(join(cliScriptsDir, 'claude_local_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
+    writeFileSync(join(cliScriptsDir, 'claude_remote_launcher.cjs'), 'require("./claude_version_utils.cjs");\n', 'utf8');
+    writeFileSync(join(cliScriptsDir, 'session_hook_forwarder.cjs'), 'console.log("session");\n', 'utf8');
+    writeFileSync(join(cliScriptsDir, 'permission_hook_forwarder.cjs'), 'console.log("permission");\n', 'utf8');
+    writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
+    writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
+    writeFileSync(join(cliShimsDir, 'git'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeFileSync(join(cliShimsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
+    writeFileSync(
+      join(transformersDir, 'package.json'),
+      JSON.stringify({ name: '@huggingface/transformers', version: '1.0.0', dependencies: { 'onnxruntime-node': '1.0.0' } }, null, 2),
+    );
+    writeFileSync(join(transformersDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(
+      join(ortDir, 'package.json'),
+      JSON.stringify({ name: 'onnxruntime-node', version: '1.0.0', dependencies: { 'onnxruntime-common': '1.0.0' } }, null, 2),
+    );
+    writeFileSync(join(ortDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(
+      join(ortCommonDir, 'package.json'),
+      JSON.stringify({ name: 'onnxruntime-common', version: '1.0.0', dependencies: {} }, null, 2),
+    );
+    writeFileSync(join(ortCommonDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(
+      join(nodePtyDir, 'package.json'),
+      JSON.stringify({ name: 'node-pty', version: '1.0.0', dependencies: {} }, null, 2),
+    );
+    writeFileSync(join(nodePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+    writeFileSync(
+      join(homebridgePtyDir, 'package.json'),
+      JSON.stringify({ name: '@homebridge/node-pty-prebuilt-multiarch', version: '1.0.0', dependencies: {} }, null, 2),
+    );
+    writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    await artifacts.buildCliBinaryArtifactPayload({
+      repoRoot,
+      payloadDir,
+      target: artifacts.resolveCurrentBinaryTarget({
+        availableTargets: artifacts.CLI_BINARY_TARGETS,
+        platform: 'linux',
+        arch: 'x64',
+      }),
+      commandProbe: () => true,
+      runCommand: async () => {
+        mkdirSync(cliDistDir, { recursive: true });
+        writeFileSync(join(cliDistDir, 'index.mjs'), 'export { detect } from "./detect-BwxnBwvx.mjs";\n', 'utf8');
+        writeFileSync(join(cliDistDir, 'detect-BwxnBwvx.mjs'), 'export const detect = true;\n', 'utf8');
+      },
+      compileBinary: async ({ outfile }) => {
+        rmSync(cliDistDir, { recursive: true, force: true });
+        writeFileSync(outfile, '#!/bin/sh\necho happier\n', 'utf8');
+      },
+    });
+
+    assert.equal(readFileSync(join(payloadDir, 'package-dist', 'index.mjs'), 'utf8'), 'export { detect } from "./detect-BwxnBwvx.mjs";\n');
+    assert.equal(readFileSync(join(payloadDir, 'package-dist', 'detect-BwxnBwvx.mjs'), 'utf8'), 'export const detect = true;\n');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps/cli package.json', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-cli-bundle-manifest-'));
   try {

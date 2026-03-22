@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { cp, mkdir, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
@@ -74,6 +74,23 @@ async function copyCliNodeRuntimePayload(repoRoot: string, payloadDir: string, d
   }
 }
 
+async function snapshotCliDistDir(params: Readonly<{ cliDir: string; distDir: string }>): Promise<string> {
+  const snapshotDir = await mkdtemp(join(params.cliDir, '.dist.hstack-snapshot-'));
+  let liveDistRenamed = false;
+  try {
+    await rename(params.distDir, snapshotDir);
+    liveDistRenamed = true;
+    await cp(snapshotDir, params.distDir, { recursive: true });
+    return snapshotDir;
+  } catch (error) {
+    if (liveDistRenamed && !existsSync(params.distDir) && existsSync(snapshotDir)) {
+      await rename(snapshotDir, params.distDir).catch(() => {});
+    }
+    await rm(snapshotDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 export async function buildCliBinaryArtifactPayload({
   repoRoot,
   payloadDir,
@@ -102,13 +119,13 @@ export async function buildCliBinaryArtifactPayload({
   const entrypoint = join(distDir, 'index.mjs');
   const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
   const yarn = resolveYarnCommand({ commandProbe });
-  await withCliDistBuildLock(async ({ waited }) => {
+  const snapshotDistDir = await withCliDistBuildLock<string>(async ({ waited }) => {
     if (!existsSync(distDir) && existsSync(distBackupDir)) {
       await rename(distBackupDir, distDir);
     }
 
     if (waited && existsSync(entrypoint)) {
-      return;
+      return await snapshotCliDistDir({ cliDir, distDir });
     }
 
     const hadDistBeforeBuild = existsSync(distDir);
@@ -130,28 +147,35 @@ export async function buildCliBinaryArtifactPayload({
       }
       throw error;
     }
+    return await snapshotCliDistDir({ cliDir, distDir });
   }, { lockPath });
 
-  await rm(payloadDir, { recursive: true, force: true });
-  await mkdir(payloadDir, { recursive: true });
+  const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
 
-  const executableName = resolveExecutableName({ baseName: 'happier', target });
-  const mergedExternals = [...new Set([...CLI_RUNTIME_EXTERNAL_PACKAGES, ...externals.map((value) => String(value ?? '').trim()).filter(Boolean)])];
-  await compileBinary({
-    entrypoint,
-    bunTarget: target.bunTarget,
-    outfile: join(payloadDir, executableName),
-    cwd: repoRoot,
-    externals: mergedExternals,
-    bunCommand,
-    runCommand,
-  });
-  await rm(join(payloadDir, 'node_modules'), { recursive: true, force: true });
-  await copyCliNodeRuntimePayload(repoRoot, payloadDir, distDir);
-  await copyCliRuntimeSidecars(repoRoot, payloadDir);
+  try {
+    await rm(payloadDir, { recursive: true, force: true });
+    await mkdir(payloadDir, { recursive: true });
 
-  return {
-    executableName,
-    entrypoint: executableName,
-  };
+    const executableName = resolveExecutableName({ baseName: 'happier', target });
+    const mergedExternals = [...new Set([...CLI_RUNTIME_EXTERNAL_PACKAGES, ...externals.map((value) => String(value ?? '').trim()).filter(Boolean)])];
+    await compileBinary({
+      entrypoint: snapshotEntrypoint,
+      bunTarget: target.bunTarget,
+      outfile: join(payloadDir, executableName),
+      cwd: repoRoot,
+      externals: mergedExternals,
+      bunCommand,
+      runCommand,
+    });
+    await rm(join(payloadDir, 'node_modules'), { recursive: true, force: true });
+    await copyCliNodeRuntimePayload(repoRoot, payloadDir, snapshotDistDir);
+    await copyCliRuntimeSidecars(repoRoot, payloadDir);
+
+    return {
+      executableName,
+      entrypoint: executableName,
+    };
+  } finally {
+    await rm(snapshotDistDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
