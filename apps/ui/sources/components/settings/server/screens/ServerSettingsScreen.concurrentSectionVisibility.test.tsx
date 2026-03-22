@@ -1,28 +1,37 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let controllerValue: any = null;
 
-vi.mock('react-native', () => ({
-    KeyboardAvoidingView: ({ children }: any) => React.createElement('KeyboardAvoidingView', null, children),
-    Platform: {
-        OS: 'ios',
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    KeyboardAvoidingView: ({ children }: any) => React.createElement('KeyboardAvoidingView', null, children),
+                                    Platform: {
+                                        OS: 'ios',
+                                        select: ({ ios, default: defaultValue }: any) => ios ?? defaultValue,
+                                    },
+                                }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    Stack: {
-        Screen: (props: any) => React.createElement('StackScreen', props),
-    },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: {} }),
-    StyleSheet: { create: () => ({}) },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {},
+    });
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -95,9 +104,7 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ServerSettingsScreen));
-        });
+        tree = (await renderScreen(React.createElement(ServerSettingsScreen))).tree;
 
         expect(tree.root.findAllByType('ServerGroupsSection' as any)).toHaveLength(0);
     });
@@ -110,9 +117,7 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ServerSettingsScreen));
-        });
+        tree = (await renderScreen(React.createElement(ServerSettingsScreen))).tree;
 
         expect(tree.root.findAllByType('ServerGroupsSection' as any)).toHaveLength(1);
     });

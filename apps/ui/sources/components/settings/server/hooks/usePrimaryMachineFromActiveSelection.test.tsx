@@ -1,8 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { usePrimaryMachineFromActiveSelection } from './usePrimaryMachineFromActiveSelection';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,12 +17,15 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: vi.fn(() => [{ id: 'server-a', name: 'Server A', serverUrl: 'https://a.example.test', lastUsedAt: 1 }]),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAllMachines: vi.fn(() => []),
     useMachineListByServerId: vi.fn(() => ({})),
     useMachineListStatusByServerId: vi.fn(() => ({})),
     useSetting: vi.fn((key: string) => null),
-}));
+});
+});
 
 type ProbeProps = Readonly<{
     onValue: (value: ReturnType<typeof usePrimaryMachineFromActiveSelection>) => void;
@@ -48,10 +53,7 @@ describe('usePrimaryMachineFromActiveSelection', () => {
         (getEffectiveServerSelectionFromRawSettings as any).mockReturnValue({ serverIds: ['server-a'] });
 
         const captured: any[] = [];
-        await act(async () => {
-            renderer.create(<Probe onValue={(value) => captured.push(value)} />);
-            await Promise.resolve();
-        });
+        await renderScreen(<Probe onValue={(value) => captured.push(value)} />);
 
         const latest = captured.at(-1);
         expect(latest).toBe('m1');
@@ -62,10 +64,7 @@ describe('usePrimaryMachineFromActiveSelection', () => {
         (useAllMachines as any).mockReturnValue([]);
 
         const captured: any[] = [];
-        await act(async () => {
-            renderer.create(<Probe onValue={(value) => captured.push(value)} />);
-            await Promise.resolve();
-        });
+        await renderScreen(<Probe onValue={(value) => captured.push(value)} />);
 
         const latest = captured.at(-1);
         expect(latest).toBe(null);
@@ -79,10 +78,7 @@ describe('usePrimaryMachineFromActiveSelection', () => {
         ]);
 
         const captured: any[] = [];
-        await act(async () => {
-            renderer.create(<Probe onValue={(value) => captured.push(value)} />);
-            await Promise.resolve();
-        });
+        await renderScreen(<Probe onValue={(value) => captured.push(value)} />);
 
         const latest = captured.at(-1);
         expect(latest).toBe('m-ok');
@@ -105,13 +101,9 @@ describe('usePrimaryMachineFromActiveSelection', () => {
         (getEffectiveServerSelectionFromRawSettings as any).mockReturnValue({ serverIds: ['server-b', 'server-a'] });
 
         const captured: any[] = [];
-        await act(async () => {
-            renderer.create(<Probe onValue={(value) => captured.push(value)} />);
-            await Promise.resolve();
-        });
+        await renderScreen(<Probe onValue={(value) => captured.push(value)} />);
 
         const latest = captured.at(-1);
         expect(latest).toBe('m-b1');
     });
 });
-

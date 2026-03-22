@@ -1,27 +1,40 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { renderScreen } from '@/dev/testkit';
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'web' },
-}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                        OS: 'web',
+                                    },
+                                }
+    );
+});
 
 vi.mock('expo-secure-store', () => ({}));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    alert: vi.fn(),
-    confirm: vi.fn(),
-    prompt: vi.fn(),
-    show: vi.fn(),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: vi.fn(),
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+            show: vi.fn(),
+        },
+    }).module;
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,10 +50,7 @@ async function renderHook<T>(useValue: () => T): Promise<T> {
     return null;
   }
 
-  await act(async () => {
-    renderer.create(React.createElement(Test));
-    await Promise.resolve();
-  });
+  await renderScreen(React.createElement(Test));
 
   if (!current) throw new Error('Hook did not render');
   return current;
