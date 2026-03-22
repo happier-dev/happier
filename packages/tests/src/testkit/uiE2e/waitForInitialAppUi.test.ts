@@ -51,6 +51,18 @@ describe('waitForInitialAppUi', () => {
     expect(page.reloadCalls).toBe(0);
   });
 
+  it('returns when provider-based welcome actions are visible', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-signup-provider': [1],
+        'welcome-restore': [1],
+      },
+    });
+
+    await expect(waitForInitialAppUi({ page, timeoutMs: 50, reloadOnFailure: false })).resolves.toBeUndefined();
+    expect(page.reloadCalls).toBe(0);
+  });
+
   it('reloads once when the first pass never renders but the retry does', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy

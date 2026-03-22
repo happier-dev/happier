@@ -2,6 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 
 import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
+import {
+  inspectOwnedProcess,
+  registerProcessOwnershipLease,
+  resolveProcessOwnershipLeasesDir,
+  sweepProcessOwnershipLeases,
+} from '../process/processOwnershipLease';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 import { waitForRegexInFile } from '../waitForRegexInFile';
@@ -19,6 +25,18 @@ function extractHttpUrls(text: string): string[] {
 
 function normalizeUrl(raw: string): string {
   return raw.replaceAll(/\u001b\[[0-9;]*m/g, '').trim().replace(/^[('"]+/, '').replace(/[)'".,]+$/, '');
+}
+
+function looksLikeCliTerminalConnectCommand(command: string): boolean {
+  const normalized = command.replaceAll('\\', '/');
+  return normalized.includes('auth login')
+    && normalized.includes('--force')
+    && normalized.includes('--no-open')
+    && normalized.includes('--method web');
+}
+
+export function resolveCliTerminalConnectOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
+  return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'cli-terminal-connect' });
 }
 
 function extractTerminalConnectUrl(text: string): string | null {
@@ -69,6 +87,17 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   webappUrl: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<StartedCliTerminalConnect> {
+  const currentOwnerInspection = inspectOwnedProcess(process.pid);
+  if (currentOwnerInspection.ok) {
+    await sweepProcessOwnershipLeases({
+      rootDir: repoRootDir(),
+      leaseKind: 'cli-terminal-connect',
+      currentOwnerPid: process.pid,
+      currentOwnerStartTime: currentOwnerInspection.startTime,
+      isOwnedProcessCommand: (command) => looksLikeCliTerminalConnectCommand(command),
+    });
+  }
+
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
     { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
@@ -92,6 +121,19 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     },
     stdoutPath,
     stderrPath,
+  });
+
+  await registerProcessOwnershipLease({
+    rootDir: repoRootDir(),
+    leaseKind: 'cli-terminal-connect',
+    child: proc.child,
+    ownerPid: process.pid,
+    ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+    metadata: {
+      cliHomeDir: params.cliHomeDir,
+      serverUrl: params.serverUrl,
+      webappUrl: params.webappUrl,
+    },
   });
 
   let connectUrl: string | null = null;
