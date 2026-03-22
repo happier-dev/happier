@@ -12,6 +12,9 @@ import { createCodexPermissionHandler } from './utils/createCodexPermissionHandl
 const modelSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
 const sessionModeSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
 const configOptionSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
+let remoteModePublishGate: Promise<void> | null = null;
+const remoteModePublishGateResolver: { current: (() => void) | null } = { current: null };
+const registerRemoteSwitchHandlerSpy = vi.fn();
 
 const probeCodexAcpLoadSessionSupportSpy = vi.fn<(...args: any[]) => Promise<any>>(async (..._args) => {
   throw new Error('probe-called');
@@ -102,6 +105,37 @@ vi.mock('@/agent/runtime/runtimeOverridesSynchronizer', () => ({
   initializeRuntimeOverridesSynchronizer: vi.fn(async () => ({
     syncFromMetadata: vi.fn(),
     seedFromSession: vi.fn(async () => {}),
+  })),
+}));
+
+vi.mock('@/agent/localControl/createLocalRemoteModeController', () => ({
+  createLocalRemoteModeController: vi.fn((params: any) => ({
+    publishModeState: async (nextMode: 'local' | 'remote') => {
+      params.session.sendSessionEvent({ type: 'switch', mode: nextMode });
+      params.session.updateAgentState((currentState: any) => ({
+        ...currentState,
+        controlledByUser: nextMode === 'local',
+      }));
+      params.session.keepAlive(params.getThinking(), nextMode);
+      if (nextMode === 'remote') {
+        params.setRemoteUiAllowsSwitchToLocal((await params.resolveLocalSwitchAvailability()).ok);
+        params.mountRemoteUi();
+        await remoteModePublishGate;
+      } else {
+        params.setRemoteUiAllowsSwitchToLocal(false);
+        await params.unmountRemoteUi();
+      }
+    },
+    registerRemoteSwitchHandler: () => {
+      registerRemoteSwitchHandlerSpy();
+      params.session.rpcHandlerManager.registerHandler('switch', async (requestParams: unknown) => {
+        const to = typeof requestParams === 'object' && requestParams !== null
+          ? (requestParams as { to?: unknown }).to
+          : undefined;
+        if (to === 'remote') return true;
+        return await params.requestSwitchToLocalIfSupported();
+      });
+    },
   })),
 }));
 
@@ -346,6 +380,8 @@ describe('runCodex CodexACP resume behavior', () => {
     modelSyncFlushPendingAfterStartSpy.mockClear();
     sessionModeSyncFlushPendingAfterStartSpy.mockClear();
     configOptionSyncFlushPendingAfterStartSpy.mockClear();
+    registerRemoteSwitchHandlerSpy.mockClear();
+    remoteModePublishGate = null;
     lastSessionClient = null;
     lastOnUserMessageHandler = null;
     lastOnSwitchToLocal = null;
@@ -494,10 +530,14 @@ describe('runCodex CodexACP resume behavior', () => {
   it('flushes pending remote override synchronizers after app-server attach startup', async () => {
     const experiments = await import('@/backends/codex/experiments');
     (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
     waitForMessagesOrPendingImpl = async () => {
       throw new Error('wait-called');
     };
-    mockAttachedSessionMetadata({ codexSessionId: 'thread-existing' });
+    mockAttachedSessionMetadata({ codexSessionId: 'thread-existing', codexBackendMode: 'appServer' });
     createCodexAppServerRuntimeSpy.mockImplementationOnce(() => ({
       getSessionId: () => 'thread-existing',
       supportsInFlightSteer: () => false,
@@ -693,14 +733,13 @@ describe('runCodex CodexACP resume behavior', () => {
       SESSION_MODELS_STATE_KEY,
       SESSION_CONFIG_OPTIONS_STATE_KEY,
     ]);
-    expect(resolveRunnerMcpServersSpy).not.toHaveBeenCalled();
-    expect(outcome).toMatchObject({ ok: true });
+    expect(outcome).toMatchObject({ ok: false });
   });
 
   it('wires Happier MCP servers into the future app-server runtime', async () => {
     const experiments = await import('@/backends/codex/experiments');
     (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
-    mockAttachedSessionMetadata({ codexSessionId: 'vendor-thread-existing-123' });
+    mockAttachedSessionMetadata({ codexSessionId: 'vendor-thread-existing-123', codexBackendMode: 'appServer' });
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {
@@ -759,6 +798,10 @@ describe('runCodex CodexACP resume behavior', () => {
   it('does not treat non-app-server codexSessionId metadata as an app-server thread id', async () => {
     const experiments = await import('@/backends/codex/experiments');
     (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
     mockAttachedSessionMetadata({ codexSessionId: 'mcp-session-123', codexBackendMode: 'mcp' });
 
     const { runCodex } = await import('./runCodex');
@@ -785,6 +828,10 @@ describe('runCodex CodexACP resume behavior', () => {
   });
 
   it('cancels the app-server runtime when the session abort RPC is invoked mid-turn', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
     waitForMessagesOrPendingImpl = async () => {
       throw new Error('wait-called');
     };
@@ -824,6 +871,10 @@ describe('runCodex CodexACP resume behavior', () => {
   });
 
   it('prefers the linked vendor resume id over the happy session id when app-server attaches an existing session', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
     const { runCodex } = await import('./runCodex');
 
     const credentials = { token: 'test' } as Credentials;
@@ -853,6 +904,10 @@ describe('runCodex CodexACP resume behavior', () => {
   it('allows appServer resume without the ACP-only resume error path', async () => {
     const experiments = await import('@/backends/codex/experiments');
     (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
 
     const { runCodex } = await import('./runCodex');
 
@@ -882,6 +937,10 @@ describe('runCodex CodexACP resume behavior', () => {
   });
 
   it('registers a session-scoped rollback RPC that delegates to the app-server runtime', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
     const { runCodex } = await import('./runCodex');
     waitForMessagesOrPendingImpl = async () => {
       throw new Error('wait-called');
@@ -914,6 +973,10 @@ describe('runCodex CodexACP resume behavior', () => {
   });
 
   it('passes the requested directory to the Codex app-server runtime', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
     const { runCodex } = await import('./runCodex');
     waitForMessagesOrPendingImpl = async () => {
       throw new Error('wait-called');
@@ -1108,6 +1171,7 @@ describe('runCodex CodexACP resume behavior', () => {
       credentials,
       startedBy: 'terminal',
       startingMode: 'remote',
+      codexBackendMode: 'acp',
       resume: null,
       permissionMode: 'default',
       permissionModeUpdatedAt: 1,
@@ -1182,6 +1246,10 @@ describe('runCodex CodexACP resume behavior', () => {
     (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () => async () => ({ ok: true as const, backend: 'appServer' }),
     );
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
 
     const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
     (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
@@ -1242,15 +1310,55 @@ describe('runCodex CodexACP resume behavior', () => {
     await expect(runPromise).resolves.toBeUndefined();
   });
 
-  it('uses app-server in-flight steering for mid-turn user messages and publishes the capability', async () => {
+  it('registers the remote switch handler before awaiting remote-mode publication', async () => {
+    remoteModePublishGateResolver.current = null;
+    remoteModePublishGate = new Promise<void>((resolve) => {
+      remoteModePublishGateResolver.current = resolve;
+    });
+
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
     }));
 
+    waitForMessagesOrPendingImpl = async () => {
+      throw new Error('stop-after-registration');
+    };
+
+    const { runCodex } = await import('./runCodex');
+
+    const credentials = { token: 'test' } as Credentials;
+    const runPromise = runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      resume: null,
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+    } as any);
+
+    try {
+      await expect.poll(() => createCodexAcpRuntimeSpy.mock.calls.length, { timeout: 1_000 }).toBe(1);
+      await expect.poll(() => registerRemoteSwitchHandlerSpy.mock.calls.length, { timeout: 250 }).toBe(1);
+    } finally {
+      const releaseRemoteModePublishGate = remoteModePublishGateResolver.current;
+      if (releaseRemoteModePublishGate) (releaseRemoteModePublishGate as () => void)();
+      remoteModePublishGate = null;
+      await runPromise.catch(() => undefined);
+    }
+  });
+
+  it('queues mid-turn user messages for app-server sessions and publishes inFlightSteer=false', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+
+    let observedQueuedMessageText: string | null = null;
+    let observedQueuedMessageCount = 0;
     const appServerRuntime = {
       getSessionId: () => 'thread-app-server',
-      supportsInFlightSteer: () => true,
+      supportsInFlightSteer: () => false,
       isTurnInFlight: () => true,
       beginTurn: vi.fn(),
       cancel: vi.fn(async () => {}),
@@ -1266,15 +1374,18 @@ describe('runCodex CodexACP resume behavior', () => {
     };
     createCodexAppServerRuntimeSpy.mockImplementationOnce(() => appServerRuntime);
 
-    waitForMessagesOrPendingImpl = async () => {
+    waitForMessagesOrPendingImpl = async (opts) => {
       if (!lastOnUserMessageHandler) {
         throw new Error('missing-onUserMessage-handler');
       }
       lastOnUserMessageHandler({
-        content: { text: 'steer now' },
+        content: { text: 'queue now' },
         meta: {},
         localId: 'local-user-message-1',
       });
+      observedQueuedMessageCount = opts.messageQueue.size();
+      const queued = await opts.messageQueue.waitForMessagesAndGetAsString(new AbortController().signal);
+      observedQueuedMessageText = queued?.message ?? null;
       throw new Error('wait-called');
     };
 
@@ -1294,11 +1405,13 @@ describe('runCodex CodexACP resume behavior', () => {
 
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalledTimes(1);
     expect(lastOnUserMessageHandler).toBeTypeOf('function');
-    expect(appServerRuntime.steerPrompt).toHaveBeenCalledWith('steer now');
+    expect(observedQueuedMessageCount).toBe(1);
+    expect(observedQueuedMessageText).toBe('queue now');
+    expect(appServerRuntime.steerPrompt).not.toHaveBeenCalled();
     expect(appServerRuntime.sendPrompt).not.toHaveBeenCalled();
     expect(lastSessionClient?.updateAgentState).toHaveBeenCalled();
     const updatedAgentState = (lastSessionClient?.updateAgentState as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.({});
-    expect(updatedAgentState?.capabilities?.inFlightSteer).toBe(true);
+    expect(updatedAgentState?.capabilities?.inFlightSteer).toBe(false);
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.error).toEqual(expect.objectContaining({ message: 'wait-called' }));

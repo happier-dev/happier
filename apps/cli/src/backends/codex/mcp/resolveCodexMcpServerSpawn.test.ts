@@ -1,33 +1,29 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import { resolveProviderCliManagedCommandPath } from '@/runtime/managedTools/providerCliResolution';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
-const ORIGINAL_ENV = {
-  HAPPIER_CODEX_PATH: process.env.HAPPIER_CODEX_PATH,
-  HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-  PATH: process.env.PATH,
-};
-
+const envKeys = ['HAPPIER_CODEX_PATH', 'HAPPIER_HOME_DIR', 'PATH'] as const;
 const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
 
 afterEach(() => {
-  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
   for (const dir of TEMP_DIRS) {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
   TEMP_DIRS.clear();
 });
 
 describe('resolveCodexMcpServerSpawn', () => {
   it('fails closed when no Codex CLI source is available', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-codex-mcp-default-'));
+    const root = createTempDirSync('happier-codex-mcp-default-');
     TEMP_DIRS.add(root);
     process.env.HAPPIER_HOME_DIR = join(root, 'home');
     process.env.PATH = join(root, 'empty-path');
@@ -38,25 +34,22 @@ describe('resolveCodexMcpServerSpawn', () => {
   });
 
   it('respects HAPPIER_CODEX_PATH override', async () => {
-    const prev = process.env.HAPPIER_CODEX_PATH;
-    const root = mkdtempSync(join(tmpdir(), 'happier-codex-mcp-override-'));
+    const root = createTempDirSync('happier-codex-mcp-override-');
     TEMP_DIRS.add(root);
     const overridePath = join(root, process.platform === 'win32' ? 'custom-codex.cmd' : 'custom-codex');
-    writeFileSync(overridePath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
-    if (process.platform !== 'win32') chmodSync(overridePath, 0o755);
+    writeExecutableShimSync({
+      dir: root,
+      fileName: basename(overridePath),
+      contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+    });
     process.env.HAPPIER_CODEX_PATH = overridePath;
-    try {
-      vi.resetModules();
-      const mod = await import('./resolveCodexMcpServerSpawn');
-      await expect(mod.resolveCodexMcpServerSpawn()).resolves.toEqual({ mode: 'codex-cli', command: overridePath });
-    } finally {
-      if (prev === undefined) delete process.env.HAPPIER_CODEX_PATH;
-      else process.env.HAPPIER_CODEX_PATH = prev;
-    }
+    vi.resetModules();
+    const mod = await import('./resolveCodexMcpServerSpawn');
+    await expect(mod.resolveCodexMcpServerSpawn()).resolves.toEqual({ mode: 'codex-cli', command: overridePath });
   });
 
   it('falls back to the managed Codex CLI when PATH is missing it', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-codex-mcp-managed-'));
+    const root = createTempDirSync('happier-codex-mcp-managed-');
     TEMP_DIRS.add(root);
     process.env.HAPPIER_HOME_DIR = join(root, 'home');
     process.env.PATH = join(root, 'empty-path');
@@ -64,9 +57,12 @@ describe('resolveCodexMcpServerSpawn', () => {
     mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });
 
     const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
-    mkdirSync(join(managedPath, '..'), { recursive: true });
-    writeFileSync(managedPath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
-    if (process.platform !== 'win32') chmodSync(managedPath, 0o755);
+    mkdirSync(dirname(managedPath), { recursive: true });
+    writeExecutableShimSync({
+      dir: dirname(managedPath),
+      fileName: basename(managedPath),
+      contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+    });
 
     vi.resetModules();
     const mod = await import('./resolveCodexMcpServerSpawn');

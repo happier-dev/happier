@@ -585,4 +585,5 @@ describe('runClaude fast-start', () => {
       throw testError;
     }
   });
+
 });
