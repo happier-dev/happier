@@ -1,16 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-
-import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env.testkit';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 describe('memorySettings', () => {
   const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
   let homeDir: string | undefined;
 
   beforeEach(async () => {
-    homeDir = await mkdtemp(join(tmpdir(), 'happier-memory-settings-'));
+    homeDir = await createTempDir('happier-memory-settings-');
     applyEnvValues({
       HAPPIER_HOME_DIR: homeDir,
       HAPPIER_SERVER_URL: 'https://api.example.test',
@@ -22,7 +19,7 @@ describe('memorySettings', () => {
   afterEach(async () => {
     restoreEnvValues(envBackup);
     vi.resetModules();
-    if (homeDir) await rm(homeDir, { recursive: true, force: true });
+    if (homeDir) await removeTempDir(homeDir);
   });
 
   it('returns defaults when unset', async () => {
