@@ -1,17 +1,37 @@
+import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import os from 'node:os';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import type { MachineTransferReceiveEnvelope, SessionHandoffResumePlan } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { requestTypedDirectPeerTransferPayload } from '../../machines/transfer/directPeerTransport';
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
-import { createSessionHandoffTransferredBundlesCodec } from '../../session/handoff/transfer/sessionHandoffTransferredBundles';
-import type { SessionHandoffTransferredBundles } from '../../session/handoff/transfer/sessionHandoffTransferredBundles';
 
 describe('rpcHandlers (session handoff direct-peer fallback)', () => {
+    async function createDirectPeerRequestPayloadFile(params: Readonly<{
+        payload: Buffer;
+    }>): Promise<Readonly<{
+        requestPayloadFile: ReturnType<typeof vi.fn>;
+        dispose: () => Promise<void>;
+    }>> {
+        const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-direct-peer-fallback-'));
+        const payloadFilePath = join(temporaryDirectory, 'payload.bin');
+        await writeFile(payloadFilePath, params.payload);
+        return {
+            requestPayloadFile: vi.fn(async ({ destinationPath }: Readonly<{ destinationPath: string }>) => {
+                await copyFile(payloadFilePath, destinationPath);
+                return { destinationPath };
+            }),
+            dispose: async () => {
+                await rm(temporaryDirectory, { recursive: true, force: true });
+            },
+        };
+    }
+
     function computeManifestHash(payload: Uint8Array): string {
         return `sha256:${createHash('sha256').update(payload).digest('hex')}`;
     }
@@ -30,15 +50,20 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         };
     }
 
-    function expectOpenEnvelopeWithRecipient(sendEnvelope: ReturnType<typeof vi.fn>, transferId: string): string {
-        expect(sendEnvelope).toHaveBeenCalledWith({
-            targetMachineId: 'machine_source',
-            envelope: expect.objectContaining({
-                transferId,
-                kind: 'open',
-                manifestHash: transferId,
-                recipientPublicKeyBase64: expect.any(String),
-            }),
+    async function expectOpenEnvelopeWithRecipient(
+        sendEnvelope: ReturnType<typeof vi.fn>,
+        transferId: string,
+    ): Promise<string> {
+        await vi.waitFor(() => {
+            expect(sendEnvelope).toHaveBeenCalledWith({
+                targetMachineId: 'machine_source',
+                envelope: expect.objectContaining({
+                    transferId,
+                    kind: 'open',
+                    manifestHash: transferId,
+                    recipientPublicKeyBase64: expect.any(String),
+                }),
+            });
         });
         const openEnvelope = sendEnvelope.mock.calls[0]?.[0]?.envelope;
         if (
@@ -66,7 +91,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                 transcriptStorage: 'persisted',
             }),
         }));
-        const requestPayload = vi.fn(async () => {
+        const requestPayloadFile = vi.fn(async () => {
             throw new Error('direct peer request should not run for expired candidates');
         });
         const sendEnvelope = vi.fn();
@@ -90,13 +115,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             },
             directPeerTransfer: {
                 publishTransfer: vi.fn(() => []),
-                requestPayload,
+                requestPayloadFile,
                 clearPublishedTransfer: vi.fn(),
             },
         });
 
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
         expect(prepare).toBeDefined();
+        expect(resultGet).toBeDefined();
 
         const preparePromise = prepare!({
             handoffId: 'handoff_direct_peer_expired_candidates',
@@ -114,11 +141,11 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             ],
         });
 
-        const recipientPublicKeyBase64 = expectOpenEnvelopeWithRecipient(
+        const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
             sendEnvelope,
             'session-handoff:handoff_direct_peer_expired_candidates',
         );
-        expect(requestPayload).not.toHaveBeenCalled();
+        expect(requestPayloadFile).not.toHaveBeenCalled();
 
         const serverRoutedPayload = Buffer.from(JSON.stringify({
             providerBundle: {
@@ -155,7 +182,25 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             });
         }
 
-        await expect(preparePromise).resolves.toMatchObject({
+        const prepared = await preparePromise;
+        expect(prepared).toMatchObject({
+            handoffId: 'handoff_direct_peer_expired_candidates',
+            status: expect.objectContaining({
+                transportStrategy: 'server_routed_stream',
+            }),
+        });
+
+        let ready = prepared;
+        if (ready.status.status !== 'ready_for_cutover') {
+            await vi.waitFor(async () => {
+                ready = await resultGet!({
+                    handoffId: 'handoff_direct_peer_expired_candidates',
+                });
+                expect(ready.status.status).toBe('ready_for_cutover');
+            });
+        }
+
+        expect(ready).toMatchObject({
             handoffId: 'handoff_direct_peer_expired_candidates',
             status: expect.objectContaining({
                 transportStrategy: 'server_routed_stream',
@@ -166,7 +211,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
 
     it('returns a transport error when all direct-peer endpoint candidates are expired and no server-routed fallback channel is available', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const requestPayload = vi.fn(async () => {
+        const requestPayloadFile = vi.fn(async () => {
             throw new Error('direct peer request should not run for expired candidates');
         });
         const rpcHandlerManager = {
@@ -179,7 +224,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             rpcHandlerManager,
             directPeerTransfer: {
                 publishTransfer: vi.fn(() => []),
-                requestPayload,
+                requestPayloadFile,
                 clearPublishedTransfer: vi.fn(),
             },
         });
@@ -207,12 +252,60 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
         });
 
-        expect(requestPayload).not.toHaveBeenCalled();
+        expect(requestPayloadFile).not.toHaveBeenCalled();
+    });
+
+    it('treats a legacy requestPayload-only direct-peer adapter as unavailable when no server-routed fallback channel is available', async () => {
+        const registered = new Map<string, (params: unknown) => Promise<any>>();
+        const legacyRequestPayload = vi.fn(async () => {
+            throw new Error('legacy typed payload path should not be used');
+        });
+        const rpcHandlerManager = {
+            registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+                registered.set(method, handler);
+            },
+        } as any;
+
+        const legacyOnlyDirectPeerTransfer = {
+            publishTransfer: vi.fn(() => []),
+            requestPayload: legacyRequestPayload,
+            clearPublishedTransfer: vi.fn(),
+        };
+
+        registerMachineSessionHandoffRpcHandlers({
+            rpcHandlerManager,
+            directPeerTransfer: legacyOnlyDirectPeerTransfer,
+        });
+
+        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+        expect(prepare).toBeDefined();
+
+        await expect(prepare!({
+            handoffId: 'handoff_direct_peer_legacy_only_adapter',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            negotiatedTransportStrategy: 'direct_peer',
+            sourceSessionStorageMode: 'persisted',
+            targetPath: '/repo',
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_legacy_only_adapter?token=test-token',
+                    expiresAt: Date.now() + 30_000,
+                },
+            ],
+        })).resolves.toEqual({
+            ok: false,
+            errorCode: 'direct_peer_transfer_unavailable',
+            error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+        });
+
+        expect(legacyRequestPayload).not.toHaveBeenCalled();
     });
 
     it('returns a transport error when direct-peer transfer fails and no server-routed fallback channel is available', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const requestPayload = vi.fn(async () => {
+        const requestPayloadFile = vi.fn(async () => {
             throw new Error('direct peer unavailable');
         });
         const rpcHandlerManager = {
@@ -225,7 +318,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             rpcHandlerManager,
             directPeerTransfer: {
                 publishTransfer: vi.fn(() => []),
-                requestPayload,
+                requestPayloadFile,
                 clearPublishedTransfer: vi.fn(),
             },
         });
@@ -253,19 +346,12 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
         });
 
-        expect(requestPayload).toHaveBeenCalledTimes(1);
+        expect(requestPayloadFile).toHaveBeenCalledTimes(1);
     });
 
     it('suppresses an immediate retry after a direct-peer transport failure for the same source machine and endpoint set', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const requestPayload = vi.fn(async (_input: Readonly<{
-            transferId: string;
-            endpointCandidates: readonly {
-                kind: 'http' | 'https' | 'tcp';
-                url: string;
-                expiresAt: number;
-            }[];
-        }>): Promise<SessionHandoffTransferredBundles> => {
+        const requestPayloadFile = vi.fn(async () => {
             throw new Error('direct peer unavailable');
         });
         const rpcHandlerManager = {
@@ -278,7 +364,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             rpcHandlerManager,
             directPeerTransfer: {
                 publishTransfer: vi.fn(() => []),
-                requestPayload,
+                requestPayloadFile,
                 clearPublishedTransfer: vi.fn(),
             },
         });
@@ -326,13 +412,13 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
         });
 
-        expect(requestPayload).toHaveBeenCalledTimes(1);
+        expect(requestPayloadFile).toHaveBeenCalledTimes(1);
     });
 
   it('fails closed instead of silently server-routing when the direct-peer transfer payload is invalid', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const requestPayload = vi.fn(async () => {
-            throw new Error('Invalid session handoff transfer payload');
+        const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
+            payload: Buffer.from('{', 'utf8'),
         });
         const sendEnvelope = vi.fn();
         const listeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
@@ -353,76 +439,42 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             },
             directPeerTransfer: {
                 publishTransfer: vi.fn(() => []),
-                requestPayload,
+                requestPayloadFile,
                 clearPublishedTransfer: vi.fn(),
             },
         });
 
-        const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-        expect(prepare).toBeDefined();
+        try {
+            const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+            expect(prepare).toBeDefined();
 
-        await expect(prepare!({
-            handoffId: 'handoff_direct_peer_invalid_payload',
-            sourceMachineId: 'machine_source',
-            targetMachineId: 'machine_target',
-            negotiatedTransportStrategy: 'direct_peer',
-            sourceSessionStorageMode: 'persisted',
-            targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                    expiresAt: Date.now() + 30_000,
-                },
-            ],
-        })).rejects.toThrow('Invalid session handoff transfer payload');
+            await expect(prepare!({
+                handoffId: 'handoff_direct_peer_invalid_payload',
+                sourceMachineId: 'machine_source',
+                targetMachineId: 'machine_target',
+                negotiatedTransportStrategy: 'direct_peer',
+                sourceSessionStorageMode: 'persisted',
+                targetPath: '/repo',
+                endpointCandidates: [
+                    {
+                        kind: 'http',
+                        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
+                        expiresAt: Date.now() + 30_000,
+                    },
+                ],
+            })).rejects.toThrow('Invalid session handoff transfer payload');
 
-    expect(requestPayload).toHaveBeenCalledTimes(1);
-    expect(sendEnvelope).not.toHaveBeenCalled();
+            expect(requestPayloadFile).toHaveBeenCalledTimes(1);
+            expect(sendEnvelope).not.toHaveBeenCalled();
+        } finally {
+            await dispose();
+        }
   });
 
-  it('fails closed instead of probing later candidates when a direct-peer candidate returns malformed json', async () => {
+  it('fails closed instead of probing later candidates when a direct-peer candidate returns an invalid file-backed payload', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const requestPayload = vi.fn(async () => {
-      return await requestTypedDirectPeerTransferPayload({
-        transferId: 'handoff_direct_peer_invalid_json_payload',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/candidate-1?token=test-token',
-            expiresAt: Date.now() + 30_000,
-          },
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46002/session-handoffs/direct-transfer/candidate-2?token=test-token',
-            expiresAt: Date.now() + 30_000,
-          },
-        ],
-        fetchFn: async (input: string | URL | Request) => {
-          const url = String(input);
-          if (url.includes('candidate-1')) {
-            return new Response('{"handoffId":', {
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-            });
-          }
-
-          return new Response(JSON.stringify({
-            handoffId: 'handoff_direct_peer_invalid_json_payload',
-            providerBundle: {
-              providerId: 'claude',
-              remoteSessionId: 'claude_session_source',
-              transcriptBase64: 'e30K',
-            },
-          }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          });
-        },
-        codec: createSessionHandoffTransferredBundlesCodec({
-          mapDecodeError: ({ transferId }) => new Error(`Invalid direct peer transfer response for ${transferId}`),
-        }),
-      });
+    const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
+      payload: Buffer.from('{', 'utf8'),
     });
     const sendEnvelope = vi.fn();
     const listeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
@@ -443,36 +495,40 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
       },
       directPeerTransfer: {
         publishTransfer: vi.fn(() => []),
-        requestPayload,
+        requestPayloadFile,
         clearPublishedTransfer: vi.fn(),
       },
     });
 
-    const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
-    expect(prepare).toBeDefined();
+    try {
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      expect(prepare).toBeDefined();
 
-    await expect(prepare!({
-      handoffId: 'handoff_direct_peer_invalid_json_payload',
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      negotiatedTransportStrategy: 'direct_peer',
-      sourceSessionStorageMode: 'persisted',
-      targetPath: '/repo',
-      endpointCandidates: [
-        {
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/candidate-1?token=test-token',
-          expiresAt: Date.now() + 30_000,
-        },
-        {
-          kind: 'http',
-          url: 'http://127.0.0.1:46002/session-handoffs/direct-transfer/candidate-2?token=test-token',
-          expiresAt: Date.now() + 30_000,
-        },
-      ],
-    })).rejects.toThrow('Invalid direct peer transfer response for handoff_direct_peer_invalid_json_payload');
+      await expect(prepare!({
+        handoffId: 'handoff_direct_peer_invalid_json_payload',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        sourceSessionStorageMode: 'persisted',
+        targetPath: '/repo',
+        endpointCandidates: [
+          {
+            kind: 'http',
+            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/candidate-1?token=test-token',
+            expiresAt: Date.now() + 30_000,
+          },
+          {
+            kind: 'http',
+            url: 'http://127.0.0.1:46002/session-handoffs/direct-transfer/candidate-2?token=test-token',
+            expiresAt: Date.now() + 30_000,
+          },
+        ],
+      })).rejects.toThrow('Invalid session handoff transfer payload');
 
-    expect(requestPayload).toHaveBeenCalledTimes(1);
-    expect(sendEnvelope).not.toHaveBeenCalled();
+      expect(requestPayloadFile).toHaveBeenCalledTimes(1);
+      expect(sendEnvelope).not.toHaveBeenCalled();
+    } finally {
+      await dispose();
+    }
   });
 });
