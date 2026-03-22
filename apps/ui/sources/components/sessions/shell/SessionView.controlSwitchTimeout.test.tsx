@@ -303,7 +303,7 @@ describe('SessionView (control switch timeout)', () => {
   }
 
   async function flushControlSwitchTimeout() {
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: controlSwitchTimeoutMs });
+    await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: controlSwitchTimeoutMs });
   }
 
   beforeEach(() => {

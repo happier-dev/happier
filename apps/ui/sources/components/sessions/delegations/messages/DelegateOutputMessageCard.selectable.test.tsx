@@ -1,6 +1,8 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,9 +46,7 @@ describe('DelegateOutputMessageCard (selection)', () => {
     };
 
     let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<DelegateOutputMessageCard payload={payload} />);
-    });
+    tree = (await renderScreen(<DelegateOutputMessageCard payload={payload} />)).tree;
 
     const findTextNode = (text: string) =>
       tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;

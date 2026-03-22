@@ -1,7 +1,7 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -100,24 +100,6 @@ async function flushRender(): Promise<void> {
     });
 }
 
-function findPressableByText(tree: renderer.ReactTestRenderer, text: string) {
-    const textNode = tree.root.find((node) => {
-        if ((node.type as unknown) !== 'Text') return false;
-        const children = node.props.children;
-        if (typeof children === 'string') return children === text;
-        if (Array.isArray(children)) return children.includes(text);
-        return false;
-    });
-    let current: any = textNode;
-    while (current && (current.type as unknown) !== 'Pressable') {
-        current = current.parent;
-    }
-    if (!current) {
-        throw new Error(`Pressable with text "${text}" not found`);
-    }
-    return current;
-}
-
 describe('SessionAutomationsScreen', () => {
     beforeEach(() => {
         automationsState.list = [];
@@ -187,11 +169,10 @@ describe('SessionAutomationsScreen', () => {
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }))).tree;
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
         await flushRender();
 
-        const json = JSON.stringify(tree!.toJSON());
+        const json = JSON.stringify(screen.tree.toJSON());
         expect(json).toContain('Linked');
         expect(json).not.toContain('Other session');
     });
@@ -232,14 +213,16 @@ describe('SessionAutomationsScreen', () => {
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }))).tree;
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
         await flushRender();
 
-        const add = findPressableByText(tree!, 'Add automation');
+        const add = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Add automation');
+        if (!add) {
+            throw new Error('Add automation pressable was not found');
+        }
         expect(add.props.accessibilityState?.disabled ?? add.props.disabled).not.toBe(true);
         await act(async () => {
-            add.props.onPress();
+            pressTestInstance(add, 'Add automation');
         });
 
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
@@ -260,13 +243,15 @@ describe('SessionAutomationsScreen', () => {
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }))).tree;
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
         await flushRender();
 
-        const add = findPressableByText(tree!, 'Add automation');
+        const add = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Add automation');
+        if (!add) {
+            throw new Error('Add automation pressable was not found');
+        }
 
         expect(add.props.accessibilityState?.disabled ?? add.props.disabled).toBe(true);
-        expect(JSON.stringify(tree!.toJSON())).toContain('This session can’t be resumed');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('This session can’t be resumed');
     });
 });

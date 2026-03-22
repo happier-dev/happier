@@ -79,6 +79,7 @@ const recipientStateState = vi.hoisted(() => ({
     setExecutionRunDelivery: vi.fn(),
   },
 }));
+const directSessionAdvanceTimersMs = 250;
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -377,8 +378,12 @@ describe('SessionView (direct sessions)', () => {
 
   async function renderSessionViewAndSettle() {
     const screen = await renderSessionView();
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+    await settleDirectSessionView();
     return screen;
+  }
+
+  async function settleDirectSessionView() {
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: directSessionAdvanceTimersMs });
   }
 
   function findAgentInput(screen: Awaited<ReturnType<typeof renderSessionView>>) {
@@ -762,7 +767,7 @@ describe('SessionView (direct sessions)', () => {
       badges: ['sessionsList.storageDirectTab', 'agentInput.agent.codex · happy-host'],
     }));
 
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+    await settleDirectSessionView();
     await act(async () => {
       await screen.unmount();
     });
@@ -776,7 +781,7 @@ describe('SessionView (direct sessions)', () => {
     expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
     const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
 
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
+    await settleDirectSessionView();
     expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
     expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
 

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -317,9 +316,7 @@ describe('/session/[id]/info', () => {
         const viewMachineItem = screen.findByTestId('sessionInfo.viewMachine');
         expect(viewMachineItem).toBeTruthy();
 
-        await act(async () => {
-            viewMachineItem!.props.onPress();
-        });
+        screen.pressByTestId('sessionInfo.viewMachine');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/machine/machine-target');
     });

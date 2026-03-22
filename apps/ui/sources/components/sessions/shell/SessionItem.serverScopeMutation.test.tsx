@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -143,8 +143,9 @@ describe('SessionItem server-scoped mutations', () => {
 
         const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
         const rightActions = swipeable.props.renderRightActions();
+        const rightActionsScreen = await renderScreen(rightActions);
         await act(async () => {
-            await rightActions.props.onPress();
+            await pressTestInstanceAsync(rightActionsScreen.findByType('Pressable'), 'session swipe action');
         });
 
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);
@@ -197,8 +198,9 @@ describe('SessionItem server-scoped mutations', () => {
 
         const swipeable = screen.find((node: any) => typeof node.props?.renderRightActions === 'function');
         const rightActions = swipeable.props.renderRightActions();
+        const rightActionsScreen = await renderScreen(rightActions);
         await act(async () => {
-            await rightActions.props.onPress();
+            await pressTestInstanceAsync(rightActionsScreen.findByType('Pressable'), 'session swipe action');
         });
 
         expect(modalAlertSpy).toHaveBeenCalledTimes(1);

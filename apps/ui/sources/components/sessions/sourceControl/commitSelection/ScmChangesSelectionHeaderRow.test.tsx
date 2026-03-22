@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
 
-import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -64,10 +63,8 @@ describe('ScmChangesSelectionHeaderRow', () => {
         const pressables = screen.findAllByType('Pressable' as any);
         expect(pressables).toHaveLength(2);
 
-        act(() => {
-            pressables[0]!.props.onPress();
-            pressables[1]!.props.onPress();
-        });
+        pressTestInstance(pressables[0], 'files.selectAll');
+        pressTestInstance(pressables[1], 'files.selectNone');
 
         expect(onSelectAll).toHaveBeenCalledTimes(1);
         expect(onSelectNone).toHaveBeenCalledTimes(1);

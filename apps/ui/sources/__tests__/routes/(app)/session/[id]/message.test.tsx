@@ -221,6 +221,14 @@ describe('Session message route hydration', () => {
     return renderScreen(React.createElement(Screen));
   }
 
+  async function settleMessageScreen(advanceTimersMs?: number) {
+    await flushHookEffects({
+      cycles: 1,
+      turns: 1,
+      ...(typeof advanceTimersMs === 'number' ? { advanceTimersMs } : {}),
+    });
+  }
+
   it('renders invalid link fallback when session id param is missing', async () => {
     mockSearchParams = { id: '', messageId: 'message-1' };
     const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
@@ -237,14 +245,14 @@ describe('Session message route hydration', () => {
     loadOlderDeferred = createDeferredPromise();
 
     const screen = await renderMessageScreen(MessageScreen);
-    await flushHookEffects();
+    await settleMessageScreen();
 
     expect(syncOnSessionVisibleSpy).toHaveBeenCalledWith('session-1');
     expect(syncLoadOlderMessagesSpy).toHaveBeenCalledWith('session-1');
     expect(routerBackSpy).not.toHaveBeenCalled();
 
     loadOlderDeferred!.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
-    await flushHookEffects();
+    await settleMessageScreen();
 
     expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1');
   });
@@ -371,7 +379,7 @@ describe('Session message route hydration', () => {
     syncLoadOlderMessagesSpy.mockImplementation(async () => ({ loaded: 0, hasMore: true, status: 'not_ready' as const }));
 
     await renderMessageScreen(MessageScreen);
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 1 });
+    await settleMessageScreen(1);
 
     expect(routerReplaceSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).not.toHaveBeenCalled();
@@ -404,7 +412,7 @@ describe('Session message route hydration', () => {
     };
 
     await screen.update(React.createElement(MessageScreen));
-    await flushHookEffects();
+    await settleMessageScreen();
   });
 
   it('does not render the focused-tool composer when there are no participant targets', async () => {

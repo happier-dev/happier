@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -145,24 +145,19 @@ vi.mock('@/auth/pairing/pairingUrl', () => ({
     parsePairingDeepLink: () => null,
 }));
 
+afterEach(() => {
+    vi.restoreAllMocks();
+    standardCleanup();
+});
+
 describe('/restore (mobile)', () => {
     it('renders a scanner-first restore UI', async () => {
         vi.resetModules();
         modalAlertSpy.mockClear();
         const { default: Screen } = await import('@/app/(app)/restore/index');
 
-        let tree: ReactTestRenderer | null = null;
-        try {
-            await act(async () => {
-                tree = create(<Screen />);
-            });
-            const buttons = tree!.root.findAllByProps({ testID: 'restore-show-qr-instead' });
-            expect(buttons.length).toBeGreaterThan(0);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-            await Promise.resolve();
-        }
+        const screen = await renderScreen(<Screen />);
+        const button = screen.findByTestId('restore-show-qr-instead');
+        expect(button).not.toBeNull();
     });
 });

@@ -233,7 +233,7 @@ describe('SessionScmStashDetailsView', () => {
 
             expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
 
-            await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_000 });
 
             await vi.waitFor(() => {
                 expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
@@ -252,7 +252,7 @@ describe('SessionScmStashDetailsView', () => {
             });
 
             const screen = await renderStashDetailsView();
-            await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10_000 });
             await vi.waitFor(() => {
                 expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
             });
@@ -276,7 +276,7 @@ describe('SessionScmStashDetailsView', () => {
             });
 
             const screen = await renderStashDetailsView();
-            await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
+            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10_000 });
             await vi.waitFor(() => {
                 expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
             });

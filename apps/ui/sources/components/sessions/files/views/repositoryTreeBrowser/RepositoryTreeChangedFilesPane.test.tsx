@@ -1,8 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -105,48 +104,33 @@ describe('RepositoryTreeChangedFilesPane', () => {
         });
 
         const onShowAllRepositoryFiles = vi.fn();
-        let tree: renderer.ReactTestRenderer | null = null;
-
         const { RepositoryTreeChangedFilesPane } = await import('./RepositoryTreeChangedFilesPane');
 
-        tree = (await renderScreen(<RepositoryTreeChangedFilesPane
+        const screen = await renderScreen(<RepositoryTreeChangedFilesPane
                     sessionId="s1"
                     scmSnapshot={null}
                     searchQuery=""
                     onSearchQueryChange={vi.fn()}
                     onShowAllRepositoryFiles={onShowAllRepositoryFiles}
                     onOpenFile={vi.fn()}
-                />)).tree;
+                />);
 
-        const getPressables = () => tree!.findAll((node: any) => typeof node.props?.onPress === 'function');
-        const labels = getPressables().map((node: any) => node.findAllByType('TextInput' as any).length === 0
-            ? node.findAll((child: any) => typeof child.props?.children === 'string').map((child: any) => child.props.children).join(' ')
-            : '');
+        expect(screen.getTextContent()).toContain('files.toolbar.turnView');
+        expect(screen.getTextContent()).toContain('files.toolbar.sessionView');
+        expect(screen.findAllByType('ChangedFilesList' as any)).toHaveLength(1);
+        expect(screen.findAllByType('ChangedFilesReview' as any)).toHaveLength(0);
 
-        expect(labels.some((label: string) => label.includes('files.toolbar.turnView'))).toBe(true);
-        expect(labels.some((label: string) => label.includes('files.toolbar.sessionView'))).toBe(true);
-        expect(tree!.findAllByType('ChangedFilesList' as any)).toHaveLength(1);
-        expect(tree!.findAllByType('ChangedFilesReview' as any)).toHaveLength(0);
-
-        const reviewToggle = getPressables().find((node: any) =>
-            node.findAll((child: any) => child.props?.children === 'files.toolbar.review').length > 0,
-        );
+        const reviewToggle = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'files.toolbar.review');
         expect(reviewToggle).toBeTruthy();
 
-        act(() => {
-            reviewToggle!.props.onPress();
-        });
+        await pressTestInstanceAsync(reviewToggle, 'files.toolbar.review');
 
-        expect(tree!.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
+        expect(screen.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
 
-        const allRepositoryFilesToggle = getPressables().find((node: any) =>
-            node.findAll((child: any) => child.props?.children === 'files.toolbar.allRepositoryFiles').length > 0,
-        );
+        const allRepositoryFilesToggle = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'files.toolbar.allRepositoryFiles');
         expect(allRepositoryFilesToggle).toBeTruthy();
 
-        act(() => {
-            allRepositoryFilesToggle!.props.onPress();
-        });
+        await pressTestInstanceAsync(allRepositoryFilesToggle, 'files.toolbar.allRepositoryFiles');
 
         expect(onShowAllRepositoryFiles).toHaveBeenCalledTimes(1);
     });

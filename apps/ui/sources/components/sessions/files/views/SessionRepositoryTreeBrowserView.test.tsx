@@ -242,9 +242,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
 
         expect(screen.findByTestId('search-results:src/api.ts')).toBeTruthy();
 
-        await act(async () => {
-            screen.pressByTestId('search-results:src/api.ts');
-        });
+        screen.pressByTestId('search-results:src/api.ts');
 
         expect(searchFilesSpy).toHaveBeenCalled();
         expect(onOpenFile).toHaveBeenCalledWith('src/api.ts');

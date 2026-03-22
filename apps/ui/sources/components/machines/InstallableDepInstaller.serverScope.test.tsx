@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderSettingsView } from '@/dev/testkit';
 import type { InstallableDepInstallerProps } from './InstallableDepInstaller';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -97,7 +97,7 @@ async function renderInstaller(
 ) {
     const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
 
-    return renderScreen(
+    return renderSettingsView(
         <InstallableDepInstaller
             {...baseInstallerProps}
             {...overrides}
@@ -130,9 +130,8 @@ describe('InstallableDepInstaller', () => {
             },
         });
 
-        const installAction = screen.findByProps({ title: installLabels.install });
         await act(async () => {
-            await installAction.props.onPress();
+            screen.pressRowByTitle(installLabels.install);
         });
 
         const confirmButtons = alertMock.mock.calls.find(
@@ -167,12 +166,12 @@ describe('InstallableDepInstaller', () => {
             },
         });
 
-        const installAction = screen.findByProps({ title: installLabels.install });
+        const installAction = screen.findRowByTitle(installLabels.install);
         if (!installAction) {
             throw new Error('Expected install action item');
         }
         await act(async () => {
-            await installAction.props.onPress();
+            screen.pressRowByTitle(installLabels.install);
         });
 
         const confirmButtons = alertMock.mock.calls.find((call) => Array.isArray(call[2]))?.[2];

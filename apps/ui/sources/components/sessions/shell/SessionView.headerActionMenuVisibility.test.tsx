@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { act, type ReactTestInstance } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { pressTestInstance, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -284,8 +284,8 @@ const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) =>
   <AppPaneProvider>{children ?? null}</AppPaneProvider>
 );
 
-function findPressableByAccessibilityLabel(root: ReactTestInstance, label: string) {
-  return root.findAll((node) => (node.type as unknown) === 'Pressable' && node.props?.accessibilityLabel === label)[0];
+function findPressableByAccessibilityLabel(screen: RenderScreenResult, label: string) {
+  return screen.findAll((node) => (node.type as unknown) === 'Pressable' && node.props?.accessibilityLabel === label)[0];
 }
 
 async function renderSessionView() {
@@ -328,7 +328,7 @@ describe('SessionView header action menu visibility', () => {
     sessionExecutionRunsSupportedState.supported = false;
     executionRunsBackendsState.backends = null;
     const screen = await renderSessionView();
-    const openRunsButton = findPressableByAccessibilityLabel(screen.root, 'session.openRuns');
+    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
 
     expect(openRunsButton).toBeUndefined();
   });
@@ -346,13 +346,11 @@ describe('SessionView header action menu visibility', () => {
     navigateWithBlurOnWebSpy.mockClear();
 
     const screen = await renderSessionView();
-    const openAutomationsButton = findPressableByAccessibilityLabel(screen.root, 'session.openAutomations');
+    const openAutomationsButton = findPressableByAccessibilityLabel(screen, 'session.openAutomations');
 
     expect(openAutomationsButton).toBeDefined();
 
-    await act(async () => {
-      openAutomationsButton!.props.onPress();
-    });
+    pressTestInstance(openAutomationsButton, 'session.openAutomations');
 
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
     expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations');
@@ -373,7 +371,7 @@ describe('SessionView header action menu visibility', () => {
     ];
 
     const screen = await renderSessionView();
-    const openRunsButton = findPressableByAccessibilityLabel(screen.root, 'session.openRuns');
+    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
 
     expect(openRunsButton).toBeDefined();
   });
@@ -401,7 +399,7 @@ describe('SessionView header action menu visibility', () => {
     ];
 
     const screen = await renderSessionView();
-    const openSubagentsButton = findPressableByAccessibilityLabel(screen.root, 'session.openSubagents');
+    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
 
     expect(openSubagentsButton).toBeDefined();
   });
@@ -421,7 +419,7 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
 
     const screen = await renderSessionView();
-    const openSubagentsButton = findPressableByAccessibilityLabel(screen.root, 'session.openSubagents');
+    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
 
     expect(openSubagentsButton).toBeDefined();
   });

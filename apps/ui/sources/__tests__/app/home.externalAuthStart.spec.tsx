@@ -1,6 +1,8 @@
 import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
@@ -116,6 +118,14 @@ async function flushEffects() {
     await Promise.allSettled(fireAndForgetPromises.splice(0));
 }
 
+function findActionButton(screen: RenderScreenResult, testID: string) {
+    const button = screen.findAllByTestId(testID).find((node) => typeof node.props.action === 'function');
+    if (!button) {
+        throw new Error(`Unable to find action button "${testID}"`);
+    }
+    return button;
+}
+
 afterEach(() => {
     vi.clearAllMocks();
 });
@@ -150,26 +160,16 @@ describe('Home external auth start', () => {
             },
         });
 
-        let tree: ReactTestRenderer | null = null;
-        act(() => {
-            tree = create(<Home />);
+        const screen = await renderScreen(<Home />);
+        await act(async () => {
+            await flushEffects();
         });
 
-        try {
-            await act(async () => {
-                await flushEffects();
-            });
-
-            const signupButton = tree!.root.findByProps({ testID: 'welcome-signup-provider' });
-            await act(async () => {
-                await signupButton.props.action();
-                await flushEffects();
-            });
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const signupButton = findActionButton(screen, 'welcome-signup-provider');
+        await act(async () => {
+            await signupButton.props.action();
+            await flushEffects();
+        });
 
         expect(tokenStorageMock.setPendingExternalAuth).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -217,26 +217,16 @@ describe('Home external auth start', () => {
             },
         });
 
-        let tree: ReactTestRenderer | null = null;
-        act(() => {
-            tree = create(<Home />);
+        const screen = await renderScreen(<Home />);
+        await act(async () => {
+            await flushEffects();
         });
 
-        try {
-            await act(async () => {
-                await flushEffects();
-            });
-
-            const loginButton = tree!.root.findByProps({ testID: 'welcome-create-account' });
-            await act(async () => {
-                await loginButton.props.action();
-                await flushEffects();
-            });
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const loginButton = findActionButton(screen, 'welcome-create-account');
+        await act(async () => {
+            await loginButton.props.action();
+            await flushEffects();
+        });
 
         expect(tokenStorageMock.setPendingExternalAuth).toHaveBeenCalledWith(
             expect.objectContaining({

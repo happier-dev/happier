@@ -195,13 +195,13 @@ describe('UI testkit render helpers', () => {
             React.createElement(
                 'View',
                 { testID: 'settings.root' },
-                React.createElement('Pressable', { testID: 'settings.proxy-row' }),
+                React.createElement('View', { testID: 'settings.proxy-row' }),
                 React.createElement('Text', null, 'settings.proxy-title'),
             ),
         );
 
-        expect(screen.tree.findByType('Pressable')).toBeTruthy();
-        expect(screen.tree.findAllByType('Pressable')).toHaveLength(1);
+        expect(screen.tree.findByType('View')).toBeTruthy();
+        expect(screen.tree.findAllByType('View')).toHaveLength(2);
         expect(screen.tree.findByProps({ testID: 'settings.proxy-row' })).toBeTruthy();
         expect(screen.tree.findAllByProps({ testID: 'settings.proxy-row' })).toHaveLength(1);
         expect(screen.tree.find((node) => node.props?.testID === 'settings.proxy-row')).toBeTruthy();
@@ -215,13 +215,13 @@ describe('UI testkit render helpers', () => {
             React.createElement(
                 'View',
                 { testID: 'settings.screen-root' },
-                React.createElement('Pressable', { testID: 'settings.screen-row' }),
+                React.createElement('View', { testID: 'settings.screen-row' }),
                 React.createElement('Text', null, 'settings.screen-title'),
             ),
         );
 
-        expect(screen.findByType('Pressable')).toBeTruthy();
-        expect(screen.findAllByType('Pressable')).toHaveLength(1);
+        expect(screen.findByType('View')).toBeTruthy();
+        expect(screen.findAllByType('View')).toHaveLength(2);
         expect(screen.findByProps({ testID: 'settings.screen-row' })).toBeTruthy();
         expect(screen.findAllByProps({ testID: 'settings.screen-row' })).toHaveLength(1);
         expect(screen.find((node) => node.props?.testID === 'settings.screen-row')).toBeTruthy();

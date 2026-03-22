@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import {
@@ -395,9 +394,7 @@ describe('CommitScreen', () => {
         const screen = await renderCommitScreen(Screen);
         expect(screen.findByTestId('scm-commit-details-back')).toBeTruthy();
 
-        await act(async () => {
-            screen.pressByTestId('scm-commit-details-back');
-        });
+        await screen.pressByTestIdAsync('scm-commit-details-back');
         expect(routerBack).toHaveBeenCalledTimes(1);
     });
 
@@ -407,12 +404,9 @@ describe('CommitScreen', () => {
         vi.mocked(sessionScmCommitBackout).mockRejectedValueOnce(new Error('rpc unavailable'));
         const Screen = (await import('@/app/(app)/session/[id]/commit')).default;
         const screen = await renderCommitScreen(Screen);
-        const revertButton = screen.findByTestId('scm-commit-details-revert');
-        expect(revertButton).toBeTruthy();
+        expect(screen.findByTestId('scm-commit-details-revert')).toBeTruthy();
 
-        await act(async () => {
-            await revertButton?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('scm-commit-details-revert');
         await flushHookEffects();
 
         expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'rpc unavailable');

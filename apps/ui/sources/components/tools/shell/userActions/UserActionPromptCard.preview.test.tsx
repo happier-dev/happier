@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -78,9 +80,7 @@ describe('UserActionPromptCard (preview)', () => {
         } as PendingPermissionRequest;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <UserActionPromptCard
+        tree = (await renderScreen(<UserActionPromptCard
                     request={request}
                     location={{
                         kind: 'top',
@@ -90,9 +90,7 @@ describe('UserActionPromptCard (preview)', () => {
                     sessionId="session-1"
                     metadata={null}
                     canApprovePermissions={true}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(() => tree!.root.findByProps({ testID: 'user-action-prompt-view-tool' })).toThrow();
         expect(routerPush).not.toHaveBeenCalled();

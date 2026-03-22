@@ -167,12 +167,9 @@ describe('Settings → Account (grouping)', () => {
         vi.resetModules();
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
-        const addPhoneItems = screen.findAll(
-            (node) => node.props?.testID === 'settings-account-add-your-phone' && typeof node.props?.onPress === 'function',
-        );
-        expect(addPhoneItems.length).toBeGreaterThan(0);
+        expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
 
-        await addPhoneItems[0]!.props.onPress();
+        screen.pressByTestId('settings-account-add-your-phone');
 
         expect(routerMockRef.current.spies.push).toHaveBeenCalledWith('/settings/add-phone');
     });
@@ -184,9 +181,7 @@ describe('Settings → Account (grouping)', () => {
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
-        expect(screen.findAll(
-            (node) => node.props?.testID === 'settings-account-add-your-phone' && typeof node.props?.onPress === 'function',
-        )).toHaveLength(0);
+        expect(screen.findByTestId('settings-account-add-your-phone')).toBeNull();
     });
 
     it('shows "Add your phone" on desktop-sized web even when the viewport is narrow', async () => {
@@ -197,8 +192,6 @@ describe('Settings → Account (grouping)', () => {
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
-        expect(screen.findAll(
-            (node) => node.props?.testID === 'settings-account-add-your-phone' && typeof node.props?.onPress === 'function',
-        ).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
     });
 });

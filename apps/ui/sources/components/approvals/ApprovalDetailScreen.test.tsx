@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -202,15 +202,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 });
 
-function collectText(node: renderer.ReactTestRenderer): string[] {
-    return node.root
-        .findAll((entry) => String(entry.type) === 'Text')
-        .flatMap((entry) => {
-            const children = Array.isArray(entry.props.children) ? entry.props.children : [entry.props.children];
-            return children.map((child) => String(child ?? '')).filter((value) => value.length > 0);
-        });
-}
-
 describe('ApprovalDetailScreen', () => {
     beforeEach(() => {
         backSpy.mockReset();
@@ -285,10 +276,9 @@ describe('ApprovalDetailScreen', () => {
     it('renders requester, session context, and structured action details', async () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
 
-        const text = collectText(tree!);
+        const text = screen.getTextContent();
         expect(text).toContain('Approve answering the user');
         expect(text).toContain('Respond to user-action request');
         expect(text).toContain('Repo session');
@@ -303,11 +293,10 @@ describe('ApprovalDetailScreen', () => {
     it('opens the linked session from the approval context card', async () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
 
         await act(async () => {
-            await tree!.pressByTestIdAsync('approvals.open-session');
+            await screen.pressByTestIdAsync('approvals.open-session');
         });
 
         expect(pushSpy).toHaveBeenCalledWith('/session/session-1');
@@ -317,11 +306,10 @@ describe('ApprovalDetailScreen', () => {
         currentArtifact = null;
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
 
         expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('artifact-1');
-        expect(tree).toBeTruthy();
+        expect(screen).toBeTruthy();
     });
 
     it('shows an error state when loading a missing approval artifact fails', async () => {
@@ -329,13 +317,12 @@ describe('ApprovalDetailScreen', () => {
         fetchArtifactWithBodySpy.mockResolvedValueOnce(null);
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
 
-        const text = collectText(tree!);
+        const text = screen.getTextContent();
         expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('artifact-1');
         expect(text).toContain('approvals.loadError');
-        expect(tree!.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 
     it('creates the action executor with the session-to-server resolver and routes approval decisions with a server hint', async () => {
@@ -348,8 +335,7 @@ describe('ApprovalDetailScreen', () => {
         };
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />)).tree;
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
 
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -358,7 +344,7 @@ describe('ApprovalDetailScreen', () => {
         );
 
         await act(async () => {
-            await tree!.pressByTestIdAsync('approvals.approve');
+            await screen.pressByTestIdAsync('approvals.approve');
         });
 
         expect(executeSpy).toHaveBeenCalledWith(
