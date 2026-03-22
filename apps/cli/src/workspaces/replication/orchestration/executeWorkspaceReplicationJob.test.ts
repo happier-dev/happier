@@ -277,7 +277,6 @@ describe('executeWorkspaceReplicationJob', () => {
       await expect(jobStore.read('job_fail_1')).resolves.toMatchObject({
         jobId: 'job_fail_1',
         failedAtMs: 55,
-        lastErrorCode: 'job_run_failed',
         lastErrorMessage: 'boom',
         status: {
           status: 'failed',

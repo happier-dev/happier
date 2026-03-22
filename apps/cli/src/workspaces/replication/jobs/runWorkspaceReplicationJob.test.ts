@@ -21,7 +21,10 @@ describe('runWorkspaceReplicationJob', () => {
                 status: {
                     status: 'pending',
                     phase: 'planning',
+                    checkpoint: 'job_created',
+                    progressCounters: {},
                     warnings: [],
+                    blockingDivergenceCandidates: [],
                 },
             });
 
@@ -37,7 +40,8 @@ describe('runWorkspaceReplicationJob', () => {
                     status: {
                         ...current.status,
                         status: 'completed',
-                        phase: 'finalizing',
+                        phase: 'commit_baseline',
+                        checkpoint: 'baseline_committed',
                     },
                 }),
             });
@@ -49,7 +53,8 @@ describe('runWorkspaceReplicationJob', () => {
                 updatedAtMs: 25,
                 status: {
                     status: 'completed',
-                    phase: 'finalizing',
+                    phase: 'commit_baseline',
+                    checkpoint: 'baseline_committed',
                 },
             });
             await expect(jobStore.read('job_1')).resolves.toMatchObject({
@@ -58,7 +63,8 @@ describe('runWorkspaceReplicationJob', () => {
                 updatedAtMs: 25,
                 status: {
                     status: 'completed',
-                    phase: 'finalizing',
+                    phase: 'commit_baseline',
+                    checkpoint: 'baseline_committed',
                 },
             });
         } finally {
@@ -82,7 +88,10 @@ describe('runWorkspaceReplicationJob', () => {
                 status: {
                     status: 'pending',
                     phase: 'planning',
+                    checkpoint: 'job_created',
+                    progressCounters: {},
                     warnings: [],
+                    blockingDivergenceCandidates: [],
                 },
             });
 
@@ -103,6 +112,7 @@ describe('runWorkspaceReplicationJob', () => {
                 status: {
                     status: 'failed',
                     phase: 'planning',
+                    checkpoint: 'job_created',
                 },
             });
         } finally {

@@ -19,9 +19,12 @@ describe('abortWorkspaceReplicationJob', () => {
                 createdAtMs: 10,
                 updatedAtMs: 10,
                 status: {
-                    status: 'running',
-                    phase: 'transferring_blobs',
+                    status: 'in_progress',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
+                    progressCounters: {},
                     warnings: [],
+                    blockingDivergenceCandidates: [],
                 },
             });
 
@@ -38,7 +41,8 @@ describe('abortWorkspaceReplicationJob', () => {
                 updatedAtMs: 77,
                 status: {
                     status: 'aborted',
-                    phase: 'transferring_blobs',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
                 },
             });
             await expect(jobStore.read('job_abort_1')).resolves.toMatchObject({
@@ -69,8 +73,11 @@ describe('abortWorkspaceReplicationJob', () => {
                 completedAtMs: 20,
                 status: {
                     status: 'completed',
-                    phase: 'finalizing',
+                    phase: 'commit_baseline',
+                    checkpoint: 'baseline_committed',
+                    progressCounters: {},
                     warnings: [],
+                    blockingDivergenceCandidates: [],
                 },
             });
 

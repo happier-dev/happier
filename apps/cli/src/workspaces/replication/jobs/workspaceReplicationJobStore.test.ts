@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,10 @@ describe('workspaceReplicationJobStore', () => {
         status: {
           status: 'pending',
           phase: 'planning',
+          checkpoint: 'job_created',
+          progressCounters: {},
+          warnings: [],
+          blockingDivergenceCandidates: [],
           // Unknown handoff-shaped keys must be stripped.
           handoffId: 'handoff_123',
         },
@@ -54,6 +58,46 @@ describe('workspaceReplicationJobStore', () => {
       await expect(store.findByCorrelationId('handoff_123')).resolves.toMatchObject({
         jobId: 'job_prepare_1',
         correlationId: 'handoff_123',
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes legacy persisted job files into the current engine schema (backwards-safe read)', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-jobs-'));
+
+    try {
+      const { createWorkspaceReplicationPaths, resolveWorkspaceReplicationJobPath } = await import('../state/workspaceReplicationPaths');
+      const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+
+      const paths = createWorkspaceReplicationPaths({ activeServerDir });
+      const jobPath = resolveWorkspaceReplicationJobPath({
+        jobsDirectory: paths.jobsDirectory,
+        jobId: 'job_legacy_1',
+      });
+
+      await mkdir(paths.jobsDirectory, { recursive: true });
+      await writeFile(jobPath, JSON.stringify({
+        jobId: 'job_legacy_1',
+        correlationId: 'handoff_legacy',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        status: {
+          status: 'running',
+          phase: 'initializing',
+        },
+      }), 'utf8');
+
+      const store = createWorkspaceReplicationJobStore({ activeServerDir });
+      await expect(store.read('job_legacy_1')).resolves.toMatchObject({
+        jobId: 'job_legacy_1',
+        correlationId: 'handoff_legacy',
+        status: {
+          status: 'in_progress',
+          phase: 'planning',
+          checkpoint: 'job_created',
+        },
       });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });

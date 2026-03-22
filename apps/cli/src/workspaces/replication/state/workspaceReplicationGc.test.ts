@@ -19,9 +19,12 @@ describe('workspaceReplicationGc', () => {
                 createdAtMs: 100,
                 updatedAtMs: 100,
                 status: {
-                    status: 'running',
-                    phase: 'transferring_blobs',
+                    status: 'in_progress',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
+                    progressCounters: {},
                     warnings: [],
+                    blockingDivergenceCandidates: [],
                 },
             });
             await jobStore.write({
@@ -32,8 +35,11 @@ describe('workspaceReplicationGc', () => {
                 completedAtMs: 10,
                 status: {
                     status: 'completed',
-                    phase: 'finalizing',
+                    phase: 'commit_baseline',
+                    checkpoint: 'baseline_committed',
+                    progressCounters: {},
                     warnings: [],
+                    blockingDivergenceCandidates: [],
                 },
             });
 
@@ -48,7 +54,7 @@ describe('workspaceReplicationGc', () => {
             await expect(jobStore.read('job_keep_running')).resolves.toMatchObject({
                 jobId: 'job_keep_running',
                 status: {
-                    status: 'running',
+                    status: 'in_progress',
                 },
             });
         } finally {
