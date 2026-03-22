@@ -85,4 +85,26 @@ describe('resolveSpawnChildEnvironment (mcp selection)', () => {
 
     expect(result.extraEnvForChild.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON).toBe(JSON.stringify(options.sessionConfigOptionOverrides));
   });
+
+  it('exports the requested session directory for runner metadata seeding', async () => {
+    const options: SpawnSessionOptions = {
+      directory: '/tmp/requested-session-directory',
+    } as any;
+
+    const result = await resolveSpawnChildEnvironment({
+      options,
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      processEnv: {},
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.extraEnvForChild.HAPPIER_SESSION_REQUESTED_DIRECTORY).toBe('/tmp/requested-session-directory');
+  });
 });

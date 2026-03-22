@@ -30,11 +30,10 @@ describe('resolveSpawnChildEnvironment (profile template expansion)', () => {
     expect(result.expandedEnvironmentVariables.ANTHROPIC_AUTH_TOKEN).toBe('sk-test');
   });
 
-  it('fails closed when profile env references token auth env injected for the child', async () => {
+  it('fails closed when profile env references child-only daemon env injected after expansion', async () => {
     const options: SpawnSessionOptions = {
       directory: '.',
       environmentVariables: {},
-      token: 'token-123',
     };
 
     const result = await resolveSpawnChildEnvironment({
@@ -43,10 +42,8 @@ describe('resolveSpawnChildEnvironment (profile template expansion)', () => {
         ANTHROPIC_AUTH_TOKEN: '${DEEPSEEK_AUTH_TOKEN}',
       },
       daemonSpawnHooks: {
-        buildAuthEnv: async () => ({
-          env: {
-            DEEPSEEK_AUTH_TOKEN: 'sk-token-secret',
-          },
+        buildExtraEnvForChild: () => ({
+          DEEPSEEK_AUTH_TOKEN: 'sk-child-only-secret',
         }),
       },
       processEnv: {},

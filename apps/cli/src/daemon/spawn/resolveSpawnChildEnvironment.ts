@@ -7,6 +7,7 @@ import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
 import type { DaemonSpawnHooks } from '../spawnHooks';
 import { buildAuthEnvUnexpandedErrorMessage, findUnexpandedAuthEnvironmentReferences } from './authEnvValidation';
 import { resolveCodexBackendModeForRun } from '@/backends/codex/utils/resolveCodexBackendModeForRun';
+import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
 
 function sanitizeCodexAcpFallbackDetail(detail: string): string {
   const normalized = detail.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -78,37 +79,12 @@ export async function resolveSpawnChildEnvironment(params: {
       : undefined;
   }
 
-  const chainCleanup = (first: (() => void) | null, second: (() => void) | null) => {
-    if (!first) return second;
-    if (!second) return first;
-    return () => {
-      try {
-        first();
-      } finally {
-        second();
-      }
-    };
-  };
-
   const authEnv: Record<string, string> = {};
-  if (!params.options.token && params.connectedServiceAuth?.env) {
+  if (params.connectedServiceAuth?.env) {
     Object.assign(authEnv, params.connectedServiceAuth.env);
     cleanupOnFailure = connectedCleanupOnFailure;
     cleanupOnExit = connectedCleanupOnExit;
   }
-  if (params.options.token) {
-    if (params.daemonSpawnHooks?.buildAuthEnv) {
-      const built = await params.daemonSpawnHooks.buildAuthEnv({ token: params.options.token });
-      Object.assign(authEnv, built.env);
-      cleanupOnFailure = built.cleanupOnFailure ?? null;
-      cleanupOnExit = built.cleanupOnExit ?? null;
-    } else {
-      authEnv.CLAUDE_CODE_OAUTH_TOKEN = params.options.token;
-    }
-    cleanupOnFailure = chainCleanup(connectedCleanupOnFailure, cleanupOnFailure);
-    cleanupOnExit = chainCleanup(connectedCleanupOnExit, cleanupOnExit);
-  }
-
   const sanitizedAuthEnv = sanitizeEnvVarRecord(authEnv);
 
   let profileEnv: Record<string, string> = {};
@@ -230,6 +206,7 @@ export async function resolveSpawnChildEnvironment(params: {
   if (params.options.sessionConfigOptionOverrides) {
     extraEnvForChild.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON = JSON.stringify(params.options.sessionConfigOptionOverrides);
   }
+  extraEnvForChild[SESSION_REQUESTED_DIRECTORY_ENV] = params.options.directory;
   if (
     effectiveCodexBackendMode === 'mcp'
     || effectiveCodexBackendMode === 'acp'

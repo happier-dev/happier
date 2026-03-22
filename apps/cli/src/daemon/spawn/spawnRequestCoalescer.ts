@@ -95,7 +95,6 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
     agentRuntimeDescriptorV1: options.agentRuntimeDescriptorV1,
   }) ?? null;
   const resume = normalizeNonEmptyString(options.resume);
-  const token = normalizeNonEmptyString(options.token);
   const initialPrompt = normalizeNonEmptyString(options.initialPrompt);
 
   const environmentVariables = options.environmentVariables;
@@ -118,7 +117,6 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
     modelId: modelId ?? null,
     codexBackendMode,
     resume: resume ?? null,
-    tokenHash: token ? sha256Hex(token) : null,
     initialPromptHash: initialPrompt ? sha256Hex(initialPrompt) : null,
     envValueHashes: hashRecordValues(environmentVariables),
     connectedServicesHash: connectedServices === undefined ? null : sha256Hex(stableJsonStringify(connectedServices)),

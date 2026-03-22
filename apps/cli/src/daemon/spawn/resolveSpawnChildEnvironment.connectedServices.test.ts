@@ -32,12 +32,11 @@ describe('resolveSpawnChildEnvironment (connected services)', () => {
     }
   });
 
-  it('keeps connected service cleanup hooks even when token auth is used', async () => {
+  it('keeps connected service cleanup hooks when connected auth is used', async () => {
     const connectedCleanups: string[] = [];
     const options: SpawnSessionOptions = {
       directory: '.',
       environmentVariables: {},
-      token: 'token-123',
     };
 
     const result = await resolveSpawnChildEnvironment({

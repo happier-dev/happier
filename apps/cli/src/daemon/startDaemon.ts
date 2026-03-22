@@ -34,15 +34,16 @@ import { createSessionAttachFile } from './sessionAttachFile';
 import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from './shutdownPolicy';
 import { shouldRetryMachineRegistrationError } from './machineRegistrationRetryPolicy';
 
-import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
+import { isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
 import {
   createDirectPeerTransferRegistry,
+  requestDirectPeerTransferToFile,
   startDirectPeerTransferServer,
 } from '@/machines/transfer/directPeerTransport';
-import { sessionHandoffTransferredBundlesCodec } from '@/session/handoff/transfer/sessionHandoffTransferredBundles';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
+import { buildHandoffSessionMetadataFromTrackedSession } from './sessions/buildHandoffSessionMetadataFromTrackedSession';
 import { createOnChildExited } from './sessions/onChildExited';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
@@ -52,6 +53,7 @@ import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
 import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
 import { projectPath } from '@/projectPath';
+import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
@@ -405,6 +407,19 @@ export async function startDaemon(): Promise<void> {
 
         // Helper functions
         const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+        const loadLocalSessionMetadataForHandoff = async (sessionId: string): Promise<SessionHandoffLocalMetadataSource | null> => {
+            for (const trackedSession of pidToTrackedSession.values()) {
+                if (trackedSession.happySessionId !== sessionId) {
+                    continue;
+            }
+            return buildHandoffSessionMetadataFromTrackedSession({
+              trackedSession,
+              machineId,
+              fallbackHomeDir: os.homedir(),
+            });
+          }
+          return null;
+        };
 
         await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
@@ -435,7 +450,7 @@ export async function startDaemon(): Promise<void> {
             }
 
             return await spawnConcurrencyGate.run(async () => {
-              // Do NOT log raw options: it may include secrets (token / env vars).
+              // Do NOT log raw options: it may include secrets (env vars).
               const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
                 ? Object.keys(options.environmentVariables as Record<string, unknown>)
                 : [];
@@ -447,7 +462,6 @@ export async function startDaemon(): Promise<void> {
                 approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
                 backendTarget: options.backendTarget,
                 profileId: options.profileId,
-                hasToken: !!options.token,
                 hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
                 hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
                 windowsRemoteSessionLaunchMode: options.windowsRemoteSessionLaunchMode,
@@ -470,7 +484,6 @@ export async function startDaemon(): Promise<void> {
                     directory,
                     sessionId,
                     machineId,
-                    token,
                     approvedNewDirectoryCreation = true,
                     resume,
                     existingSessionId,
@@ -503,9 +516,7 @@ export async function startDaemon(): Promise<void> {
               let sessionAttachPayload: import('@/agent/runtime/sessionAttachPayload').SessionAttachFilePayload | null = null;
               if (normalizedExistingSessionId) {
                 const credentials = await readCredentials().catch(() => null);
-                const tokenForFetch = typeof token === 'string' && token.trim().length > 0
-                  ? token
-                  : (credentials?.token ?? '');
+                const tokenForFetch = credentials?.token ?? '';
 
                 const attachContext = await resolveExistingSessionAttachContext({
                   token: tokenForFetch,
@@ -1547,6 +1558,7 @@ export async function startDaemon(): Promise<void> {
                 spawnSession,
                 stopSession,
                 isSessionActive: isSessionAlreadyRunning,
+                loadLocalSessionMetadata: loadLocalSessionMetadataForHandoff,
                 requestShutdown: () => {
                   void beforeShutdown().finally(() => requestShutdown('happier-app'));
                 },
@@ -1558,13 +1570,21 @@ export async function startDaemon(): Promise<void> {
                 ...(directPeerRegistry
                   ? {
                       directPeerTransfer: {
-                        publishTransfer: ({ transferId, payload, payloadSource }) =>
-                          directPeerRegistry!.publishTransfer({
+                        publishTransfer: ({ transferId, payload: _payload, payloadSource }) => {
+                          if (!payloadSource) {
+                            throw new Error('Direct peer handoff publish requires a file-backed payload source');
+                          }
+                          return directPeerRegistry!.publishTransfer({
                             transferId,
-                            ...(payloadSource
-                              ? { payloadSource }
-                              : { payload: sessionHandoffTransferredBundlesCodec.encode(payload) }),
-                          }).endpointCandidates,
+                            payloadSource,
+                          }).endpointCandidates;
+                        },
+                        requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath }) =>
+                          await requestDirectPeerTransferToFile({
+                            transferId,
+                            endpointCandidates,
+                            destinationPath,
+                          }),
                         clearPublishedTransfer: (transferId) => directPeerRegistry!.clearPublishedTransfer(transferId),
                       },
                     }
@@ -1790,7 +1810,6 @@ export async function startDaemon(): Promise<void> {
 
       await stopDirectPeerServer();
       await stopControlServer();
-          await cleanupDaemonState();
           await stopCaffeinate();
           if (daemonLockHandle) {
             await releaseDaemonLock(daemonLockHandle);

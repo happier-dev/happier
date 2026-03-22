@@ -368,6 +368,7 @@ export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
 
       // Wait for daemon to die
       await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs());
+      await cleanupDaemonState();
       logger.debug('Daemon stopped gracefully via HTTP');
       return;
     } catch (error) {
@@ -393,6 +394,7 @@ export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
       } catch {
         // already exited
       }
+      await cleanupDaemonState();
       logger.debug('Force killed daemon (SIGTERM/SIGKILL)');
     } catch (error) {
       logger.debug('Daemon already dead');

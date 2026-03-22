@@ -1,7 +1,7 @@
 import { inferAgentIdFromSessionMetadata, resolveAgentIdFromFlavor, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
 export function resolveVendorResumeIdForExistingSession(params: Readonly<{
