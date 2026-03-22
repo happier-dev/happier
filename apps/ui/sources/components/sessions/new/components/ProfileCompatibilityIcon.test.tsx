@@ -1,5 +1,4 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -89,8 +88,7 @@ describe('ProfileCompatibilityIcon', () => {
     it('shows only the first two compatible backend glyphs followed by ellipsis when more than two backends are supported', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ProfileCompatibilityIcon
+        const screen = await renderScreen(<ProfileCompatibilityIcon
                     profile={{
                         isBuiltIn: false,
                         compatibility: {
@@ -101,17 +99,16 @@ describe('ProfileCompatibilityIcon', () => {
                         },
                         compatibilityByTargetKey: {},
                     }}
-                />)).tree;
+                } />);
 
-        const glyphs = tree.root.findAllByType('Text').map((node: any) => node.props.children);
+        const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['CL', 'CX', '...']);
     });
 
     it('shows the custom ACP glyph when a profile is only compatible with a configured ACP backend', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<ProfileCompatibilityIcon
+        const screen = await renderScreen(<ProfileCompatibilityIcon
                     profile={{
                         isBuiltIn: false,
                         compatibility: {},
@@ -119,9 +116,9 @@ describe('ProfileCompatibilityIcon', () => {
                             'acpBackend:custom-acp': true,
                         },
                     }}
-                />)).tree;
+                } />);
 
-        const glyphs = tree.root.findAllByType('Text').map((node: any) => node.props.children);
+        const glyphs = screen.findAllByType('Text').map((node: any) => node.props.children);
         expect(glyphs).toEqual(['CA']);
     });
 });

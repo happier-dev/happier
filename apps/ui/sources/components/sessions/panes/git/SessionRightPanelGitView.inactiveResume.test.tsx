@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
@@ -207,11 +206,10 @@ describe('SessionRightPanelGitView (inactive session resume)', () => {
 
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
         expect(capturedInactiveProps).toMatchObject({ machineReachable: true });
-        expect(tree.root.findAllByType('SourceControlUnavailableState').length).toBe(0);
+        expect(screen.findAllByType('SourceControlUnavailableState').length).toBe(0);
     });
 
     it('shows unavailable state when machine appears offline but machine RPC target is available', async () => {
@@ -223,11 +221,10 @@ describe('SessionRightPanelGitView (inactive session resume)', () => {
 
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
         expect(capturedInactiveProps).toBeNull();
-        expect(tree.root.findAllByType('SourceControlUnavailableState').length).toBe(1);
+        expect(screen.findAllByType('SourceControlUnavailableState').length).toBe(1);
     });
 
     it('loads commit history when project path is available even if session metadata path is missing', async () => {

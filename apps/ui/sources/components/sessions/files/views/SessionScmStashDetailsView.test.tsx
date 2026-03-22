@@ -176,10 +176,16 @@ describe('SessionScmStashDetailsView', () => {
 
     async function renderStashDetailsView() {
         const screen = await renderScreen(<SessionScmStashDetailsView sessionId="s1" scopeId="session:s1" />);
-        await vi.waitFor(() => {
-            expect(sessionScmStashListSpy).toHaveBeenCalledTimes(1);
-        });
+        await settleStashDetailsView();
         return screen;
+    }
+
+    async function settleStashDetailsView(options: Readonly<{ advanceTimersMs?: number }> = {}): Promise<void> {
+        await flushHookEffects({
+            cycles: 1,
+            turns: 1,
+            ...options,
+        });
     }
 
     async function withFakeTimers(body: () => Promise<void>): Promise<void> {
@@ -193,11 +199,8 @@ describe('SessionScmStashDetailsView', () => {
 
     it('loads managed stashes and renders the diff for the first stash', async () => {
         await renderStashDetailsView();
-
-        await vi.waitFor(() => {
-            expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
-            expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
-        });
+        expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
+        expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
     });
 
     it('retries the selected stash diff when the backend is transiently unavailable', async () => {
@@ -233,11 +236,9 @@ describe('SessionScmStashDetailsView', () => {
 
             expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
 
-            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_000 });
+            await settleStashDetailsView({ advanceTimersMs: 1_000 });
 
-            await vi.waitFor(() => {
-                expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
-            });
+            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
 
             expect(diffFilesListSpy).toHaveBeenCalled();
         });
@@ -252,10 +253,8 @@ describe('SessionScmStashDetailsView', () => {
             });
 
             const screen = await renderStashDetailsView();
-            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10_000 });
-            await vi.waitFor(() => {
-                expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
-            });
+            await settleStashDetailsView({ advanceTimersMs: 10_000 });
+            expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
 
             expect(screen.getTextContent()).toContain('RPC method not available');
         });
@@ -276,10 +275,8 @@ describe('SessionScmStashDetailsView', () => {
             });
 
             const screen = await renderStashDetailsView();
-            await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10_000 });
-            await vi.waitFor(() => {
-                expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
-            });
+            await settleStashDetailsView({ advanceTimersMs: 10_000 });
+            expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
 
             expect(screen.getTextContent()).toContain('RPC method not available');
         });

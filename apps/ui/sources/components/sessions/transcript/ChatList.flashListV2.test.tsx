@@ -57,7 +57,7 @@ async function primeFlashListMetrics(
         layoutHeight,
         contentHeight,
         flushOptions: {
-            turns: options.turns ?? 2,
+            turns: options.turns ?? 1,
             frames: options.frames,
             advanceTimersMs: options.advanceTimersMs,
         },
@@ -784,7 +784,7 @@ describe('ChatList (FlashList v2)', () => {
 
                 scrollEl.scrollHeight = 1400;
                 resolveLoadOlder?.({ loaded: 5, hasMore: true, status: 'loaded' });
-                await screen.settle({ turns: 3 });
+                await screen.settle({ turns: 2 });
 
                 expect(scrollEl.scrollTop).toBe(260);
             },
@@ -847,7 +847,7 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.scrollHeight = 5200;
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
                 resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                await screen.settle({ turns: 3 });
+                await screen.settle({ turns: 2 });
 
                 expect(scrollEl.scrollTop).toBe(4100);
 
@@ -932,7 +932,7 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.scrollHeight = 5200;
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
                 resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                await screen.settle({ turns: 4 });
+                await screen.settle({ turns: 3 });
 
                 expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
                     index: 0,
@@ -1013,7 +1013,7 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.scrollHeight = 5200;
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
                 resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                await screen.settle({ turns: 4 });
+                await screen.settle({ turns: 3 });
 
                 expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
                     index: 0,

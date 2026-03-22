@@ -303,7 +303,7 @@ describe('SessionView (control switch timeout)', () => {
   }
 
   async function flushControlSwitchTimeout() {
-    await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: controlSwitchTimeoutMs });
+    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: controlSwitchTimeoutMs });
   }
 
   beforeEach(() => {
@@ -387,7 +387,7 @@ describe('SessionView (control switch timeout)', () => {
       throw new Error('Expected pending session switch rejection handler');
     }
     rejectPendingSwitch(new Error('slow failure'));
-    await flushHookEffects({ cycles: 1, turns: 2 });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(modalAlertSpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');

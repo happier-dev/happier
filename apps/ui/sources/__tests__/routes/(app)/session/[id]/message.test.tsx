@@ -213,6 +213,9 @@ describe('Session message route hydration', () => {
 	  });
 
   afterEach(() => {
+    if (typeof vi.isFakeTimers === 'function' && vi.isFakeTimers()) {
+      vi.clearAllTimers();
+    }
     standardCleanup();
     vi.useRealTimers();
   });

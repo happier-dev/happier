@@ -383,7 +383,7 @@ describe('SessionView (direct sessions)', () => {
   }
 
   async function settleDirectSessionView() {
-    await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: directSessionAdvanceTimersMs });
+    await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: directSessionAdvanceTimersMs });
   }
 
   function findAgentInput(screen: Awaited<ReturnType<typeof renderSessionView>>) {
