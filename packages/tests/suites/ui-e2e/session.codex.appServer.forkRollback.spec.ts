@@ -8,6 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -194,8 +195,7 @@ async function createCodexSessionFromComposer(params: {
   }
 
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
-  await page.getByTestId('agent-input-machine-chip').click();
-  await page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
+  await openNewSessionMachineSelection({ page, uiBaseUrl });
   await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
   await page.getByTestId(`new-session-machine:${machineId}`).click();
 

@@ -346,6 +346,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
       page.getByText('Handoff will stop this session on this machine before transferring it to the selected machine.'),
     ).toHaveCount(1, { timeout: 60_000 });
     await page.getByRole('button', { name: 'Hand off and stop here' }).click();
+    await expect(page.getByTestId('session-handoff-progress-modal')).toHaveCount(1, { timeout: 60_000 });
 
     await waitForSessionInfoMachineTarget({
       page,
@@ -534,6 +535,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
     await page.getByTestId('dropdown-option-sync_changes').click();
     await page.getByTestId('session-handoff-start').click();
     await page.getByRole('button', { name: 'Hand off and stop here' }).click();
+    await expect(page.getByTestId('session-handoff-progress-modal')).toHaveCount(1, { timeout: 60_000 });
 
     await waitForSessionInfoMachineTarget({
       page,

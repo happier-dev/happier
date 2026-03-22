@@ -8,6 +8,10 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import {
+    openNewSessionMachineSelection,
+    openNewSessionPathSelection,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -75,11 +79,11 @@ async function writeFakeCodexAppServerScript(params: Readonly<{ scriptPath: stri
         '  }',
         '  if (msg.method === "initialized") continue;',
         '  if (msg.method === "thread/start") {',
-        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: null } }) + "\\n");',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: msg.params?.model ?? "gpt-5.4", serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null } }) + "\\n");',
         '    continue;',
         '  }',
         '  if (msg.method === "thread/resume") {',
-        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: msg.params?.threadId ?? "thread-started", model: msg.params?.model ?? "gpt-5.4", serviceTier: msg.params?.serviceTier ?? null } }) + "\\n");',
+        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: msg.params?.threadId ?? "thread-started", model: msg.params?.model ?? "gpt-5.4", serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null } }) + "\\n");',
         '    continue;',
         '  }',
         '  if (msg.method === "collaborationMode/list") {',
@@ -91,8 +95,8 @@ async function writeFakeCodexAppServerScript(params: Readonly<{ scriptPath: stri
         '  }',
         '  if (msg.method === "model/list") {',
         '    process.stdout.write(JSON.stringify({ id: msg.id, result: [',
-        '      { id: "gpt-5.4", displayName: "GPT-5.4", isDefault: true },',
-        '      { id: "gpt-5.4-mini", displayName: "GPT-5.4 mini" }',
+        '      { id: "gpt-5.4", displayName: "GPT-5.4", description: "Latest frontier agentic coding model.", isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Fast responses with lighter reasoning" }, { reasoningEffort: "medium", description: "Balanced reasoning depth" }, { reasoningEffort: "high", description: "Greater reasoning depth for complex problems" }], defaultReasoningEffort: "medium" },',
+        '      { id: "gpt-5.4-mini", displayName: "GPT-5.4 mini", description: "Smaller frontier agentic coding model.", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced reasoning depth" }, { reasoningEffort: "high", description: "Greater reasoning depth for complex problems" }], defaultReasoningEffort: "medium" }',
         '    ] }) + "\\n");',
         '    continue;',
         '  }',
@@ -105,12 +109,16 @@ async function writeFakeCodexAppServerScript(params: Readonly<{ scriptPath: stri
         '    const selectedModel = typeof collaborationMode?.settings?.model === "string"',
         '      ? collaborationMode.settings.model',
         '      : (typeof msg.params?.model === "string" ? msg.params.model : "gpt-5.4");',
+        '    const selectedEffort = typeof msg.params?.effort === "string"',
+        '      ? msg.params.effort',
+        '      : (typeof collaborationMode?.settings?.reasoning_effort === "string" ? collaborationMode.settings.reasoning_effort : "medium");',
+        '    const selectedServiceTier = typeof msg.params?.serviceTier === "string" ? msg.params.serviceTier : "standard";',
         '    process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: turnId }, threadId } }) + "\\n");',
         '    setTimeout(() => {',
         '      process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId, turn: { id: turnId } } }) + "\\n");',
         '    }, 5);',
         '    setTimeout(() => {',
-        '      process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: `msg-${turnCounter}`, type: "agentMessage", text: `FAKE_CODEX_DYNAMIC_OK_${turnCounter}_${selectedMode}_${selectedModel}` } } }) + "\\n");',
+        '      process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: `msg-${turnCounter}`, type: "agentMessage", text: `FAKE_CODEX_DYNAMIC_OK_${turnCounter}_${selectedMode}_${selectedModel}_${selectedEffort}_${selectedServiceTier}` } } }) + "\\n");',
         '    }, 10);',
         '    setTimeout(() => {',
         '      process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId, turn: { id: turnId } } }) + "\\n");',
@@ -152,6 +160,25 @@ async function waitForLoggedRequest(params: Readonly<{
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
     }
     throw new Error(`Timed out waiting for matching request in ${params.requestLogPath}`);
+}
+
+async function fillAndClickComposerSend(params: Readonly<{
+    page: Page;
+    inputTestId: string;
+    sendTestId: string;
+    prompt: string;
+    timeoutMs?: number;
+}>): Promise<void> {
+    const timeoutMs = params.timeoutMs ?? 60_000;
+    const input = params.page.getByTestId(params.inputTestId);
+    await expect(input).toHaveCount(1, { timeout: timeoutMs });
+    await input.click();
+    await input.pressSequentially(params.prompt);
+
+    const sendButton = params.page.getByTestId(params.sendTestId);
+    await expect(sendButton).toHaveCount(1, { timeout: timeoutMs });
+    await expect(sendButton).toBeEnabled({ timeout: timeoutMs });
+    await sendButton.click();
 }
 
 async function ensureSignedIn(page: Page, uiBaseUrl: string): Promise<void> {
@@ -198,6 +225,17 @@ async function setSessionReplayEnabled(page: Page, uiBaseUrl: string, enabled: b
     } else {
         await expect(replaySwitch).not.toBeChecked({ timeout: 60_000 });
     }
+}
+
+async function enableEnhancedSessionWizard(page: Page, uiBaseUrl: string): Promise<void> {
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/features`);
+    const enhancedWizardToggle = page.getByTestId('settings-feature-toggle-useEnhancedSessionWizard');
+    await expect(enhancedWizardToggle).toHaveCount(1, { timeout: 60_000 });
+    const isChecked = await enhancedWizardToggle.isChecked().catch(() => false);
+    if (!isChecked) {
+        await enhancedWizardToggle.click();
+    }
+    await expect(enhancedWizardToggle).toBeChecked({ timeout: 60_000 });
 }
 
 async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
@@ -252,6 +290,7 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     });
 
     await setCodexBackendModeToAppServer(params.page, params.uiBaseUrl);
+    await enableEnhancedSessionWizard(params.page, params.uiBaseUrl);
     await setSessionReplayEnabled(params.page, params.uiBaseUrl, false);
     const machineId = await waitForLatestMachineId({ suiteDir: params.suiteDir, timeoutMs: 120_000 });
     return { daemon, requestLogPath, machineId };
@@ -261,27 +300,174 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
     await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await params.page.getByTestId('agent-input-agent-chip').click();
+    await expect(params.page.getByTestId('agent-input-chip-picker-popover')).toHaveCount(1, { timeout: 60_000 });
     const inlineCodexOption = params.page.getByTestId('new-session-agent:codex');
     if ((await inlineCodexOption.count()) > 0) {
+        await expect(inlineCodexOption).toBeEnabled({ timeout: 60_000 });
         await inlineCodexOption.click();
     } else {
-        const pickerDialog = params.page.getByRole('dialog').last();
-        await expect(pickerDialog).toContainText('Select AI Backend', { timeout: 60_000 });
-        await pickerDialog.getByText('Codex', { exact: true }).click();
+        const codexPickerOption = params.page.getByTestId('agent-input-chip-picker.option:agent:codex');
+        if ((await codexPickerOption.count()) > 0) {
+            await expect(codexPickerOption).toBeEnabled({ timeout: 60_000 });
+            await codexPickerOption.click();
+        } else {
+            const codexDropdownOption = params.page.getByTestId('dropdown-option-codex');
+            if ((await codexDropdownOption.count()) > 0) {
+                await codexDropdownOption.click();
+        } else {
+            const codexPickerTrigger = params.page.getByTestId('agent-input-chip-picker.top-selector-trigger');
+            if ((await codexPickerTrigger.count()) > 0) {
+                await codexPickerTrigger.click();
+            }
+
+            const dropdownAgentCodexOption = params.page.getByTestId('dropdown-option-agent_codex');
+            try {
+                await expect(dropdownAgentCodexOption).toHaveCount(1, { timeout: 60_000 });
+                await dropdownAgentCodexOption.click();
+                const applyButton = params.page.getByTestId('agent-input-chip-picker.apply');
+                if ((await applyButton.count()) > 0) {
+                    await applyButton.click();
+                }
+                return;
+            } catch {
+                const codexPickerOptionFallback = params.page.getByTestId('agent-input-chip-picker.option:codex');
+                await expect(codexPickerOptionFallback).toHaveCount(1, { timeout: 60_000 });
+                await codexPickerOptionFallback.click();
+            }
+
+            const applyButton = params.page.getByTestId('agent-input-chip-picker.apply');
+            if ((await applyButton.count()) > 0) {
+                await applyButton.click();
+            }
+            }
+        }
     }
 
-    await params.page.getByTestId('agent-input-machine-chip').click();
-    await params.page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
+    await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
     await expect(params.page.getByTestId(`new-session-machine:${params.machineId}`)).toHaveCount(1, { timeout: 120_000 });
     await params.page.getByTestId(`new-session-machine:${params.machineId}`).click();
     await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
     await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+    const pathChip = params.page.getByTestId('agent-input-path-chip');
+    await expect(pathChip).toHaveCount(1, { timeout: 60_000 });
+    const pathChipText = (await pathChip.textContent()) ?? '';
+    const looksLikePath = /^[A-Za-z]:[\\/]/.test(pathChipText) || /[\\/]/.test(pathChipText);
+    if (!looksLikePath) {
+        await openNewSessionPathSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
+        await expect(params.page.getByTestId('path-selector-input')).toHaveCount(1, { timeout: 60_000 });
+        const selectedPath = '/tmp';
+        await params.page.getByTestId('path-selector-input').fill(selectedPath);
+        await params.page.getByTestId('path-selector-input').press('Enter');
+        await params.page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
+        await expect(pathChip).toContainText(selectedPath, { timeout: 60_000 });
+    }
+
 }
 
 async function openAgentActionMenu(page: Page): Promise<void> {
-    await expect(page.getByTestId('agent-input-action-menu-button')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('agent-input-action-menu-button').click();
-    await expect(page.getByTestId('agent-input-action-menu-overlay')).toHaveCount(1, { timeout: 60_000 });
+    const actionMenuButton = page.getByTestId('agent-input-action-menu-button');
+    if ((await actionMenuButton.count()) > 0) {
+        await actionMenuButton.click();
+        await expect(page.getByTestId('agent-input-action-menu-overlay')).toHaveCount(1, { timeout: 60_000 });
+        return;
+    }
+
+    const modeChip = page.getByTestId('agent-input-session-mode-chip');
+    await expect(modeChip).toHaveCount(1, { timeout: 60_000 });
+    await modeChip.click();
+}
+
+async function readVisibleModelSelectionOptionTestIds(page: Page): Promise<string[]> {
+    const selectorPrefixes = ['new-session-model:', 'model-picker-overlay-option:'];
+    const ids = await Promise.all(
+        selectorPrefixes.map(async (prefix) => {
+            return page.locator(`[data-testid^="${prefix}"]`).evaluateAll((nodes) => {
+                return nodes
+                    .map((node) => node.getAttribute('data-testid'))
+                    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+            });
+        }),
+    );
+    return ids.flat();
+}
+
+async function clickModelSelectionOption(page: Page, optionId: string): Promise<void> {
+    const wizardOption = page.getByTestId(`new-session-model:${optionId}`);
+    try {
+        await expect(wizardOption).toHaveCount(1, { timeout: 120_000 });
+        await wizardOption.click();
+        return;
+    } catch {
+        // fall through to the overlay surface
+    }
+
+    const overlayOption = page.getByTestId(`model-picker-overlay-option:${optionId}`);
+    try {
+        await expect(overlayOption).toHaveCount(1, { timeout: 120_000 });
+        await overlayOption.click();
+    } catch (error) {
+        const visibleOptionIds = await readVisibleModelSelectionOptionTestIds(page).catch(() => []);
+        throw new Error(
+            `Expected model selection option ${optionId}, but visible options were: ${
+                visibleOptionIds.length > 0 ? visibleOptionIds.join(', ') : '(none)'
+            }`,
+            { cause: error as Error },
+        );
+    }
+}
+
+async function clickSelectedModelControlOption(page: Page, controlId: string, valueId: string): Promise<void> {
+    const option = page.getByTestId(`model-picker-overlay-selected-option-control-option:${controlId}:${valueId}`);
+    await expect(option).toHaveCount(1, { timeout: 120_000 });
+    await option.click();
+}
+
+async function setSelectedModelControlSwitch(page: Page, controlId: string, checked: boolean): Promise<void> {
+    const toggle = page.getByTestId(`model-picker-overlay-selected-option-control-switch:${controlId}`);
+    await expect(toggle).toHaveCount(1, { timeout: 120_000 });
+    const currentValue = (await toggle.getAttribute('aria-checked').catch(() => null)) === 'true';
+    if (currentValue !== checked) {
+        await toggle.click();
+    }
+}
+
+async function readVisibleSessionModeOptionTestIds(page: Page): Promise<string[]> {
+    const selectorPrefixes = ['agent-input-session-mode-option:', 'agent-input-simple-option:'];
+    const ids = await Promise.all(
+        selectorPrefixes.map(async (prefix) => {
+            return page.locator(`[data-testid^="${prefix}"]`).evaluateAll((nodes) => {
+                return nodes
+                    .map((node) => node.getAttribute('data-testid'))
+                    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+            });
+        }),
+    );
+    return ids.flat();
+}
+
+async function clickSessionModeOption(page: Page, optionId: string): Promise<void> {
+    const overlayOption = page.getByTestId(`agent-input-session-mode-option:${optionId}`);
+    try {
+        await expect(overlayOption).toHaveCount(1, { timeout: 120_000 });
+        await overlayOption.click();
+        return;
+    } catch {
+        // fall through to the simple surface
+    }
+
+    const simpleOption = page.getByTestId(`agent-input-simple-option:${optionId}`);
+    try {
+        await expect(simpleOption).toHaveCount(1, { timeout: 120_000 });
+        await simpleOption.click();
+    } catch (error) {
+        const visibleOptionIds = await readVisibleSessionModeOptionTestIds(page).catch(() => []);
+        throw new Error(
+            `Expected session mode option ${optionId}, but visible options were: ${
+                visibleOptionIds.length > 0 ? visibleOptionIds.join(', ') : '(none)'
+            }`,
+            { cause: error as Error },
+        );
+    }
 }
 
 test.describe('ui e2e: Codex app-server dynamic controls', () => {
@@ -344,28 +530,31 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
         await openAgentActionMenu(page);
+        await clickSessionModeOption(page, 'plan');
 
-        await expect(page.getByTestId('agent-input-session-mode-option:plan')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('model-picker-overlay-option:gpt-5.4-mini')).toHaveCount(1, { timeout: 120_000 });
-
-        await page.getByTestId('agent-input-session-mode-option:plan').click();
-        await expect(page.getByTestId('agent-input-session-mode-summary')).toContainText('Plan', { timeout: 60_000 });
-
-        await page.getByTestId('model-picker-overlay-option:gpt-5.4-mini').click();
+        await page.getByTestId('agent-input-agent-chip').click();
+        await clickModelSelectionOption(page, 'gpt-5.4-mini');
+        await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
         await expect(page.getByTestId('model-picker-overlay-summary')).toContainText('GPT-5.4 mini', { timeout: 60_000 });
 
         await page.keyboard.press('Escape');
-        await page.getByTestId('new-session-composer-input').fill(`codex app-server preflight controls ${run.runId}`);
-        await page.getByTestId('new-session-composer-input').press('Enter');
+        await fillAndClickComposerSend({
+            page,
+            inputTestId: 'new-session-composer-input',
+            sendTestId: 'new-session-composer-send',
+            prompt: `codex app-server preflight controls ${run.runId}`,
+        });
 
         await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_1_plan_gpt-5.4-mini')).toHaveCount(1, { timeout: 180_000 });
+        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_1_plan_gpt-5.4-mini_high_standard')).toHaveCount(1, { timeout: 180_000 });
 
         await waitForLoggedRequest({
             requestLogPath: prepared.requestLogPath,
             predicate: (entry) => entry.method === 'turn/start'
                 && (entry.params?.collaborationMode as { mode?: string } | undefined)?.mode === 'plan'
-                && ((entry.params?.collaborationMode as { settings?: { model?: string } } | undefined)?.settings?.model === 'gpt-5.4-mini'),
+                && ((entry.params?.collaborationMode as { settings?: { model?: string; reasoning_effort?: string } } | undefined)?.settings?.model === 'gpt-5.4-mini')
+                && ((entry.params?.collaborationMode as { settings?: { model?: string; reasoning_effort?: string } } | undefined)?.settings?.reasoning_effort === 'high')
+                && entry.params?.effort === 'high',
             timeoutMs: 60_000,
         });
     });
@@ -383,29 +572,53 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         daemon = prepared.daemon;
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
-        await page.getByTestId('new-session-composer-input').fill(`codex app-server default controls ${run.runId}`);
-        await page.getByTestId('new-session-composer-input').press('Enter');
+
+        await fillAndClickComposerSend({
+            page,
+            inputTestId: 'new-session-composer-input',
+            sendTestId: 'new-session-composer-send',
+            prompt: `codex app-server default controls ${run.runId}`,
+        });
         await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_1_default_gpt-5.4')).toHaveCount(1, { timeout: 180_000 });
+        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_1_default_gpt-5.4_medium_standard')).toHaveCount(1, { timeout: 180_000 });
 
         const sessionId = parseSessionIdFromUrl(page.url());
         await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
         await openAgentActionMenu(page);
-        await expect(page.getByTestId('agent-input-session-mode-option:plan')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('model-picker-overlay-option:gpt-5.4-mini')).toHaveCount(1, { timeout: 120_000 });
+        await clickSessionModeOption(page, 'plan');
 
-        await page.getByTestId('agent-input-session-mode-option:plan').click();
-        await expect(page.getByTestId('agent-input-session-mode-summary')).toContainText('Plan', { timeout: 60_000 });
-
-        await page.getByTestId('model-picker-overlay-option:gpt-5.4-mini').click();
+        await page.getByTestId('agent-input-agent-chip').click();
+        await clickModelSelectionOption(page, 'gpt-5.4-mini');
+        await clickSelectedModelControlOption(page, 'reasoning_effort', 'high');
         await expect(page.getByTestId('model-picker-overlay-summary')).toContainText('GPT-5.4 mini', { timeout: 60_000 });
 
         await page.keyboard.press('Escape');
-        await page.getByTestId('session-composer-input').fill(`codex app-server live controls ${run.runId}`);
-        await page.getByTestId('session-composer-input').press('Enter');
-        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_2_plan_gpt-5.4-mini')).toHaveCount(1, { timeout: 180_000 });
+        await fillAndClickComposerSend({
+            page,
+            inputTestId: 'session-composer-input',
+            sendTestId: 'session-composer-send',
+            prompt: `codex app-server live controls ${run.runId}`,
+        });
+        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_2_plan_gpt-5.4-mini_high_standard')).toHaveCount(1, { timeout: 180_000 });
+
+        await openAgentActionMenu(page);
+        await clickSessionModeOption(page, 'default');
+
+        await page.getByTestId('agent-input-agent-chip').click();
+        await clickModelSelectionOption(page, 'gpt-5.4');
+        await clickSelectedModelControlOption(page, 'reasoning_effort', 'medium');
+        await expect(page.getByTestId('model-picker-overlay-summary')).toContainText('GPT-5.4', { timeout: 60_000 });
+
+        await page.keyboard.press('Escape');
+        await fillAndClickComposerSend({
+            page,
+            inputTestId: 'session-composer-input',
+            sendTestId: 'session-composer-send',
+            prompt: `codex app-server switched back to default ${run.runId}`,
+        });
+        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_3_default_gpt-5.4_medium_standard')).toHaveCount(1, { timeout: 180_000 });
 
         await waitForLoggedRequest({
             requestLogPath: prepared.requestLogPath,
@@ -416,12 +629,22 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
             requestLogPath: prepared.requestLogPath,
             predicate: (entry) => entry.method === 'turn/start'
                 && (entry.params?.collaborationMode as { mode?: string } | undefined)?.mode === 'plan'
-                && ((entry.params?.collaborationMode as { settings?: { model?: string } } | undefined)?.settings?.model === 'gpt-5.4-mini'),
+                && ((entry.params?.collaborationMode as { settings?: { model?: string; reasoning_effort?: string } } | undefined)?.settings?.model === 'gpt-5.4-mini')
+                && ((entry.params?.collaborationMode as { settings?: { model?: string; reasoning_effort?: string } } | undefined)?.settings?.reasoning_effort === 'high')
+                && entry.params?.effort === 'high',
+            timeoutMs: 60_000,
+        });
+        await waitForLoggedRequest({
+            requestLogPath: prepared.requestLogPath,
+            predicate: (entry) => entry.method === 'turn/start'
+                && ((entry.params?.collaborationMode as { mode?: string } | undefined)?.mode ?? 'default') === 'default'
+                && entry.params?.model === 'gpt-5.4'
+                && entry.params?.effort === 'medium',
             timeoutMs: 60_000,
         });
     });
 
-    test('shows the eligible Codex app-server Speed control and applies it to the next turn session config', async ({ page }) => {
+    test('shows the eligible Codex app-server Fast toggle inside the selected model card and applies it on the first turn', async ({ page }) => {
         test.setTimeout(540_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
@@ -434,28 +657,35 @@ test.describe('ui e2e: Codex app-server dynamic controls', () => {
         daemon = prepared.daemon;
 
         await selectCodexAgentAndMachine({ page, uiBaseUrl, machineId: prepared.machineId });
-        await page.getByTestId('new-session-composer-input').fill(`codex app-server speed controls default ${run.runId}`);
-        await page.getByTestId('new-session-composer-input').press('Enter');
-        await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_1_default_gpt-5.4')).toHaveCount(1, { timeout: 180_000 });
-
-        await openAgentActionMenu(page);
-        await expect(page.getByTestId('agent-input-config-option:speed')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('agent-input-config-option-option:speed:standard')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('agent-input-config-option-option:speed:fast')).toHaveCount(1, { timeout: 120_000 });
-
-        await page.getByTestId('agent-input-config-option-option:speed:fast').click();
-        await expect(page.getByTestId('agent-input-config-option-summary:speed')).toContainText('Fast', { timeout: 60_000 });
-
+        await page.getByTestId('agent-input-agent-chip').click();
+        await clickModelSelectionOption(page, 'gpt-5.4-mini');
+        await expect(page.getByTestId('model-picker-overlay-selected-option-control:speed')).toHaveCount(0, { timeout: 60_000 });
+        await clickModelSelectionOption(page, 'gpt-5.4');
+        await expect(page.getByTestId('model-picker-overlay-selected-option-control:speed')).toHaveCount(1, { timeout: 60_000 });
+        await setSelectedModelControlSwitch(page, 'speed', true);
         await page.keyboard.press('Escape');
-        await page.getByTestId('session-composer-input').fill(`codex app-server speed controls fast ${run.runId}`);
-        await page.getByTestId('session-composer-input').press('Enter');
-        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_2_default_gpt-5.4')).toHaveCount(1, { timeout: 180_000 });
+
+        await fillAndClickComposerSend({
+            page,
+            inputTestId: 'new-session-composer-input',
+            sendTestId: 'new-session-composer-send',
+            prompt: `codex app-server fast controls ${run.runId}`,
+        });
+        await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
+        await expect(page.getByText('FAKE_CODEX_DYNAMIC_OK_1_default_gpt-5.4_medium_fast')).toHaveCount(1, { timeout: 180_000 });
 
         await waitForLoggedRequest({
             requestLogPath: prepared.requestLogPath,
-            predicate: (entry) => entry.method === 'thread/resume'
+            predicate: (entry) => entry.method === 'thread/start'
+                && entry.params?.model === 'gpt-5.4'
+                && entry.params?.serviceTier === 'fast',
+            timeoutMs: 60_000,
+        });
+        await waitForLoggedRequest({
+            requestLogPath: prepared.requestLogPath,
+            predicate: (entry) => entry.method === 'turn/start'
                 && entry.params?.threadId === 'thread-started'
+                && entry.params?.model === 'gpt-5.4'
                 && entry.params?.serviceTier === 'fast',
             timeoutMs: 60_000,
         });

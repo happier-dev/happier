@@ -10,6 +10,7 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -68,8 +69,7 @@ async function selectMachineForNewSession(params: Readonly<{
     machineId: string;
 }>) {
     await expect(params.page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-    await params.page.getByTestId('agent-input-machine-chip').click();
-    await params.page.waitForURL((url: URL) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
+    await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
 
     const exact = params.page.getByTestId(`new-session-machine:${params.machineId}`);
     if (await exact.count()) {

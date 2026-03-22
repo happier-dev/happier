@@ -14,6 +14,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { ensureCliDistSnapshotEntrypoint } from '../../src/testkit/process/cliDist';
 import { repoRootDir } from '../../src/testkit/paths';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 type TerminalAttachmentInfoV1 = {
@@ -168,8 +169,7 @@ async function createSessionFromComposer(params: {
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByTestId('agent-input-machine-chip').click();
-    await page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
+    await openNewSessionMachineSelection({ page, uiBaseUrl });
 
     const exact = page.getByTestId(`new-session-machine:${machineId}`);
     await expect(exact).toHaveCount(1, { timeout: 120_000 });

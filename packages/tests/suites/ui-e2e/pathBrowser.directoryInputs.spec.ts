@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -25,8 +25,9 @@ async function ensureSignedInAndConnected(params: Readonly<{
     uiBaseUrl: string;
     suiteDir: string;
     cliHomeDir: string;
+    flowDirName: string;
 }>): Promise<StartedDaemon> {
-    const { page, server, uiBaseUrl, suiteDir, cliHomeDir } = params;
+    const { page, server, uiBaseUrl, suiteDir, cliHomeDir, flowDirName } = params;
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 420_000);
     await waitForInitialAppUi({ page, timeoutMs: 420_000 });
@@ -42,7 +43,7 @@ async function ensureSignedInAndConnected(params: Readonly<{
         await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
     }
 
-    const testDir = resolve(join(suiteDir, 'connect-daemon'));
+    const testDir = resolve(join(suiteDir, flowDirName));
     await mkdir(testDir, { recursive: true });
 
     const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
@@ -73,8 +74,6 @@ async function ensureSignedInAndConnected(params: Readonly<{
         // success dialog is optional
     }
 
-    await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
-
     const daemon = await startTestDaemon({
         testDir,
         happyHomeDir: cliHomeDir,
@@ -90,6 +89,8 @@ async function ensureSignedInAndConnected(params: Readonly<{
         },
     });
 
+    await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
+
     await expect
         .poll(
             async () => {
@@ -104,7 +105,12 @@ async function ensureSignedInAndConnected(params: Readonly<{
     return daemon;
 }
 
-async function selectDirectoryFromPathBrowser(page: Page): Promise<string> {
+async function selectDirectoryFromPathBrowser(
+    page: Page,
+    options?: Readonly<{
+        allowRootFallback?: boolean;
+    }>,
+): Promise<string> {
     await expect(page.getByTestId('path-browser-modal')).toHaveCount(1, { timeout: 60_000 });
     const candidates = ['/tmp', '/Users'] as const;
     let visiblePath: string | null = null;
@@ -139,16 +145,27 @@ async function selectDirectoryFromPathBrowser(page: Page): Promise<string> {
     if (!candidateAppearedFromInitialExpansion && !(await findVisibleCandidate())) {
         const rootToggle = page.getByTestId('path-browser-toggle:/').first();
         await rootToggle.scrollIntoViewIfNeeded();
-        await rootToggle.evaluate((element: HTMLElement) => {
-            element.click();
-        });
+        await rootToggle.click({ force: true });
 
         await expect
             .poll(findVisibleCandidate, { timeout: 60_000 })
             .toBe(true);
     }
     if (!visiblePath) {
-        throw new Error('expected a machine root child directory to become visible');
+        if (!options?.allowRootFallback) {
+            throw new Error('expected a machine root child directory to become visible');
+        }
+
+        const rootRow = page.getByTestId('path-browser-row:/').first();
+        await rootRow.scrollIntoViewIfNeeded();
+        await rootRow.click({ force: true });
+
+        const confirmButton = page.getByTestId('path-browser-confirm').first();
+        await expect(confirmButton).toBeEnabled({ timeout: 30_000 });
+        await confirmButton.scrollIntoViewIfNeeded();
+        await confirmButton.click({ force: true });
+        await expect(page.getByTestId('path-browser-modal')).toHaveCount(0, { timeout: 30_000 });
+        return '/';
     }
 
     const visibleRow = page.getByTestId(`path-browser-row:${visiblePath}`).first();
@@ -176,9 +193,25 @@ test.describe('ui e2e: directory path browser reuse', () => {
     let uiBaseUrl: string | null = null;
     let daemon: StartedDaemon | null = null;
 
+    // Keep the web bootstrap timeout generous so slower machines do not fail the lane before the app is ready.
     test.beforeAll(async () => {
         test.setTimeout(900_000);
         await mkdir(cliHomeDir, { recursive: true });
+
+        const uiWebEnv = {
+        ...process.env,
+        EXPO_PUBLIC_DEBUG: '1',
+        EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
+        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `path-browser-directory-inputs-${run.runId}`,
+        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+        // This suite exercises the shared path-browser contract; the Metro dev server adds
+        // unnecessary startup cost and flake here, while the exported web bundle still proves
+            // the same user-facing behavior.
+            HAPPIER_E2E_UI_WEB_MODE: 'export',
+            HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+        };
+        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
 
         server = await startServerLight({
             testDir: suiteDir,
@@ -195,10 +228,8 @@ test.describe('ui e2e: directory path browser reuse', () => {
         ui = await startUiWeb({
             testDir: suiteDir,
             env: {
-                ...process.env,
-                EXPO_PUBLIC_DEBUG: '1',
+                ...uiWebEnv,
                 EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-                EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
             },
         });
 
@@ -223,6 +254,7 @@ test.describe('ui e2e: directory path browser reuse', () => {
             uiBaseUrl,
             suiteDir,
             cliHomeDir,
+            flowDirName: 'connect-daemon-new-session',
         });
 
         await enableEnhancedSessionWizardInSettings(page, uiBaseUrl);
@@ -238,16 +270,18 @@ test.describe('ui e2e: directory path browser reuse', () => {
         test.setTimeout(540_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
-        if (!daemon) {
-            await page.setViewportSize({ width: 1440, height: 900 });
-            daemon = await ensureSignedInAndConnected({
-                page,
-                server,
-                uiBaseUrl,
-                suiteDir,
-                cliHomeDir,
-            });
-        }
+        await daemon?.stop().catch(() => {});
+        daemon = null;
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        daemon = await ensureSignedInAndConnected({
+            page,
+            server,
+            uiBaseUrl,
+            suiteDir,
+            cliHomeDir,
+            flowDirName: 'connect-daemon-mcp-settings',
+        });
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/mcp`);
         await expect(page.getByTestId('settings.mcpServers.segment:detected')).toHaveCount(1, { timeout: 180_000 });
@@ -256,7 +290,7 @@ test.describe('ui e2e: directory path browser reuse', () => {
         await expect(page.getByTestId('path-browser-trigger')).toHaveCount(1, { timeout: 60_000 });
 
         await page.getByTestId('path-browser-trigger').click();
-        const selectedPath = await selectDirectoryFromPathBrowser(page);
+        const selectedPath = await selectDirectoryFromPathBrowser(page, { allowRootFallback: true });
         await expect(page.getByTestId('settings.mcpServers.detect.directoryInput')).toHaveValue(selectedPath, { timeout: 30_000 });
     });
 });

@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -93,22 +94,10 @@ async function selectMachineForNewSession(params: Readonly<{
 }>): Promise<void> {
   await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
   await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-  await params.page.getByTestId('agent-input-machine-chip').click();
-  await params.page.waitForURL((url: URL) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
-
-  const pickDeadlineMs = Date.now() + 120_000;
-  while (true) {
-    const anyMachine = params.page.locator('[data-testid^="new-session-machine:"]').first();
-    if (await anyMachine.count()) {
-      await anyMachine.click();
-      break;
-    }
-    if (Date.now() > pickDeadlineMs) {
-      await expect(params.page.locator('[data-testid^="new-session-machine:"]').first()).toHaveCount(1, { timeout: 1 });
-    }
-    await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new/pick/machine`);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
-  }
+  await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
+  const anyMachine = params.page.locator('[data-testid^="new-session-machine:"]').first();
+  await expect(anyMachine).toHaveCount(1, { timeout: 120_000 });
+  await anyMachine.click();
 
   await params.page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });

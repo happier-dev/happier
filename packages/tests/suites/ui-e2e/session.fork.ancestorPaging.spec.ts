@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -61,22 +62,7 @@ async function createSessionFromComposer(params: {
   machineId: string;
   prompt: string;
 }): Promise<string> {
-  const { page, uiBaseUrl, machineId, prompt } = params;
-  await page.goto(`${uiBaseUrl}/new`, { waitUntil: 'domcontentloaded' });
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-  await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId('agent-input-machine-chip').click();
-  await page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
-  await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId(`new-session-machine:${machineId}`).click();
-  await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-
-  await page.getByTestId('new-session-composer-input').fill(prompt);
-  await page.getByTestId('new-session-composer-input').press('Enter');
-
-  await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-  return parseSessionIdFromUrl(page.url());
+  return createSessionFromNewSessionComposer(params);
 }
 
 async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; sessionId: string }): Promise<void> {

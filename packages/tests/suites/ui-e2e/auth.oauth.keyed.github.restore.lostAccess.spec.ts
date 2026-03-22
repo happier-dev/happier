@@ -7,6 +7,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
 import { startFakeGitHubOAuthServer, type StopFn } from '../../src/testkit/oauth/fakeGithubOAuthServer';
 
@@ -144,6 +145,7 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
     );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 });
     await page.getByTestId('welcome-signup-provider').click();
 
     await finalizedFirst;
@@ -171,6 +173,7 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
     const page2 = await ctx2.newPage();
     try {
       await gotoDomContentLoadedWithRetries(page2, uiBaseUrl);
+      await waitForInitialAppUi({ page: page2, timeoutMs: 120_000 });
       await page2.getByTestId('welcome-signup-provider').click();
 
       await expect.poll(() => new URL(page2.url()).pathname, { timeout: 120_000 }).toBe('/restore');
@@ -205,6 +208,7 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
     const p = await ctx.newPage();
     try {
       await gotoDomContentLoadedWithRetries(p, uiBaseUrl);
+      await waitForInitialAppUi({ page: p, timeoutMs: 120_000 });
       await p.getByTestId('welcome-signup-provider').click();
       await expect.poll(() => new URL(p.url()).pathname, { timeout: 120_000 }).toBe('/restore');
 

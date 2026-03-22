@@ -38,7 +38,9 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
       EXPO_PUBLIC_DEBUG: '1',
       EXPO_PUBLIC_HAPPY_SERVER_URL: proxyBaseUrl ?? '',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
-      HAPPIER_E2E_UI_WEB_MODE: 'metro',
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
       HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
     };
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
@@ -65,6 +67,9 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
         HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: 'san_email',
         HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: 'example.com',
         HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS: 'CN=Example Root CA',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER: 'x-happier-client-cert-email',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: 'x-happier-client-cert-issuer',
+        HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER: 'x-happier-client-cert-sha256',
 
         HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED: '1',
         HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID: 'mtls',
