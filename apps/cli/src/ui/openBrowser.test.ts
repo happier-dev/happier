@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { openBrowser } from './openBrowser';
+
+const envScope = createEnvKeyScope([
+  'CI',
+  'HAPPIER_NO_BROWSER_OPEN',
+]);
 
 function trySetStdoutIsTty(value: boolean): (() => void) | null {
   const desc = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
@@ -23,53 +29,45 @@ function trySetStdoutIsTty(value: boolean): (() => void) | null {
 describe('openBrowser', () => {
   it('returns false when HAPPIER_NO_BROWSER_OPEN is set', async () => {
     const restoreTty = trySetStdoutIsTty(true);
-    const prev = process.env.HAPPIER_NO_BROWSER_OPEN;
-    process.env.HAPPIER_NO_BROWSER_OPEN = '1';
+    envScope.patch({ HAPPIER_NO_BROWSER_OPEN: '1' });
 
     try {
       const ok = await openBrowser('https://example.com');
       expect(ok).toBe(false);
     } finally {
-      if (prev === undefined) delete process.env.HAPPIER_NO_BROWSER_OPEN;
-      else process.env.HAPPIER_NO_BROWSER_OPEN = prev;
+      envScope.restore();
       restoreTty?.();
     }
   });
 
   it('returns false in CI environments', async () => {
     const restoreTty = trySetStdoutIsTty(true);
-    const previousCi = process.env.CI;
-    const previousNoBrowser = process.env.HAPPIER_NO_BROWSER_OPEN;
-    delete process.env.HAPPIER_NO_BROWSER_OPEN;
-    process.env.CI = '1';
+    envScope.patch({
+      CI: '1',
+      HAPPIER_NO_BROWSER_OPEN: undefined,
+    });
 
     try {
       const ok = await openBrowser('https://example.com');
       expect(ok).toBe(false);
     } finally {
-      if (previousCi === undefined) delete process.env.CI;
-      else process.env.CI = previousCi;
-      if (previousNoBrowser === undefined) delete process.env.HAPPIER_NO_BROWSER_OPEN;
-      else process.env.HAPPIER_NO_BROWSER_OPEN = previousNoBrowser;
+      envScope.restore();
       restoreTty?.();
     }
   });
 
   it('returns false when stdout is not interactive', async () => {
     const restoreTty = trySetStdoutIsTty(false);
-    const previousCi = process.env.CI;
-    const previousNoBrowser = process.env.HAPPIER_NO_BROWSER_OPEN;
-    delete process.env.CI;
-    delete process.env.HAPPIER_NO_BROWSER_OPEN;
+    envScope.patch({
+      CI: undefined,
+      HAPPIER_NO_BROWSER_OPEN: undefined,
+    });
 
     try {
       const ok = await openBrowser('https://example.com');
       expect(ok).toBe(false);
     } finally {
-      if (previousCi === undefined) delete process.env.CI;
-      else process.env.CI = previousCi;
-      if (previousNoBrowser === undefined) delete process.env.HAPPIER_NO_BROWSER_OPEN;
-      else process.env.HAPPIER_NO_BROWSER_OPEN = previousNoBrowser;
+      envScope.restore();
       restoreTty?.();
     }
   });
