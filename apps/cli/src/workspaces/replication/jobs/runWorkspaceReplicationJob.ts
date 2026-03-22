@@ -1,4 +1,5 @@
 import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from './workspaceReplicationJobStore';
+import { WorkspaceReplicationJobCancelRequestedError } from '../safety/workspaceReplicationJobCancelRequestedError';
 
 const TERMINAL_JOB_STATUSES = new Set<WorkspaceReplicationJobRecord['status']['status']>([
   'completed',
@@ -16,6 +17,10 @@ function resolveJobFailureMessage(error: unknown): string {
     return error.message;
   }
   return 'Workspace replication job failed';
+}
+
+function isCancelRequestedError(error: unknown): error is WorkspaceReplicationJobCancelRequestedError {
+  return error instanceof WorkspaceReplicationJobCancelRequestedError;
 }
 
 export async function runWorkspaceReplicationJob(params: Readonly<{
@@ -46,6 +51,21 @@ export async function runWorkspaceReplicationJob(params: Readonly<{
     await params.jobStore.write(persisted);
     return persisted;
   } catch (error) {
+    if (isCancelRequestedError(error)) {
+      const abortedRecord: WorkspaceReplicationJobRecord = {
+        ...current,
+        updatedAtMs: nowMs,
+        cancelRequestedAtMs: current.cancelRequestedAtMs ?? nowMs,
+        abortedAtMs: current.abortedAtMs ?? nowMs,
+        status: {
+          ...current.status,
+          status: 'aborted',
+        },
+      };
+      await params.jobStore.write(abortedRecord);
+      throw error;
+    }
+
     const failedRecord: WorkspaceReplicationJobRecord = {
       ...current,
       updatedAtMs: nowMs,

@@ -119,4 +119,53 @@ describe('runWorkspaceReplicationJob', () => {
             await rm(activeServerDir, { recursive: true, force: true });
         }
     });
+
+    it('marks the job aborted (not failed) when the runner throws a cancellation error', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-run-job-cancelled-'));
+
+        try {
+            const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+            const { runWorkspaceReplicationJob } = await import('./runWorkspaceReplicationJob');
+            const { WorkspaceReplicationJobCancelRequestedError } = await import('../safety/workspaceReplicationJobCancelRequestedError');
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                jobId: 'job_cancel_1',
+                correlationId: 'handoff_cancel_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'in_progress',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
+                    progressCounters: {},
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            await expect(runWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_cancel_1',
+                now: () => 60,
+                run: async () => {
+                    throw new WorkspaceReplicationJobCancelRequestedError('job_cancel_1');
+                },
+            })).rejects.toThrow(WorkspaceReplicationJobCancelRequestedError);
+
+            await expect(jobStore.read('job_cancel_1')).resolves.toMatchObject({
+                jobId: 'job_cancel_1',
+                cancelRequestedAtMs: 60,
+                abortedAtMs: 60,
+                updatedAtMs: 60,
+                status: {
+                    status: 'aborted',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
+                },
+            });
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
 });

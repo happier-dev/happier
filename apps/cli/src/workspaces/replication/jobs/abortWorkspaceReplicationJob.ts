@@ -29,11 +29,6 @@ export async function abortWorkspaceReplicationJob(params: Readonly<{
     ...current,
     updatedAtMs: nowMs,
     cancelRequestedAtMs: current.cancelRequestedAtMs ?? nowMs,
-    abortedAtMs: nowMs,
-    status: {
-      ...current.status,
-      status: 'aborted',
-    },
   };
 
   await params.jobStore.write(next);

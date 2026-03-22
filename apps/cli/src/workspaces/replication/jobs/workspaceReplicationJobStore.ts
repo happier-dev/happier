@@ -9,8 +9,7 @@ import {
   createWorkspaceReplicationPaths,
   resolveWorkspaceReplicationJobPath,
 } from '../state/workspaceReplicationPaths';
-
-const WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION = 1 as const;
+import { WORKSPACE_REPLICATION_SCHEMA_VERSION } from '../state/workspaceReplicationSchemaVersion';
 
 export const WorkspaceReplicationJobPhaseSchema = z.enum([
   'planning',
@@ -75,8 +74,8 @@ export const WorkspaceReplicationJobStatusSchema = z
 export const WorkspaceReplicationJobRecordSchema = z
   .object({
     schemaVersion: z
-      .literal(WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION)
-      .default(WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION),
+      .literal(WORKSPACE_REPLICATION_SCHEMA_VERSION)
+      .default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
     jobId: z.string().min(1),
     correlationId: z.string().min(1).optional(),
     relationshipId: z.string().min(1).optional(),
@@ -96,6 +95,15 @@ export const WorkspaceReplicationJobRecordSchema = z
 
 export type WorkspaceReplicationJobRecord = z.output<typeof WorkspaceReplicationJobRecordSchema>;
 export type WorkspaceReplicationJobRecordInput = z.input<typeof WorkspaceReplicationJobRecordSchema>;
+
+export function safeParseWorkspaceReplicationJobRecordFromDiskValue(
+  raw: unknown,
+): WorkspaceReplicationJobRecord | null {
+  const parsed = WorkspaceReplicationJobRecordSchema.safeParse(
+    normalizeWorkspaceReplicationJobRecordValue(raw),
+  );
+  return parsed.success ? parsed.data : null;
+}
 
 export type WorkspaceReplicationJobStore = Readonly<{
   write: (record: WorkspaceReplicationJobRecordInput) => Promise<void>;
@@ -160,7 +168,7 @@ function normalizeWorkspaceReplicationJobRecordValue(raw: unknown): Record<strin
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     ...value,
-    schemaVersion: WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION,
+    schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
     status: normalizeWorkspaceReplicationJobStatusValue(value.status),
   };
 }
@@ -168,10 +176,7 @@ function normalizeWorkspaceReplicationJobRecordValue(raw: unknown): Record<strin
 async function readWorkspaceReplicationJobFile(filePath: string): Promise<WorkspaceReplicationJobRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const parsed = WorkspaceReplicationJobRecordSchema.safeParse(
-      normalizeWorkspaceReplicationJobRecordValue(JSON.parse(raw)),
-    );
-    return parsed.success ? parsed.data : null;
+    return safeParseWorkspaceReplicationJobRecordFromDiskValue(JSON.parse(raw));
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError?.code === 'ENOENT') {
@@ -200,7 +205,7 @@ export function createWorkspaceReplicationJobStore(input: Readonly<{
       await mkdir(paths.jobsDirectory, { recursive: true });
       const parsed = WorkspaceReplicationJobRecordSchema.parse({
         ...record,
-        schemaVersion: WORKSPACE_REPLICATION_JOB_SCHEMA_VERSION,
+        schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
       });
       await writeJsonAtomic(resolveJobPath(parsed.jobId), parsed);
     },

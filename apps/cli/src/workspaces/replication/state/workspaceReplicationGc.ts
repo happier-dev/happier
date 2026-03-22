@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   WorkspaceReplicationJobRecordSchema,
   type WorkspaceReplicationJobRecord,
+  safeParseWorkspaceReplicationJobRecordFromDiskValue,
 } from '../jobs/workspaceReplicationJobStore';
 import {
   createWorkspaceReplicationPaths,
@@ -27,8 +28,8 @@ function resolveTerminalAtMs(record: WorkspaceReplicationJobRecord): number | nu
 async function readJobRecord(filePath: string): Promise<WorkspaceReplicationJobRecord | null> {
   try {
     const raw = await readFile(filePath, 'utf8');
-    const parsed = WorkspaceReplicationJobRecordSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    // Use the job store's normalization so legacy persisted job records are GC'd correctly.
+    return safeParseWorkspaceReplicationJobRecordFromDiskValue(JSON.parse(raw));
   } catch {
     return null;
   }

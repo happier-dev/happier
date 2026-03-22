@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('abortWorkspaceReplicationJob', () => {
-    it('marks a running job cancelled and aborted', async () => {
+    it('requests cancellation for a running job without racing the runner (sets cancelRequestedAtMs)', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-abort-job-'));
 
         try {
@@ -37,19 +37,17 @@ describe('abortWorkspaceReplicationJob', () => {
             expect(result).toMatchObject({
                 jobId: 'job_abort_1',
                 cancelRequestedAtMs: 77,
-                abortedAtMs: 77,
                 updatedAtMs: 77,
                 status: {
-                    status: 'aborted',
+                    status: 'in_progress',
                     phase: 'transfer_missing_blobs_to_target_cas',
                     checkpoint: 'blob_transfer_started',
                 },
             });
             await expect(jobStore.read('job_abort_1')).resolves.toMatchObject({
                 cancelRequestedAtMs: 77,
-                abortedAtMs: 77,
                 status: {
-                    status: 'aborted',
+                    status: 'in_progress',
                 },
             });
         } finally {

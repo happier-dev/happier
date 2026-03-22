@@ -1,26 +1,26 @@
-import type { WorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
-import type { WorkspaceReplicationCasStore } from './cas/workspaceReplicationCasStore';
-import type { WorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
-import type { WorkspaceReplicationRelationshipStore } from './relationships/workspaceReplicationRelationshipStore';
-import type { WorkspaceReplicationTransfers } from './transport/workspaceReplicationTransfers';
+import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-type CreateWorkspaceReplicationBaselineStore = typeof import('./baseline/workspaceReplicationBaselineStore').createWorkspaceReplicationBaselineStore;
-type CreateWorkspaceReplicationCasStore = typeof import('./cas/workspaceReplicationCasStore').createWorkspaceReplicationCasStore;
-type CreateWorkspaceReplicationJobStore = typeof import('./jobs/workspaceReplicationJobStore').createWorkspaceReplicationJobStore;
-type CreateWorkspaceReplicationRelationshipStore = typeof import('./relationships/workspaceReplicationRelationshipStore').createWorkspaceReplicationRelationshipStore;
-type CreateWorkspaceReplicationTransfers = typeof import('./transport/workspaceReplicationTransfers').createWorkspaceReplicationTransfers;
-type CreateWorkspaceReplicationSourceOffer = typeof import('./transport/createWorkspaceReplicationSourceOffer').createWorkspaceReplicationSourceOffer;
-type CreateWorkspaceReplicationSourceOfferFromManifest =
-    typeof import('./transport/createWorkspaceReplicationSourceOffer').createWorkspaceReplicationSourceOfferFromManifest;
-type CreateWorkspaceReplicationSourceOfferFromExportArtifacts =
-    typeof import('./transport/createWorkspaceReplicationSourceOfferFromExportArtifacts').createWorkspaceReplicationSourceOfferFromExportArtifacts;
-type ScanWorkspaceManifestIntoCas = typeof import('./scan/scanWorkspaceManifestIntoCas').scanWorkspaceManifestIntoCas;
-type PlanWorkspaceReplicationMissingBlobs =
-    typeof import('./transport/planWorkspaceReplicationMissingBlobs').planWorkspaceReplicationMissingBlobs;
-type ApplyWorkspaceReplicationPlan = typeof import('./apply/applyWorkspaceReplicationPlan').applyWorkspaceReplicationPlan;
+import type { ScmBackendRegistry } from '@/scm/registry';
+import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import type {
+    ScmSourceControllerWorkspaceTransferConflictPolicy,
+    ScmSourceControllerWorkspaceTransferStrategy,
+} from '@/scm/sourceController/workspaceTransfer';
+
+import type { WorkspaceReplicationBaselineRecord, WorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
+import type { WorkspaceReplicationCasStore } from './cas/workspaceReplicationCasStore';
+import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
+import type { WorkspaceReplicationRelationshipStore } from './relationships/workspaceReplicationRelationshipStore';
+import type { WorkspaceReplicationDirectionScope } from './relationships/relationshipScope';
+import type { WorkspaceReplicationSourceOffer } from './transport/createWorkspaceReplicationSourceOffer';
+import type { WorkspaceReplicationTransfers } from './transport/workspaceReplicationTransfers';
 
 export type WorkspaceReplicationEngineInput = Readonly<{
     activeServerDir: string;
+    localMachineId: string;
+    transfers: WorkspaceReplicationTransfers;
+    scmRegistry?: ScmBackendRegistry;
+    now?: () => number;
 }>;
 
 export type WorkspaceReplicationEngineStores = Readonly<{
@@ -30,57 +30,102 @@ export type WorkspaceReplicationEngineStores = Readonly<{
     jobs: WorkspaceReplicationJobStore;
 }>;
 
+type CreateWorkspaceReplicationBaselineStore = typeof import('./baseline/workspaceReplicationBaselineStore').createWorkspaceReplicationBaselineStore;
+type CreateWorkspaceReplicationCasStore = typeof import('./cas/workspaceReplicationCasStore').createWorkspaceReplicationCasStore;
+type CreateWorkspaceReplicationJobStore = typeof import('./jobs/workspaceReplicationJobStore').createWorkspaceReplicationJobStore;
+type CreateWorkspaceReplicationRelationshipStore =
+    typeof import('./relationships/workspaceReplicationRelationshipStore').createWorkspaceReplicationRelationshipStore;
+
+type CreateWorkspaceReplicationSourceOffer =
+    typeof import('./transport/createWorkspaceReplicationSourceOffer').createWorkspaceReplicationSourceOffer;
+
+type ScanWorkspaceManifestIntoCas = typeof import('./scan/scanWorkspaceManifestIntoCas').scanWorkspaceManifestIntoCas;
+
+type ExecuteWorkspaceReplicationJobWithLocalRuntime =
+    typeof import('./orchestration/executeWorkspaceReplicationJobWithLocalRuntime').executeWorkspaceReplicationJobWithLocalRuntime;
+
 export type WorkspaceReplicationEngineDependencies = Readonly<{
     createCasStore?: CreateWorkspaceReplicationCasStore;
     createRelationshipStore?: CreateWorkspaceReplicationRelationshipStore;
     createBaselineStore?: CreateWorkspaceReplicationBaselineStore;
     createJobStore?: CreateWorkspaceReplicationJobStore;
-    createTransfers?: CreateWorkspaceReplicationTransfers;
     createSourceOffer?: CreateWorkspaceReplicationSourceOffer;
-    createSourceOfferFromManifest?: CreateWorkspaceReplicationSourceOfferFromManifest;
-    createSourceOfferFromExportArtifacts?: CreateWorkspaceReplicationSourceOfferFromExportArtifacts;
     scanManifestIntoCas?: ScanWorkspaceManifestIntoCas;
-    planMissingBlobs?: PlanWorkspaceReplicationMissingBlobs;
-    applyPlan?: ApplyWorkspaceReplicationPlan;
+    executeJobWithLocalRuntime?: ExecuteWorkspaceReplicationJobWithLocalRuntime;
+    executeJobInBackground?: (input: WorkspaceReplicationJobExecutionInput) => void;
 }>;
 
-export type WorkspaceReplicationCreateSourceOfferInput =
-    Omit<Parameters<CreateWorkspaceReplicationSourceOffer>[0], 'activeServerDir'>;
-export type WorkspaceReplicationCreateSourceOfferFromManifestInput =
-    Omit<Parameters<CreateWorkspaceReplicationSourceOfferFromManifest>[0], 'activeServerDir'>;
-export type WorkspaceReplicationCreateSourceOfferFromExportArtifactsInput =
-    Omit<Parameters<CreateWorkspaceReplicationSourceOfferFromExportArtifacts>[0], 'activeServerDir'>;
-export type WorkspaceReplicationScanManifestIntoCasInput =
-    Omit<Parameters<ScanWorkspaceManifestIntoCas>[0], 'activeServerDir'>;
-export type WorkspaceReplicationPlanMissingBlobsInput =
-    Omit<Parameters<PlanWorkspaceReplicationMissingBlobs>[0], 'activeServerDir'>;
-export type WorkspaceReplicationApplyPlanInput =
-    Omit<Parameters<ApplyWorkspaceReplicationPlan>[0], 'activeServerDir'>;
-
-export type WorkspaceReplicationEngineOperations = Readonly<{
-    createSourceOffer: (
-        input: WorkspaceReplicationCreateSourceOfferInput,
-    ) => Promise<Awaited<ReturnType<CreateWorkspaceReplicationSourceOffer>>>;
-    createSourceOfferFromManifest: (
-        input: WorkspaceReplicationCreateSourceOfferFromManifestInput,
-    ) => Promise<Awaited<ReturnType<CreateWorkspaceReplicationSourceOfferFromManifest>>>;
-    createSourceOfferFromExportArtifacts: (
-        input: WorkspaceReplicationCreateSourceOfferFromExportArtifactsInput,
-    ) => Promise<Awaited<ReturnType<CreateWorkspaceReplicationSourceOfferFromExportArtifacts>>>;
-    scanManifestIntoCas: (
-        input: WorkspaceReplicationScanManifestIntoCasInput,
-    ) => Promise<Awaited<ReturnType<ScanWorkspaceManifestIntoCas>>>;
-    planMissingBlobs: (
-        input: WorkspaceReplicationPlanMissingBlobsInput,
-    ) => Promise<Awaited<ReturnType<PlanWorkspaceReplicationMissingBlobs>>>;
-    applyPlan: (
-        input: WorkspaceReplicationApplyPlanInput,
-    ) => Promise<Awaited<ReturnType<ApplyWorkspaceReplicationPlan>>>;
+export type WorkspaceReplicationResolvedRelationship = Readonly<{
+    relationshipId: string;
+    directionId: string;
+    baseline: WorkspaceReplicationBaselineRecord | null;
 }>;
 
-export type WorkspaceReplicationEngine = Readonly<{
-    activeServerDir: string;
-    stores: WorkspaceReplicationEngineStores;
-    transfers: WorkspaceReplicationTransfers;
-    operations: WorkspaceReplicationEngineOperations;
+export type WorkspaceReplicationPreflightSummary = Readonly<{
+    plannedFileCount: number;
+    plannedByteCount: number;
+    removedFileCount: number;
+    removedByteCount: number;
 }>;
+
+export type WorkspaceReplicationPlanResult = Readonly<{
+    scope: WorkspaceReplicationDirectionScope;
+    baseline: WorkspaceReplicationBaselineRecord | null;
+    sourceManifest: WorkspaceManifest;
+    targetManifest: WorkspaceManifest;
+    preflightSummary: WorkspaceReplicationPreflightSummary;
+    // Present only when mode === 'one_way_safe' and baseline exists.
+    blockingTargetDivergencePaths?: readonly string[];
+    targetDivergencePaths?: readonly string[];
+    canApplySafely?: boolean;
+}>;
+
+export type WorkspaceReplicationCreateSourceOfferInput = Readonly<{
+    scope: WorkspaceReplicationDirectionScope;
+    safeFilterPolicy?: WorkspaceManifestSafeFilterPolicy;
+}>;
+
+export type WorkspaceReplicationApplyInput = Readonly<{
+    targetPath: string;
+    strategy: ScmSourceControllerWorkspaceTransferStrategy;
+    conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
+    registry?: ScmBackendRegistry;
+}>;
+
+export type WorkspaceReplicationBlobPackRequestToFile = (input: Readonly<{
+    packId: string;
+    digests: readonly string[];
+    destinationPath: string;
+}>) => Promise<void>;
+
+export type WorkspaceReplicationStartJobFromOfferInput = Readonly<{
+    scope: WorkspaceReplicationDirectionScope;
+    sourceOffer: WorkspaceReplicationSourceOffer;
+    apply: WorkspaceReplicationApplyInput;
+    requestBlobPackToFile: WorkspaceReplicationBlobPackRequestToFile;
+    correlationId?: string;
+}>;
+
+export type WorkspaceReplicationStartJobFromOfferResult = Readonly<{
+    jobId: string;
+    initialStatus: WorkspaceReplicationJobRecord;
+}>;
+
+export type WorkspaceReplicationListJobsInput = Readonly<{
+    correlationId?: string;
+    limit?: number;
+}>;
+
+export type WorkspaceReplicationGcInput = Readonly<{
+    nowMs?: number;
+    terminalTtlMs: number;
+}>;
+
+export type WorkspaceReplicationJobExecutionInput = Readonly<{
+    jobId: string;
+    scope: WorkspaceReplicationDirectionScope;
+    sourceOffer: WorkspaceReplicationSourceOffer;
+    apply: WorkspaceReplicationApplyInput;
+    requestBlobPackToFile: WorkspaceReplicationBlobPackRequestToFile;
+}>;
+

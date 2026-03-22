@@ -61,4 +61,49 @@ describe('workspaceReplicationGc', () => {
             await rm(activeServerDir, { recursive: true, force: true });
         }
     });
+
+    it('removes legacy terminal job files that use older phase/status encodings', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-gc-legacy-'));
+
+        try {
+            const { mkdir, writeFile } = await import('node:fs/promises');
+            const {
+                createWorkspaceReplicationPaths,
+                resolveWorkspaceReplicationJobPath,
+            } = await import('./workspaceReplicationPaths');
+            const { gcWorkspaceReplicationJobs } = await import('./workspaceReplicationGc');
+
+            const paths = createWorkspaceReplicationPaths({ activeServerDir });
+            await mkdir(paths.jobsDirectory, { recursive: true });
+
+            const jobPath = resolveWorkspaceReplicationJobPath({
+                jobsDirectory: paths.jobsDirectory,
+                jobId: 'job_legacy_completed',
+            });
+
+            // This intentionally does NOT match the current strict enum surface (phase/checkpoint);
+            // GC must still normalize legacy persisted values so terminal jobs are cleaned up.
+            await writeFile(jobPath, JSON.stringify({
+                jobId: 'job_legacy_completed',
+                correlationId: 'legacy_corr',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                completedAtMs: 10,
+                status: {
+                    status: 'completed',
+                    phase: 'finalizing',
+                },
+            }), 'utf8');
+
+            const result = await gcWorkspaceReplicationJobs({
+                activeServerDir,
+                nowMs: 200,
+                terminalTtlMs: 50,
+            });
+
+            expect(result.removedJobIds).toEqual(['job_legacy_completed']);
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
 });

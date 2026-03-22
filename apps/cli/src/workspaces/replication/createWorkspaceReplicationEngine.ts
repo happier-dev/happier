@@ -1,23 +1,32 @@
-import { applyWorkspaceReplicationPlan } from './apply/applyWorkspaceReplicationPlan';
 import { createWorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
 import { createWorkspaceReplicationCasStore } from './cas/workspaceReplicationCasStore';
+import { abortWorkspaceReplicationJob } from './jobs/abortWorkspaceReplicationJob';
 import { createWorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
 import { createWorkspaceReplicationRelationshipStore } from './relationships/workspaceReplicationRelationshipStore';
+import type { WorkspaceReplicationDirectionScope } from './relationships/relationshipScope';
+import { buildWorkspaceReplicationDirectionId } from './relationships/workspaceReplicationRelationshipStore';
 import { scanWorkspaceManifestIntoCas } from './scan/scanWorkspaceManifestIntoCas';
+import { gcWorkspaceReplicationJobs } from './state/workspaceReplicationGc';
 import { WorkspaceReplicationError } from './workspaceReplicationError';
-import { buildWorkspaceReplicationEngine } from './workspaceReplicationEngine';
+import type { WorkspaceReplicationEngine } from './workspaceReplicationEngine';
 import type {
-    WorkspaceReplicationEngine,
     WorkspaceReplicationEngineDependencies,
     WorkspaceReplicationEngineInput,
+    WorkspaceReplicationCreateSourceOfferInput,
+    WorkspaceReplicationGcInput,
+    WorkspaceReplicationListJobsInput,
+    WorkspaceReplicationPlanResult,
+    WorkspaceReplicationResolvedRelationship,
+    WorkspaceReplicationStartJobFromOfferInput,
+    WorkspaceReplicationStartJobFromOfferResult,
 } from './workspaceReplicationTypes';
-import {
-    createWorkspaceReplicationSourceOffer,
-    createWorkspaceReplicationSourceOfferFromManifest,
-} from './transport/createWorkspaceReplicationSourceOffer';
-import { createWorkspaceReplicationSourceOfferFromExportArtifacts } from './transport/createWorkspaceReplicationSourceOfferFromExportArtifacts';
-import { planWorkspaceReplicationMissingBlobs } from './transport/planWorkspaceReplicationMissingBlobs';
-import { createWorkspaceReplicationTransfers } from './transport/workspaceReplicationTransfers';
+import { compareWorkspaceManifests } from './planning/compareWorkspaceManifests';
+import { buildOneWaySafeReplicationPlan } from './planning/buildOneWaySafeReplicationPlan';
+import { objectKey } from '@/utils/deterministicJson';
+import { createWorkspaceReplicationSourceOffer } from './transport/createWorkspaceReplicationSourceOffer';
+import type { WorkspaceReplicationSourceOffer } from './transport/createWorkspaceReplicationSourceOffer';
+import { listWorkspaceReplicationJobs } from './engine/listWorkspaceReplicationJobs';
+import { executeWorkspaceReplicationJobWithLocalRuntime } from './orchestration/executeWorkspaceReplicationJobWithLocalRuntime';
 
 export function createWorkspaceReplicationEngine(
     input: WorkspaceReplicationEngineInput,
@@ -27,15 +36,11 @@ export function createWorkspaceReplicationEngine(
     const createRelationshipStore = dependencies.createRelationshipStore ?? createWorkspaceReplicationRelationshipStore;
     const createBaselineStore = dependencies.createBaselineStore ?? createWorkspaceReplicationBaselineStore;
     const createJobStore = dependencies.createJobStore ?? createWorkspaceReplicationJobStore;
-    const createTransfers = dependencies.createTransfers ?? createWorkspaceReplicationTransfers;
-    const createSourceOffer = dependencies.createSourceOffer ?? createWorkspaceReplicationSourceOffer;
-    const createSourceOfferFromManifest =
-        dependencies.createSourceOfferFromManifest ?? createWorkspaceReplicationSourceOfferFromManifest;
-    const createSourceOfferFromExportArtifacts =
-        dependencies.createSourceOfferFromExportArtifacts ?? createWorkspaceReplicationSourceOfferFromExportArtifacts;
-    const scanManifest = dependencies.scanManifestIntoCas ?? scanWorkspaceManifestIntoCas;
-    const planMissingBlobs = dependencies.planMissingBlobs ?? planWorkspaceReplicationMissingBlobs;
-    const applyPlan = dependencies.applyPlan ?? applyWorkspaceReplicationPlan;
+    const createSourceOfferImpl = dependencies.createSourceOffer ?? createWorkspaceReplicationSourceOffer;
+    const scanManifestIntoCasImpl = dependencies.scanManifestIntoCas ?? scanWorkspaceManifestIntoCas;
+    const executeJobWithLocalRuntimeImpl =
+        dependencies.executeJobWithLocalRuntime ?? executeWorkspaceReplicationJobWithLocalRuntime;
+    const executeJobInBackground = dependencies.executeJobInBackground;
 
     try {
         const stores = {
@@ -44,45 +49,222 @@ export function createWorkspaceReplicationEngine(
             baselines: createBaselineStore({ activeServerDir: input.activeServerDir }),
             jobs: createJobStore({ activeServerDir: input.activeServerDir }),
         } as const;
-        const transfers = createTransfers();
+        const now = input.now ?? (() => Date.now());
 
-        return buildWorkspaceReplicationEngine({
+        async function resolveRelationship(scope: WorkspaceReplicationDirectionScope): Promise<WorkspaceReplicationResolvedRelationship> {
+            const relationship = await stores.relationships.ensureRelationship(scope);
+            const baseline = await stores.baselines.load(scope);
+            return {
+                relationshipId: relationship.relationshipId,
+                directionId: buildWorkspaceReplicationDirectionId(scope),
+                baseline,
+            };
+        }
+
+        async function plan(params: Readonly<{
+            scope: WorkspaceReplicationDirectionScope;
+            sourceManifest: WorkspaceReplicationPlanResult['sourceManifest'];
+            targetWorkspaceRoot: string;
+        }>): Promise<WorkspaceReplicationPlanResult> {
+            const relationship = await stores.relationships.ensureRelationship(params.scope);
+            const baseline = await stores.baselines.load(params.scope);
+            const targetManifest = await scanManifestIntoCasImpl({
+                activeServerDir: input.activeServerDir,
+                relationshipId: relationship.relationshipId,
+                workspaceRoot: params.targetWorkspaceRoot,
+                scmRegistry: input.scmRegistry,
+            });
+
+            const comparison = compareWorkspaceManifests({
+                previousManifest: targetManifest,
+                nextManifest: params.sourceManifest,
+            });
+            const plannedFileCount = comparison.added.length + comparison.changed.length + comparison.removed.length;
+            const plannedByteCount = [
+                ...comparison.added,
+                ...comparison.changed.map((change) => change.next),
+            ].reduce((total, entry) => total + (entry.kind === 'file' ? entry.sizeBytes : 0), 0);
+            const removedFileCount = comparison.removed.length;
+            const removedByteCount = comparison.removed.reduce(
+                (total, entry) => total + (entry.kind === 'file' ? entry.sizeBytes : 0),
+                0,
+            );
+
+            if (params.scope.mode === 'one_way_safe' && baseline) {
+                const oneWaySafe = buildOneWaySafeReplicationPlan({
+                    baseline,
+                    sourceManifest: params.sourceManifest,
+                    targetManifest,
+                });
+                return {
+                    scope: params.scope,
+                    baseline,
+                    sourceManifest: params.sourceManifest,
+                    targetManifest,
+                    preflightSummary: {
+                        plannedFileCount,
+                        plannedByteCount,
+                        removedFileCount,
+                        removedByteCount,
+                    },
+                    targetDivergencePaths: oneWaySafe.targetDivergencePaths,
+                    blockingTargetDivergencePaths: oneWaySafe.blockingTargetDivergencePaths,
+                    canApplySafely: oneWaySafe.canApplySafely,
+                };
+            }
+
+            return {
+                scope: params.scope,
+                baseline,
+                sourceManifest: params.sourceManifest,
+                targetManifest,
+                preflightSummary: {
+                    plannedFileCount,
+                    plannedByteCount,
+                    removedFileCount,
+                    removedByteCount,
+                },
+            };
+        }
+
+        async function createSourceOffer(
+            inputOrScope: WorkspaceReplicationCreateSourceOfferInput | WorkspaceReplicationDirectionScope,
+        ): Promise<WorkspaceReplicationSourceOffer> {
+            const scope: WorkspaceReplicationDirectionScope = 'scope' in inputOrScope ? inputOrScope.scope : inputOrScope;
+            const safeFilterPolicy = 'scope' in inputOrScope ? inputOrScope.safeFilterPolicy : undefined;
+
+            return await createSourceOfferImpl({
+                activeServerDir: input.activeServerDir,
+                source: { machineId: scope.sourceMachineId, rootPath: scope.sourceWorkspaceRoot },
+                target: { machineId: scope.targetMachineId, rootPath: scope.targetWorkspaceRoot },
+                mode: scope.mode,
+                ignorePatterns: scope.ignorePatterns,
+                safeFilterPolicy,
+                scmRegistry: input.scmRegistry,
+            });
+        }
+
+        async function startJobFromOffer(params: WorkspaceReplicationStartJobFromOfferInput): Promise<WorkspaceReplicationStartJobFromOfferResult> {
+            const relationship = await stores.relationships.ensureRelationship(params.scope);
+            const nowMs = now();
+            const jobId = `job_${objectKey({
+                correlationId: params.correlationId ?? '',
+                offerId: params.sourceOffer.offerId,
+                nowMs,
+            })}`;
+
+            const initialStatus = {
+                jobId,
+                ...(params.correlationId ? { correlationId: params.correlationId } : {}),
+                relationshipId: relationship.relationshipId,
+                directionId: buildWorkspaceReplicationDirectionId(params.scope),
+                offerId: params.sourceOffer.offerId,
+                mode: params.scope.mode,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+                status: {
+                    status: 'pending',
+                    phase: 'planning',
+                    checkpoint: 'job_created',
+                    progressCounters: {},
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            } as const;
+
+            await stores.jobs.write(initialStatus);
+
+            const executionInput = {
+                jobId,
+                scope: params.scope,
+                sourceOffer: params.sourceOffer,
+                apply: params.apply,
+                requestBlobPackToFile: params.requestBlobPackToFile,
+            } as const;
+
+            if (executeJobInBackground) {
+                executeJobInBackground(executionInput);
+            } else {
+                queueMicrotask(() => {
+                    void executeJobWithLocalRuntimeImpl({
+                        activeServerDir: input.activeServerDir,
+                        jobStore: stores.jobs,
+                        relationships: stores.relationships,
+                        jobId,
+                        now,
+                        relationshipScope: params.scope,
+                        resolveSourceOfferById: async (offerId) => {
+                            if (offerId !== params.sourceOffer.offerId) {
+                                throw new Error(`Workspace replication source offer not found: ${offerId}`);
+                            }
+                            return params.sourceOffer;
+                        },
+                        requestBlobPackToFile: params.requestBlobPackToFile,
+                        apply: params.apply,
+                    }).catch(() => undefined);
+                });
+            }
+
+            return {
+                jobId,
+                initialStatus,
+            };
+        }
+
+        async function getJobStatus(jobId: string) {
+            const record = await stores.jobs.read(jobId);
+            if (!record) {
+                throw new WorkspaceReplicationError({
+                    code: 'job_not_found',
+                    message: `Workspace replication job not found: ${jobId}`,
+                });
+            }
+            return record;
+        }
+
+        async function listJobs(listInput: WorkspaceReplicationListJobsInput = {}) {
+            return await listWorkspaceReplicationJobs({
+                activeServerDir: input.activeServerDir,
+                correlationId: listInput.correlationId,
+                limit: listInput.limit,
+            });
+        }
+
+        async function abortJob(jobId: string) {
+            const aborted = await abortWorkspaceReplicationJob({
+                jobStore: stores.jobs,
+                jobId,
+                now,
+            });
+            if (!aborted) {
+                throw new WorkspaceReplicationError({
+                    code: 'job_not_found',
+                    message: `Workspace replication job not found: ${jobId}`,
+                });
+            }
+            return aborted;
+        }
+
+        async function gc(gcInput: WorkspaceReplicationGcInput) {
+            return await gcWorkspaceReplicationJobs({
+                activeServerDir: input.activeServerDir,
+                nowMs: gcInput.nowMs ?? now(),
+                terminalTtlMs: gcInput.terminalTtlMs,
+            });
+        }
+
+        return {
             activeServerDir: input.activeServerDir,
-            stores,
-            transfers,
-            operations: {
-                createSourceOffer: async (operationInput) =>
-                    await createSourceOffer({
-                        activeServerDir: input.activeServerDir,
-                        ...operationInput,
-                    }),
-                createSourceOfferFromManifest: async (operationInput) =>
-                    await createSourceOfferFromManifest({
-                        activeServerDir: input.activeServerDir,
-                        ...operationInput,
-                    }),
-                createSourceOfferFromExportArtifacts: async (operationInput) =>
-                    await createSourceOfferFromExportArtifacts({
-                        activeServerDir: input.activeServerDir,
-                        ...operationInput,
-                    }),
-                scanManifestIntoCas: async (operationInput) =>
-                    await scanManifest({
-                        activeServerDir: input.activeServerDir,
-                        ...operationInput,
-                    }),
-                planMissingBlobs: async (operationInput) =>
-                    await planMissingBlobs({
-                        activeServerDir: input.activeServerDir,
-                        ...operationInput,
-                    }),
-                applyPlan: async (operationInput) =>
-                    await applyPlan({
-                        activeServerDir: input.activeServerDir,
-                        ...operationInput,
-                    }),
-            },
-        });
+            localMachineId: input.localMachineId,
+            resolveRelationship,
+            plan,
+            createSourceOffer,
+            startJobFromOffer,
+            getJobStatus,
+            listJobs,
+            abortJob,
+            gc,
+        };
     } catch (error) {
         throw new WorkspaceReplicationError({
             code: 'engine_initialization_failed',

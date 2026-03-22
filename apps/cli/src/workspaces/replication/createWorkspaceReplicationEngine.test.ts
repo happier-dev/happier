@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceReplicationBaselineStore } from './baseline/workspaceReplicationBaselineStore';
 import type { WorkspaceReplicationCasStore } from './cas/workspaceReplicationCasStore';
-import type { WorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
+import type { WorkspaceReplicationJobRecord, WorkspaceReplicationJobStore } from './jobs/workspaceReplicationJobStore';
 import type {
     WorkspaceReplicationRelationshipRecord,
     WorkspaceReplicationRelationshipStore,
 } from './relationships/workspaceReplicationRelationshipStore';
 import type { WorkspaceReplicationTransfers } from './transport/workspaceReplicationTransfers';
+import {
+    buildWorkspaceReplicationDirectionId,
+} from './relationships/workspaceReplicationRelationshipStore';
+import type { WorkspaceReplicationDirectionScope } from './relationships/relationshipScope';
 
 const relationshipRecord: WorkspaceReplicationRelationshipRecord = {
     schemaVersion: 1,
@@ -90,8 +94,9 @@ function createStubTransfers(): WorkspaceReplicationTransfers {
 }
 
 describe('createWorkspaceReplicationEngine', () => {
-    it('creates store instances once and binds activeServerDir for engine operations', async () => {
+    it('creates store instances once and exposes the stable engine surface', async () => {
         const activeServerDir = '/tmp/happier-active-server';
+        const localMachineId = 'machine_local';
         const stores = {
             cas: createStubCasStore(),
             relationships: createStubRelationshipStore(),
@@ -103,7 +108,6 @@ describe('createWorkspaceReplicationEngine', () => {
         const createRelationshipStore = vi.fn(() => stores.relationships);
         const createBaselineStore = vi.fn(() => stores.baselines);
         const createJobStore = vi.fn(() => stores.jobs);
-        const createTransfers = vi.fn(() => transfers);
         const createSourceOffer = vi.fn(async () => ({
             offerId: 'offer_1',
             relationshipId: 'rel_1',
@@ -112,53 +116,19 @@ describe('createWorkspaceReplicationEngine', () => {
             manifest: { entries: [], fingerprint: 'sha256:offer' },
             blobIndex: [],
         }));
-        const createSourceOfferFromManifest = vi.fn(async () => ({
-            offerId: 'offer_2',
-            relationshipId: 'rel_2',
-            directionId: 'dir_2',
-            sourceFingerprint: 'sha256:manifest',
-            manifest: { entries: [], fingerprint: 'sha256:manifest' },
-            blobIndex: [],
-        }));
-        const createSourceOfferFromExportArtifacts = vi.fn(async () => ({
-            offerId: 'offer_3',
-            relationshipId: 'rel_3',
-            directionId: 'dir_3',
-            sourceFingerprint: 'sha256:artifacts',
-            manifest: { entries: [], fingerprint: 'sha256:artifacts' },
-            blobIndex: [],
-        }));
-        const scanManifestIntoCas = vi.fn(async () => ({
-            entries: [],
-            fingerprint: 'sha256:scan',
-        }));
-        const planMissingBlobs = vi.fn(async () => ({
-            missingBlobs: [],
-            plannedFileCount: 0,
-            plannedByteCount: 0,
-            alreadyPresentFileCount: 0,
-            alreadyPresentByteCount: 0,
-        }));
-        const applyPlan = vi.fn(async ({ targetPath }: Readonly<{ targetPath: string }>) => ({
-            targetPath,
-        }));
+        const executeJobInBackground = vi.fn();
 
         const { createWorkspaceReplicationEngine } = await import('./createWorkspaceReplicationEngine');
 
-        const engine = createWorkspaceReplicationEngine(
-            { activeServerDir },
+        const engine: unknown = createWorkspaceReplicationEngine(
+            { activeServerDir, localMachineId, transfers },
             {
                 createCasStore,
                 createRelationshipStore,
                 createBaselineStore,
                 createJobStore,
-                createTransfers,
                 createSourceOffer,
-                createSourceOfferFromManifest,
-                createSourceOfferFromExportArtifacts,
-                scanManifestIntoCas,
-                planMissingBlobs,
-                applyPlan,
+                executeJobInBackground,
             },
         );
 
@@ -166,102 +136,119 @@ describe('createWorkspaceReplicationEngine', () => {
         expect(createRelationshipStore).toHaveBeenCalledWith({ activeServerDir });
         expect(createBaselineStore).toHaveBeenCalledWith({ activeServerDir });
         expect(createJobStore).toHaveBeenCalledWith({ activeServerDir });
-        expect(createTransfers).toHaveBeenCalledTimes(1);
-        expect(engine.activeServerDir).toBe(activeServerDir);
-        expect(engine.stores).toEqual(stores);
-        expect(engine.transfers).toBe(transfers);
+        expect(engine).toBeTruthy();
 
-        await engine.operations.createSourceOffer({
-            source: { machineId: 'source', rootPath: '/source' },
-            target: { machineId: 'target', rootPath: '/target' },
+        const engineObject = engine as Record<string, unknown>;
+        expect(engineObject.activeServerDir).toBe(activeServerDir);
+        expect(engineObject.localMachineId).toBe(localMachineId);
+        expect(typeof engineObject.resolveRelationship).toBe('function');
+        expect(typeof engineObject.plan).toBe('function');
+        expect(typeof engineObject.createSourceOffer).toBe('function');
+        expect(typeof engineObject.startJobFromOffer).toBe('function');
+        expect(typeof engineObject.getJobStatus).toBe('function');
+        expect(typeof engineObject.listJobs).toBe('function');
+        expect(typeof engineObject.abortJob).toBe('function');
+        expect(typeof engineObject.gc).toBe('function');
+
+        const directionScope: WorkspaceReplicationDirectionScope = {
+            sourceMachineId: 'source',
+            sourceWorkspaceRoot: '/source',
+            targetMachineId: 'target',
+            targetWorkspaceRoot: '/target',
             mode: 'one_way_safe',
-        });
+            ignorePatterns: ['node_modules/**'],
+        };
+
+        const resolveRelationship = engineObject.resolveRelationship as (
+            scope: WorkspaceReplicationDirectionScope,
+        ) => Promise<unknown>;
+        await resolveRelationship(directionScope);
+        expect(stores.relationships.ensureRelationship).toHaveBeenCalledWith(directionScope);
+        expect(stores.baselines.load).toHaveBeenCalledWith(directionScope);
+
+        const createSourceOfferOperation = engineObject.createSourceOffer as (
+            scope: WorkspaceReplicationDirectionScope,
+        ) => Promise<unknown>;
+        await createSourceOfferOperation(directionScope);
         expect(createSourceOffer).toHaveBeenCalledWith({
             activeServerDir,
             source: { machineId: 'source', rootPath: '/source' },
             target: { machineId: 'target', rootPath: '/target' },
             mode: 'one_way_safe',
+            ignorePatterns: ['node_modules/**'],
         });
 
-        await engine.operations.createSourceOfferFromManifest({
-            source: { machineId: 'source', rootPath: '/source' },
-            target: { machineId: 'target', rootPath: '/target' },
+        const existingJobRecord: WorkspaceReplicationJobRecord = {
+            jobId: 'job_stub',
+            correlationId: 'corr_stub',
+            relationshipId: relationshipRecord.relationshipId,
+            directionId: buildWorkspaceReplicationDirectionId(directionScope),
+            offerId: 'offer_stub',
             mode: 'one_way_safe',
-            manifest: { entries: [], fingerprint: 'sha256:manifest' },
-        });
-        expect(createSourceOfferFromManifest).toHaveBeenCalledWith({
-            activeServerDir,
-            source: { machineId: 'source', rootPath: '/source' },
-            target: { machineId: 'target', rootPath: '/target' },
-            mode: 'one_way_safe',
-            manifest: { entries: [], fingerprint: 'sha256:manifest' },
-        });
-
-        await engine.operations.createSourceOfferFromExportArtifacts({
-            source: { machineId: 'source', rootPath: '/source' },
-            target: { machineId: 'target', rootPath: '/target' },
-            mode: 'one_way_safe',
-            workspaceExportArtifacts: {
-                manifest: { entries: [], fingerprint: 'sha256:artifacts' },
-                blobContentsByDigest: new Map(),
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            status: {
+                status: 'pending',
+                phase: 'planning',
+                checkpoint: 'job_created',
+                progressCounters: {},
+                warnings: [],
+                blockingDivergenceCandidates: [],
             },
-        });
-        expect(createSourceOfferFromExportArtifacts).toHaveBeenCalledWith({
-            activeServerDir,
-            source: { machineId: 'source', rootPath: '/source' },
-            target: { machineId: 'target', rootPath: '/target' },
-            mode: 'one_way_safe',
-            workspaceExportArtifacts: {
-                manifest: { entries: [], fingerprint: 'sha256:artifacts' },
-                blobContentsByDigest: new Map(),
-            },
-        });
+        };
 
-        await engine.operations.scanManifestIntoCas({
-            relationshipId: 'rel_1',
-            workspaceRoot: '/source',
-        });
-        expect(scanManifestIntoCas).toHaveBeenCalledWith({
-            activeServerDir,
-            relationshipId: 'rel_1',
-            workspaceRoot: '/source',
-        });
+        const getJobStatus = engineObject.getJobStatus as (jobId: string) => Promise<WorkspaceReplicationJobRecord>;
+        (stores.jobs.read as ReturnType<typeof vi.fn>).mockResolvedValueOnce(existingJobRecord);
+        await expect(getJobStatus('job_stub')).resolves.toMatchObject({ jobId: 'job_stub' });
 
-        await engine.operations.planMissingBlobs({
-            blobIndex: [],
-        });
-        expect(planMissingBlobs).toHaveBeenCalledWith({
-            activeServerDir,
-            blobIndex: [],
-        });
+        const { WorkspaceReplicationError } = await import('./workspaceReplicationError');
+        (stores.jobs.read as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+        await expect(getJobStatus('job_missing')).rejects.toBeInstanceOf(WorkspaceReplicationError);
 
-        await engine.operations.applyPlan({
+        type StartJobFromOfferInput = Readonly<{
+            scope: WorkspaceReplicationDirectionScope;
+            sourceOffer: Readonly<{
+                offerId: string;
+                relationshipId: string;
+                directionId: string;
+                sourceFingerprint: string;
+                manifest: Readonly<{ entries: readonly unknown[]; fingerprint: string }>;
+                blobIndex: readonly unknown[];
+            }>;
+            apply: Readonly<{
+                targetPath: string;
+                strategy: 'sync_changes';
+                conflictPolicy: 'replace_existing';
+            }>;
+            requestBlobPackToFile: (input: Readonly<{
+                packId: string;
+                digests: readonly string[];
+                destinationPath: string;
+            }>) => Promise<void>;
+            correlationId: string;
+        }>;
+
+        const startJobFromOffer = engineObject.startJobFromOffer as (input: StartJobFromOfferInput) => Promise<unknown>;
+        await startJobFromOffer({
+            scope: directionScope,
             sourceOffer: {
-                offerId: 'offer_1',
-                relationshipId: 'rel_1',
-                directionId: 'dir_1',
+                offerId: 'offer_stub',
+                relationshipId: relationshipRecord.relationshipId,
+                directionId: buildWorkspaceReplicationDirectionId(directionScope),
                 sourceFingerprint: 'sha256:offer',
                 manifest: { entries: [], fingerprint: 'sha256:offer' },
                 blobIndex: [],
             },
-            targetPath: '/target',
-            strategy: 'sync_changes',
-            conflictPolicy: 'replace_existing',
-        });
-        expect(applyPlan).toHaveBeenCalledWith({
-            activeServerDir,
-            sourceOffer: {
-                offerId: 'offer_1',
-                relationshipId: 'rel_1',
-                directionId: 'dir_1',
-                sourceFingerprint: 'sha256:offer',
-                manifest: { entries: [], fingerprint: 'sha256:offer' },
-                blobIndex: [],
+            apply: {
+                targetPath: '/target',
+                strategy: 'sync_changes',
+                conflictPolicy: 'replace_existing',
             },
-            targetPath: '/target',
-            strategy: 'sync_changes',
-            conflictPolicy: 'replace_existing',
+            requestBlobPackToFile: vi.fn(async () => undefined),
+            correlationId: 'corr_stub',
         });
+        expect(stores.jobs.write).toHaveBeenCalled();
+        expect(executeJobInBackground).toHaveBeenCalled();
     });
 
     it('wraps store initialization failures in a workspace replication error', async () => {
@@ -275,26 +262,32 @@ describe('createWorkspaceReplicationEngine', () => {
 
         expect(() =>
             createWorkspaceReplicationEngine(
-                { activeServerDir: '/tmp/happier-active-server' },
+                {
+                    activeServerDir: '/tmp/happier-active-server',
+                    localMachineId: 'machine_local',
+                    transfers: createStubTransfers(),
+                },
                 {
                     createCasStore,
                     createRelationshipStore: vi.fn(() => createStubRelationshipStore()),
                     createBaselineStore: vi.fn(() => createStubBaselineStore()),
                     createJobStore: vi.fn(() => createStubJobStore()),
-                    createTransfers: vi.fn(() => createStubTransfers()),
                 },
             ),
         ).toThrowError(WorkspaceReplicationError);
 
         try {
             createWorkspaceReplicationEngine(
-                { activeServerDir: '/tmp/happier-active-server' },
+                {
+                    activeServerDir: '/tmp/happier-active-server',
+                    localMachineId: 'machine_local',
+                    transfers: createStubTransfers(),
+                },
                 {
                     createCasStore,
                     createRelationshipStore: vi.fn(() => createStubRelationshipStore()),
                     createBaselineStore: vi.fn(() => createStubBaselineStore()),
                     createJobStore: vi.fn(() => createStubJobStore()),
-                    createTransfers: vi.fn(() => createStubTransfers()),
                 },
             );
             throw new Error('expected engine creation to throw');
