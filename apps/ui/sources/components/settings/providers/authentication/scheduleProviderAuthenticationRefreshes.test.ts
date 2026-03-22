@@ -3,45 +3,76 @@ import { describe, expect, it, vi } from 'vitest';
 import { scheduleProviderAuthenticationRefreshes } from './scheduleProviderAuthenticationRefreshes';
 
 describe('scheduleProviderAuthenticationRefreshes', () => {
-    it('runs the immediate and delayed refresh attempts', async () => {
-        vi.useFakeTimers();
-        try {
-            const refresh = vi.fn();
+    type TimeoutCallback = Exclude<Parameters<typeof setTimeout>[0], string>;
 
-            scheduleProviderAuthenticationRefreshes({
-                refresh,
-                delaysMs: [0, 100, 300],
-            });
+    function createTimerHarness() {
+        const timers: Array<{
+            delayMs: number;
+            cleared: boolean;
+            run: () => void;
+        }> = [];
 
-            expect(refresh).toHaveBeenCalledTimes(1);
+        const setTimeoutFn = ((callback: TimeoutCallback, delay?: number) => {
+            const timer = {
+                delayMs: Number(delay ?? 0),
+                cleared: false,
+                run: () => {
+                    if (!timer.cleared) {
+                        callback();
+                    }
+                },
+            };
 
-            await vi.advanceTimersByTimeAsync(100);
-            expect(refresh).toHaveBeenCalledTimes(2);
+            timers.push(timer);
+            return timer as unknown as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout;
 
-            await vi.advanceTimersByTimeAsync(200);
-            expect(refresh).toHaveBeenCalledTimes(3);
-        } finally {
-            vi.useRealTimers();
-        }
+        const clearTimeoutFn = ((timer: ReturnType<typeof setTimeout>) => {
+            (timer as unknown as { cleared: boolean }).cleared = true;
+        }) as typeof clearTimeout;
+
+        return {
+            timers,
+            setTimeoutFn,
+            clearTimeoutFn,
+        };
+    }
+
+    it('runs the immediate and delayed refresh attempts', () => {
+        const refresh = vi.fn();
+        const timers = createTimerHarness();
+
+        scheduleProviderAuthenticationRefreshes({
+            refresh,
+            delaysMs: [0, 100, 300],
+            setTimeoutFn: timers.setTimeoutFn,
+            clearTimeoutFn: timers.clearTimeoutFn,
+        });
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        timers.timers.find((timer) => timer.delayMs === 100)?.run();
+        expect(refresh).toHaveBeenCalledTimes(2);
+
+        timers.timers.find((timer) => timer.delayMs === 300)?.run();
+        expect(refresh).toHaveBeenCalledTimes(3);
     });
 
-    it('cancels pending delayed refresh attempts', async () => {
-        vi.useFakeTimers();
-        try {
-            const refresh = vi.fn();
+    it('cancels pending delayed refresh attempts', () => {
+        const refresh = vi.fn();
+        const timers = createTimerHarness();
 
-            const cancel = scheduleProviderAuthenticationRefreshes({
-                refresh,
-                delaysMs: [0, 100, 300],
-            });
+        const cancel = scheduleProviderAuthenticationRefreshes({
+            refresh,
+            delaysMs: [0, 100, 300],
+            setTimeoutFn: timers.setTimeoutFn,
+            clearTimeoutFn: timers.clearTimeoutFn,
+        });
 
-            expect(refresh).toHaveBeenCalledTimes(1);
-            cancel();
+        expect(refresh).toHaveBeenCalledTimes(1);
+        cancel();
 
-            await vi.advanceTimersByTimeAsync(1_000);
-            expect(refresh).toHaveBeenCalledTimes(1);
-        } finally {
-            vi.useRealTimers();
-        }
+        timers.timers.forEach((timer) => timer.run());
+        expect(refresh).toHaveBeenCalledTimes(1);
     });
 });

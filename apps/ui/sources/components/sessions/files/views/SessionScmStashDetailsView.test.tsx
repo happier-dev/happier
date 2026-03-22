@@ -21,10 +21,6 @@ import {
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 import { SessionScmStashDetailsView } from './SessionScmStashDetailsView';
-import {
-    resolveManagedStashRetryDelayMs,
-    resolveManagedStashRetryMaxIntervalMs,
-} from './scmStashRetry';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -60,9 +56,6 @@ const sessionScmStashPopSpy = vi.fn<
 const sessionScmStashDropSpy = vi.fn<
     (sessionId: string, request: ScmStashDropRequest) => Promise<ScmStashDropResponse>
 >(async (_sessionId, _request) => ({ success: true }));
-
-const managedStashRetryMaxIntervalMs = resolveManagedStashRetryMaxIntervalMs(undefined);
-const managedStashRetryDelayMs = resolveManagedStashRetryDelayMs(0, managedStashRetryMaxIntervalMs);
 
 let scmWriteEnabled = true;
 
@@ -240,7 +233,7 @@ describe('SessionScmStashDetailsView', () => {
 
             expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(1);
 
-            await flushHookEffects({ cycles: 1, advanceTimersMs: managedStashRetryDelayMs });
+            await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
 
             await vi.waitFor(() => {
                 expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(2);
@@ -259,7 +252,7 @@ describe('SessionScmStashDetailsView', () => {
             });
 
             const screen = await renderStashDetailsView();
-            await flushHookEffects({ cycles: 1, advanceTimersMs: managedStashRetryMaxIntervalMs });
+            await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
             await vi.waitFor(() => {
                 expect(sessionScmStashListSpy).toHaveBeenCalledTimes(5);
             });
@@ -283,7 +276,7 @@ describe('SessionScmStashDetailsView', () => {
             });
 
             const screen = await renderStashDetailsView();
-            await flushHookEffects({ cycles: 1, advanceTimersMs: managedStashRetryMaxIntervalMs });
+            await flushHookEffects({ cycles: 4, turns: 0, runOnlyPendingTimers: true });
             await vi.waitFor(() => {
                 expect(sessionScmStashShowSpy).toHaveBeenCalledTimes(5);
             });

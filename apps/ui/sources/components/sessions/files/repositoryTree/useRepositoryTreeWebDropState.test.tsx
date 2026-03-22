@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS } from '@/components/sessions/files/repositoryTree/repositoryTreeDragAndDropConfig';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import { renderScreen } from '@/dev/testkit';
 
@@ -53,15 +54,11 @@ describe('useRepositoryTreeWebDropState', () => {
             });
         });
 
-        act(() => {
-            vi.advanceTimersByTime(1_199);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS - 1 });
 
         expect(setExpandedPathsSpy).not.toHaveBeenCalled();
 
-        act(() => {
-            vi.advanceTimersByTime(1);
-        });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 1 });
 
         expect(REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS).toBe(1_200);
         expect(setExpandedPathsSpy).toHaveBeenCalledWith('session-1', ['src']);

@@ -49,12 +49,9 @@ describe('MultiPaneHost (overlayRight)', () => {
         }
         expect(readZIndex(overlayWrapper?.props?.style)).toBeGreaterThan(0);
 
-        const scrim = tree.findByTestId(RIGHT_SCRIM_TEST_ID);
-        if (!scrim) {
-            throw new Error('Expected right scrim to be present');
-        }
-        act(() => {
-            scrim.props.onPress();
+        expect(tree.findByTestId(RIGHT_SCRIM_TEST_ID)).toBeTruthy();
+        await act(async () => {
+            await tree.pressByTestIdAsync(RIGHT_SCRIM_TEST_ID);
         });
         expect(onCloseRight).toHaveBeenCalledTimes(0);
         await flushHookEffects({ advanceTimersMs: OVERLAY_CLOSE_DURATION_MS });

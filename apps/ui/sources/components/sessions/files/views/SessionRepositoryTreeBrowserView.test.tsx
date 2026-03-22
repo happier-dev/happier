@@ -195,7 +195,7 @@ async function updateSearchQuery(screen: Awaited<ReturnType<typeof renderReposit
 }
 
 async function settleSearchEffects() {
-    await flushHookEffects({ advanceTimersMs: 200, cycles: 2 });
+    await flushHookEffects({ advanceTimersMs: 120, cycles: 1, turns: 1 });
 }
 
 describe('SessionRepositoryTreeBrowserView', () => {

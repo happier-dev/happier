@@ -5,10 +5,12 @@ import { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { MultiPaneHostWithBottom } from './MultiPaneHostWithBottom';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
 
 describe('MultiPaneHostWithBottom (overlayBottom)', () => {
+    const overlayCloseDurationMs = motionTokens.durationMs.base;
     const originalWindow = (globalThis as any).window;
 
     afterEach(() => {
@@ -44,9 +46,7 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
         expect(screen.findByTestId('multi-pane-bottom-scrim')).toBeTruthy();
         await screen.pressByTestIdAsync('multi-pane-bottom-scrim');
         expect(onCloseBottom).toHaveBeenCalledTimes(0);
-        await act(async () => {
-            await vi.advanceTimersToNextTimerAsync();
-        });
+        await flushHookEffects({ advanceTimersMs: overlayCloseDurationMs });
         expect(onCloseBottom).toHaveBeenCalledTimes(1);
     });
 
@@ -84,9 +84,7 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
         });
         expect(onCloseBottom).toHaveBeenCalledTimes(0);
         expect(onCloseRight).toHaveBeenCalledTimes(0);
-        await act(async () => {
-            await vi.advanceTimersToNextTimerAsync();
-        });
+        await flushHookEffects({ advanceTimersMs: overlayCloseDurationMs });
         expect(onCloseBottom).toHaveBeenCalledTimes(1);
         expect(onCloseRight).toHaveBeenCalledTimes(0);
     });
