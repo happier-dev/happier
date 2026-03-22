@@ -74,6 +74,7 @@ function renderGroupedToolCallRowContent(params: Readonly<{
                 message={params.message}
                 metadata={params.metadata}
                 sessionId={params.sessionId}
+                layoutContext="tool_calls_group"
                 forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
                 interaction={params.interaction}
             />

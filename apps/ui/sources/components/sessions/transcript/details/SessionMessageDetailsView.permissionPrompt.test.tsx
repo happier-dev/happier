@@ -1,9 +1,11 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,40 +27,24 @@ const recipientStateState = vi.hoisted(() => ({
 }));
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        View: 'View',
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
             },
         },
-    }),
-    StyleSheet: {
-        create: (value: any) => (typeof value === 'function' ? value({
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                surfaceHighest: '#fafafa',
-                accent: {
-                    indigo: '#5856D6',
-                    orange: '#FF9500',
-                    green: '#34C759',
-                },
-                success: '#34C759',
-                warningCritical: '#FF3B30',
-            },
-        }) : value),
-    },
-}));
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
@@ -137,9 +123,10 @@ vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({
     }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('SessionMessageDetailsView permission prompt fallback', () => {
     const session: Session = {
@@ -213,15 +200,11 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
         participantComposerSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(SessionMessageDetailsView, {
+        tree = (await renderScreen(React.createElement(SessionMessageDetailsView, {
                     sessionId: 'session-1',
                     session,
                     message,
-                }),
-            );
-        });
+                }))).tree;
 
         expect(tree).toBeDefined();
         expect(toolFullViewSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -252,15 +235,11 @@ describe('SessionMessageDetailsView permission prompt fallback', () => {
         };
         participantComposerSpy.mockClear();
 
-        await act(async () => {
-            renderer.create(
-                React.createElement(SessionMessageDetailsView, {
+        await renderScreen(React.createElement(SessionMessageDetailsView, {
                     sessionId: 'session-1',
                     session,
                     message,
-                }),
-            );
-        });
+                }));
 
         expect(participantComposerSpy).toHaveBeenCalledWith(expect.objectContaining({
             extraActionChips: expect.arrayContaining([

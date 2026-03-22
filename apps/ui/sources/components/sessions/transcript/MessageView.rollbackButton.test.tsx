@@ -1,17 +1,25 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { createReducer } from '@/sync/reducer/reducer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => ({
-    Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
-    useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-    View: 'View',
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
+                        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                        View: 'View',
+                        ActivityIndicator: 'ActivityIndicator',
+                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                    }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -21,45 +29,24 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                success: '#0a0',
-                textSecondary: '#555',
-                userMessageBackground: '#eef',
-                agentEventText: '#777',
-                surface: '#fff',
-                border: '#ddd',
-                divider: '#ddd',
-                overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-                shadow: { color: '#000' },
-                input: { background: '#f7f7f7' },
-                warning: '#f90',
-                text: '#111',
-                tint: '#06f',
-                card: '#fff',
-                surfaceHigh: '#f5f5f5',
-                surfaceHighest: '#fff',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (input: any) => (typeof input === 'function' ? input({ colors: { userMessageBackground: '#eef' } }, {}) : input),
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => React.createElement('MarkdownView', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => true,
@@ -94,9 +81,13 @@ vi.mock('@/sync/sync', () => ({
     sync: { submitMessage: vi.fn(), patchSessionMetadataWithRetry: vi.fn() },
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@/utils/url/sessionFileDeepLink', () => ({
     buildSessionFileDeepLink: () => '/session/s1',
@@ -114,19 +105,26 @@ vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
     isCommittedMessageDiscarded: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'sessionThinkingDisplayMode') return 'inline';
-        if (key === 'sessionThinkingInlinePresentation') return 'summary';
-        if (key === 'sessionThinkingInlineChrome') return 'plain';
-        if (key === 'sessionReplayEnabled') return false;
-        return null;
-    },
-    useSession: () => ({ id: 's1', active: true, metadata: { machineId: 'm1' } }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesReducerState: () => ({}),
-    storage: { getState: () => ({ updateSessionDraft: vi.fn() }) },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: (key: string) => {
+                if (key === 'sessionThinkingDisplayMode') return 'inline';
+                if (key === 'sessionThinkingInlinePresentation') return 'summary';
+                if (key === 'sessionThinkingInlineChrome') return 'plain';
+                if (key === 'sessionReplayEnabled') return false;
+                return null;
+            },
+            useSession: () => createSessionFixture({ id: 's1', active: true, metadata: { machineId: 'm1' } as any }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesReducerState: () => createReducer(),
+            storage: createStorageStoreMock({}),
+            getStorage: () => createStorageStoreMock({}),
+        },
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -180,17 +178,21 @@ vi.mock('@/scm/utils/filePresentation', () => ({
     getImageMimeTypeFromPath: () => null,
 }));
 
-vi.mock('@happier-dev/agents', () => ({
-    normalizeVoiceAgentTurnTranscriptText: (text: string) => text,
-}));
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+    return {
+        ...actual,
+        normalizeVoiceAgentTurnTranscriptText: (text: string) => text,
+    };
+});
 
 vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () => ({
     TranscriptRollbackActionButton: (props: any) => React.createElement('TranscriptRollbackActionButton', props),
 }));
 
 describe('MessageView (rollback button)', () => {
-    beforeEach(() => {
-        // no shared state
+    afterEach(() => {
+        standardCleanup();
     });
 
     it('renders rollback action for agent messages when rollbackAction is provided', async () => {
@@ -198,19 +200,16 @@ describe('MessageView (rollback button)', () => {
 
         const message: any = { kind: 'agent-text', id: 'a1', createdAt: 1, text: 'hello', isThinking: false, seq: 2 };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <MessageView
-                    message={message}
-                    metadata={null}
-                    sessionId="s1"
-                    rollbackAction={{ target: { type: 'latest_turn' }, restoredDraftText: null }}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+                rollbackAction={{ target: { type: 'latest_turn' }, restoredDraftText: null }}
+            />,
+        );
 
-        const rollbackButtons = tree!.root.findAll(
+        const rollbackButtons = screen.findAll(
             (node: any) => node.type === 'TranscriptRollbackActionButton' && node.props.testID === 'transcript-message-rollback:a1',
         );
         expect(rollbackButtons).toHaveLength(1);

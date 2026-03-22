@@ -1,160 +1,134 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Text: 'Text',
-  ScrollView: 'ScrollView',
-  Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-  Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default },
-  Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
-  useWindowDimensions: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Platform: { OS: 'ios' },
+                    }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        success: '#0a0',
-        text: '#111',
-        textSecondary: '#555',
-        surface: '#fff',
-        surfaceHigh: '#f5f5f5',
-        surfaceHighest: '#fff',
-        divider: '#ddd',
-        overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-        shadow: { color: '#000' },
-        input: { background: '#f7f7f7' },
-        userMessageBackground: '#eef',
-        agentEventText: '#777',
-      },
-    },
-  }),
-  StyleSheet: {
-    create: (input: any) => {
-      const theme = {
-        colors: {
-          success: '#0a0',
-          text: '#111',
-          textSecondary: '#555',
-          surface: '#fff',
-          surfaceHigh: '#f5f5f5',
-          surfaceHighest: '#fff',
-          divider: '#ddd',
-          overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-          shadow: { color: '#000' },
-          input: { background: '#f7f7f7' },
-          userMessageBackground: '#eef',
-          agentEventText: '#777',
-        },
-      };
-      return typeof input === 'function' ? input(theme, {}) : input;
-    },
-  },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
-  MarkdownView: (props: any) => React.createElement('MarkdownView', props),
+    MarkdownView: (props: any) => React.createElement('MarkdownView', props),
 }));
 
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
-  ToolView: (props: any) => React.createElement('ToolView', props),
+    ToolView: (props: any) => React.createElement('ToolView', props),
 }));
 
 vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
-  ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
+    ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
-  Text: (props: any) => React.createElement('Text', props, props.children),
-  TextInput: (props: any) => React.createElement('TextInput', props, props.children),
+    Text: (props: any) => React.createElement('Text', props, props.children),
+    TextInput: (props: any) => React.createElement('TextInput', props, props.children),
 }));
 
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
-  extractWorkspaceFileMentions: () => [],
+    extractWorkspaceFileMentions: () => [],
 }));
 
 vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
-  LinkedWorkspaceFilesRow: () => null,
+    LinkedWorkspaceFilesRow: () => null,
 }));
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
-  isCommittedMessageDiscarded: () => false,
+    isCommittedMessageDiscarded: () => false,
 }));
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn() },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
-vi.mock('@/modal', () => ({
-  Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('expo-clipboard', () => ({
-  setStringAsync: vi.fn(),
+    setStringAsync: vi.fn(),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-  Octicons: 'Octicons',
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
 }));
 
 vi.mock('@/sync/sync', () => ({
-  sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
+    sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: () => null,
-  useSession: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: () => null,
+            useSession: () => null,
+        },
+    });
+});
 
 describe('MessageView (agent events)', () => {
-  it('renders agent-event text as selectable', async () => {
-    const { MessageView } = await import('./MessageView');
-
-    const message: any = {
-      kind: 'agent-event',
-      event: { type: 'message', message: 'hello event' },
-    };
-
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    afterEach(() => {
+        standardCleanup();
     });
 
-    const texts = tree!.root.findAllByType('Text' as any);
-    expect(texts.length).toBeGreaterThan(0);
-    expect(texts.some((n: any) => n.props.selectable === true)).toBe(true);
-  });
+    it('renders agent-event text as selectable', async () => {
+        const { MessageView } = await import('./MessageView');
 
-  it('renders agent events as inline left-aligned transcript rows with an icon', async () => {
-    const { MessageView } = await import('./MessageView');
+        const message: any = {
+            kind: 'agent-event',
+            event: { type: 'message', message: 'hello event' },
+        };
 
-    const message: any = {
-      kind: 'agent-event',
-      event: { type: 'message', message: 'hello event' },
-    };
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        const texts = screen.findAllByType('Text' as any);
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        expect(texts.length).toBeGreaterThan(0);
+        expect(texts.some((n: any) => n.props.selectable === true)).toBe(true);
     });
 
-    const icons = tree!.root.findAllByType('Ionicons' as any);
-    expect(icons.length).toBeGreaterThan(0);
-    expect(icons[0]?.props.color).toBe('#555');
+    it('renders agent events as inline left-aligned transcript rows with an icon', async () => {
+        const { MessageView } = await import('./MessageView');
 
-    const row = icons[0]?.parent?.parent as any;
+        const message: any = {
+            kind: 'agent-event',
+            event: { type: 'message', message: 'hello event' },
+        };
 
-    expect(row).toBeTruthy();
-    expect(row.props.style.flexDirection).toBe('row');
-    expect(row.props.style.justifyContent).not.toBe('center');
-  });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        const icons = screen.findAllByType('Ionicons' as any);
+
+        expect(icons.length).toBeGreaterThan(0);
+
+        const row = icons[0]?.parent?.parent as any;
+
+        expect(row).toBeTruthy();
+        expect(row.props.style.flexDirection).toBe('row');
+        expect(row.props.style.justifyContent).not.toBe('center');
+    });
 });

@@ -1,24 +1,27 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let messageById: Record<string, any> = {};
 let renderedToolCallsGroupViewProps: any[] = [];
 
-vi.mock('react-native', async (importOriginal) => {
-  const ReactMod = await import('react');
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: (props: any) => React.createElement('View', props, props.children),
+                        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (value: any) => value },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
   TranscriptEnterWrapper: (props: any) => React.createElement(React.Fragment, null, props.children),
@@ -31,10 +34,13 @@ vi.mock('@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView', (
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
     messageIds.map((id) => messageById[id]).filter(Boolean),
-}));
+});
+});
 
 describe('ToolCallsGroupRow', () => {
   beforeEach(() => {
@@ -62,9 +68,7 @@ describe('ToolCallsGroupRow', () => {
 
     const { ToolCallsGroupRow } = await import('./ToolCallsGroupRow');
 
-    await act(async () => {
-      renderer.create(
-        React.createElement(ToolCallsGroupRow as any, {
+    await renderScreen(React.createElement(ToolCallsGroupRow as any, {
           sessionId: 's1',
           toolCallsGroupId: 'group-1',
           toolMessageIds: ['tool-1', 'tool-2'],
@@ -77,9 +81,7 @@ describe('ToolCallsGroupRow', () => {
             if (messageId === 'tool-2') return toolMessageTwo;
             return null;
           },
-        }),
-      );
-    });
+        }));
 
     expect(renderedToolCallsGroupViewProps).toEqual(
       expect.arrayContaining([

@@ -1,89 +1,49 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createReducer } from '@/sync/reducer/reducer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('react-native', async (importOriginal) => {
-    return {
-        Platform: {
-            OS: 'web',
-            select: (values: any) => values?.web ?? values?.default,
-        },
-        Easing: {
-            bezier: () => ({}),
-            linear: () => ({}),
-        },
-        Dimensions: {
-            get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-        },
-        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-        Animated: {
-            Value: class AnimatedValue {
-                constructor(public _value: number) {}
-                interpolate() {
-                    return this as any;
-                }
-            },
-            timing: (_value: any, _config: any) => ({
-                start: (cb?: any) => {
-                    cb?.();
-                },
-            }),
-            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-        },
-        View: 'View',
-        Text: 'Text',
-        ScrollView: 'ScrollView',
-        Image: 'Image',
-        ActivityIndicator: 'ActivityIndicator',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Easing: {
+                            bezier: () => ({}),
+                            linear: () => ({}),
+                        },
+                        Dimensions: {
+                            get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                        },
+                        useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                        Animated: {
+                            Value: class AnimatedValue {
+                                constructor(public _value: number) {}
+                                interpolate() {
+                                    return this as any;
+                                }
+                            },
+                            timing: (_value: any, _config: any) => ({
+                                start: (cb?: any) => {
+                                    cb?.();
+                                },
+                            }),
+                            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+                        },
+                        View: 'View',
+                        Text: 'Text',
+                        ScrollView: 'ScrollView',
+                        Image: 'Image',
+                        ActivityIndicator: 'ActivityIndicator',
+                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                    }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-                colors: {
-                    success: '#0a0',
-                    text: '#111',
-                    textSecondary: '#555',
-                    link: '#06f',
-                    surfaceHighest: '#fff',
-                    surfaceHigh: '#f5f5f5',
-                    surface: '#fff',
-                    divider: '#ddd',
-                    overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-                    shadow: { color: '#000' },
-                    input: { background: '#f7f7f7' },
-                    userMessageBackground: '#eef',
-                    agentEventText: '#777',
-                },
-            },
-    }),
-    StyleSheet: {
-        create: (input: any) => {
-            const theme = {
-                colors: {
-                    success: '#0a0',
-                    text: '#111',
-                    textSecondary: '#555',
-                    link: '#06f',
-                    surfaceHighest: '#fff',
-                    surfaceHigh: '#f5f5f5',
-                    surface: '#fff',
-                    divider: '#ddd',
-                    overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-                    shadow: { color: '#000' },
-                    input: { background: '#f7f7f7' },
-                    userMessageBackground: '#eef',
-                    agentEventText: '#777',
-                },
-            };
-            return typeof input === 'function' ? input(theme, {}) : input;
-        },
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => React.createElement('MarkdownView', props),
@@ -101,29 +61,38 @@ vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => false,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: any) => {
-        if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
-            return params.title;
-        }
-        if (typeof key === 'string' && key.startsWith('session.reviewFindings.status.')) {
-            return key.split('.').pop();
-        }
-        if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
-            return `Review findings (${params.count})`;
-        }
-        if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Implement selected fixes';
-        if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
-        if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
-        if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
-        return key;
-    },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: any) => {
+            if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
+                return params.title;
+            }
+            if (typeof key === 'string' && key.startsWith('session.reviewFindings.status.')) {
+                return key.split('.').pop();
+            }
+            if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
+                return `Review findings (${params.count})`;
+            }
+            if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Implement selected fixes';
+            if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
+            if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
+            if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
+            return key;
+        },
+    });
+});
 
 const modalShowSpy = vi.fn();
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), show: (config: unknown) => modalShowSpy(config) },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMock.spies.show.mockImplementation((config: unknown) => {
+        modalShowSpy(config);
+        return 'modal-id';
+    });
+    return modalMock.module;
+});
 
 const sendMessageSpy = vi.fn<
     (
@@ -174,25 +143,28 @@ let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
 let thinkingInlinePresentation: 'full' | 'summary' = 'full';
 let filesImagePreviewMaxBytes: number | null = null;
 let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSession: () => null,
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSetting: (key: string) => {
-        if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
-        if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
-        if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
-        if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
-        return null;
-    },
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesReducerState: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        useSession: () => null,
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSetting: (key: string) => {
+            if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
+            if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
+            if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
+            if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
+            return null;
+        },
+        useSessionMessagesById: () => ({}),
+        useSessionMessagesReducerState: () => createReducer(),
+    }),
+);
 
 afterEach(() => {
     thinkingDisplayMode = 'inline';
     thinkingInlinePresentation = 'full';
     filesImagePreviewMaxBytes = null;
     toolViewTimelineChromeMode = null;
+    standardCleanup();
 });
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -200,9 +172,13 @@ vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {
@@ -235,19 +211,16 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <MessageView
-                    message={message}
-                    metadata={null}
-                    sessionId="s1"
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />,
+        );
 
         // This should fail until MessageView wires StructuredMessageBlock into its rendering.
-        expect(tree!.root.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+        expect(screen.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
     });
 
     it('does not render the MarkdownView for structured user messages', async () => {
@@ -279,12 +252,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType('MarkdownView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('MarkdownView' as any)).toHaveLength(0);
     });
 
     it('does not wrap structured user messages in a user bubble background', async () => {
@@ -316,12 +286,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const bubbleViews = tree!.root.findAll((node) => {
+        const bubbleViews = screen.findAll((node) => {
             if ((node as any).type !== 'View') return false;
             const styleProp = (node as any).props?.style;
             const styles = Array.isArray(styleProp) ? styleProp : [styleProp];
@@ -357,17 +324,14 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
         expect(markdownViews).toHaveLength(1);
         expect(markdownViews[0]!.props.markdown).toBe('hello');
 
-        expect(() => tree!.root.findByProps({ testID: 'message-attachments-inline-images' })).not.toThrow();
-        expect(tree!.root.findAllByProps({ testID: 'message-attachments-row' })).toHaveLength(0);
+        expect(screen.findByTestId('message-attachments-inline-images')).not.toBeNull();
+        expect(screen.findAllByTestId('message-attachments-row')).toHaveLength(0);
     });
 
     it('normalizes wrapped voice agent turn text before rendering it in the hidden voice transcript', async () => {
@@ -393,12 +357,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
         expect(markdownViews).toHaveLength(1);
         expect(markdownViews[0]!.props.markdown).toBe(
             'Create a file named voice_perm_local_active_20260307_d.txt containing exactly HELLO.',
@@ -423,12 +384,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.toJSON()).toBeNull();
+        expect(screen.tree.toJSON()).toBeNull();
     });
 
     it('hides voice transcript turns whose normalized text is empty after trimming', async () => {
@@ -449,12 +407,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.toJSON()).toBeNull();
+        expect(screen.tree.toJSON()).toBeNull();
     });
 
     it('renders a placeholder tile for inline image attachments when filesImagePreviewMaxBytes is tiny', async () => {
@@ -487,14 +442,11 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(() => tree!.root.findByProps({ testID: 'message-attachments-inline-images' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: `message-attachments-inline-image:${path}` })).not.toThrow();
-        expect(tree!.root.findAllByProps({ testID: `message-attachments-inline-image-preview:${path}` })).toHaveLength(0);
+        expect(screen.findByTestId('message-attachments-inline-images')).not.toBeNull();
+        expect(screen.findByTestId(`message-attachments-inline-image:${path}`)).not.toBeNull();
+        expect(screen.findAllByTestId(`message-attachments-inline-image-preview:${path}`)).toHaveLength(0);
     });
 
     it('opens inline transcript images in the shared attachment preview modal', async () => {
@@ -531,15 +483,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         modalShowSpy.mockClear();
         routerPushSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const firstImage = tree!.root.findByProps({ testID: `message-attachments-inline-image:${firstPath}` });
-        await act(async () => {
-            firstImage.props.onPress();
-        });
+        await screen.pressByTestIdAsync(`message-attachments-inline-image:${firstPath}`);
 
         expect(routerPushSpy).not.toHaveBeenCalled();
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
@@ -589,22 +535,10 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         routerPushSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const jumpButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            if (typeof (node as any).props?.onPress !== 'function') return false;
-            const textChildren = node.findAllByType('Text' as any);
-            return textChildren.some((t: any) => (t.children || []).join('') === 'files.reviewComments.jump');
-        });
-
-        expect(jumpButtons).toHaveLength(1);
-        await act(async () => {
-            jumpButtons[0]!.props.onPress();
-        });
+        expect(screen.findByTestId('review-comments-jump:c1')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-comments-jump:c1');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts&source=file&anchor=fileLine&startLine=12');
     });
@@ -660,18 +594,15 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <MessageView
-                    message={message}
-                    metadata={null}
-                    sessionId="s1"
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />,
+        );
 
-        expect(tree!.root.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+        expect(screen.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
     });
 
     it('suppresses the duplicate ToolTimelineRow for structured review tool-calls in activity feed mode', async () => {
@@ -712,13 +643,10 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
-        expect(tree!.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+        expect(screen.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+        expect(screen.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
     });
 
     it('renders a structured plan-output card for tool-call messages when meta.happier.kind is plan_output.v1', async () => {
@@ -758,12 +686,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType(PlanOutputMessageCard as any)).toHaveLength(1);
+        expect(screen.findAllByType(PlanOutputMessageCard as any)).toHaveLength(1);
     });
 
     it('renders a structured delegate-output card for tool-call messages when meta.happier.kind is delegate_output.v1', async () => {
@@ -800,12 +725,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType(DelegateOutputMessageCard as any)).toHaveLength(1);
+        expect(screen.findAllByType(DelegateOutputMessageCard as any)).toHaveLength(1);
     });
 
     it('can adopt a plan by sending a structured user message to the parent session', async () => {
@@ -844,20 +766,10 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const adoptButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            if (typeof (node as any).props?.onPress !== 'function') return false;
-            return String((node as any).props?.testID ?? '') === 'adopt-plan-button';
-        });
-        expect(adoptButtons).toHaveLength(1);
-        await act(async () => {
-            adoptButtons[0]!.props.onPress();
-        });
+        expect(screen.findByTestId('adopt-plan-button')).not.toBeNull();
+        await screen.pressByTestIdAsync('adopt-plan-button');
 
         expect(sendMessageSpy).toHaveBeenCalledTimes(1);
         expect(sendMessageSpy.mock.calls[0]?.[0]).toBe('s1');
@@ -912,32 +824,12 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
-        const findingHeaders = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            if (typeof (node as any).props?.onPress !== 'function') return false;
-            const textChildren = node.findAllByType('Text' as any);
-            return textChildren.some((t: any) => (t.children || []).join('').includes('Nit'));
-        });
-        expect(findingHeaders.length).toBeGreaterThan(0);
-        await act(async () => {
-            findingHeaders[0]!.props.onPress();
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        expect(screen.findByTestId('review-findings-header:f1')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-findings-header:f1');
 
-        const applyButtons = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            if (typeof (node as any).props?.onPress !== 'function') return false;
-            const textChildren = node.findAllByType('Text' as any);
-            return textChildren.some((t: any) => (t.children || []).join('') === 'Implement selected fixes');
-        });
-
-        expect(applyButtons.length).toBe(1);
-        await act(async () => {
-            await applyButtons[0]!.props.onPress();
-        });
+        expect(screen.findByTestId('review-findings-publish-accepted')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-findings-publish-accepted');
 
         expect(sendMessageSpy).toHaveBeenCalledTimes(1);
         const [sessionId, text, _displayText, metaOverrides] = sendMessageSpy.mock.calls[0] as any[];
@@ -965,16 +857,13 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             meta: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
         expect(markdownViews).toHaveLength(1);
         expect((markdownViews[0] as any).props.markdown).toBe('**Title**\n\n- first\n- second');
 
-        const thinkingLabels = tree!.root.findAll((node) => {
+        const thinkingLabels = screen.findAll((node) => {
             if ((node as any).type !== 'Text') return false;
             const children = (node as any).props?.children;
             return children === 'sessionInfo.thinking';
@@ -993,12 +882,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             meta: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
         expect(markdownViews).toHaveLength(1);
         expect((markdownViews[0] as any).props.markdown).toBe('Hello');
     });
@@ -1018,20 +904,14 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             meta: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" activeThinkingMessageId={null} />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" activeThinkingMessageId={null} />);
 
-        expect(tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-summary-inline').length).toBeGreaterThan(0);
-        expect(tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-markdown')).toHaveLength(0);
+        expect(screen.findAllByTestId('transcript-thinking-summary-inline').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('transcript-thinking-body-markdown')).toHaveLength(0);
 
-        const header = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-header')[0]!;
-        await act(async () => {
-            header.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('transcript-thinking-header');
 
-        const bodyMarkdownNodes = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-markdown');
+        const bodyMarkdownNodes = screen.findAllByTestId('transcript-thinking-body-markdown');
         expect(bodyMarkdownNodes.length).toBeGreaterThan(0);
         expect(bodyMarkdownNodes.some((n) => (n.props as any).markdown === 'Hello there')).toBe(true);
     });
@@ -1048,15 +928,12 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             meta: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
         expect(markdownViews).toHaveLength(0);
 
-        const toolViews = tree!.root.findAllByType('ToolView' as any);
+        const toolViews = screen.findAllByType('ToolView' as any);
         expect(toolViews).toHaveLength(1);
         expect((toolViews[0] as any).props.tool?.name).toBe('Reasoning');
         expect((toolViews[0] as any).props.tool?.result?.content).toBe('**Title**\n\nHello');
@@ -1074,12 +951,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             meta: {},
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-        });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-        expect(tree!.root.findAllByType('MarkdownView' as any)).toHaveLength(0);
-        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('MarkdownView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ToolView' as any)).toHaveLength(0);
     });
 });

@@ -1,51 +1,26 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    legacyChatListHarnessState,
+    renderLegacyChatList,
+    resetLegacyChatListHarness,
+} from './ChatList.legacyListTestHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedFlatListProps: any = null;
 let capturedMessageViewProps: any[] = [];
 let capturedTurnViewProps: any[] = [];
 
-let sessionMessagesState: { messages: any[]; isLoaded: boolean } = { messages: [], isLoaded: true };
-let sessionPendingState: { messages: any[]; discarded: any[] } = { messages: [], discarded: [] };
-let sessionActionDraftsState: any[] = [];
-let sessionState: any = null;
-
 const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
-
-const settingValues: Record<string, any> = {};
 
 vi.mock('@shopify/flash-list', () => ({
     FlashList: () => null,
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const ReactMod = await import('react');
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        Platform: {
-            OS: 'web',
-            select: (spec: any) => {
-                if (!spec || typeof spec !== 'object') return undefined;
-                return spec.web ?? spec.default;
-            },
-        },
-        View: (props: any) => ReactMod.createElement('View', props, props.children),
-        ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
-        FlatList: (props: any) => {
-            capturedFlatListProps = props;
-            const data = Array.isArray(props?.data) ? props.data : [];
-            const children = data.map((item: any, index: number) => {
-                const key = typeof props?.keyExtractor === 'function' ? props.keyExtractor(item, index) : String(index);
-                return ReactMod.createElement(ReactMod.Fragment, { key }, props.renderItem?.({ item, index }));
-            });
-            return ReactMod.createElement('FlatList', null, children);
-        },
-    };
-});
+vi.mock('react-native', async () => (
+    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListReactNativeMock()
+));
 
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 0,
@@ -55,31 +30,9 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSession: () => sessionState,
-    useSessionTranscriptIds: () => ({
-        ids: (sessionMessagesState.messages ?? []).map((message: any) => message.id),
-        isLoaded: sessionMessagesState.isLoaded,
-    }),
-    useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((message: any) => [message.id, message])),
-    useForkedTranscriptSnapshot: () => null,
-    useSessionPendingMessages: () => sessionPendingState,
-    useSessionActionDrafts: () => sessionActionDraftsState,
-    useSessionLatestThinkingMessageId: () => null,
-    useSessionLatestThinkingMessageActivityAtMs: () => null,
-    useMessage: (_sessionId: string, messageId: string) => (sessionMessagesState.messages ?? []).find((message: any) => message.id === messageId) ?? null,
-    useSetting: (key: string) => settingValues[key],
-    getStorage: () => ({
-        getState: () => ({
-            sessionMessages: {
-                [sessionState?.id ?? 'session-1']: {
-                    messagesById: Object.fromEntries((sessionMessagesState.messages ?? []).map((message: any) => [message.id, message])),
-                    messagesMap: Object.fromEntries((sessionMessagesState.messages ?? []).map((message: any) => [message.id, message])),
-                },
-            },
-        }),
-    }),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => (
+    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListStorageMock(importOriginal)
+));
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: buildChatListItemsMock,
@@ -169,14 +122,12 @@ vi.mock('@/sync/sync', () => ({
 
 describe('ChatList rollback action', () => {
     beforeEach(() => {
-        capturedFlatListProps = null;
+        resetLegacyChatListHarness();
         capturedMessageViewProps = [];
         capturedTurnViewProps = [];
         buildChatListItemsMock.mockClear();
-        sessionMessagesState = { messages: [], isLoaded: true };
-        sessionPendingState = { messages: [], discarded: [] };
-        sessionActionDraftsState = [];
-        sessionState = {
+        legacyChatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
+        legacyChatListHarnessState.sessionState = {
             id: 'session-1',
             seq: 4,
             active: true,
@@ -187,17 +138,16 @@ describe('ChatList rollback action', () => {
             presence: 'online',
             thinking: false,
         };
-        for (const key of Object.keys(settingValues)) delete settingValues[key];
-        settingValues.transcriptGroupToolCalls = false;
-        settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-        settingValues.toolViewTimelineChromeMode = 'cards';
-        settingValues.transcriptListImplementation = 'flatlist_legacy';
+        legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+        legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+        legacyChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
+        legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
     });
 
     it('places rollback-to-point on active user messages and marks rolled-back messages historical', async () => {
-        settingValues.transcriptGroupingMode = 'linear';
-        sessionState = {
-            ...sessionState,
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
             metadata: {
                 flavor: 'codex',
                 codexBackendMode: 'appServer',
@@ -214,7 +164,7 @@ describe('ChatList rollback action', () => {
             { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
             { kind: 'agent-text', id: 'a2', localId: null, createdAt: 3, text: 'rolled back', seq: 3, isThinking: false },
         ];
-        sessionMessagesState = { isLoaded: true, messages };
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
         buildChatListItemsMock.mockImplementation((opts: any) => (
             (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
                 kind: 'message',
@@ -225,10 +175,7 @@ describe('ChatList rollback action', () => {
             }))
         ));
 
-        const { ChatList } = await import('./ChatList');
-        act(() => {
-            renderer.create(<ChatList session={sessionState} />);
-        });
+        const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
         expect(byId.get('u1')?.rollbackAction).toEqual({
@@ -239,17 +186,19 @@ describe('ChatList rollback action', () => {
         expect(byId.get('a1')?.rollbackAction ?? null).toBeNull();
         expect(byId.get('a2')?.rollbackAction ?? null).toBeNull();
         expect(byId.get('a2')?.historical).toBe(true);
+
+        await screen.unmount();
     }, 120000);
 
     it('does not place rollback actions on tool-call or agent messages when rollback-to-point is available', async () => {
-        settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
 
         const messages = [
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
             { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
             { kind: 'tool-call', id: 't1', localId: null, createdAt: 3, tool: { id: 'tool-1' }, children: [], seq: 3 },
         ];
-        sessionMessagesState = { isLoaded: true, messages };
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
         buildChatListItemsMock.mockImplementation((opts: any) => (
             (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
                 kind: 'message',
@@ -260,10 +209,7 @@ describe('ChatList rollback action', () => {
             }))
         ));
 
-        const { ChatList } = await import('./ChatList');
-        act(() => {
-            renderer.create(<ChatList session={sessionState} />);
-        });
+        const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
         expect(byId.get('u1')?.rollbackAction).toEqual({
@@ -272,10 +218,12 @@ describe('ChatList rollback action', () => {
         });
         expect(byId.get('a1')?.rollbackAction ?? null).toBeNull();
         expect(byId.get('t1')?.rollbackAction ?? null).toBeNull();
+
+        await screen.unmount();
     });
 
     it('keeps rollback-to-point attached to user messages when turn grouping is enabled', async () => {
-        settingValues.transcriptGroupingMode = 'turns';
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
 
         const messages = [
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
@@ -283,7 +231,7 @@ describe('ChatList rollback action', () => {
             { kind: 'user-text', id: 'u2', localId: null, createdAt: 3, text: 'second', seq: 3 },
             { kind: 'agent-text', id: 'a2', localId: null, createdAt: 4, text: 'reply two', seq: 4, isThinking: false },
         ];
-        sessionMessagesState = { isLoaded: true, messages };
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
         buildChatListItemsMock.mockImplementation((opts: any) => {
             if (opts?.includeCommittedMessages === false) return [];
             return messages.map((message) => ({
@@ -295,10 +243,7 @@ describe('ChatList rollback action', () => {
             }));
         });
 
-        const { ChatList } = await import('./ChatList');
-        act(() => {
-            renderer.create(<ChatList session={sessionState} />);
-        });
+        const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
         expect(byId.get('u1')?.rollbackAction).toEqual({
@@ -310,12 +255,14 @@ describe('ChatList rollback action', () => {
             restoredDraftText: 'second',
         });
         expect(byId.get('a2')?.rollbackAction ?? null).toBeNull();
+
+        await screen.unmount();
     });
 
     it('shows rollback for older Codex app-server sessions that only have generic codex control metadata', async () => {
-        settingValues.transcriptGroupingMode = 'linear';
-        sessionState = {
-            ...sessionState,
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
             metadata: {
                 flavor: 'codex',
                 codexSessionId: 'thread_123',
@@ -332,7 +279,7 @@ describe('ChatList rollback action', () => {
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
             { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
         ];
-        sessionMessagesState = { isLoaded: true, messages };
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
         buildChatListItemsMock.mockImplementation((opts: any) => (
             (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
                 kind: 'message',
@@ -343,22 +290,21 @@ describe('ChatList rollback action', () => {
             }))
         ));
 
-        const { ChatList } = await import('./ChatList');
-        act(() => {
-            renderer.create(<ChatList session={sessionState} />);
-        });
+        const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
         expect(byId.get('u1')?.rollbackAction).toEqual({
             target: { type: 'before_user_message', userMessageSeq: 1 },
             restoredDraftText: 'first',
         });
+
+        await screen.unmount();
     });
 
     it('does not show rollback for inactive sessions even when Codex app-server metadata is present', async () => {
-        settingValues.transcriptGroupingMode = 'linear';
-        sessionState = {
-            ...sessionState,
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
             active: false,
             metadata: {
                 flavor: 'codex',
@@ -370,7 +316,7 @@ describe('ChatList rollback action', () => {
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
             { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
         ];
-        sessionMessagesState = { isLoaded: true, messages };
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
         buildChatListItemsMock.mockImplementation((opts: any) => (
             (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
                 kind: 'message',
@@ -381,19 +327,18 @@ describe('ChatList rollback action', () => {
             }))
         ));
 
-        const { ChatList } = await import('./ChatList');
-        act(() => {
-            renderer.create(<ChatList session={sessionState} />);
-        });
+        const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
         expect(byId.get('u1')?.rollbackAction ?? null).toBeNull();
+
+        await screen.unmount();
     });
 
     it('passes historical rollback state through to nested message views when turn grouping is enabled', async () => {
-        settingValues.transcriptGroupingMode = 'turns';
-        sessionState = {
-            ...sessionState,
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
             metadata: {
                 flavor: 'codex',
                 codexBackendMode: 'appServer',
@@ -411,7 +356,7 @@ describe('ChatList rollback action', () => {
             { kind: 'user-text', id: 'u2', localId: null, createdAt: 3, text: 'second', seq: 3 },
             { kind: 'agent-text', id: 'a2', localId: null, createdAt: 4, text: 'reply two', seq: 4, isThinking: false },
         ];
-        sessionMessagesState = { isLoaded: true, messages };
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
         buildChatListItemsMock.mockImplementation((opts: any) => {
             if (opts?.includeCommittedMessages === false) return [];
             return messages.map((message) => ({
@@ -423,15 +368,14 @@ describe('ChatList rollback action', () => {
             }));
         });
 
-        const { ChatList } = await import('./ChatList');
-        act(() => {
-            renderer.create(<ChatList session={sessionState} />);
-        });
+        const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
         expect(byId.get('u1')?.historical).toBe(false);
         expect(byId.get('a1')?.historical).toBe(false);
         expect(byId.get('u2')?.historical).toBe(true);
         expect(byId.get('a2')?.historical).toBe(true);
+
+        await screen.unmount();
     });
 });

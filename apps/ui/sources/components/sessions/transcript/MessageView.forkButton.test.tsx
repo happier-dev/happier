@@ -1,6 +1,9 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,65 +21,83 @@ let sessionMetadata: any = { machineId: 'm1' };
 let projectForSession: any = null;
 let machinesState: Record<string, any> = {};
 
-vi.mock('react-native', async () => ({
-  Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-  Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
-  useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
-  View: 'View',
-  Text: 'Text',
-  ActivityIndicator: 'ActivityIndicator',
-  Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
+function flattenStyleProp(style: any): any {
+  if (!style) return style;
+  if (Array.isArray(style)) {
+    return Object.assign({}, ...style.filter(Boolean).map(flattenStyleProp));
+  }
+  if (typeof style === 'object') return style;
+  return {};
+}
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        success: '#0a0',
-        text: '#111',
-        textSecondary: '#555',
-        tint: '#06f',
-        card: '#fff',
-        border: '#ddd',
-        surface: '#fff',
-        surfaceHigh: '#f5f5f5',
-        surfaceHighest: '#fff',
-        divider: '#ddd',
-        overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-        shadow: { color: '#000' },
-        input: { background: '#f7f7f7' },
-        userMessageBackground: '#eef',
-        agentEventText: '#777',
-        warning: '#f90',
-      },
-    },
-  }),
-  StyleSheet: {
-    create: (input: any) => {
-      const theme = {
-        colors: {
-          success: '#0a0',
-          text: '#111',
-          textSecondary: '#555',
-          tint: '#06f',
-          card: '#fff',
-          border: '#ddd',
-          surface: '#fff',
-          surfaceHigh: '#f5f5f5',
-          surfaceHighest: '#fff',
-          divider: '#ddd',
-          overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
-          shadow: { color: '#000' },
-          input: { background: '#f7f7f7' },
-          userMessageBackground: '#eef',
-          agentEventText: '#777',
-          warning: '#f90',
-        },
-      };
-      return typeof input === 'function' ? input(theme, {}) : input;
-    },
-  },
-}));
+function getActionContainer(screen: any, messageId: string) {
+  const forkButton = screen.findByTestId(`transcript-message-fork:${messageId}`);
+  expect(forkButton).toBeTruthy();
+  const actionContainer = findAncestor(forkButton, (node: any) => {
+    const style = flattenStyleProp(node.props?.style);
+    return (
+      style?.position === 'absolute' &&
+      style?.flexDirection === 'row' &&
+      style?.justifyContent === 'flex-end'
+    );
+  });
+  expect(actionContainer).toBeTruthy();
+  return actionContainer!;
+}
+
+function assertForkButtonPrecedesCopyButton(screen: any, messageId: string) {
+  const forkButton = screen.findByTestId(`transcript-message-fork:${messageId}`);
+  const copyButton = screen.findByTestId(`transcript-message-copy:${messageId}`);
+  const actionContainer = getActionContainer(screen, messageId);
+
+  expect(forkButton).toBeTruthy();
+  expect(copyButton).toBeTruthy();
+  expect(forkButton?.props.accessibilityLabel).toBe('session.forking.forkFromMessageA11y');
+  expect(copyButton?.props.accessibilityLabel).toBe('common.copy');
+
+  const actionNodes = actionContainer.findAll(
+    (node: any) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('transcript-message-'),
+  );
+  const actionTestIds = actionNodes.map((node: any) => node.props.testID);
+  const forkIndex = actionTestIds.indexOf(`transcript-message-fork:${messageId}`);
+  const copyIndex = actionTestIds.indexOf(`transcript-message-copy:${messageId}`);
+  expect(forkIndex).toBeGreaterThanOrEqual(0);
+  expect(copyIndex).toBeGreaterThanOrEqual(0);
+  expect(forkIndex).toBeLessThan(copyIndex);
+}
+
+function findAncestor(instance: any, predicate: (node: any) => boolean) {
+  let current = instance?.parent ?? null;
+  while (current) {
+    if (predicate(current)) return current;
+    current = current.parent ?? null;
+  }
+  return null;
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
+                    useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+                    Platform: {
+                      OS: 'web',
+                      select: <T,>(options: { web?: T; default?: T; native?: T; ios?: T; android?: T }) =>
+                        options?.web ?? options?.default ?? options?.native ?? options?.ios ?? options?.android,
+                    },
+                    View: ({ children, style, ...props }: any) => React.createElement('View', { ...props, style: flattenStyleProp(style) }, children),
+                    Text: 'Text',
+                    ActivityIndicator: 'ActivityIndicator',
+                    Pressable: 'Pressable',
+                  }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
   MarkdownView: (props: any) => React.createElement('MarkdownView', props),
@@ -86,13 +107,19 @@ vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
   shouldShowMessageCopyButton: () => copyButtonsVisible,
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  return createTextModuleMock({
+    translate: (key: string) => key,
+  });
+});
 
-vi.mock('@/modal', () => ({
-  Modal: { alert: (...args: any[]) => modalAlertSpy(...args) },
-}));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  const modalMock = createModalModuleMock();
+  modalMock.spies.alert.mockImplementation((...args: any[]) => modalAlertSpy(...args));
+  return modalMock.module;
+});
 
 vi.mock('@/sync/ops', () => ({
   forkSession: (...args: any[]) => forkSessionSpy(...args),
@@ -106,30 +133,33 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSetting: (key: string) => {
-    if (key === 'sessionReplayEnabled') return replayEnabled;
-    if (key === 'sessionThinkingDisplayMode') return 'inline';
-    if (key === 'toolViewTimelineChromeMode') return 'cards';
-    return null;
-  },
-  useSession: () => ({
-    id: 's1',
-    seq: 1,
-    createdAt: 0,
-    updatedAt: 0,
-    active: true,
-    activeAt: 0,
-    metadata: sessionMetadata,
-    metadataVersion: 1,
-    agentState: null,
-    agentStateVersion: 1,
-    thinking: false,
-    thinkingAt: 0,
-    presence: 'online',
-  }),
-  storage: {
-    getState: () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+  const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+  return createStorageModuleStub({
+    useSetting: (key: string) => {
+      if (key === 'sessionReplayEnabled') return replayEnabled;
+      if (key === 'sessionThinkingDisplayMode') return 'inline';
+      if (key === 'toolViewTimelineChromeMode') return 'cards';
+      return null;
+    },
+    useSession: () => ({
+      id: 's1',
+      seq: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      active: true,
+      activeAt: 0,
+      metadata: sessionMetadata,
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      thinking: false,
+      thinkingAt: 0,
+      presence: 'online',
+    }),
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesReducerState: () => ({} as any),
+    storage: createStorageStoreMock({
       sessions: {
         s1: {
           id: 's1',
@@ -141,21 +171,25 @@ vi.mock('@/sync/domains/state/storage', () => ({
       machines: machinesState,
       getProjectForSession: (sessionId: string) => (sessionId === 's1' ? projectForSession : null),
       updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
-    }),
-  },
-}));
+    } as any),
+  });
+});
 
-vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  const routerMock = createExpoRouterMock();
+  routerMock.spies.push.mockImplementation((value: unknown) => routerPushSpy(value));
+  return routerMock.module;
+});
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(),
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', async () => {
+  const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+  return createExpoVectorIconsMock();
+});
 
 vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
   StructuredMessageBlock: () => null,
@@ -219,29 +253,23 @@ describe('MessageView (fork button)', () => {
     machinesState = {};
   });
 
+  afterEach(() => {
+    standardCleanup();
+  });
+
   it('does not use pointerEvents prop on web when actions are hidden (prevents click interception)', async () => {
     copyButtonsVisible = false;
     const { MessageView } = await import('./MessageView');
 
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const actionContainers = tree!.root.findAll(
-      (node: any) => node.type === 'View' && node.props.accessibilityElementsHidden === true,
-    );
-    expect(actionContainers).toHaveLength(1);
-
-    const actionContainer = actionContainers[0]!;
+    const actionContainer = getActionContainer(screen, 'm1');
     expect(actionContainer.props.pointerEvents).toBeUndefined();
 
     const style = actionContainer.props.style;
-    const flattened = Array.isArray(style)
-      ? Object.assign({}, ...style.filter(Boolean))
-      : style;
+    const flattened = flattenStyleProp(style);
     expect(flattened.pointerEvents).toBe('none');
   });
 
@@ -249,18 +277,12 @@ describe('MessageView (fork button)', () => {
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm2', createdAt: 2, text: 'hello', isThinking: false, seq: 6 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const webHoverContainers = tree!.root.findAll(
-      (node: any) => node.type === 'View' && typeof node.props.onPointerEnter === 'function',
-    );
-    expect(webHoverContainers.length).toBeGreaterThan(0);
-    for (const container of webHoverContainers) {
-      expect(container.props.pointerEvents).toBeUndefined();
-    }
+    const actionContainer = getActionContainer(screen, 'm2');
+    const rowContainer = findAncestor(actionContainer, (node: any) => typeof node.props?.onPointerEnter === 'function');
+    expect(rowContainer).toBeTruthy();
+    expect(rowContainer?.props.pointerEvents).toBeUndefined();
   });
 
   it('keeps visible action controls interactive without forcing global overlay priority', async () => {
@@ -269,23 +291,13 @@ describe('MessageView (fork button)', () => {
 
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const actionContainers = tree!.root.findAll(
-      (node: any) => node.type === 'View' && node.props.accessibilityElementsHidden === false,
-    );
-    expect(actionContainers).toHaveLength(1);
-
-    const actionContainer = actionContainers[0]!;
+    const actionContainer = getActionContainer(screen, 'm1');
     expect(actionContainer.props.pointerEvents).toBeUndefined();
 
     const style = actionContainer.props.style;
-    const flattened = Array.isArray(style)
-      ? Object.assign({}, ...style.filter(Boolean))
-      : style;
+    const flattened = flattenStyleProp(style);
     expect(flattened.pointerEvents).toBe('auto');
     expect(flattened.zIndex).toBeUndefined();
   });
@@ -296,21 +308,9 @@ describe('MessageView (fork button)', () => {
 
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const pressables = tree!.root.findAllByType('Pressable' as any);
-    const a11y = pressables.map((p) => p.props.accessibilityLabel).filter(Boolean);
-    expect(a11y).toContain('session.forking.forkFromMessageA11y');
-    expect(a11y).toContain('common.copy');
-
-    const forkIndex = a11y.indexOf('session.forking.forkFromMessageA11y');
-    const copyIndex = a11y.indexOf('common.copy');
-    expect(forkIndex).toBeGreaterThanOrEqual(0);
-    expect(copyIndex).toBeGreaterThanOrEqual(0);
-    expect(forkIndex).toBeLessThan(copyIndex);
+    assertForkButtonPrecedesCopyButton(screen, 'm1');
   });
 
   it('renders fork button for user-text messages (left of copy)', async () => {
@@ -319,21 +319,9 @@ describe('MessageView (fork button)', () => {
 
     const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const pressables = tree!.root.findAllByType('Pressable' as any);
-    const a11y = pressables.map((p) => p.props.accessibilityLabel).filter(Boolean);
-    expect(a11y).toContain('session.forking.forkFromMessageA11y');
-    expect(a11y).toContain('common.copy');
-
-    const forkIndex = a11y.indexOf('session.forking.forkFromMessageA11y');
-    const copyIndex = a11y.indexOf('common.copy');
-    expect(forkIndex).toBeGreaterThanOrEqual(0);
-    expect(copyIndex).toBeGreaterThanOrEqual(0);
-    expect(forkIndex).toBeLessThan(copyIndex);
+    assertForkButtonPrecedesCopyButton(screen, 'm1');
   });
 
   it('does not render fork button when message seq is 0 (uncommitted)', async () => {
@@ -341,12 +329,9 @@ describe('MessageView (fork button)', () => {
 
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 0 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const pressables = screen.findAllByType('Pressable' as any);
     const a11y = pressables.map((p) => p.props.accessibilityLabel).filter(Boolean);
     expect(a11y).not.toContain('session.forking.forkFromMessageA11y');
   });
@@ -373,20 +358,14 @@ describe('MessageView (fork button)', () => {
 
     const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
-    await act(async () => {
-      await forkButton.props.onPress();
-    });
+    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
+    await screen.pressByTestIdAsync('transcript-message-fork:m1');
 
     expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
       parentSessionId: 's1',
       forkPoint: { type: 'seq', upToSeqInclusive: 5 },
-      machineId: 'm-target',
       serverId: 'server-a',
     }));
     expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1');
@@ -408,21 +387,16 @@ describe('MessageView (fork button)', () => {
 
     const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
-    await act(async () => {
-      await forkButton.props.onPress();
-    });
+    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
+    await screen.pressByTestIdAsync('transcript-message-fork:m1');
 
     expect(patchSessionMetadataWithRetrySpy).not.toHaveBeenCalled();
 
     await act(async () => {
       resolveVisible?.();
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
 
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith(
@@ -438,14 +412,10 @@ describe('MessageView (fork button)', () => {
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const pressables = tree!.root.findAllByType('Pressable' as any);
-    const a11y = pressables.map((p) => p.props.accessibilityLabel).filter(Boolean);
-    expect(a11y).toContain('session.forking.forkFromMessageA11y');
+    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
+    expect(screen.findByTestId('transcript-message-fork:m1')?.props.accessibilityLabel).toBe('session.forking.forkFromMessageA11y');
   });
 
   it('still delegates fork when session metadata machineId is missing', async () => {
@@ -454,15 +424,10 @@ describe('MessageView (fork button)', () => {
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
-    await act(async () => {
-      await forkButton.props.onPress();
-    });
+    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
+    await screen.pressByTestIdAsync('transcript-message-fork:m1');
 
     expect(modalAlertSpy).not.toHaveBeenCalled();
     expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -482,22 +447,20 @@ describe('MessageView (fork button)', () => {
     const { MessageView } = await import('./MessageView');
     const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
-    });
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
+    expect(screen.findByTestId('transcript-message-fork:m1')).toBeTruthy();
     act(() => {
-      void forkButton.props.onPress();
+      screen.pressByTestId('transcript-message-fork:m1');
     });
 
-    const loaders = tree!.root.findAllByType('ActivityIndicator' as any);
-    expect(loaders.length).toBeGreaterThan(0);
+    const forkButton = screen.findByTestId('transcript-message-fork:m1');
+    expect(forkButton).toBeTruthy();
+    expect(forkButton!.findByType('ActivityIndicator' as any)).toBeTruthy();
 
     await act(async () => {
       resolveFork?.({ ok: true, childSessionId: 'child-loading' });
-      await Promise.resolve();
+      await flushHookEffects({ cycles: 1, turns: 1 });
     });
   });
 });

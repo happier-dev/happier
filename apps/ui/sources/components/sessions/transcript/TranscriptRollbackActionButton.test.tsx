@@ -1,47 +1,56 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const executeSpy = vi.fn();
-const modalAlertSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
 const createDefaultActionExecutorSpy = vi.fn((_: unknown) => ({
     execute: (actionId: unknown, input: unknown, ctx: unknown) => executeSpy(actionId, input, ctx),
 }));
+const modalMockRuntime = vi.hoisted(() => ({ current: null as any }));
 
-vi.mock('react-native', async () => ({
-    Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    ActivityIndicator: 'ActivityIndicator',
-    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
+                        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                        ActivityIndicator: 'ActivityIndicator',
+                        AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+                    }
+    );
+});
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 textSecondary: '#555',
             },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) => (typeof input === 'function' ? input({ colors: { textSecondary: '#555' } }, {}) : input),
-    },
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: (title: unknown, message: unknown) => modalAlertSpy(title, message) },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMockRuntime.current = modalMock;
+    return modalMock.module;
+});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts),
@@ -51,42 +60,41 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionI
     resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => `server:${sessionId}`,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
-        }),
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            storage: createStorageStoreMock({
+                updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
+            }),
+        },
+    });
+});
 
 describe('TranscriptRollbackActionButton', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         executeSpy.mockReset();
-        modalAlertSpy.mockReset();
         updateSessionDraftSpy.mockReset();
         createDefaultActionExecutorSpy.mockClear();
+        modalMockRuntime.current?.spies.alert?.mockReset();
     });
 
     it('executes the latest-turn rollback action for the session', async () => {
         executeSpy.mockResolvedValueOnce({ ok: true, result: { ok: true } });
 
         const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <TranscriptRollbackActionButton
-                    sessionId="session-1"
-                    testID="rollback-action"
-                />,
-            );
-        });
-
-        const button = tree!.root.findByType('Pressable');
-
-        await act(async () => {
-            await button.props.onPress();
-        });
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+            />,
+        );
+        await screen.pressByTestIdAsync('rollback-action');
 
         expect(executeSpy).toHaveBeenCalledWith(
             'session.rollback',
@@ -99,60 +107,44 @@ describe('TranscriptRollbackActionButton', () => {
                 surface: 'ui_button',
             },
         );
-        expect(modalAlertSpy).not.toHaveBeenCalled();
-        expect(button.props.accessibilityLabel).toBe('session.rollback.latestTurnA11y');
+        expect(modalMockRuntime.current.spies.alert).not.toHaveBeenCalled();
+        expect(screen.findByTestId('rollback-action')?.props.accessibilityLabel).toBe('session.rollback.latestTurnA11y');
         expect(createDefaultActionExecutorSpy).toHaveBeenCalledWith(expect.objectContaining({
             resolveServerIdForSessionId: expect.any(Function),
         }));
+        await screen.unmount();
     }, 120000);
 
     it('alerts when the underlying rollback RPC result is not ok', async () => {
         executeSpy.mockResolvedValueOnce({ ok: true, result: { ok: false, errorMessage: 'nope' } });
 
         const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+            />,
+        );
+        await screen.pressByTestIdAsync('rollback-action');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <TranscriptRollbackActionButton
-                    sessionId="session-1"
-                    testID="rollback-action"
-                />,
-            );
-        });
-
-        const button = tree!.root.findByType('Pressable');
-
-        await act(async () => {
-            await button.props.onPress();
-        });
-
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'nope');
+        expect(modalMockRuntime.current.spies.alert).toHaveBeenCalledWith('common.error', 'nope');
+        await screen.unmount();
     });
 
     it('prefills the session draft after rollback-to-point succeeds', async () => {
         executeSpy.mockResolvedValueOnce({ ok: true, result: { ok: true } });
 
         const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <TranscriptRollbackActionButton
-                    sessionId="session-1"
-                    testID="rollback-action"
-                    target={{ type: 'before_user_message', userMessageSeq: 7 }}
-                    restoredDraftText="edit this prompt"
-                />,
-            );
-        });
-
-        const button = tree!.root.findByType('Pressable');
-        expect(button.props.accessibilityLabel).toBe('session.rollback.beforeUserMessageA11y');
-
-        await act(async () => {
-            await button.props.onPress();
-        });
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+                target={{ type: 'before_user_message', userMessageSeq: 7 }}
+                restoredDraftText="edit this prompt"
+            />,
+        );
+        expect(screen.findByTestId('rollback-action')?.props.accessibilityLabel).toBe('session.rollback.beforeUserMessageA11y');
+        await screen.pressByTestIdAsync('rollback-action');
 
         expect(executeSpy).toHaveBeenCalledWith(
             'session.rollback',
@@ -166,6 +158,7 @@ describe('TranscriptRollbackActionButton', () => {
             },
         );
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('session-1', 'edit this prompt');
+        await screen.unmount();
     });
 
 });

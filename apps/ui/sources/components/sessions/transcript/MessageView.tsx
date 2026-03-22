@@ -56,6 +56,7 @@ export const MessageView = (props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
+  layoutContext?: 'transcript' | 'tool_calls_group';
   forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId?: string | null;
   thinkingExpanded?: boolean;
@@ -78,6 +79,7 @@ export const MessageView = (props: {
           message={props.message}
           metadata={props.metadata}
           sessionId={props.sessionId}
+          layoutContext={props.layoutContext ?? 'transcript'}
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           activeThinkingMessageId={props.activeThinkingMessageId ?? null}
           thinkingExpanded={props.thinkingExpanded}
@@ -97,6 +99,7 @@ function RenderBlock(props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
+  layoutContext: 'transcript' | 'tool_calls_group';
   forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId: string | null;
   thinkingExpanded?: boolean;
@@ -144,6 +147,7 @@ function RenderBlock(props: {
         message={props.message}
         metadata={props.metadata}
         sessionId={props.sessionId}
+        layoutContext={props.layoutContext}
         forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
         activeThinkingMessageId={props.activeThinkingMessageId}
         getMessageById={props.getMessageById}
@@ -436,6 +440,7 @@ function UserTextBlock(props: {
           ) : null}
           <CopyMessageButton
             markdown={copyText}
+            testID={`transcript-message-copy:${props.message.id ?? props.message.localId}`}
             onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
           />
@@ -844,6 +849,7 @@ function ToolCallBlock(props: {
   message: ToolCallMessage;
   metadata: Metadata | null;
   sessionId: string;
+  layoutContext: 'transcript' | 'tool_calls_group';
   forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId: string | null;
   getMessageById?: (id: string) => Message | null;
@@ -887,7 +893,10 @@ function ToolCallBlock(props: {
     <View
       style={[
         styles.toolContainer,
-        toolViewTimelineChromeMode === 'activity_feed' ? styles.toolContainerFeed : styles.toolContainerCards,
+        props.layoutContext === 'tool_calls_group' ? styles.toolContainerEmbedded : null,
+        toolViewTimelineChromeMode === 'activity_feed'
+          ? (props.layoutContext === 'tool_calls_group' ? styles.toolContainerFeedEmbedded : styles.toolContainerFeed)
+          : styles.toolContainerCards,
       ]}
     >
       {structuredNode}
@@ -986,6 +995,9 @@ const styles = StyleSheet.create((theme) => ({
   toolContainer: {
     marginHorizontal: 16,
   },
+  toolContainerEmbedded: {
+    marginHorizontal: 0,
+  },
   toolActionContainer: {
     alignItems: 'flex-end',
     paddingBottom: 6,
@@ -995,6 +1007,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   toolContainerFeed: {
     paddingBottom: 22,
+  },
+  toolContainerFeedEmbedded: {
+    paddingBottom: 0,
   },
   messageActionContainer: {
     position: 'absolute',

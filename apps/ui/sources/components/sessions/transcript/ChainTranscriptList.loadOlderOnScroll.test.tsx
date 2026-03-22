@@ -1,6 +1,8 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+
+import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,63 +44,54 @@ vi.mock('@shopify/flash-list', () => ({
     }),
 }));
 
-function createDeferred<T>() {
-    let resolve!: (value: T) => void;
-    let reject!: (reason?: unknown) => void;
-    const promise = new Promise<T>((res, rej) => {
-        resolve = res;
-        reject = rej;
-    });
-    return { promise, resolve, reject };
-}
-
 describe('ChainTranscriptList', () => {
+    async function renderChainTranscriptList(props: React.ComponentProps<typeof import('./ChainTranscriptList')['ChainTranscriptList']>) {
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+        return renderScreen(React.createElement(ChainTranscriptList, props));
+    }
+
+    function getFlashList(screen: Awaited<ReturnType<typeof renderChainTranscriptList>>) {
+        return screen.findByType('FlashList' as any);
+    }
+
+    async function settleListEffects(turns = 1) {
+        await flushHookEffects({ cycles: 1, turns });
+    }
+
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('does not pass deprecated estimatedItemSize to FlashList v2', async () => {
         scrollToIndexShouldReject = false;
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = screen.findByType('FlashList' as any);
         expect(list.props.estimatedItemSize).toBeUndefined();
         expect(list.props.overrideProps).toBeUndefined();
     });
 
     it('pins to the last transcript item instead of scrolling into the footer on first layout', async () => {
         scrollToIndexShouldReject = false;
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    footer: React.createElement('Footer'),
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            footer: React.createElement('Footer'),
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
 
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 300 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 300 } } });
             list.props.onContentSizeChange(0, 600);
-            await Promise.resolve();
+            await settleListEffects();
         });
 
         expect(scrollToIndexSpy).toHaveBeenCalledWith(
@@ -113,32 +106,23 @@ describe('ChainTranscriptList', () => {
 
     it('falls back to an estimated last-item offset when scrollToIndex cannot measure yet', async () => {
         scrollToIndexShouldReject = true;
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [
-                        { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'first', isThinking: false },
-                        { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'second', isThinking: false },
-                    ],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    footer: React.createElement('Footer'),
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [
+                { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'first', isThinking: false },
+                { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'second', isThinking: false },
+            ],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            footer: React.createElement('Footer'),
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
 
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 300 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 300 } } });
             list.props.onContentSizeChange(0, 600);
-            await Promise.resolve();
-            await Promise.resolve();
+            await settleListEffects(2);
         });
 
         expect(scrollToIndexSpy).toHaveBeenCalledWith(
@@ -163,27 +147,23 @@ describe('ChainTranscriptList', () => {
         const deferred = createDeferred<{ loaded: number; hasMore: boolean; status: 'loaded' }>();
         const loadOlder = vi.fn(async () => await deferred.promise);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    loadOlder,
-                }),
-            );
-            await Promise.resolve();
-        });
+        const screen = await renderScreen(
+            React.createElement(ChainTranscriptList, {
+                sessionId: 's1',
+                messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+                metadata: null,
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                loadOlder,
+            }),
+        );
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
         expect(typeof list.props.onScroll).toBe('function');
         expect(typeof list.props.onLayout).toBe('function');
         expect(typeof list.props.onContentSizeChange).toBe('function');
 
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 500 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
             list.props.onContentSizeChange(0, 1000);
             list.props.onScroll({
                 nativeEvent: {
@@ -199,15 +179,11 @@ describe('ChainTranscriptList', () => {
                     layoutMeasurement: { height: 500 },
                 },
             });
-            await Promise.resolve();
+            await settleListEffects();
         });
 
         expect(loadOlder).toHaveBeenCalledTimes(1);
-
         deferred.resolve({ loaded: 1, hasMore: true, status: 'loaded' });
-        act(() => {
-            tree.unmount();
-        });
     });
 
     it('loads older when scrolled near the top (even if onStartReached is not fired)', async () => {
@@ -216,27 +192,21 @@ describe('ChainTranscriptList', () => {
         const deferred = createDeferred<{ loaded: number; hasMore: boolean; status: 'loaded' }>();
         const loadOlder = vi.fn(async () => await deferred.promise);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    loadOlder,
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder,
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
         expect(typeof list.props.onScroll).toBe('function');
         expect(typeof list.props.onLayout).toBe('function');
         expect(typeof list.props.onContentSizeChange).toBe('function');
 
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 500 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
             list.props.onContentSizeChange(0, 1000);
             list.props.onScroll({
                 nativeEvent: {
@@ -245,7 +215,7 @@ describe('ChainTranscriptList', () => {
                     layoutMeasurement: { height: 500 },
                 },
             });
-            await Promise.resolve();
+            await settleListEffects();
             expect(loadOlder).toHaveBeenCalledTimes(1);
             const loadOlderPromise = loadOlder.mock.results[0]?.value as Promise<unknown> | undefined;
             expect(loadOlderPromise).toBeInstanceOf(Promise);
@@ -253,13 +223,10 @@ describe('ChainTranscriptList', () => {
             if (loadOlderPromise) {
                 await loadOlderPromise;
             }
-            await Promise.resolve();
+            await settleListEffects();
         });
 
         expect(loadOlder).toHaveBeenCalledTimes(1);
-        act(() => {
-            tree.unmount();
-        });
     });
 
     it('loads older on web-like scroll events where layout/content sizes are not present', async () => {
@@ -268,30 +235,24 @@ describe('ChainTranscriptList', () => {
         const deferred = createDeferred<{ loaded: number; hasMore: boolean; status: 'loaded' }>();
         const loadOlder = vi.fn(async () => await deferred.promise);
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    loadOlder,
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder,
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
         expect(typeof list.props.onScroll).toBe('function');
         expect(typeof list.props.onLayout).toBe('function');
         expect(typeof list.props.onContentSizeChange).toBe('function');
 
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 500 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
             list.props.onContentSizeChange(0, 1000);
             list.props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } });
-            await Promise.resolve();
+            await settleListEffects();
             expect(loadOlder).toHaveBeenCalledTimes(1);
             const loadOlderPromise = loadOlder.mock.results[0]?.value as Promise<unknown> | undefined;
             expect(loadOlderPromise).toBeInstanceOf(Promise);
@@ -299,37 +260,27 @@ describe('ChainTranscriptList', () => {
             if (loadOlderPromise) {
                 await loadOlderPromise;
             }
-            await Promise.resolve();
+            await settleListEffects();
         });
 
         expect(loadOlder).toHaveBeenCalledTimes(1);
-        act(() => {
-            tree.unmount();
-        });
     });
 
     it('does not load older while pinned at the bottom of a short transcript', async () => {
         scrollToIndexShouldReject = false;
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
         const loadOlder = vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const }));
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    loadOlder,
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder,
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 500 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
             list.props.onContentSizeChange(0, 600);
             list.props.onScroll({
                 nativeEvent: {
@@ -338,13 +289,10 @@ describe('ChainTranscriptList', () => {
                     layoutMeasurement: { height: 500 },
                 },
             });
-            await Promise.resolve();
+            await settleListEffects();
         });
 
         expect(loadOlder).not.toHaveBeenCalled();
-        act(() => {
-            tree.unmount();
-        });
     });
 
     it('preserves the viewport when older messages prepend above the current position on web', async () => {
@@ -360,23 +308,17 @@ describe('ChainTranscriptList', () => {
             return { loaded: 5, hasMore: true, status: 'loaded' as const };
         });
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ChainTranscriptList, {
-                    sessionId: 's1',
-                    messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-                    metadata: null,
-                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
-                    loadOlder,
-                }),
-            );
-            await Promise.resolve();
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder,
         });
 
-        const list = tree.root.findByType('FlashList' as any);
+        const list = getFlashList(screen);
         await act(async () => {
-            list.props.onLayout({ nativeEvent: { layout: { height: 500 } } });
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
             list.props.onContentSizeChange(0, 1000);
             list.props.onScroll({
                 nativeEvent: {
@@ -387,15 +329,10 @@ describe('ChainTranscriptList', () => {
                 },
                 target: scrollEl,
             });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
+            await settleListEffects(3);
         });
 
         expect(loadOlder).toHaveBeenCalledTimes(1);
         expect(scrollEl.scrollTop).toBe(400);
-        act(() => {
-            tree.unmount();
-        });
     });
 });

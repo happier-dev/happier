@@ -3,6 +3,7 @@ import { ActivityIndicator, View, type LayoutChangeEvent, type NativeScrollEvent
 import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { mergeTranscriptCommittedAndDraftMessages } from '@/sync/domains/messages/mergeTranscriptCommittedAndDraftMessages';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
@@ -117,7 +118,16 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         if (!Array.isArray(props.draftMessages) || props.draftMessages.length === 0) {
             return props.messages;
         }
-        return [...props.messages, ...props.draftMessages];
+        const committedIds = props.messages.map((message) => message.id);
+        const committedMessagesById = buildMessagesById(props.messages);
+        const merged = mergeTranscriptCommittedAndDraftMessages({
+            committedIds,
+            committedMessagesById,
+            draftMessages: props.draftMessages.filter(
+                (message): message is Extract<Message, { kind: 'agent-text' }> => message.kind === 'agent-text',
+            ),
+        });
+        return merged.ids.map((id) => merged.messagesById[id]!).filter(Boolean);
     }, [props.draftMessages, props.messages]);
 
     const messageIdsOldestFirst = React.useMemo(() => mergedMessages.map((message) => message.id), [mergedMessages]);

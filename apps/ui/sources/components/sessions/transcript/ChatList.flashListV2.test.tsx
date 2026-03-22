@@ -1,29 +1,89 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import {
+    flashListChatListHarnessState,
+    createFlashListChatListWebElement,
+    createFlashListChatListWebScroller,
+    FlashListChatListWebElement,
+    renderFlashListChatList,
+    triggerFlashListChatListInitialFill,
+    triggerFlashListChatListScroll,
+    triggerFlashListChatListStartReached,
+    withRenderedFlashListChatListWebScroller,
+    withFlashListChatListWebScrollerDom,
+} from '@/dev/testkit/harness/chatListHarness';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import type { ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+
+import { buildChatListNativeId } from './chatListNativeId';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedFlashListProps: any = null;
 let renderedFlatListCount = 0;
 let flashListRefHandle: any = null;
-const mountedTrees: renderer.ReactTestRenderer[] = [];
+const mountedTrees: ReactTestRenderer[] = [];
 
-function createTree(element: React.ReactElement): renderer.ReactTestRenderer {
-    const tree = renderer.create(element);
-    mountedTrees.push(tree);
-    return tree;
+type FlashListFlushOptions = {
+    turns?: number;
+    frames?: number;
+    advanceTimersMs?: number;
+};
+
+function getCapturedFlashListProps(): any {
+    const props = flashListChatListHarnessState.flashListProps ?? capturedFlashListProps;
+    expect(props).toBeTruthy();
+    return props;
 }
 
-async function flushAnimationFrame(): Promise<void> {
-    const raf = (globalThis as any).requestAnimationFrame as undefined | ((cb: FrameRequestCallback) => unknown);
-    if (typeof raf === 'function') {
-        await new Promise<void>((resolve) => {
-            raf(() => resolve());
-        });
-        return;
-    }
-    await Promise.resolve();
+async function renderTrackedFlashListChatList(element: React.ReactElement) {
+    const screen = await renderFlashListChatList(element, {
+        flushOptions: { cycles: 0 },
+    });
+    mountedTrees.push(screen.tree);
+    return screen;
+}
+
+function expectScreenHasTestId(screen: { findByTestId: (testID: string) => unknown }, testID: string): void {
+    expect(screen.findByTestId(testID)).toBeTruthy();
+}
+
+async function primeFlashListMetrics(
+    layoutHeight: number,
+    contentHeight: number,
+    options: FlashListFlushOptions = {},
+): Promise<void> {
+    await triggerFlashListChatListInitialFill({
+        layoutHeight,
+        contentHeight,
+        flushOptions: {
+            turns: options.turns ?? 2,
+            frames: options.frames,
+            advanceTimersMs: options.advanceTimersMs,
+        },
+    });
+}
+
+async function scrollFlashListTo(contentOffsetY: number, options: FlashListFlushOptions & { trusted?: boolean } = {}): Promise<void> {
+    await triggerFlashListChatListScroll(
+        contentOffsetY,
+        options.trusted === false ? {} : { isTrusted: true },
+        {
+            turns: options.turns ?? 1,
+            frames: options.frames,
+            advanceTimersMs: options.advanceTimersMs,
+        },
+    );
+}
+
+async function flushFlashListEffects(options: FlashListFlushOptions = {}): Promise<void> {
+    await flushHookEffects({
+        cycles: 1,
+        turns: options.turns ?? 1,
+        frames: options.frames,
+        advanceTimersMs: options.advanceTimersMs,
+    });
 }
 
 let sessionMessagesState: { messages: any[]; isLoaded: boolean } = { messages: [], isLoaded: true };
@@ -55,6 +115,7 @@ let syncTuningState: SyncTuningMock = {
 vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
     FlashList: React.forwardRef((props: any, ref: any) => {
         capturedFlashListProps = props;
+        flashListChatListHarnessState.flashListProps = props;
         if (typeof ref === 'function') {
             ref(flashListRefHandle);
         } else if (ref && typeof ref === 'object') {
@@ -76,7 +137,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
 
         return React.createElement(
             'FlashList',
-            props,
+            { ...props, testID: 'flash-list' },
             header,
             data.map((item: any, index: number) => {
                 const key =
@@ -92,29 +153,31 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
 }));
 
 vi.mock('react-native', async () => {
-    const ReactMod = await import('react');
-    return {
-        Dimensions: {
-            get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
-        },
-        Platform: {
-            get OS() {
-                return platformOs;
-            },
-            select: (values: any) => values?.[platformOs] ?? values?.default,
-        },
-        Easing: {
-            bezier: () => (t: number) => t,
-            linear: (t: number) => t,
-        },
-        View: (props: any) => ReactMod.createElement('View', props, props.children),
-        Pressable: ({ children, ...props }: any) => ReactMod.createElement('Pressable', props, children),
-        ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
-        FlatList: (_props: any) => {
-            renderedFlatListCount++;
-            return ReactMod.createElement('FlatList');
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Dimensions: {
+                                get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
+                            },
+                            Platform: {
+                                get OS() {
+                                                return platformOs;
+                                            },
+                                select: (values: any) => values?.[platformOs] ?? values?.default,
+                            },
+                            Easing: {
+                                bezier: () => (t: number) => t,
+                                linear: (t: number) => t,
+                            },
+                            View: (props: any) => React.createElement('View', props, props.children),
+                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+                            FlatList: (_props: any) => {
+                                    renderedFlatListCount++;
+                                    return React.createElement('FlatList');
+                                },
+                        }
+    );
 });
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -125,18 +188,20 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useSession: () => sessionState,
-  useSessionTranscriptIds: () => ({
-    ids: (sessionMessagesState.messages ?? []).map((m: any) => m.id),
-    isLoaded: sessionMessagesState.isLoaded,
-  }),
-  useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-  useForkedTranscriptSnapshot: () => null,
-  useSessionPendingMessages: () => sessionPendingState,
-  useSessionActionDrafts: () => sessionActionDraftsState,
-  useSessionLatestThinkingMessageId: () => null,
-  useSessionLatestThinkingMessageActivityAtMs: () => null,
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+    useSession: () => sessionState,
+    useSessionTranscriptIds: () => ({
+            ids: (sessionMessagesState.messages ?? []).map((m: any) => m.id),
+            isLoaded: sessionMessagesState.isLoaded,
+        }),
+    useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
+    useForkedTranscriptSnapshot: () => null,
+    useSessionPendingMessages: () => sessionPendingState,
+    useSessionActionDrafts: () => sessionActionDraftsState,
+    useSessionLatestThinkingMessageId: () => null,
+    useSessionLatestThinkingMessageActivityAtMs: () => null,
     useMessage: () => null,
     useSetting: (key: string) => settingValues[key],
     getStorage: () => ({
@@ -149,7 +214,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
         }),
     }),
-}));
+});
+});
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: ({ messageIdsOldestFirst, messagesById }: any) =>
@@ -173,7 +239,7 @@ vi.mock('@/components/sessions/transcript/forkContext/ForkDividerRow', () => ({
 }));
 
 vi.mock('./ChatFooter', () => ({
-    ChatFooter: () => React.createElement('ChatFooter'),
+    ChatFooter: () => React.createElement('ChatFooter', { testID: 'chat-footer' }),
 }));
 
 vi.mock('./MessageView', () => ({
@@ -293,6 +359,7 @@ describe('ChatList (FlashList v2)', () => {
         vi.resetModules();
         platformOs = 'web';
         capturedFlashListProps = null;
+        flashListChatListHarnessState.flashListProps = null;
         renderedFlatListCount = 0;
         flashListRefHandle = null;
         mountedTrees.length = 0;
@@ -345,13 +412,11 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
         expect(renderedFlatListCount).toBe(0);
-        expect(capturedFlashListProps).not.toBeNull();
-        expect(capturedFlashListProps.maintainVisibleContentPosition).toBeUndefined();
+        expect(screen.getCapturedFlashListProps()).not.toBeNull();
+        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toBeUndefined();
     });
 
     it('loads older messages when scrolled near the top (without requiring onStartReached)', async () => {
@@ -369,22 +434,17 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+        getCapturedFlashListProps();
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
 
         await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
+            await primeFlashListMetrics(600, 1200, { turns: 1 });
         });
 
         await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
+            await scrollFlashListTo(100);
         });
 
         expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
@@ -405,23 +465,18 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+        getCapturedFlashListProps();
 
         await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
+            await primeFlashListMetrics(600, 1200, { turns: 1 });
         });
 
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
 
         await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 } } });
-            await Promise.resolve();
+            await scrollFlashListTo(100, { trusted: false });
         });
 
         expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
@@ -442,24 +497,16 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
         await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-            await flushAnimationFrame();
-            await flushAnimationFrame();
+            await primeFlashListMetrics(600, 1200, { turns: 2, frames: 2 });
         });
 
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
 
         await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
+            await scrollFlashListTo(600);
         });
 
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
@@ -470,9 +517,6 @@ describe('ChatList (FlashList v2)', () => {
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
         loadOlderMessagesMock.mockResolvedValue({ loaded: 1, hasMore: true, status: 'loaded' as const });
         loadOlderMessagesMock.mockClear();
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 100,
@@ -485,47 +529,48 @@ describe('ChatList (FlashList v2)', () => {
             isConnected: true,
         };
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
-        };
-
         sessionMessagesState = {
             isLoaded: true,
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+                expect(capturedFlashListProps).toBeTruthy();
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 100);
-            await Promise.resolve();
-            scrollEl.scrollHeight = 1600;
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                await act(async () => {
+                    capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
+                    capturedFlashListProps.onContentSizeChange?.(0, 100);
+                    await Promise.resolve();
+                    scrollEl.scrollHeight = 1600;
+                    await Promise.resolve();
+                    await Promise.resolve();
+                });
 
-        expect(loadOlderMessagesMock).not.toHaveBeenCalled();
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(loadOlderMessagesMock).not.toHaveBeenCalled();
+                expect(screen.getCapturedFlashListProps()).toBeTruthy();
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: {
+                    getComputedStyle: vi.fn(() => ({
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        overflow: 'auto',
+                    })),
+                },
+                useImmediateAnimationFrame: false,
+            },
+        );
     });
 
     it('ignores a web onStartReached misfire while the transcript is still pinned at the bottom', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1600,
@@ -539,15 +584,6 @@ describe('ChatList (FlashList v2)', () => {
             isConnected: true,
         };
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
-        };
-
         loadOlderMessagesMock.mockResolvedValue({ loaded: 1, hasMore: true, status: 'loaded' as const });
         loadOlderMessagesMock.mockClear();
 
@@ -558,44 +594,40 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+                getCapturedFlashListProps();
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                await primeFlashListMetrics(600, 1200);
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await scrollFlashListTo(600);
 
-        loadOlderMessagesMock.mockClear();
+                loadOlderMessagesMock.mockClear();
 
-        await act(async () => {
-            capturedFlashListProps.onStartReached?.();
-            await Promise.resolve();
-        });
+                await triggerFlashListChatListStartReached();
 
-        expect(loadOlderMessagesMock).not.toHaveBeenCalled();
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(loadOlderMessagesMock).not.toHaveBeenCalled();
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: {
+                    getComputedStyle: vi.fn(() => ({
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        overflow: 'auto',
+                    })),
+                },
+            },
+        );
     });
 
     it('preserves the web viewport when older messages prepend above the current scroll position', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1200,
@@ -607,15 +639,6 @@ describe('ChatList (FlashList v2)', () => {
             parentElement: null,
             contains: () => false,
             isConnected: true,
-        };
-
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
         };
 
         loadOlderMessagesMock.mockImplementation(async () => {
@@ -631,49 +654,43 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+                getCapturedFlashListProps();
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                await primeFlashListMetrics(600, 1200);
 
-        scrollEl.scrollHeight = 1200;
-        loadOlderMessagesMock.mockClear();
+                scrollEl.scrollHeight = 1200;
+                loadOlderMessagesMock.mockClear();
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await scrollFlashListTo(600);
 
-        scrollEl.scrollTop = 100;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 100;
+                await scrollFlashListTo(100, { turns: 3 });
 
-        expect(loadOlderMessagesMock.mock.calls.length).toBeGreaterThanOrEqual(1);
-        expect(scrollEl.scrollTop).toBe(700);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(loadOlderMessagesMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+                expect(scrollEl.scrollTop).toBe(700);
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: {
+                    getComputedStyle: vi.fn(() => ({
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        overflow: 'auto',
+                    })),
+                },
+            },
+        );
     });
 
     it('continues preserving the web viewport if content grows again after the prepend commit', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1200,
@@ -685,15 +702,6 @@ describe('ChatList (FlashList v2)', () => {
             parentElement: null,
             contains: () => false,
             isConnected: true,
-        };
-
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
         };
 
         loadOlderMessagesMock.mockImplementation(async () => {
@@ -709,58 +717,48 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+                getCapturedFlashListProps();
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                await primeFlashListMetrics(600, 1200);
 
-        scrollEl.scrollHeight = 1200;
-        loadOlderMessagesMock.mockClear();
+                scrollEl.scrollHeight = 1200;
+                loadOlderMessagesMock.mockClear();
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await scrollFlashListTo(600);
 
-        scrollEl.scrollTop = 100;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 100;
+                await scrollFlashListTo(100, { turns: 3 });
 
-        expect(loadOlderMessagesMock.mock.calls.length).toBeGreaterThanOrEqual(1);
-        expect(scrollEl.scrollTop).toBe(300);
+                expect(loadOlderMessagesMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+                expect(scrollEl.scrollTop).toBe(300);
 
-        scrollEl.scrollHeight = 1800;
-        await act(async () => {
-            capturedFlashListProps.onContentSizeChange?.(0, 1800);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollHeight = 1800;
+                await primeFlashListMetrics(600, 1800);
 
-        expect(scrollEl.scrollTop).toBe(700);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(scrollEl.scrollTop).toBe(700);
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: {
+                    getComputedStyle: vi.fn(() => ({
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        overflow: 'auto',
+                    })),
+                },
+            },
+        );
     });
 
     it('preserves the web viewport when the user keeps scrolling upward while older messages are still loading', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1200,
@@ -774,15 +772,6 @@ describe('ChatList (FlashList v2)', () => {
             isConnected: true,
         };
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
-        };
-
         let resolveLoadOlder: ((value: { loaded: number; hasMore: boolean; status: 'loaded' }) => void) | null = null;
         loadOlderMessagesMock.mockImplementation(
             () =>
@@ -799,151 +788,60 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).toBeTruthy();
+                getCapturedFlashListProps();
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                await primeFlashListMetrics(600, 1200);
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await scrollFlashListTo(600);
 
-        scrollEl.scrollTop = 100;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 100;
+                await scrollFlashListTo(100);
 
-        await act(async () => {
-            capturedFlashListProps.onStartReached?.();
-            await Promise.resolve();
-        });
+                await triggerFlashListChatListStartReached();
 
-        expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+                expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
 
-        scrollEl.scrollTop = 60;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 60 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 60;
+                await scrollFlashListTo(60);
 
-        scrollEl.scrollHeight = 1400;
-        await act(async () => {
-            resolveLoadOlder?.({ loaded: 5, hasMore: true, status: 'loaded' });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollHeight = 1400;
+                await act(async () => {
+                    resolveLoadOlder?.({ loaded: 5, hasMore: true, status: 'loaded' });
+                    await flushFlashListEffects({ turns: 3 });
+                });
 
-        expect(scrollEl.scrollTop).toBe(260);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(scrollEl.scrollTop).toBe(260);
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: {
+                    getComputedStyle: vi.fn(() => ({
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        overflow: 'auto',
+                    })),
+                },
+            },
+        );
     });
 
     it('keeps tracking the original web prepend anchor when it is temporarily unmounted during a large prepend', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
 
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
-        const originalHTMLElement = (globalThis as any).HTMLElement;
-
-        class FakeElement {
-            public scrollTop = 0;
-            public scrollHeight = 0;
-            public clientHeight = 0;
-            public scrollWidth = 0;
-            public clientWidth = 0;
-            public isConnected = true;
-            public parentElement: FakeElement | null = null;
-
-            private rect: { top: number; bottom: number };
-            private readonly nodesBySelector = new Map<string, FakeElement[]>();
-
-            constructor(
-                private readonly testId: string | null,
-                rect: { top: number; bottom: number },
-            ) {
-                this.rect = rect;
-            }
-
-            getAttribute(name: string) {
-                return name === 'data-testid' ? this.testId : null;
-            }
-
-            getBoundingClientRect() {
-                return {
-                    top: this.rect.top,
-                    bottom: this.rect.bottom,
-                    left: 0,
-                    right: 0,
-                    width: 0,
-                    height: this.rect.bottom - this.rect.top,
-                    x: 0,
-                    y: this.rect.top,
-                    toJSON: () => ({}),
-                };
-            }
-
-            querySelectorAll(selector: string) {
-                return this.nodesBySelector.get(selector) ?? [];
-            }
-
-            setQuerySelectorAll(selector: string, nodes: FakeElement[]) {
-                this.nodesBySelector.set(selector, nodes);
-            }
-
-            contains(node: unknown) {
-                return node === this;
-            }
-
-            setRect(rect: { top: number; bottom: number }) {
-                this.rect = rect;
-            }
-        }
-
-        (globalThis as any).HTMLElement = FakeElement;
-
-        let scrollTopValue = 0;
-        const scrollEl = new FakeElement(null, { top: 0, bottom: 600 }) as FakeElement & {
-            contains: (node: unknown) => boolean;
-            scrollTop: number;
-        };
-        scrollEl.scrollHeight = 1200;
-        scrollEl.clientHeight = 600;
-        Object.defineProperty(scrollEl, 'scrollTop', {
-            configurable: true,
-            enumerable: true,
-            get: () => scrollTopValue,
-            set: (value: number) => {
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                scrollTopValue = Math.max(0, Math.min(value, maxScrollTop));
-            },
+        const visibleAnchor = createFlashListChatListWebElement('transcript-anchor-message-m1', { top: 120, bottom: 220 });
+        const scrollEl = createFlashListChatListWebScroller({
+            clientHeight: 600,
+            scrollHeight: 1200,
+            scrollTop: 600,
+            testNodes: [visibleAnchor],
         });
-        scrollEl.scrollTop = 600;
-
-        const visibleAnchor = new FakeElement('transcript-anchor-message-m1', { top: 120, bottom: 220 });
-        scrollEl.setQuerySelectorAll('[data-testid]', [visibleAnchor]);
-
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
-        };
 
         let resolveLoadOlder: ((value: { loaded: number; hasMore: boolean; status: 'loaded' }) => void) | null = null;
         loadOlderMessagesMock.mockImplementation(
@@ -962,149 +860,67 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withRenderedFlashListChatListWebScroller(
+            scrollEl,
+            <ChatList session={{ ...sessionState }} />,
+            async () => {
+                await primeFlashListMetrics(600, 1200);
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await scrollFlashListTo(600);
 
-        scrollEl.scrollTop = 100;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 100;
+                await scrollFlashListTo(100);
 
-        expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+                expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
 
-        scrollEl.scrollHeight = 5200;
-        scrollEl.setQuerySelectorAll('[data-testid]', []);
-        await act(async () => {
-            resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollHeight = 5200;
+                scrollEl.setQuerySelectorAll('[data-testid]', []);
+                await act(async () => {
+                    resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
+                    await flushFlashListEffects({ turns: 3 });
+                });
 
-        expect(scrollEl.scrollTop).toBe(4100);
+                expect(scrollEl.scrollTop).toBe(4100);
 
-        visibleAnchor.setRect({ top: 300, bottom: 400 });
-        scrollEl.scrollHeight = 5300;
-        scrollEl.setQuerySelectorAll('[data-testid]', [visibleAnchor]);
-        await act(async () => {
-            capturedFlashListProps.onContentSizeChange?.(0, 5300);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                visibleAnchor.setRect({ top: 300, bottom: 400 });
+                scrollEl.scrollHeight = 5300;
+                scrollEl.setQuerySelectorAll('[data-testid]', [visibleAnchor]);
+                await act(async () => {
+                    await primeFlashListMetrics(600, 5300);
+                });
 
-        expect(scrollEl.scrollTop).toBe(4280);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
-        (globalThis as any).HTMLElement = originalHTMLElement;
+                expect(scrollEl.scrollTop).toBe(4280);
+            },
+            {
+                initialFill: false,
+                dom: {
+                    HTMLElement: FlashListChatListWebElement,
+                    document: { getElementById: vi.fn(() => scrollEl) },
+                    window: {
+                        getComputedStyle: vi.fn(() => ({
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            overflow: 'auto',
+                        })),
+                    },
+                },
+            },
+        );
     });
 
     it('recovers the captured web prepend item when scrollHeight growth overshoots the original viewport anchor', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
 
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
-        const originalHTMLElement = (globalThis as any).HTMLElement;
-        const originalRaf = (globalThis as any).requestAnimationFrame;
-        const originalCancelRaf = (globalThis as any).cancelAnimationFrame;
-
-        class FakeElement {
-            public scrollTop = 0;
-            public scrollHeight = 0;
-            public clientHeight = 0;
-            public scrollWidth = 0;
-            public clientWidth = 0;
-            public isConnected = true;
-            public parentElement: FakeElement | null = null;
-
-            private rect: { top: number; bottom: number };
-            private readonly nodesBySelector = new Map<string, FakeElement[]>();
-
-            constructor(
-                private readonly testId: string | null,
-                rect: { top: number; bottom: number },
-            ) {
-                this.rect = rect;
-            }
-
-            getAttribute(name: string) {
-                return name === 'data-testid' ? this.testId : null;
-            }
-
-            getBoundingClientRect() {
-                return {
-                    top: this.rect.top,
-                    bottom: this.rect.bottom,
-                    left: 0,
-                    right: 0,
-                    width: 0,
-                    height: this.rect.bottom - this.rect.top,
-                    x: 0,
-                    y: this.rect.top,
-                    toJSON: () => ({}),
-                };
-            }
-
-            querySelectorAll(selector: string) {
-                return this.nodesBySelector.get(selector) ?? [];
-            }
-
-            setQuerySelectorAll(selector: string, nodes: FakeElement[]) {
-                this.nodesBySelector.set(selector, nodes);
-            }
-
-            contains(node: unknown) {
-                return node === this;
-            }
-
-            setRect(rect: { top: number; bottom: number }) {
-                this.rect = rect;
-            }
-        }
-
-        (globalThis as any).HTMLElement = FakeElement;
-        (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
-            cb(0);
-            return 1;
-        };
-        (globalThis as any).cancelAnimationFrame = () => {};
-
-        let scrollTopValue = 0;
-        const scrollEl = new FakeElement(null, { top: 0, bottom: 600 }) as FakeElement & {
-            contains: (node: unknown) => boolean;
-            scrollTop: number;
-        };
-        scrollEl.scrollHeight = 1200;
-        scrollEl.clientHeight = 600;
-        Object.defineProperty(scrollEl, 'scrollTop', {
-            configurable: true,
-            enumerable: true,
-            get: () => scrollTopValue,
-            set: (value: number) => {
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                scrollTopValue = Math.max(0, Math.min(value, maxScrollTop));
-            },
+        const itemAnchor = createFlashListChatListWebElement('transcript-item-u1', { top: 40, bottom: 340 });
+        const messageAnchor = createFlashListChatListWebElement('transcript-anchor-message-u1', { top: 120, bottom: 180 });
+        const scrollEl = createFlashListChatListWebScroller({
+            clientHeight: 600,
+            scrollHeight: 1200,
+            scrollTop: 600,
+            testNodes: [itemAnchor, messageAnchor],
         });
-        scrollEl.scrollTop = 600;
-
-        const itemAnchor = new FakeElement('transcript-item-u1', { top: 40, bottom: 340 });
-        const messageAnchor = new FakeElement('transcript-anchor-message-u1', { top: 120, bottom: 180 });
-        scrollEl.setQuerySelectorAll('[data-testid]', [itemAnchor, messageAnchor]);
 
         flashListRefHandle = {
             scrollToOffset: vi.fn(),
@@ -1116,15 +932,6 @@ describe('ChatList (FlashList v2)', () => {
             }),
         };
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
-        };
-
         let resolveLoadOlder: ((value: { loaded: number; hasMore: boolean; status: 'loaded' }) => void) | null = null;
         loadOlderMessagesMock.mockImplementation(
             () =>
@@ -1142,146 +949,63 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withRenderedFlashListChatListWebScroller(
+            scrollEl,
+            <ChatList session={{ ...sessionState }} />,
+            async () => {
+                await primeFlashListMetrics(600, 1200);
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await scrollFlashListTo(600);
 
-        scrollEl.scrollTop = 100;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 100;
+                await scrollFlashListTo(100);
 
-        expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+                expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
 
-        scrollEl.scrollHeight = 5200;
-        scrollEl.setQuerySelectorAll('[data-testid]', []);
-        await act(async () => {
-            resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollHeight = 5200;
+                scrollEl.setQuerySelectorAll('[data-testid]', []);
+                await act(async () => {
+                    resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
+                    await flushFlashListEffects({ turns: 4 });
+                });
 
-        expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
-            index: 0,
-            animated: false,
-            viewPosition: 0,
-        });
-        expect(scrollEl.scrollTop).toBe(4000);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
-        (globalThis as any).HTMLElement = originalHTMLElement;
-        (globalThis as any).requestAnimationFrame = originalRaf;
-        (globalThis as any).cancelAnimationFrame = originalCancelRaf;
+                expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
+                    index: 0,
+                    animated: false,
+                    viewPosition: 0,
+                });
+                expect(scrollEl.scrollTop).toBe(4000);
+            },
+            {
+                initialFill: false,
+                dom: {
+                    HTMLElement: FlashListChatListWebElement,
+                    document: { getElementById: vi.fn(() => scrollEl) },
+                    window: {
+                        getComputedStyle: vi.fn(() => ({
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            overflow: 'auto',
+                        })),
+                    },
+                },
+            },
+        );
     });
 
     it('recovers by stable anchor identity when the captured turn wrapper id changes across the prepend', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
 
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
-        const originalHTMLElement = (globalThis as any).HTMLElement;
-        const originalRaf = (globalThis as any).requestAnimationFrame;
-        const originalCancelRaf = (globalThis as any).cancelAnimationFrame;
-
-        class FakeElement {
-            public scrollTop = 0;
-            public scrollHeight = 0;
-            public clientHeight = 0;
-            public scrollWidth = 0;
-            public clientWidth = 0;
-            public isConnected = true;
-            public parentElement: FakeElement | null = null;
-
-            private rect: { top: number; bottom: number };
-            private readonly nodesBySelector = new Map<string, FakeElement[]>();
-
-            constructor(
-                private readonly testId: string | null,
-                rect: { top: number; bottom: number },
-            ) {
-                this.rect = rect;
-            }
-
-            getAttribute(name: string) {
-                return name === 'data-testid' ? this.testId : null;
-            }
-
-            getBoundingClientRect() {
-                return {
-                    top: this.rect.top,
-                    bottom: this.rect.bottom,
-                    left: 0,
-                    right: 0,
-                    width: 0,
-                    height: this.rect.bottom - this.rect.top,
-                    x: 0,
-                    y: this.rect.top,
-                    toJSON: () => ({}),
-                };
-            }
-
-            querySelectorAll(selector: string) {
-                return this.nodesBySelector.get(selector) ?? [];
-            }
-
-            setQuerySelectorAll(selector: string, nodes: FakeElement[]) {
-                this.nodesBySelector.set(selector, nodes);
-            }
-
-            contains(node: unknown) {
-                return node === this;
-            }
-
-            setRect(rect: { top: number; bottom: number }) {
-                this.rect = rect;
-            }
-        }
-
-        (globalThis as any).HTMLElement = FakeElement;
-        (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
-            cb(0);
-            return 1;
-        };
-        (globalThis as any).cancelAnimationFrame = () => {};
-
-        let scrollTopValue = 0;
-        const scrollEl = new FakeElement(null, { top: 0, bottom: 600 }) as FakeElement & {
-            contains: (node: unknown) => boolean;
-            scrollTop: number;
-        };
-        scrollEl.scrollHeight = 1200;
-        scrollEl.clientHeight = 600;
-        Object.defineProperty(scrollEl, 'scrollTop', {
-            configurable: true,
-            enumerable: true,
-            get: () => scrollTopValue,
-            set: (value: number) => {
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                scrollTopValue = Math.max(0, Math.min(value, maxScrollTop));
-            },
+        const staleItemAnchor = createFlashListChatListWebElement('transcript-item-turn:stale', { top: 20, bottom: 360 });
+        const stableMessageAnchor = createFlashListChatListWebElement('transcript-anchor-message-u1', { top: 120, bottom: 180 });
+        const scrollEl = createFlashListChatListWebScroller({
+            clientHeight: 600,
+            scrollHeight: 1200,
+            scrollTop: 600,
+            testNodes: [staleItemAnchor, stableMessageAnchor],
         });
-        scrollEl.scrollTop = 600;
-
-        const staleItemAnchor = new FakeElement('transcript-item-turn:stale', { top: 20, bottom: 360 });
-        const stableMessageAnchor = new FakeElement('transcript-anchor-message-u1', { top: 120, bottom: 180 });
-        scrollEl.setQuerySelectorAll('[data-testid]', [staleItemAnchor, stableMessageAnchor]);
 
         flashListRefHandle = {
             scrollToOffset: vi.fn(),
@@ -1292,15 +1016,6 @@ describe('ChatList (FlashList v2)', () => {
             }),
         };
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = {
-            getComputedStyle: vi.fn(() => ({
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                overflow: 'auto',
-            })),
-        };
-
         let resolveLoadOlder: ((value: { loaded: number; hasMore: boolean; status: 'loaded' }) => void) | null = null;
         loadOlderMessagesMock.mockImplementation(
             () =>
@@ -1318,51 +1033,54 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1200);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withRenderedFlashListChatListWebScroller(
+            scrollEl,
+            <ChatList session={{ ...sessionState }} />,
+            async () => {
+                await act(async () => {
+                    await primeFlashListMetrics(600, 1200);
+                });
 
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 600 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                await act(async () => {
+                    await scrollFlashListTo(600);
+                });
 
-        scrollEl.scrollTop = 100;
-        await act(async () => {
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
-            await Promise.resolve();
-        });
+                scrollEl.scrollTop = 100;
+                await act(async () => {
+                    await scrollFlashListTo(100);
+                });
 
-        expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+                expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
 
-        scrollEl.scrollHeight = 5200;
-        scrollEl.setQuerySelectorAll('[data-testid]', []);
-        await act(async () => {
-            resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                scrollEl.scrollHeight = 5200;
+                scrollEl.setQuerySelectorAll('[data-testid]', []);
+                await act(async () => {
+                    resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
+                    await flushFlashListEffects({ turns: 4 });
+                });
 
-        expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
-            index: 0,
-            animated: false,
-            viewPosition: 0,
-        });
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
-        (globalThis as any).HTMLElement = originalHTMLElement;
-        (globalThis as any).requestAnimationFrame = originalRaf;
-        (globalThis as any).cancelAnimationFrame = originalCancelRaf;
+                expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
+                    index: 0,
+                    animated: false,
+                    viewPosition: 0,
+                });
+            },
+            {
+                initialFill: false,
+                dom: {
+                    HTMLElement: FlashListChatListWebElement,
+                    document: { getElementById: vi.fn(() => scrollEl) },
+                    window: {
+                        getComputedStyle: vi.fn(() => ({
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            overflow: 'auto',
+                        })),
+                    },
+                },
+            },
+        );
     });
 
     it('uses startRenderingFromBottom on native FlashList', async () => {
@@ -1373,13 +1091,11 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).not.toBeNull();
-        expect(capturedFlashListProps.maintainVisibleContentPosition?.startRenderingFromBottom).toBe(true);
-        expect(capturedFlashListProps.maintainVisibleContentPosition?.autoscrollToTopThreshold).toBeUndefined();
+        expect(screen.getCapturedFlashListProps()).not.toBeNull();
+        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition?.startRenderingFromBottom).toBe(true);
+        expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition?.autoscrollToTopThreshold).toBeUndefined();
     });
 
     it('memoizes maintainVisibleContentPosition to avoid prop churn (FlashList)', async () => {
@@ -1389,28 +1105,15 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        let rerender: (() => void) | null = null;
+        const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} bottomNotice={null} />);
 
-        function Wrapper() {
-            const [tick, setTick] = React.useState(0);
-            rerender = () => setTick((t) => t + 1);
-            return <ChatList session={{ ...sessionState }} bottomNotice={tick ? null : null} />;
-        }
+        const first = screen.getCapturedFlashListProps().maintainVisibleContentPosition;
+        expect(first).toBeUndefined();
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = createTree(<Wrapper />);
-        });
+        await screen.update(<ChatList session={{ ...sessionState }} bottomNotice={null} />);
 
-	        const first = capturedFlashListProps?.maintainVisibleContentPosition;
-	        expect(first).toBeUndefined();
-
-        await act(async () => {
-            rerender?.();
-        });
-
-	        const second = capturedFlashListProps?.maintainVisibleContentPosition;
-	        expect(second).toBe(first);
+        const second = screen.getCapturedFlashListProps().maintainVisibleContentPosition;
+        expect(second).toBe(first);
 
         // Unmount handled by afterEach to ensure stabilization timers are cancelled.
     });
@@ -1422,23 +1125,21 @@ describe('ChatList (FlashList v2)', () => {
         };
 
         const { ChatList } = await import('./ChatList');
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).not.toBeNull();
-        const headerEl = capturedFlashListProps.ListHeaderComponent;
-        const footerEl = capturedFlashListProps.ListFooterComponent;
+        expect(screen.getCapturedFlashListProps()).not.toBeNull();
+        const flashListProps = screen.getCapturedFlashListProps();
+        const headerEl = flashListProps.ListHeaderComponent;
+        const footerEl = flashListProps.ListFooterComponent;
 
         // The header is responsible for top padding + optional older-loading affordance.
         expect(typeof headerEl?.props?.isLoadingOlder).toBe('boolean');
         // The footer can be wrapped by the web hot-tail split, but it must still render ChatFooter.
         expect(footerEl).toBeTruthy();
-        expect(tree!.root.findAllByType('ChatFooter')).toHaveLength(1);
+        expectScreenHasTestId(screen, 'chat-footer');
 
         // Render sanity: FlashList still mounts in tree.
-        tree!.root.findByType('FlashList');
+        expectScreenHasTestId(screen, 'flash-list');
     });
 
     it('renders only cold history inside the web FlashList data and moves the live tail into the footer', async () => {
@@ -1454,24 +1155,18 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptWebHotTailItemCount: 2 };
 
         const { ChatList } = await import('./ChatList');
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = createTree(<ChatList session={{ ...sessionState }} />);
-        });
+        const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
-        expect(capturedFlashListProps).not.toBeNull();
-        expect((capturedFlashListProps.data ?? []).map((item: any) => item.id)).toEqual(['u1', 'u2']);
-        expect(tree!.root.findAllByProps({ testID: 'transcript-web-hot-tail' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findAllByProps({ testID: 'transcript-web-hot-tail-item-u3' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findAllByProps({ testID: 'transcript-web-hot-tail-item-u4' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findByType('ChatFooter')).toBeTruthy();
+        expect(screen.getCapturedFlashListProps()).not.toBeNull();
+        expect((screen.getCapturedFlashListProps().data ?? []).map((item: any) => item.id)).toEqual(['u1', 'u2']);
+        expectScreenHasTestId(screen, 'transcript-web-hot-tail');
+        expectScreenHasTestId(screen, 'transcript-web-hot-tail-item-u3');
+        expectScreenHasTestId(screen, 'transcript-web-hot-tail-item-u4');
+        expectScreenHasTestId(screen, 'chat-footer');
     });
 
     it('pins via DOM scroll on web without calling scrollToOffset when DOM pinning is possible', async () => {
         flashListRefHandle = { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() };
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1000,
@@ -1494,53 +1189,50 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        expect((scrollEl as any).scrollTop).toBeGreaterThan(0);
-        expect(scrollEl.scrollTo).not.toHaveBeenCalled();
-        expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect((scrollEl as any).scrollTop).toBeGreaterThan(0);
+                expect(scrollEl.scrollTo).not.toHaveBeenCalled();
+                expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
     });
 
     it('does not fall back to scrollToOffset on web when DOM pinning is unavailable (prevents mount jitter)', async () => {
         flashListRefHandle = { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() };
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
-
-        (globalThis as any).document = { getElementById: vi.fn(() => null) };
-        (globalThis as any).window = { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) };
 
         sessionMessagesState = {
             isLoaded: true,
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            null,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
+            },
+            {
+                document: { getElementById: vi.fn(() => null) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
     });
 
     it('stops scheduling long-running initial web pin retries once DOM pinning succeeds', async () => {
         flashListRefHandle = { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() };
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
         const scrollEl: any = {
             scrollHeight: 1000,
             clientHeight: 100,
@@ -1548,8 +1240,6 @@ describe('ChatList (FlashList v2)', () => {
             querySelectorAll: () => [],
             parentElement: null,
         };
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) };
 
         const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any);
 
@@ -1558,22 +1248,26 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        const delays = setTimeoutSpy.mock.calls
-            .map((call) => call[1])
-            .filter((ms): ms is number => typeof ms === 'number' && Number.isFinite(ms));
-        const maxDelay = delays.length ? Math.max(...delays) : 0;
-        expect(maxDelay).toBeLessThanOrEqual(800);
+                const delays = setTimeoutSpy.mock.calls
+                    .map((call) => call[1])
+                    .filter((ms): ms is number => typeof ms === 'number' && Number.isFinite(ms));
+                const maxDelay = delays.length ? Math.max(...delays) : 0;
+                expect(maxDelay).toBeLessThanOrEqual(800);
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
 
         setTimeoutSpy.mockRestore();
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
     });
 
     it('does not re-pin during the initial web stabilize window after the user scrolls away from bottom', async () => {
@@ -1581,9 +1275,6 @@ describe('ChatList (FlashList v2)', () => {
         vi.setSystemTime(new Date(0));
 
         flashListRefHandle = { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() };
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1000,
@@ -1599,9 +1290,6 @@ describe('ChatList (FlashList v2)', () => {
 
         const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) };
-
         sessionMessagesState = {
             isLoaded: true,
             messages: [
@@ -1610,32 +1298,32 @@ describe('ChatList (FlashList v2)', () => {
             ],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        // Initial stabilization pins to bottom.
-        expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(1000);
+                // Initial stabilization pins to bottom.
+                expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
 
-        // User scrolls away slightly from bottom.
-        scrollEl.scrollTop = 900;
-        await act(async () => {
-            capturedFlashListProps?.onWheel?.({ deltaY: -80, stopPropagation: vi.fn() });
-        });
+                // User scrolls away slightly from bottom.
+                scrollEl.scrollTop = 900;
+                await act(async () => {
+                    getCapturedFlashListProps()?.onWheel?.({ deltaY: -80, stopPropagation: vi.fn() });
+                });
 
-        // Even though stabilization retries are scheduled, we must not fight the user's scroll.
-        await act(async () => {
-            vi.advanceTimersByTime(1500);
-            await Promise.resolve();
-        });
+                // Even though stabilization retries are scheduled, we must not fight the user's scroll.
+                await flushFlashListEffects({ turns: 1, advanceTimersMs: 1500 });
 
-        expect(scrollEl.scrollTop).toBe(900);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(scrollEl.scrollTop).toBe(900);
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
         vi.useRealTimers();
     });
 
@@ -1644,9 +1332,6 @@ describe('ChatList (FlashList v2)', () => {
         vi.setSystemTime(new Date(0));
 
         flashListRefHandle = { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() };
-
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
 
         const scrollEl: any = {
             scrollHeight: 1000,
@@ -1662,9 +1347,6 @@ describe('ChatList (FlashList v2)', () => {
 
         const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
 
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) };
-
         sessionMessagesState = {
             isLoaded: true,
             messages: [
@@ -1673,36 +1355,38 @@ describe('ChatList (FlashList v2)', () => {
             ],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        // The initial mount pin puts us at the bottom.
-        expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
+                // The initial mount pin puts us at the bottom.
+                expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
 
-        await act(async () => {
-            // Establish scroll metrics used by FlashList distance-from-bottom math.
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1000);
+                await act(async () => {
+                    // Establish scroll metrics used by FlashList distance-from-bottom math.
+                    await primeFlashListMetrics(100, 1000, { turns: 1 });
 
-            // First, we're at the bottom (distanceFromBottom = 0).
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 900 } } });
+                    // First, we're at the bottom (distanceFromBottom = 0).
+                    await scrollFlashListTo(900, { trusted: false, turns: 1 });
 
-            // FlashList/web can apply a programmatic scroll adjustment during mount (no wheel/touch intent).
-            // Simulate being nudged away from bottom by ~400px.
-            vi.setSystemTime(new Date(300));
-            scrollEl.scrollTop = 492;
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 492 } } });
-        });
+                    // FlashList/web can apply a programmatic scroll adjustment during mount (no wheel/touch intent).
+                    // Simulate being nudged away from bottom by ~400px.
+                    vi.setSystemTime(new Date(300));
+                    scrollEl.scrollTop = 492;
+                    await scrollFlashListTo(492, { trusted: false, turns: 1 });
+                });
 
-        // Passive mount-time drift should be corrected back to the visual bottom while follow mode remains desired.
-        expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                // Passive mount-time drift should be corrected back to the visual bottom while follow mode remains desired.
+                expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
         vi.useRealTimers();
     });
 
@@ -1713,31 +1397,18 @@ describe('ChatList (FlashList v2)', () => {
             transcriptWebInitialPinStabilizeMs: 0,
         };
 
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
-
-        let scrollTopValue = 0;
-        const scrollEl: any = {
-            scrollHeight: 1000,
-            clientHeight: 100,
-            scrollTo: ({ top }: { top: number }) => {
-                scrollEl.scrollTop = top;
+        const scrollEl = Object.assign(
+            createFlashListChatListWebScroller({
+                clientHeight: 100,
+                scrollHeight: 1000,
+                scrollTop: 0,
+            }),
+            {
+                scrollTo: ({ top }: { top: number }) => {
+                    scrollEl.scrollTop = top;
+                },
             },
-            querySelectorAll: () => [],
-            parentElement: null,
-        };
-        Object.defineProperty(scrollEl, 'scrollTop', {
-            configurable: true,
-            enumerable: true,
-            get: () => scrollTopValue,
-            set: (value: number) => {
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                scrollTopValue = Math.max(0, Math.min(value, maxScrollTop));
-            },
-        });
-
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) };
+        );
 
         sessionMessagesState = {
             isLoaded: true,
@@ -1747,33 +1418,32 @@ describe('ChatList (FlashList v2)', () => {
             ],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        expect(capturedFlashListProps).not.toBeNull();
-        flashListRefHandle.scrollToOffset.mockClear();
+                expect(getCapturedFlashListProps()).not.toBeNull();
+                flashListRefHandle.scrollToOffset.mockClear();
 
-        await act(async () => {
-            // Establish scroll metrics used by onScroll distance-from-bottom math.
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1000);
+                await act(async () => {
+                    // Establish scroll metrics used by onScroll distance-from-bottom math.
+                    await primeFlashListMetrics(100, 1000, { turns: 1 });
+                    // Simulate a passive drift away from the bottom without any user gesture or new activity.
+                    scrollEl.scrollTop = 0;
+                    await scrollFlashListTo(0, { trusted: false, turns: 2 });
+                });
 
-            // Simulate a passive drift away from the bottom without any user gesture or new activity.
-            scrollEl.scrollTop = 0;
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 0 } } });
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(scrollEl.scrollTop).toBe(900);
-        expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
+                expect(scrollEl.scrollTop).toBe(900);
+                expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
     });
 
     it('keeps the visual bottom pinned when existing web content remeasures without user activity', async () => {
@@ -1783,38 +1453,18 @@ describe('ChatList (FlashList v2)', () => {
             transcriptWebInitialPinStabilizeMs: 0,
         };
 
-        const originalDocument = (globalThis as any).document;
-        const originalWindow = (globalThis as any).window;
-        const originalRaf = (globalThis as any).requestAnimationFrame;
-        const originalCancelRaf = (globalThis as any).cancelAnimationFrame;
-
-        let scrollTopValue = 900;
-        const scrollEl: any = {
-            scrollHeight: 1000,
-            clientHeight: 100,
-            scrollTo: ({ top }: { top: number }) => {
-                scrollEl.scrollTop = top;
+        const scrollEl = Object.assign(
+            createFlashListChatListWebScroller({
+                clientHeight: 100,
+                scrollHeight: 1000,
+                scrollTop: 900,
+            }),
+            {
+                scrollTo: ({ top }: { top: number }) => {
+                    scrollEl.scrollTop = top;
+                },
             },
-            querySelectorAll: () => [],
-            parentElement: null,
-        };
-        Object.defineProperty(scrollEl, 'scrollTop', {
-            configurable: true,
-            enumerable: true,
-            get: () => scrollTopValue,
-            set: (value: number) => {
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                scrollTopValue = Math.max(0, Math.min(value, maxScrollTop));
-            },
-        });
-
-        (globalThis as any).document = { getElementById: vi.fn(() => scrollEl) };
-        (globalThis as any).window = { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) };
-        (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
-            cb(0);
-            return 1;
-        };
-        (globalThis as any).cancelAnimationFrame = () => {};
+        );
 
         sessionMessagesState = {
             isLoaded: true,
@@ -1824,38 +1474,35 @@ describe('ChatList (FlashList v2)', () => {
             ],
         };
 
-        const { ChatList } = await import('./ChatList');
-        await act(async () => {
-            createTree(<ChatList session={{ ...sessionState }} />);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-        flashListRefHandle.scrollToOffset.mockClear();
+                flashListRefHandle.scrollToOffset.mockClear();
 
-        await act(async () => {
-            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
-            capturedFlashListProps.onContentSizeChange?.(0, 1000);
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 900 } } });
-            await Promise.resolve();
-        });
+                await act(async () => {
+                    await primeFlashListMetrics(100, 1000, { turns: 1 });
+                    await scrollFlashListTo(900, { trusted: false, turns: 1 });
+                });
 
-        scrollEl.scrollHeight = 1400;
+                scrollEl.scrollHeight = 1400;
 
-        await act(async () => {
-            capturedFlashListProps.onContentSizeChange?.(0, 1400);
-            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 900 } } });
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+                await act(async () => {
+                    await primeFlashListMetrics(100, 1400, { turns: 1 });
+                    await scrollFlashListTo(900, { trusted: false, turns: 2 });
+                });
 
-        expect(scrollEl.scrollTop).toBe(1300);
-        expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
-
-        (globalThis as any).document = originalDocument;
-        (globalThis as any).window = originalWindow;
-        (globalThis as any).requestAnimationFrame = originalRaf;
-        (globalThis as any).cancelAnimationFrame = originalCancelRaf;
+                expect(scrollEl.scrollTop).toBe(1300);
+                expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
     });
 
     it('pins using the current session nativeID when multiple transcript lists exist in the DOM (web)', async () => {
@@ -1864,42 +1511,38 @@ describe('ChatList (FlashList v2)', () => {
             messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
         };
 
-        const wrongScroller: any = {
-            scrollHeight: 2000,
+        const wrongScroller = createFlashListChatListWebScroller({
             clientHeight: 500,
+            scrollHeight: 2000,
             scrollTop: 111,
-        };
-        const rightScroller: any = {
-            scrollHeight: 3000,
+        });
+        const rightScroller = createFlashListChatListWebScroller({
             clientHeight: 600,
+            scrollHeight: 3000,
             scrollTop: 0,
-        };
+        });
+        const rightScrollerBottom = Math.max(0, rightScroller.scrollHeight - rightScroller.clientHeight);
+        const currentSessionNativeIdPrefix = buildChatListNativeId(sessionState.id, '');
 
-        const prevDocument = (globalThis as any).document;
-        const prevWindow = (globalThis as any).window;
-        try {
-            (globalThis as any).document = {
-                querySelector: () => wrongScroller,
-                getElementById: (id: string) => (id.startsWith('chat-list-session-1-') ? rightScroller : null),
-            };
-            (globalThis as any).window = {
-                getComputedStyle: () => ({ overflowY: 'auto' }),
-            };
+        await withFlashListChatListWebScrollerDom(
+            wrongScroller,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await flushFlashListEffects({ turns: 2 });
 
-            const { ChatList } = await import('./ChatList');
-            await act(async () => {
-                createTree(<ChatList session={{ ...sessionState }} />);
-                await Promise.resolve();
-                await Promise.resolve();
-            });
-
-            // If DOM pinning accidentally targets the first `[data-testid="transcript-chat-list"]` in the
-            // document, it would pin the wrong scroller. We must always pin the current session's list.
-            expect(wrongScroller.scrollTop).toBe(111);
-            expect(rightScroller.scrollTop).toBe(3000);
-        } finally {
-            (globalThis as any).document = prevDocument;
-            (globalThis as any).window = prevWindow;
-        }
+                // If DOM pinning accidentally targets the first `[data-testid="transcript-chat-list"]` in the
+                // document, it would pin the wrong scroller. We must always pin the current session's list.
+                expect(wrongScroller.scrollTop).toBe(111);
+                expect(rightScroller.scrollTop).toBe(rightScrollerBottom);
+            },
+            {
+                document: {
+                    querySelector: () => wrongScroller,
+                    getElementById: (id: string) => (id.startsWith(currentSessionNativeIdPrefix) ? rightScroller : null),
+                },
+                window: { getComputedStyle: () => ({ overflowY: 'auto' }) },
+            },
+        );
     });
 });

@@ -1,10 +1,18 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { standardCleanup } from '@/dev/testkit';
+import {
+  flushLegacyChatListEffects,
+  legacyChatListHarnessState,
+  renderLegacyChatList,
+  requireCapturedFlatListProps,
+  resetLegacyChatListHarness,
+  triggerLegacyChatListEndReached,
+  triggerLegacyChatListInitialFill,
+} from './ChatList.legacyListTestHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedFlatListProps: any = null;
 let capturedTurnViewProps: any = null;
 
 const scrollToOffsetMock = vi.fn();
@@ -13,45 +21,15 @@ const loadOlderMessagesMock = vi.fn();
 
 let flatListRefImpl: any = null;
 
-let sessionMessagesState: { messages: any[]; isLoaded: boolean } = { messages: [], isLoaded: true };
-let sessionPendingState: { messages: any[] } = { messages: [] };
-let sessionActionDraftsState: any[] = [];
-let sessionState: any = null;
-
 const buildChatListItemsMock = vi.fn((..._args: any[]) => ([] as any[]));
 
 vi.mock('@shopify/flash-list', () => ({
   FlashList: () => null,
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-  const ReactMod = await import('react');
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    Platform: {
-      OS: 'web',
-      select: (spec: any) => {
-        if (!spec || typeof spec !== 'object') return undefined;
-        return spec.web ?? spec.default;
-      },
-    },
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-    ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
-    FlatList: (props: any) => {
-      capturedFlatListProps = props;
-      if (typeof props.ref === 'function') {
-        props.ref(flatListRefImpl);
-      }
-      const first = Array.isArray(props.data) ? props.data[0] : null;
-      const rendered =
-        first && typeof props.renderItem === 'function'
-          ? props.renderItem({ item: first, index: 0 })
-          : null;
-      return ReactMod.createElement('FlatList', null, rendered);
-    },
-  };
-});
+vi.mock('react-native', async () => (
+    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListReactNativeMock()
+));
 
 vi.mock('@/utils/platform/responsive', () => ({
   useHeaderHeight: () => 0,
@@ -61,40 +39,13 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  getStorage: () => ({
-    getState: () => ({
-      sessionMessages: {
-        [sessionState?.id ?? 'session-1']: {
-          messagesById: Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-          messagesMap: Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-        },
-      },
-    }),
-  }),
-  useSession: () => sessionState,
-  useSessionTranscriptIds: () => ({
-    ids: (sessionMessagesState.messages ?? []).map((m: any) => m.id),
-    isLoaded: sessionMessagesState.isLoaded,
-  }),
-  useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
-  useForkedTranscriptSnapshot: () => null,
-  useSessionPendingMessages: () => sessionPendingState,
-  useSessionActionDrafts: () => sessionActionDraftsState,
-  useSessionLatestThinkingMessageId: () => null,
-  useSessionLatestThinkingMessageActivityAtMs: () => null,
-  useMessage: () => null,
-  useSetting: (key: string) => {
-    if (key === 'transcriptListImplementation') return 'flatlist_legacy';
-    if (key === 'transcriptToolCallsCollapsedPreviewCount') return 5;
-    return undefined;
-  },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => (
+    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListStorageMock(importOriginal)
+));
 
-vi.mock('@/components/sessions/chatListItems', () => ({
-  buildChatListItems: buildChatListItemsMock,
-  buildChatListItemsCached: (opts: any) => ({ cache: null, items: buildChatListItemsMock(opts) }),
-}));
+vi.mock('@/components/sessions/chatListItems', async () => (
+  (await import('./ChatList.legacyListTestHarness')).createLegacyChatListItemsModuleMock(buildChatListItemsMock)
+));
 
 vi.mock('./ChatFooter', () => ({
   ChatFooter: () => React.createElement('ChatFooter'),
@@ -143,8 +94,11 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('ChatList (initial scroll/pagination behavior)', () => {
+  afterEach(() => {
+    standardCleanup();
+  });
+
   beforeEach(() => {
-    capturedFlatListProps = null;
     capturedTurnViewProps = null;
     scrollToOffsetMock.mockClear();
     scrollToIndexMock.mockClear();
@@ -155,11 +109,8 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
       scrollToOffset: scrollToOffsetMock,
       scrollToIndex: scrollToIndexMock,
     };
-
-    sessionMessagesState = { messages: [], isLoaded: true };
-    sessionPendingState = { messages: [] };
-    sessionActionDraftsState = [];
-    sessionState = {
+    resetLegacyChatListHarness({ flatListRefValue: flatListRefImpl });
+    legacyChatListHarnessState.sessionState = {
       id: 'session-1',
       seq: 0,
       metadata: null,
@@ -167,79 +118,62 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
       canApprovePermissions: true,
       agentState: null,
     };
+    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
+    legacyChatListHarnessState.settingValues.transcriptToolCallsCollapsedPreviewCount = 5;
   });
 
   it('does not load older messages from mount-time onEndReached before the user scrolls', async () => {
-    sessionMessagesState = {
+    legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ id: 'm1' }],
     };
     loadOlderMessagesMock.mockResolvedValue({ loaded: 1, hasMore: true, status: 'loaded' });
 
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
-
-    await act(async () => {
-      capturedFlatListProps.onEndReached?.();
-      await Promise.resolve();
-    });
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListEndReached();
 
     expect(loadOlderMessagesMock).not.toHaveBeenCalled();
+
+    await screen.unmount();
   });
 
   it('can auto-load older messages even when committedMessagesCount is 0 (e.g. sidechain-only latest page)', async () => {
-    sessionState = { ...sessionState, seq: 25 };
-    sessionMessagesState = { isLoaded: true, messages: [] };
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages: [] };
     loadOlderMessagesMock.mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
 
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
-
-    await act(async () => {
-      capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 800 } } });
-      capturedFlatListProps.onContentSizeChange?.(400, 200);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListInitialFill();
 
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
     // On web, we avoid `scrollToOffset` during mount to prevent visible jitter. Pinning uses DOM scroll when available.
     expect(scrollToOffsetMock).not.toHaveBeenCalled();
+
+    await screen.unmount();
   });
 
   it('can auto-load older messages even when session.seq is 0 (pagination cursor can still be ready)', async () => {
-    sessionState = { ...sessionState, seq: 0 };
-    sessionMessagesState = { isLoaded: true, messages: [] };
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 0 };
+    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages: [] };
     loadOlderMessagesMock.mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
 
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
-
-    await act(async () => {
-      capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 800 } } });
-      capturedFlatListProps.onContentSizeChange?.(400, 200);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListInitialFill();
 
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+
+    await screen.unmount();
   });
 
   it('keeps loading older pages past 10 attempts while the transcript is still short and progress continues', async () => {
-    sessionState = { ...sessionState, seq: 250 };
-    sessionMessagesState = { isLoaded: true, messages: [] };
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 250 };
+    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages: [] };
     loadOlderMessagesMock
       .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
       .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
@@ -254,65 +188,55 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
       .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
       .mockResolvedValueOnce({ loaded: 1, hasMore: false, status: 'no_more' });
 
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
-
-    await act(async () => {
-      capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 800 } } });
-      capturedFlatListProps.onContentSizeChange?.(400, 200);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListInitialFill({
+      flushOptions: { cycles: 4 },
     });
 
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(12);
+
+    await screen.unmount();
   });
 
   it('pins to the visual bottom on initial load (even before layout measurements)', async () => {
-    sessionState = { ...sessionState, seq: 25 };
-    sessionMessagesState = {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ id: 'm1' }],
     };
 
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
     // On web, pinning happens via DOM scroll when possible; we do not rely on list ref scroll APIs.
     expect(scrollToOffsetMock).not.toHaveBeenCalled();
+
+    await screen.unmount();
   });
 
   it('stops wheel event propagation on web so transcript scrolling is not blocked by document scroll-lock listeners', async () => {
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
+    const capturedFlatListProps = requireCapturedFlatListProps();
     expect(typeof capturedFlatListProps.onWheel).toBe('function');
 
     const stopPropagation = vi.fn();
     capturedFlatListProps.onWheel({ stopPropagation });
     expect(stopPropagation).toHaveBeenCalledTimes(1);
+
+    await screen.unmount();
   });
 
   it('falls back to setting scrollTop directly on web when FlatList ref methods are not available', async () => {
-    sessionState = { ...sessionState, seq: 25 };
-    sessionMessagesState = {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ id: 'm1' }],
     };
 
     flatListRefImpl = {};
+    legacyChatListHarnessState.flatListRefValue = flatListRefImpl;
 
     const scrollerEl: any = {
       scrollHeight: 2000,
@@ -335,14 +259,10 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
         getComputedStyle: () => ({ overflowY: 'auto' }),
       };
 
-      const { ChatList } = await import('./ChatList');
-      await act(async () => {
-        renderer.create(<ChatList session={sessionState} />);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
+      const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
       expect(scrollerEl.scrollTop).toBe(0);
+      await screen.unmount();
     } finally {
       (globalThis as any).document = prevDocument;
       (globalThis as any).window = prevWindow;
@@ -350,8 +270,8 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
   });
 
   it('uses DOM scroll metrics on web to decide scrollability (ignores inflated contentSize from collapsed subtrees)', async () => {
-    sessionState = { ...sessionState, seq: 25 };
-    sessionMessagesState = {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ id: 'm1' }],
     };
@@ -373,22 +293,17 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
         getComputedStyle: () => ({ overflowY: 'auto' }),
       };
 
-      const { ChatList } = await import('./ChatList');
-      await act(async () => {
-        renderer.create(<ChatList session={sessionState} />);
-      });
+      const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-      expect(capturedFlatListProps).toBeTruthy();
-
-      await act(async () => {
-        capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 500 } } });
-        // Fallback heuristic would treat this as scrollable, but DOM says it is not.
-        capturedFlatListProps.onContentSizeChange?.(400, 2000);
-        await Promise.resolve();
-        await Promise.resolve();
+      requireCapturedFlatListProps();
+      await triggerLegacyChatListInitialFill({
+        contentHeight: 2000,
+        flushOptions: { cycles: 2 },
+        layoutHeight: 500,
       });
 
       expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+      await screen.unmount();
     } finally {
       (globalThis as any).document = prevDocument;
       (globalThis as any).window = prevWindow;
@@ -396,8 +311,8 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
   });
 
   it('auto-expands the newest tool calls group when the transcript cannot scroll and the group has hidden tools', async () => {
-    sessionState = { ...sessionState, seq: 25 };
-    sessionMessagesState = {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ id: 'm1', seq: 100 }],
     };
@@ -422,30 +337,23 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
 
     loadOlderMessagesMock.mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
 
-    const { ChatList } = await import('./ChatList');
-    await act(async () => {
-      renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
-
-    await act(async () => {
-      capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 800 } } });
-      capturedFlatListProps.onContentSizeChange?.(400, 200);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListInitialFill({
+      flushOptions: { cycles: 4 },
     });
 
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
     expect(capturedTurnViewProps).toBeTruthy();
     expect(capturedTurnViewProps.expandedToolCallsAnchorMessageIds?.has('tool-9')).toBe(true);
+
+    await screen.unmount();
   });
 
   it('auto-expands a tool calls group even if the group only appears after the initial fill completes', async () => {
-    sessionState = { ...sessionState, seq: 25 };
-    sessionMessagesState = {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ id: 'm1', seq: 100 }],
     };
@@ -471,40 +379,28 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
     loadOlderMessagesMock.mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
 
     const { ChatList } = await import('./ChatList');
-    let tree: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<ChatList session={sessionState} />);
-    });
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
 
-    expect(capturedFlatListProps).toBeTruthy();
-
-    await act(async () => {
-      capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 800 } } });
-      capturedFlatListProps.onContentSizeChange?.(400, 200);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListInitialFill({
+      flushOptions: { cycles: 4 },
     });
 
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
     expect(capturedTurnViewProps).toBeNull();
 
     // Next render: tool calls group exists, but the initial-fill effect should not need to re-run.
-    sessionMessagesState = {
-      ...sessionMessagesState,
-      messages: [...sessionMessagesState.messages, { id: 'm2', seq: 101 }],
+    legacyChatListHarnessState.sessionMessagesState = {
+      ...legacyChatListHarnessState.sessionMessagesState,
+      messages: [...legacyChatListHarnessState.sessionMessagesState.messages, { id: 'm2', seq: 101 }],
     };
     buildChatListItemsMock.mockReturnValue([toolGroupTurnItem] as any);
-    await act(async () => {
-      tree.update(<ChatList session={{ ...sessionState }} />);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+    await flushLegacyChatListEffects({ cycles: 4 });
 
     expect(capturedTurnViewProps).toBeTruthy();
     expect(capturedTurnViewProps.expandedToolCallsAnchorMessageIds?.has('tool-9')).toBe(true);
+
+    await screen.unmount();
   });
 });

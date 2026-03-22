@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,13 +11,13 @@ let messageById: Record<string, any> = {};
 let renderedToolCallsGroupRowProps: any[] = [];
 let renderedRollbackButtonProps: any[] = [];
 
-vi.mock('react-native', async (importOriginal) => {
-  const ReactMod = await import('react');
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    View: (props: any) => ReactMod.createElement('View', props, props.children),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: (props: any) => React.createElement('View', props, props.children),
+                        }
+    );
 });
 
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
@@ -47,11 +49,14 @@ vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () =>
   },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useMessage: (_sessionId: string, messageId: string) => messageById[messageId] ?? null,
-  useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useMessage: (_sessionId: string, messageId: string) => messageById[messageId] ?? null,
+    useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
     messageIds.map((id) => messageById[id]).filter(Boolean),
-}));
+});
+});
 
 describe('TurnView (thinking expansion controlled)', () => {
   beforeEach(() => {
@@ -78,9 +83,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     const setThinkingExpanded = vi.fn();
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -90,9 +93,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           interaction: { canSendMessages: true, canApprovePermissions: true },
           resolveThinkingExpanded,
           setThinkingExpanded,
-        }),
-      );
-    });
+        }));
 
     const thinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
     const normalProps = renderedMessageViewProps.find((p) => p?.message?.id === 'a1');
@@ -123,9 +124,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     };
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -135,9 +134,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           expandedToolCallsAnchorMessageIds: new Set(['tool-2']),
           setToolCallsGroupExpanded: () => {},
           interaction: { canSendMessages: true, canApprovePermissions: true },
-        }),
-      );
-    });
+        }));
 
     expect(renderedToolCallsGroupRowProps).toHaveLength(1);
     expect(renderedToolCallsGroupRowProps[0]?.expanded).toBe(true);
@@ -159,9 +156,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     };
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -170,9 +165,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           setToolCallsGroupExpanded: () => {},
           interaction: { canSendMessages: true, canApprovePermissions: true },
           forcePermissionPromptsInTranscript: true,
-        }),
-      );
-    });
+        }));
 
     expect(renderedMessageViewProps).toEqual(
       expect.arrayContaining([
@@ -205,9 +198,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     };
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -216,9 +207,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           setToolCallsGroupExpanded: () => {},
           interaction: { canSendMessages: true, canApprovePermissions: true },
           getMessageById: (messageId: string) => (messageId === 'agent-sidechain-1' ? agentMessage : null),
-        }),
-      );
-    });
+        }));
 
     expect(renderedMessageViewProps).toEqual(
       expect.arrayContaining([
@@ -244,9 +233,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     };
 
     const { TurnView } = await import('./TurnView');
-    await act(async () => {
-      renderer.create(
-        React.createElement(TurnView as any, {
+    await renderScreen(React.createElement(TurnView as any, {
           turn,
           metadata: null,
           sessionId: 's1',
@@ -258,9 +245,7 @@ describe('TurnView (thinking expansion controlled)', () => {
             messageId === 'user-1'
               ? { target: { type: 'before_user_message', userMessageSeq: 1 }, restoredDraftText: 'prompt' }
               : null,
-        }),
-      );
-    });
+        }));
 
     expect(renderedRollbackButtonProps).toHaveLength(0);
     expect(renderedMessageViewProps).toEqual(

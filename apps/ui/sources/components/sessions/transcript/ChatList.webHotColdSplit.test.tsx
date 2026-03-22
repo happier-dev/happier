@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,16 +36,21 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
     }),
 }));
 
-vi.mock('react-native', () => ({
-    ActivityIndicator: () => React.createElement('ActivityIndicator'),
-    FlatList: () => React.createElement('FlatList'),
-    Platform: {
-        OS: 'web',
-        select: (values: any) => values?.web ?? values?.default,
-    },
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            ActivityIndicator: () => React.createElement('ActivityIndicator'),
+                            FlatList: () => React.createElement('FlatList'),
+                            Platform: {
+                                OS: 'web',
+                                select: (values: any) => values?.web ?? values?.default,
+                            },
+                            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+                            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+                        }
+    );
+});
 
 vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 0,
@@ -54,7 +60,9 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useForkedTranscriptSnapshot: () => null,
     useMessage: (_sessionId: string, messageId: string) =>
         sessionMessagesState.messages.find((message) => message.id === messageId) ?? null,
@@ -81,7 +89,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
         }),
     }),
-}));
+});
+});
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: ({ messageIdsOldestFirst, messagesById }: any) =>
@@ -264,19 +273,20 @@ describe('ChatList web hot/cold split', () => {
         settingValues.transcriptListImplementation = 'flash_v2';
     });
 
+    afterEach(() => {
+        standardCleanup();
+    });
+
     it('keeps only cold items in FlashList data and renders the hot tail in the footer', async () => {
         const { ChatList } = await import('./ChatList');
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<ChatList session={{ ...sessionState }} />);
-        });
+        const screen = await renderScreen(<ChatList session={{ ...sessionState }} />);
 
         expect(capturedFlashListProps).not.toBeNull();
         expect((capturedFlashListProps.data ?? []).map((item: any) => item.id)).toEqual(['u1', 'u2']);
-        expect(tree!.root.findAllByProps({ testID: 'transcript-web-hot-tail' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findAllByProps({ testID: 'transcript-web-hot-tail-item-u3' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findAllByProps({ testID: 'transcript-web-hot-tail-item-u4' }).length).toBeGreaterThan(0);
-        expect(tree!.root.findByType('ChatFooter')).toBeTruthy();
+        expect(screen.findAllByTestId('transcript-web-hot-tail').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('transcript-web-hot-tail-item-u3').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('transcript-web-hot-tail-item-u4').length).toBeGreaterThan(0);
+        expect(screen.findByType('ChatFooter')).toBeTruthy();
     });
 });

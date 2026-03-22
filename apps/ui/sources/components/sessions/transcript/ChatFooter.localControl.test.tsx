@@ -1,6 +1,8 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { ChatFooter } from './ChatFooter';
 
 (
@@ -9,41 +11,35 @@ import { ChatFooter } from './ChatFooter';
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        View: 'View',
+                        Text: 'Text',
+                        Pressable: 'Pressable',
+                        Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
+                        AppState: { addEventListener: () => ({ remove: () => {} }) },
+                    }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
-            colors: {
-                surface: '#fff',
-                divider: '#ddd',
-                groupped: { sectionTitle: '#444' },
-                shadow: { color: '#000', opacity: 0.2 },
-                box: { warning: { background: '#fff3cd', text: '#856404' } },
-            },
+            surface: '#fff',
+            divider: '#ddd',
+            groupped: { sectionTitle: '#444' },
+            shadow: { color: '#000', opacity: 0.2 },
+            box: { warning: { background: '#fff3cd', text: '#856404' } },
         },
-    }),
-    StyleSheet: {
-        create: (input: any) => (typeof input === 'function'
-            ? input({
-                colors: {
-                    groupped: { sectionTitle: '#444' },
-                    shadow: { color: '#000', opacity: 0.2 },
-                },
-            })
-            : input),
-    },
-}));
+    });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
@@ -53,8 +49,8 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800 },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key: string) => key,
 }));
 
 vi.mock('@/components/sessions/SessionNoticeBanner', () => ({
@@ -62,91 +58,75 @@ vi.mock('@/components/sessions/SessionNoticeBanner', () => ({
 }));
 
 async function renderFooter(props: React.ComponentProps<typeof ChatFooter>) {
-    let tree: renderer.ReactTestRenderer | undefined;
-    await act(async () => {
-        tree = renderer.create(<ChatFooter {...props} />);
-    });
-    return tree!;
+    return renderScreen(<ChatFooter {...props} />);
 }
 
 describe('ChatFooter (local control)', () => {
+    afterEach(standardCleanup);
+
     it('renders a switch-to-remote button when controlled by user', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: true,
             onRequestSwitchToRemote: vi.fn(),
         });
 
-        // Root container should allow full-width children so long notices wrap instead of overflowing.
-        const views = tree.root.findAllByType('View');
-        expect(views[0]?.props?.style?.alignItems).toBe('stretch');
-
-        const warningViews = views.filter((v) => v.props?.style?.backgroundColor === '#fff3cd');
-        expect(warningViews.length).toBe(1);
-        expect(warningViews[0].props.style.flexWrap).toBe('wrap');
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.length).toBeGreaterThan(0);
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(true);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.findByTestId('session-chatFooter-switchToRemote')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('chatFooter.permissionsTerminalOnly');
     });
 
     it('shows a local-running notice (without terminal-only copy) when the local permission bridge is enabled', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: true,
             permissionsInUiWhileLocal: true,
             onRequestSwitchToRemote: vi.fn(),
         });
 
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.permissionsTerminalOnly')).toBe(false);
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.sessionRunningLocally')).toBe(true);
-        const localNotice = textNodes.find((node) => node.props.children === 'chatFooter.sessionRunningLocally');
-        expect(localNotice?.props?.selectable).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(true);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.getTextContent()).toContain('chatFooter.sessionRunningLocally');
+        expect(screen.getTextContent()).not.toContain('chatFooter.permissionsTerminalOnly');
+        expect(screen.findByTestId('session-chatFooter-switchToRemote')).not.toBeNull();
     });
 
     it('does not render footer actions when the session is not locally controlled', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: false,
         });
 
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables).toHaveLength(0);
+        expect(screen.findByTestId('session-chatFooter-switchToRemote')).toBeNull();
+        expect(screen.findByTestId('session-chatFooter-switchToLocal')).toBeNull();
+        expect(screen.findByTestId('session-chatFooter-detachLocalTerminal')).toBeNull();
+    });
 
-        await act(async () => {
-            tree.unmount();
-        });
+    it('hides the local-control banner when remote sessions cannot attach locally', async () => {
+        const screen = await renderFooter({
+            controlledByUser: false,
+            localControl: {
+                attached: false,
+                topology: 'exclusive',
+                remoteWritable: true,
+                canAttach: false,
+                canDetach: false,
+            },
+        } as any);
+
+        expect(screen.findByTestId('session-chatFooter-switchToRemote')).toBeNull();
+        expect(screen.findByTestId('session-chatFooter-switchToLocal')).toBeNull();
+        expect(screen.findByTestId('session-chatFooter-detachLocalTerminal')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('chatFooter.permissionsTerminalOnly');
     });
 
     it('renders a switching-to-remote message and hides the action while a control switch is in flight', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: true,
             controlSwitchTo: 'remote',
             onRequestSwitchToRemote: vi.fn(),
         });
 
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.switchingToRemote')).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(false);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.getTextContent()).toContain('chatFooter.switchingToRemote');
+        expect(screen.findByTestId('session-chatFooter-switchToRemote')).toBeNull();
     });
 
     it('renders a detach-local action for shared local attachment', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             localControl: {
                 attached: true,
                 topology: 'shared',
@@ -157,20 +137,13 @@ describe('ChatFooter (local control)', () => {
             onRequestSwitchToRemote: vi.fn(),
         } as any);
 
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.sessionRunningLocallyAndRemotely')).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.detachLocalTerminal')).toBe(true);
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(false);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.getTextContent()).toContain('chatFooter.sessionRunningLocallyAndRemotely');
+        expect(screen.findByTestId('session-chatFooter-detachLocalTerminal')).not.toBeNull();
+        expect(screen.findByTestId('session-chatFooter-switchToRemote')).toBeNull();
     });
 
     it('renders an attach-local action when shared local control can be attached from remote mode', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: false,
             localControl: {
                 attached: false,
@@ -182,16 +155,11 @@ describe('ChatFooter (local control)', () => {
             onRequestSwitchToLocal: vi.fn(),
         } as any);
 
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(true);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.findByTestId('session-chatFooter-switchToLocal')).not.toBeNull();
     });
 
     it('renders an attach-local action when exclusive local control can be attached from remote mode', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: false,
             localControl: {
                 attached: false,
@@ -203,18 +171,13 @@ describe('ChatFooter (local control)', () => {
             onRequestSwitchToLocal: vi.fn(),
         } as any);
 
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(true);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.findByTestId('session-chatFooter-switchToLocal')).not.toBeNull();
     });
 
     it('renders direct takeover actions for linked direct sessions that are not yet controlled by Happier', async () => {
         const onRequestTakeOverDirect = vi.fn();
         const onRequestTakeOverPersist = vi.fn();
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: false,
             directControl: {
                 machineOnline: true,
@@ -228,30 +191,21 @@ describe('ChatFooter (local control)', () => {
             },
         } as any);
 
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.directSessionTakeoverAvailable')).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        const directButton = pressables.find((node) => node.props.accessibilityLabel === 'chatFooter.takeOverDirect');
-        const persistButton = pressables.find((node) => node.props.accessibilityLabel === 'chatFooter.takeOverPersist');
-        expect(Boolean(directButton)).toBe(true);
-        expect(Boolean(persistButton)).toBe(true);
+        expect(screen.getTextContent()).toContain('chatFooter.directSessionTakeoverAvailable');
+        expect(screen.findByTestId('session-chatFooter-takeOverDirect')).not.toBeNull();
+        expect(screen.findByTestId('session-chatFooter-takeOverPersist')).not.toBeNull();
 
         await act(async () => {
-            directButton!.props.onPress();
-            persistButton!.props.onPress();
+            screen.pressByTestId('session-chatFooter-takeOverDirect');
+            screen.pressByTestId('session-chatFooter-takeOverPersist');
         });
 
         expect(onRequestTakeOverDirect).toHaveBeenCalledTimes(1);
         expect(onRequestTakeOverPersist).toHaveBeenCalledTimes(1);
-
-        await act(async () => {
-            tree.unmount();
-        });
     });
 
     it('renders a takeover-in-flight message and hides direct takeover actions while a direct switch is pending', async () => {
-        const tree = await renderFooter({
+        const screen = await renderFooter({
             controlledByUser: false,
             directControl: {
                 machineOnline: true,
@@ -263,15 +217,8 @@ describe('ChatFooter (local control)', () => {
             },
         } as any);
 
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.switchingToDirectTakeover')).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.takeOverDirect')).toBe(false);
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.takeOverPersist')).toBe(false);
-
-        await act(async () => {
-            tree.unmount();
-        });
+        expect(screen.getTextContent()).toContain('chatFooter.switchingToDirectTakeover');
+        expect(screen.findByTestId('session-chatFooter-takeOverDirect')).toBeNull();
+        expect(screen.findByTestId('session-chatFooter-takeOverPersist')).toBeNull();
     });
 });

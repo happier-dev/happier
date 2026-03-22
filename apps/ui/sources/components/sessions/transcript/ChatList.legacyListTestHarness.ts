@@ -1,0 +1,15 @@
+export {
+    buildLegacyChatListItems,
+    createLegacyChatListItemsModuleMock,
+    createLegacyChatListReactNativeMock,
+    createLegacyChatListStorageMock,
+    flushLegacyChatListEffects,
+    getCapturedFlatListProps,
+    legacyChatListHarnessState,
+    renderLegacyChatList,
+    requireCapturedFlatListProps,
+    resetLegacyChatListHarness,
+    triggerLegacyChatListEndReached,
+    triggerLegacyChatListInitialFill,
+    triggerLegacyChatListScroll,
+} from '@/dev/testkit/harness/chatListHarness';

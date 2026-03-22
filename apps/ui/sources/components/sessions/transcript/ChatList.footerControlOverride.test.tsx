@@ -2,6 +2,8 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createPartialStorageModuleMock, createSessionMessagesFixture, createStorageStoreMock, renderScreen } from '@/dev/testkit';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const chatFooterPropsSpy = vi.hoisted(() => vi.fn());
@@ -14,19 +16,19 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const ReactMod = await import('react');
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        FlatList: (props: any) =>
-            ReactMod.createElement(
-                'FlatList',
-                null,
-                props.ListHeaderComponent ?? null,
-                props.ListFooterComponent ?? null,
-            ),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            FlatList: (props: any) =>
+                                    React.createElement(
+                                        'FlatList',
+                                        null,
+                                        props.ListHeaderComponent ?? null,
+                                        props.ListFooterComponent ?? null,
+                                    ),
+                        }
+    );
 });
 
 const session = {
@@ -40,25 +42,25 @@ const session = {
     },
 } as any;
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    getStorage: () => ({
-        getState: () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
+    await createPartialStorageModuleMock(importOriginal, {
+        getStorage: () => createStorageStoreMock({
             sessionMessages: {
-                'session-1': { messagesById: {}, messagesMap: {} },
+                'session-1': createSessionMessagesFixture(),
             },
         }),
+        useSession: () => session,
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+        useSessionMessagesById: () => ({}),
+        useForkedTranscriptSnapshot: () => null,
+        useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: false }),
+        useSessionActionDrafts: () => ([]),
+        useSessionLatestThinkingMessageId: () => null,
+        useSessionLatestThinkingMessageActivityAtMs: () => null,
+        useMessage: () => null,
+        useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
     }),
-    useSession: () => session,
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionMessagesById: () => ({}),
-    useForkedTranscriptSnapshot: () => null,
-    useSessionPendingMessages: () => ({ messages: [], discarded: [] }),
-    useSessionActionDrafts: () => ([]),
-    useSessionLatestThinkingMessageId: () => null,
-    useSessionLatestThinkingMessageActivityAtMs: () => null,
-    useMessage: () => null,
-    useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
-}));
+);
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: () => [],
@@ -97,16 +99,12 @@ describe('ChatList footer control override', () => {
         const { ChatList } = await import('./ChatList');
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <ChatList
+        tree = (await renderScreen(<ChatList
                     session={session}
                     controlledByUserOverride={false}
                     onRequestSwitchToRemote={undefined}
                     directControlFooter={null}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(chatFooterPropsSpy).toHaveBeenCalled();
         expect(chatFooterPropsSpy.mock.calls.at(-1)?.[0]?.controlledByUser).toBe(false);
