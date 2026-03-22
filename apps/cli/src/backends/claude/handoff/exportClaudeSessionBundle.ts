@@ -38,11 +38,11 @@ function resolveTranscriptPath(params: Readonly<{
   remoteSessionId: string;
   env: NodeJS.ProcessEnv;
 }>): string {
-  const explicit = typeof params.metadata.claudeTranscriptPath === 'string' ? params.metadata.claudeTranscriptPath.trim() : '';
-  if (explicit) return explicit;
-
   const directSessionTranscriptPath = resolveDirectSessionSourceTranscriptPath(params);
   if (directSessionTranscriptPath) return directSessionTranscriptPath;
+
+  const explicit = typeof params.metadata.claudeTranscriptPath === 'string' ? params.metadata.claudeTranscriptPath.trim() : '';
+  if (explicit) return explicit;
 
   const workingDirectory = typeof params.metadata.path === 'string' ? params.metadata.path.trim() : '';
   if (!workingDirectory) {
@@ -66,9 +66,16 @@ async function resolveReadableTranscriptPath(params: Readonly<{
   remoteSessionId: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<string> {
-  const resolved = resolveTranscriptPath(params);
-  if (await fileExists(resolved)) {
-    return resolved;
+  const candidatePaths = [
+    resolveDirectSessionSourceTranscriptPath(params),
+    typeof params.metadata.claudeTranscriptPath === 'string' ? params.metadata.claudeTranscriptPath.trim() : '',
+  ]
+    .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);
+
+  for (const candidatePath of candidatePaths) {
+    if (await fileExists(candidatePath)) {
+      return candidatePath;
+    }
   }
 
   const fakeTranscriptLog = [
@@ -77,6 +84,11 @@ async function resolveReadableTranscriptPath(params: Readonly<{
   ].find((value) => typeof value === 'string' && value.trim().length > 0);
   if (typeof fakeTranscriptLog === 'string' && (await fileExists(fakeTranscriptLog))) {
     return fakeTranscriptLog;
+  }
+
+  const resolved = resolveTranscriptPath(params);
+  if (resolved && (await fileExists(resolved))) {
+    return resolved;
   }
 
   return resolved;

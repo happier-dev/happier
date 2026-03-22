@@ -111,6 +111,40 @@ describe('claude session handoff bundle', () => {
     });
   });
 
+  it('prefers the current direct-session transcript over a stale explicit transcript path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-export-direct-preferred-'));
+    const workspacePath = join(root, 'workspace');
+    const staleTranscriptPath = join(root, 'stale.jsonl');
+    const configDir = join(root, '.claude-direct');
+    const liveTranscriptPath = join(configDir, 'projects', 'proj-direct-live', 'claude_session_direct.jsonl');
+    await mkdir(join(configDir, 'projects', 'proj-direct-live'), { recursive: true });
+    await writeFile(staleTranscriptPath, '{"type":"assistant","text":"stale-explicit"}\n', 'utf8');
+    await writeFile(liveTranscriptPath, '{"type":"assistant","text":"live-direct"}\n', 'utf8');
+
+    const result = await exportClaudeSessionBundle({
+      metadata: {
+        path: workspacePath,
+        claudeSessionId: 'claude_session_direct',
+        claudeTranscriptPath: staleTranscriptPath,
+        directSessionV1: {
+          source: {
+            kind: 'claudeConfig',
+            configDir,
+            projectId: 'proj-direct-live',
+          },
+        },
+      },
+      remoteSessionId: 'claude_session_direct',
+      env: {},
+    });
+
+    expect(result).toEqual({
+      providerId: 'claude',
+      remoteSessionId: 'claude_session_direct',
+      transcriptBase64: Buffer.from('{"type":"assistant","text":"live-direct"}\n', 'utf8').toString('base64'),
+    });
+  });
+
   it('imports the transcript into the target claude project path and returns resume metadata', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-import-'));
     const targetPath = join(root, 'workspace');
