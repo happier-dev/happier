@@ -21,6 +21,10 @@ function writeSharedDepsOutputs(repoRoot: string) {
     mkdirSync(dirname(output), { recursive: true });
     writeFileSync(output, 'export {};\n', 'utf8');
   }
+
+  for (const packageName of ['agents', 'cli-common', 'protocol', 'release-runtime'] as const) {
+    writeCliBundledWorkspacePackage(repoRoot, packageName);
+  }
 }
 
 function writeCliBundledWorkspacePackage(repoRoot: string, packageName: 'agents' | 'cli-common' | 'protocol' | 'release-runtime') {
@@ -105,10 +109,14 @@ describe('providers: CLI dist build invocation', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-source-launch-'));
     const sourceEntrypoint = resolve(repoRoot, 'apps', 'cli', 'src', 'index.ts');
     const tsconfigPath = resolve(repoRoot, 'apps', 'cli', 'tsconfig.json');
+    const snapshotDir = resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotEntrypoint = resolve(snapshotDir, 'src', 'index.ts');
+    const snapshotTsconfigPath = resolve(snapshotDir, 'tsconfig.json');
 
     mkdirSync(dirname(sourceEntrypoint), { recursive: true });
     writeFileSync(sourceEntrypoint, 'export {};\n', 'utf8');
     writeFileSync(tsconfigPath, '{ "compilerOptions": {} }\n', 'utf8');
+    writeSharedDepsOutputs(repoRoot);
 
     const launchSpec = await resolveCliTestLaunchSpec(
       {
@@ -117,18 +125,21 @@ describe('providers: CLI dist build invocation', () => {
       },
       {
         repoRoot,
-        snapshotDir: resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot'),
+        snapshotDir,
       },
     );
 
     expect(launchSpec.command).toBe(process.execPath);
     expect(launchSpec.args).toEqual([
+      '--preserve-symlinks',
+      '--preserve-symlinks-main',
       '--import',
       expect.stringContaining(`${process.platform === 'win32' ? 'tsx\\dist\\esm\\index.mjs' : 'tsx/dist/esm/index.mjs'}`),
-      sourceEntrypoint,
+      snapshotEntrypoint,
     ]);
+    expect(launchSpec.cwd).toBe(snapshotDir);
     expect(launchSpec.env).toEqual({
-      TSX_TSCONFIG_PATH: tsconfigPath,
+      TSX_TSCONFIG_PATH: snapshotTsconfigPath,
     });
   });
 
@@ -136,10 +147,14 @@ describe('providers: CLI dist build invocation', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-source-preferred-launch-'));
     const sourceEntrypoint = resolve(repoRoot, 'apps', 'cli', 'src', 'index.ts');
     const tsconfigPath = resolve(repoRoot, 'apps', 'cli', 'tsconfig.json');
+    const snapshotDir = resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotEntrypoint = resolve(snapshotDir, 'src', 'index.ts');
+    const snapshotTsconfigPath = resolve(snapshotDir, 'tsconfig.json');
 
     mkdirSync(dirname(sourceEntrypoint), { recursive: true });
     writeFileSync(sourceEntrypoint, 'export {};\n', 'utf8');
     writeFileSync(tsconfigPath, '{ "compilerOptions": {} }\n', 'utf8');
+    writeSharedDepsOutputs(repoRoot);
 
     const launchSpec = await resolveCliTestLaunchSpec(
       {
@@ -148,19 +163,22 @@ describe('providers: CLI dist build invocation', () => {
       },
       {
         repoRoot,
-        snapshotDir: resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot'),
+        snapshotDir,
         preferSourceEntrypoint: true,
       },
     );
 
     expect(launchSpec.command).toBe(process.execPath);
     expect(launchSpec.args).toEqual([
+      '--preserve-symlinks',
+      '--preserve-symlinks-main',
       '--import',
       expect.stringContaining(`${process.platform === 'win32' ? 'tsx\\dist\\esm\\index.mjs' : 'tsx/dist/esm/index.mjs'}`),
-      sourceEntrypoint,
+      snapshotEntrypoint,
     ]);
+    expect(launchSpec.cwd).toBe(snapshotDir);
     expect(launchSpec.env).toEqual({
-      TSX_TSCONFIG_PATH: tsconfigPath,
+      TSX_TSCONFIG_PATH: snapshotTsconfigPath,
     });
   });
 
@@ -168,10 +186,14 @@ describe('providers: CLI dist build invocation', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-source-fallback-launch-'));
     const sourceEntrypoint = resolve(repoRoot, 'apps', 'cli', 'src', 'index.ts');
     const tsconfigPath = resolve(repoRoot, 'apps', 'cli', 'tsconfig.json');
+    const snapshotDir = resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotEntrypoint = resolve(snapshotDir, 'src', 'index.ts');
+    const snapshotTsconfigPath = resolve(snapshotDir, 'tsconfig.json');
 
     mkdirSync(dirname(sourceEntrypoint), { recursive: true });
     writeFileSync(sourceEntrypoint, 'export {};\n', 'utf8');
     writeFileSync(tsconfigPath, '{ "compilerOptions": {} }\n', 'utf8');
+    writeSharedDepsOutputs(repoRoot);
 
     const launchSpec = await resolveCliTestLaunchSpec(
       {
@@ -180,7 +202,7 @@ describe('providers: CLI dist build invocation', () => {
       },
       {
         repoRoot,
-        snapshotDir: resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot'),
+        snapshotDir,
         runCommand: async () => {
           throw new Error('Shared workspace deps output missing after build: test');
         },
@@ -189,12 +211,15 @@ describe('providers: CLI dist build invocation', () => {
 
     expect(launchSpec.command).toBe(process.execPath);
     expect(launchSpec.args).toEqual([
+      '--preserve-symlinks',
+      '--preserve-symlinks-main',
       '--import',
       expect.stringContaining(`${process.platform === 'win32' ? 'tsx\\dist\\esm\\index.mjs' : 'tsx/dist/esm/index.mjs'}`),
-      sourceEntrypoint,
+      snapshotEntrypoint,
     ]);
+    expect(launchSpec.cwd).toBe(snapshotDir);
     expect(launchSpec.env).toEqual({
-      TSX_TSCONFIG_PATH: tsconfigPath,
+      TSX_TSCONFIG_PATH: snapshotTsconfigPath,
     });
   });
 
@@ -261,20 +286,10 @@ describe('providers: shared deps build lock', () => {
     const lockPath = resolve(repoRoot, 'cli-shared-deps.lock');
 
     let buildCalls = 0;
-    const outputs = [
-      resolve(repoRoot, 'packages', 'agents', 'dist', 'index.js'),
-      resolve(repoRoot, 'packages', 'cli-common', 'dist', 'index.js'),
-      resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'),
-      resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'index.js'),
-    ];
-
     const runCommand = async () => {
       buildCalls += 1;
       await new Promise((resolveWait) => setTimeout(resolveWait, 20));
-      for (const output of outputs) {
-        mkdirSync(dirname(output), { recursive: true });
-        writeFileSync(output, 'export {};\n', 'utf8');
-      }
+      writeSharedDepsOutputs(repoRoot);
     };
 
     await Promise.all([
@@ -404,7 +419,7 @@ describe('providers: shared deps build lock', () => {
 });
 
 describe('providers: CLI dist build lock discipline', () => {
-  it('waits for build lock even when dist entrypoint already exists', async () => {
+  it('reuses a healthy dist entrypoint without waiting for the build lock', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-dist-lock-wait-'));
     const lockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
     const testDir = resolve(repoRoot, 'logs');
@@ -435,7 +450,7 @@ describe('providers: CLI dist build lock discipline', () => {
     await holdLock;
 
     expect(resolved).toBe(entrypoint);
-    expect(elapsedMs).toBeGreaterThanOrEqual(100);
+    expect(elapsedMs).toBeLessThan(100);
   });
 
   it('fails without rebuilding when rebuilds are disabled and dist remains invalid', async () => {

@@ -22,8 +22,27 @@ describe('runPlaywrightWithHeartbeat helpers', () => {
     expect(createPlaywrightSpawnOptions({ TEST_FLAG: '1' })).toMatchObject({
       detached: process.platform !== 'win32',
       stdio: 'inherit',
-      env: { TEST_FLAG: '1' },
+      env: expect.objectContaining({
+        TEST_FLAG: '1',
+      }),
     });
+  });
+
+  it('assigns a per-run UI web export namespace when one is not provided', () => {
+    const options = createPlaywrightSpawnOptions({ TEST_FLAG: '1' });
+    expect(options.env).toEqual(expect.objectContaining({
+      TEST_FLAG: '1',
+    }));
+    expect(typeof options.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('string');
+    expect(options.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toMatch(/^playwright-ui-/);
+  });
+
+  it('preserves an explicit UI web export namespace', () => {
+    const options = createPlaywrightSpawnOptions({
+      TEST_FLAG: '1',
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: 'uiweb-explicit',
+    });
+    expect(options.env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE).toBe('uiweb-explicit');
   });
 
   it('maps signals to conventional exit codes', () => {

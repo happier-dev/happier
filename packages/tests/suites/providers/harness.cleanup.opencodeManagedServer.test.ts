@@ -1,10 +1,9 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
-
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { spawnDetachedInlineNodeTestProcess } from '../../src/testkit/process/testSpawn';
 import { stopOpenCodeManagedServerFromHomeDir } from '../../src/testkit/providers/opencode/stopOpenCodeManagedServerFromHomeDir';
 
 function isProcessAlive(pid: number): boolean {
@@ -38,12 +37,10 @@ describe('provider harness cleanup: OpenCode managed server state', () => {
     const opencodeDir = join(home, 'opencode');
     await mkdir(opencodeDir, { recursive: true });
 
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    const child = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
       stdio: 'ignore',
-      detached: true,
     });
     if (!child.pid) throw new Error('Failed to spawn child process');
-    child.unref();
     childPids.push(child.pid);
 
     const statePath = join(opencodeDir, 'managed-server.json');
@@ -60,4 +57,3 @@ describe('provider harness cleanup: OpenCode managed server state', () => {
     expect(isProcessAlive(child.pid)).toBe(false);
   });
 });
-
