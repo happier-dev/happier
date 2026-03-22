@@ -18,7 +18,11 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { downloadBulkJsonPayload, uploadBulkJsonPayload } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import {
+    downloadBulkJsonPayload,
+    shouldPreferScopedMachineRpcForBulkTransfer,
+    uploadBulkJsonPayload,
+} from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
@@ -163,12 +167,17 @@ export async function machinePromptAssetsDownload(
     opts?: MachinePromptAssetsOpts,
 ): Promise<MachinePromptAssetDownloadResponse> {
     const payload = PromptAssetReadRequestSchema.parse(input);
+    const preferScoped = shouldPreferScopedMachineRpcForBulkTransfer({
+        serverId: opts?.serverId,
+        machineId,
+    });
     const result = await downloadBulkJsonPayload({
         init: async (request): Promise<PromptAssetDownloadInitResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadInitResponse>(await machineRpcWithServerScope<PromptAssetDownloadInitResponse, PromptAssetReadRequest & Readonly<{ recipientPublicKeyBase64: string }>>({
             machineId,
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            preferScoped,
             payload: {
                 ...payload,
                 recipientPublicKeyBase64: request.recipientPublicKeyBase64,
@@ -179,6 +188,7 @@ export async function machinePromptAssetsDownload(
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
+            preferScoped,
             payload: request,
         })),
         finalize: async (request): Promise<PromptAssetDownloadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptAssetDownloadFinalizeResponse>(await machineRpcWithServerScope<PromptAssetDownloadFinalizeResponse, Readonly<{ downloadId: string }>>({
@@ -186,6 +196,7 @@ export async function machinePromptAssetsDownload(
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
+            preferScoped,
             payload: request,
         })),
         parsePayload: parsePromptAssetTransferPayload,
@@ -207,6 +218,10 @@ export async function machinePromptAssetsWrite(
     opts?: MachinePromptAssetsOpts,
 ): Promise<PromptAssetMutationResponseV1> {
     const payload = PromptAssetWriteRequestSchema.parse(input);
+    const preferScoped = shouldPreferScopedMachineRpcForBulkTransfer({
+        serverId: opts?.serverId,
+        machineId,
+    });
     const result = await uploadBulkJsonPayload<PromptAssetUploadFinalizeResponse, PromptAssetMutationResponseV1>({
         payload,
         init: async (request): Promise<PromptAssetUploadInitResponse> => await assertRpcResponseWithSuccess<PromptAssetUploadInitResponse>(await machineRpcWithServerScope<PromptAssetUploadInitResponse, Readonly<{ sizeBytes: number }>>({
@@ -214,6 +229,7 @@ export async function machinePromptAssetsWrite(
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
+            preferScoped,
             payload: request,
         })),
         sendChunk: async (request): Promise<PromptAssetUploadChunkResponse> => await assertRpcResponseWithSuccess<PromptAssetUploadChunkResponse>(await machineRpcWithServerScope<PromptAssetUploadChunkResponse, Readonly<{
@@ -226,6 +242,7 @@ export async function machinePromptAssetsWrite(
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,
+            preferScoped,
             payload: request,
         })),
         finalize: async (request): Promise<PromptAssetUploadFinalizeResponse> => await assertRpcResponseWithSuccess<PromptAssetUploadFinalizeResponse>(await machineRpcWithServerScope<PromptAssetUploadFinalizeResponse, Readonly<{ uploadId: string }>>({
@@ -233,6 +250,7 @@ export async function machinePromptAssetsWrite(
             serverId: opts?.serverId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE,
+            preferScoped,
             payload: request,
         })),
         parseResponse: (value) => {

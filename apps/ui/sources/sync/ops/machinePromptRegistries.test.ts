@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const readCachedMachineRpcDirectRouteMock = vi.hoisted(() => vi.fn(() => ({ status: 'unknown' as const })));
 const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
     throw new Error('legacy downloadMachineTransferJsonPayload helper should not be used');
@@ -12,7 +13,18 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
+    readCachedMachineRpcDirectRoute: (input: Readonly<{ serverId?: string | null; remoteMachineId: string }>) =>
+        readCachedMachineRpcDirectRouteMock(input),
+    recordCachedMachineRpcDirectRouteUnavailable: () => {},
+    recordCachedMachineRpcDirectRouteViable: () => {},
+    readCachedDirectPeerRoute: () => ({ status: 'unknown' }),
+    recordCachedDirectPeerRouteUnavailable: () => {},
+    recordCachedDirectPeerRouteViable: () => {},
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline')>()),
     downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
 }));
 
@@ -23,11 +35,14 @@ vi.mock('@/sync/domains/transfers/runtime/downloadMachineTransferJsonPayload', (
 describe('machine prompt registries ops (server-scoped routing)', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        readCachedMachineRpcDirectRouteMock.mockReset();
+        readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
         downloadBulkJsonPayloadMock.mockReset();
         legacyDownloadMachineTransferJsonPayloadMock.mockClear();
     });
 
     it('downloads fetched registry item payloads through the canonical bulk transfer pipeline', async () => {
+        readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({ status: 'unavailable' });
         const payload = {
             sourceId: 'skills_sh:featured',
             itemId: 'skills_sh:featured:item-1',
@@ -91,6 +106,7 @@ describe('machine prompt registries ops (server-scoped routing)', () => {
             machineId: 'machine-1',
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
+            preferScoped: true,
             payload: expect.objectContaining({
                 sourceId: 'skills_sh:featured',
                 itemId: 'skills_sh:featured:item-1',

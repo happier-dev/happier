@@ -10,3 +10,4 @@ export {
 } from './downloadBulkPayloadToFile';
 export * from './uploadBulkJsonPayload';
 export * from './downloadBulkJsonPayload';
+export * from './shouldPreferScopedMachineRpcForBulkTransfer';

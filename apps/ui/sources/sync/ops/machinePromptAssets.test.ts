@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const readCachedMachineRpcDirectRouteMock = vi.hoisted(() => vi.fn(() => ({ status: 'unknown' as const })));
 const downloadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const uploadBulkJsonPayloadMock = vi.hoisted(() => vi.fn());
 const legacyDownloadMachineTransferJsonPayloadMock = vi.hoisted(() => vi.fn(() => {
@@ -16,7 +17,18 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', () => ({
+vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
+    readCachedMachineRpcDirectRoute: (input: Readonly<{ serverId?: string | null; remoteMachineId: string }>) =>
+        readCachedMachineRpcDirectRouteMock(input),
+    recordCachedMachineRpcDirectRouteUnavailable: () => {},
+    recordCachedMachineRpcDirectRouteViable: () => {},
+    readCachedDirectPeerRoute: () => ({ status: 'unknown' }),
+    recordCachedDirectPeerRouteUnavailable: () => {},
+    recordCachedDirectPeerRouteViable: () => {},
+}));
+
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline')>()),
     downloadBulkJsonPayload: downloadBulkJsonPayloadMock,
     uploadBulkJsonPayload: uploadBulkJsonPayloadMock,
 }));
@@ -32,6 +44,8 @@ vi.mock('@/sync/domains/transfers/runtime/uploadMachineTransferJsonPayload', () 
 describe('machine prompt assets ops (server-scoped routing)', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        readCachedMachineRpcDirectRouteMock.mockReset();
+        readCachedMachineRpcDirectRouteMock.mockReturnValue({ status: 'unknown' });
         downloadBulkJsonPayloadMock.mockReset();
         uploadBulkJsonPayloadMock.mockReset();
         legacyDownloadMachineTransferJsonPayloadMock.mockClear();
@@ -73,6 +87,7 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
     });
 
     it('downloads prompt asset payloads through the canonical bulk pipeline', async () => {
+        readCachedMachineRpcDirectRouteMock.mockReturnValueOnce({ status: 'unavailable' });
         const payload = {
             assetTypeId: 'agents.skill',
             scope: 'user',
@@ -89,9 +104,43 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
                 updatedAtMs: 1,
             },
         };
-        downloadBulkJsonPayloadMock.mockResolvedValueOnce({
-            ok: true as const,
-            payload,
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                success: true,
+                downloadId: 'download-1',
+                chunkSizeBytes: 4096,
+                sizeBytes: 10,
+                name: 'payload.json',
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                payloadBase64: Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'),
+                encryptedDataKeyEnvelopeBase64: Buffer.from('envelope', 'utf8').toString('base64'),
+                isLast: true,
+            })
+            .mockResolvedValueOnce({
+                success: true,
+            });
+        downloadBulkJsonPayloadMock.mockImplementationOnce(async (args: Readonly<{
+            init: (request: Readonly<{ recipientPublicKeyBase64: string }>) => Promise<unknown>;
+            readChunk: (request: Readonly<{ downloadId: string; index: number }>) => Promise<unknown>;
+            finalize: (request: Readonly<{ downloadId: string }>) => Promise<unknown>;
+            parsePayload: (value: unknown) => unknown | null;
+        }>) => {
+            await args.init({ recipientPublicKeyBase64: 'recipient-public-key' });
+            await args.readChunk({ downloadId: 'download-1', index: 0 });
+            await args.finalize({ downloadId: 'download-1' });
+            const parsedPayload = args.parsePayload(payload);
+            if (parsedPayload === null) {
+                return {
+                    ok: false,
+                    error: 'Downloaded transfer payload returned an unsupported response',
+                } as const;
+            }
+            return {
+                ok: true,
+                payload: parsedPayload,
+            } as const;
         });
         const { machinePromptAssetsDownload } = await import('./machinePromptAssets');
 
@@ -109,6 +158,12 @@ describe('machine prompt assets ops (server-scoped routing)', () => {
             parsePayload: expect.any(Function),
         }));
         expect(legacyDownloadMachineTransferJsonPayloadMock).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+            preferScoped: true,
+        }));
     });
 
     it('uploads prompt asset writes through the canonical bulk pipeline', async () => {

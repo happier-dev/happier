@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { downloadBulkJsonPayload } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
+import { downloadBulkJsonPayload, shouldPreferScopedMachineRpcForBulkTransfer } from '@/sync/domains/transfers/runtime/bulkTransferPipeline';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 type MachinePromptRegistriesOpts = Readonly<{
@@ -106,6 +106,10 @@ export async function machinePromptRegistriesDownloadItem(
     opts?: MachinePromptRegistriesOpts,
 ): Promise<MachinePromptRegistryDownloadItemResponse> {
     const payload = PromptRegistryFetchItemRequestV1Schema.parse(input);
+    const preferScoped = shouldPreferScopedMachineRpcForBulkTransfer({
+        serverId: opts?.serverId,
+        machineId,
+    });
     const result = await downloadBulkJsonPayload<PromptRegistryFetchedItemV1>({
         init: async (request) =>
             await machineRpcWithServerScope({
@@ -113,6 +117,7 @@ export async function machinePromptRegistriesDownloadItem(
                 serverId: opts?.serverId,
                 timeoutMs: opts?.timeoutMs ?? undefined,
                 method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
+                preferScoped,
                 payload: {
                     ...payload,
                     recipientPublicKeyBase64: request.recipientPublicKeyBase64,
@@ -124,6 +129,7 @@ export async function machinePromptRegistriesDownloadItem(
                 serverId: opts?.serverId,
                 timeoutMs: opts?.timeoutMs ?? undefined,
                 method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
+                preferScoped,
                 payload: request,
             }),
         finalize: async (request) =>
@@ -132,6 +138,7 @@ export async function machinePromptRegistriesDownloadItem(
                 serverId: opts?.serverId,
                 timeoutMs: opts?.timeoutMs ?? undefined,
                 method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
+                preferScoped,
                 payload: request,
             }),
         parsePayload: (value) => {
