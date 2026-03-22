@@ -106,7 +106,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 availableModels: [
                     {
                         id: 'gpt-5.4',
-                        name: 'GPT-5.4',
+                        name: 'GPT 5.4',
                         description: 'Latest default',
                         modelOptions: [
                             {
@@ -135,7 +135,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                     },
                     {
                         id: 'gpt-4.1',
-                        name: 'GPT-4.1',
+                        name: 'GPT 4.1',
                         modelOptions: [
                             {
                                 id: 'reasoning_effort',
@@ -208,7 +208,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
             currentModelId: 'gpt-5.4',
             availableModels: [{
                 id: 'gpt-5.4',
-                name: 'GPT-5.4',
+                name: 'GPT 5.4',
                 modelOptions: [{
                     id: 'reasoning_effort',
                     name: 'Thinking',
@@ -308,7 +308,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
             availableModels: [
                 {
                     id: 'gpt-5.4',
-                    name: 'GPT-5.4',
+                    name: 'GPT 5.4',
                     modelOptions: [
                         {
                             id: 'speed',
@@ -321,6 +321,74 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                             ],
                         },
                     ],
+                },
+            ],
+        });
+    });
+
+    it('normalizes Codex app-server model display names into user-facing labels', async () => {
+        const client = {
+            request: vi.fn(async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    return {
+                        data: [
+                            { id: 'default', name: 'Default', mode: 'default' },
+                        ],
+                    };
+                }
+                if (method === 'model/list') {
+                    return {
+                        data: [
+                            { id: 'gpt-5.4', displayName: 'gpt-5.4', isDefault: true },
+                            { id: 'gpt-5.4-mini', displayName: 'GPT-5.4-Mini' },
+                            { id: 'gpt-5.3-codex', displayName: 'gpt-5.3-codex' },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            }),
+        };
+        const { session, getMetadata } = createSessionHarness();
+
+        await publishCodexAppServerSessionControlsMetadata({
+            client,
+            session,
+            provider: 'codex',
+            updatedAt: 901,
+            authMethod: 'oauth_cli',
+            currentModeId: null,
+            currentModelId: 'gpt-5.4',
+        });
+
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toEqual({
+            v: 1,
+            provider: 'codex',
+            updatedAt: 901,
+            currentModelId: 'gpt-5.4',
+            availableModels: [
+                {
+                    id: 'gpt-5.4',
+                    name: 'GPT 5.4',
+                    modelOptions: [
+                        {
+                            id: 'speed',
+                            name: 'Fast',
+                            type: 'boolean',
+                            currentValue: 'standard',
+                            options: [
+                                { value: 'standard', name: 'Standard' },
+                                { value: 'fast', name: 'Fast' },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    id: 'gpt-5.4-mini',
+                    name: 'GPT 5.4 Mini',
+                },
+                {
+                    id: 'gpt-5.3-codex',
+                    name: 'GPT 5.3 Codex',
                 },
             ],
         });

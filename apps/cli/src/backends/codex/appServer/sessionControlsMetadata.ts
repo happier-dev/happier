@@ -70,6 +70,22 @@ function normalizeString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeCodexModelDisplayName(value: string): string {
+    const normalizedSeparators = value.replace(/[_-]+/g, ' ').trim();
+    if (!normalizedSeparators) return value;
+
+    return normalizedSeparators
+        .split(/\s+/)
+        .map((token) => {
+            if (/^gpt$/i.test(token)) return 'GPT';
+            if (/^[a-z]+$/.test(token)) {
+                return token.charAt(0).toUpperCase() + token.slice(1);
+            }
+            return token;
+        })
+        .join(' ');
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
@@ -187,7 +203,8 @@ function normalizeSessionModelMasks(params: Readonly<{
         const record = asRecord(entry);
         if (!record) continue;
         const id = normalizeString(record.id) ?? normalizeString(record.slug);
-        const name = normalizeString(record.displayName) ?? normalizeString(record.name) ?? normalizeString(record.label) ?? id;
+        const rawName = normalizeString(record.displayName) ?? normalizeString(record.name) ?? normalizeString(record.label) ?? id;
+        const name = rawName ? normalizeCodexModelDisplayName(rawName) : null;
         if (!id || !name) continue;
         const description = normalizeString(record.description)
             ?? (() => {
