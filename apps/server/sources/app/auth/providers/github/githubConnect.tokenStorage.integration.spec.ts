@@ -21,11 +21,13 @@ describe("githubConnect token storage (integration)", () => {
     });
 
     beforeEach(() => {
-        harness.restoreEnv();
+        harness.resetEnv();
         vi.unstubAllGlobals();
-        delete process.env.GITHUB_STORE_ACCESS_TOKEN;
-        delete process.env.AUTH_GITHUB_ALLOWED_ORGS;
-        delete process.env.AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE;
+        harness.resetEnv({
+            GITHUB_STORE_ACCESS_TOKEN: undefined,
+            AUTH_GITHUB_ALLOWED_ORGS: undefined,
+            AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: undefined,
+        });
     });
 
     afterEach(async () => {
@@ -134,7 +136,7 @@ describe("githubConnect token storage (integration)", () => {
     });
 
     it("persists GitHub access tokens when GITHUB_STORE_ACCESS_TOKEN=true", async () => {
-        process.env.GITHUB_STORE_ACCESS_TOKEN = "true";
+        harness.resetEnv({ GITHUB_STORE_ACCESS_TOKEN: "true" });
         const { githubConnect } = await import("./githubConnect");
 
         const account = await db.account.create({
@@ -169,9 +171,11 @@ describe("githubConnect token storage (integration)", () => {
     it("persists GitHub access tokens by default when org membership checks rely on user tokens", async () => {
         // When using oauth_user_token org membership enforcement, token storage must be enabled
         // (otherwise eligibility checks fail-closed).
-        process.env.AUTH_GITHUB_ALLOWED_ORGS = "acme";
-        process.env.AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE = "oauth_user_token";
-        delete process.env.GITHUB_STORE_ACCESS_TOKEN;
+        harness.resetEnv({
+            AUTH_GITHUB_ALLOWED_ORGS: "acme",
+            AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: "oauth_user_token",
+            GITHUB_STORE_ACCESS_TOKEN: undefined,
+        });
 
         const { githubConnect } = await import("./githubConnect");
 
