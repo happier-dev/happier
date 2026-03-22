@@ -141,7 +141,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/components/contextBar/ContextBar', () => ({
+vi.mock('@/components/settings/contextBar/ContextBar', () => ({
     ContextBar: (props: any) => React.createElement('ContextBar', props),
 }));
 

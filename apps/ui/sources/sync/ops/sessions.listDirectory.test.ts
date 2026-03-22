@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRpcCallError } from '../runtime/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import type { FeaturesResponse } from '@happier-dev/protocol';
 
 type SessionListDirectoryRpcResponse =
     | Readonly<{ success: boolean; entries: ReadonlyArray<{ name: string; type: 'file' | 'directory' | 'other' }> }>
     | null;
+
+let enforcePolicyConsultedBeforeMachineRpc = false;
+let policyConsulted = false;
 
 const sessionRPCSpy = vi.fn(
     async (_sessionId: string, _method: string, _payload: unknown): Promise<SessionListDirectoryRpcResponse> => ({
@@ -13,18 +17,59 @@ const sessionRPCSpy = vi.fn(
     }),
 );
 const machineRPCSpy = vi.fn(
-    async (_machineId: string, _method: string, _payload: unknown): Promise<SessionListDirectoryRpcResponse> => ({
-        success: true,
-        entries: [{ name: 'a.ts', type: 'file' }],
-    }),
+    async (_machineId: string, _method: string, _payload: unknown): Promise<SessionListDirectoryRpcResponse> => {
+        if (enforcePolicyConsultedBeforeMachineRpc) {
+            expect(policyConsulted).toBe(true);
+        }
+        return {
+            success: true,
+            entries: [{ name: 'a.ts', type: 'file' }],
+        };
+    },
 );
 const getStateSpy = vi.fn();
+const getReadyServerFeaturesSpy = vi.fn(async (_params: unknown): Promise<FeaturesResponse | null> => {
+    policyConsulted = true;
+    return {
+        features: {
+            machines: {
+                enabled: true,
+                transfer: {
+                    enabled: true,
+                    serverRouted: {
+                        enabled: true,
+                    },
+                },
+            },
+        },
+        capabilities: {},
+    } as FeaturesResponse;
+});
+
+const sessionRpcWithServerScopeSpy = vi.fn(
+    async (params: unknown): Promise<SessionListDirectoryRpcResponse> => {
+        const { sessionId, method, payload } = params as { sessionId: string; method: string; payload: unknown };
+        return sessionRPCSpy(sessionId, method, payload);
+    },
+);
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
         sessionRPC: (sessionId: string, method: string, payload: any) => sessionRPCSpy(sessionId, method, payload),
         machineRPC: (machineId: string, method: string, payload: any) => machineRPCSpy(machineId, method, payload),
     },
+}));
+
+vi.mock('../api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: (params: unknown) => getReadyServerFeaturesSpy(params),
+}));
+
+vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
+    sessionRpcWithServerScope: (params: unknown) => sessionRpcWithServerScopeSpy(params),
+}));
+
+vi.mock('../runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: () => 'server-1',
 }));
 
 vi.mock('../domains/state/storage', () => ({
@@ -37,6 +82,8 @@ describe('sessionListDirectory', () => {
     it('prefers machine RPC and resolves relative paths against session cwd', async () => {
         const { sessionListDirectory } = await import('./sessionFileSystem');
 
+        enforcePolicyConsultedBeforeMachineRpc = true;
+        policyConsulted = false;
         getStateSpy.mockReturnValue({
             sessions: {
                 s1: {
@@ -50,9 +97,11 @@ describe('sessionListDirectory', () => {
 
         sessionRPCSpy.mockClear();
         machineRPCSpy.mockClear();
+        getReadyServerFeaturesSpy.mockClear();
 
         const res = await sessionListDirectory('s1', 'src');
         expect(res.success).toBe(true);
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
         expect(machineRPCSpy).toHaveBeenCalledWith('m1', 'listDirectory', { path: '~/repo/src' });
         expect(sessionRPCSpy).not.toHaveBeenCalled();
     });

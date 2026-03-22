@@ -147,11 +147,11 @@ vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: any) => React.createElement('Item', props),
 }));
 
-vi.mock('@/components/contextBar/ContextBar', () => ({
+vi.mock('@/components/settings/contextBar/ContextBar', () => ({
   ContextBar: (props: any) => React.createElement('ContextBar', props),
 }));
 
-vi.mock('@/components/contextBar/useContextBarSelection', () => ({
+vi.mock('@/components/settings/contextBar/useContextBarSelection', () => ({
   useContextBarSelection: () => ({
     machineId: 'machine-1',
     setMachineId: vi.fn(),

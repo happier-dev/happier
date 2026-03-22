@@ -6,9 +6,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { type PromptAssetDiscoveryItemV1, type PromptAssetScopeV1, type PromptAssetTypeDescriptorV1 } from '@happier-dev/protocol';
 
-import { ContextBar } from '@/components/contextBar/ContextBar';
+import { ContextBar } from '@/components/settings/contextBar/ContextBar';
 import { layout } from '@/components/ui/layout/layout';
-import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
+import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

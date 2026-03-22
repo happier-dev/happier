@@ -184,7 +184,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
-vi.mock('@/components/contextBar/ContextBar', () => ({
+vi.mock('@/components/settings/contextBar/ContextBar', () => ({
     ContextBar: (props: any) => React.createElement('ContextBar', props),
 }));
 

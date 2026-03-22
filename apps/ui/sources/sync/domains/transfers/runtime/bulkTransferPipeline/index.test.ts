@@ -275,4 +275,78 @@ describe('bulkTransferPipeline', () => {
             },
         });
     });
+
+    it('fails closed when downloading a JSON payload that exceeds the bulk JSON max bytes', async () => {
+        const previous = process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+        process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = '8';
+
+        try {
+            let initCalled = 0;
+            let readChunkCalled = 0;
+
+            await expect(downloadBulkJsonPayload({
+                init: async (request) => {
+                    initCalled += 1;
+                    return {
+                        success: true as const,
+                        downloadId: 'download-json-too-large',
+                        chunkSizeBytes: 4096,
+                        sizeBytes: 9,
+                        name: 'too-large.json',
+                    };
+                },
+                readChunk: async () => {
+                    readChunkCalled += 1;
+                    throw new Error('readChunk should not be called when the payload is rejected by policy');
+                },
+                finalize: async () => ({ success: true as const }),
+                parsePayload: () => null,
+            })).resolves.toEqual({
+                ok: false,
+                error: expect.stringContaining('exceeds'),
+            });
+
+            expect(initCalled).toBe(1);
+            expect(readChunkCalled).toBe(0);
+        } finally {
+            if (previous === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = previous;
+            }
+        }
+    });
+
+    it('fails closed when uploading a JSON payload that exceeds the bulk JSON max bytes', async () => {
+        const previous = process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+        process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = '8';
+
+        try {
+            const init = vi.fn(async () => {
+                throw new Error('init should not be called when the payload is rejected by policy');
+            });
+
+            await expect(uploadBulkJsonPayload({
+                payload: {
+                    kind: 'metadata',
+                    values: ['a', 'b'],
+                },
+                init,
+                sendChunk: async () => ({ success: true as const }),
+                finalize: async () => ({ success: true as const }),
+                parseResponse: () => null,
+            })).resolves.toEqual({
+                ok: false,
+                error: expect.stringContaining('exceeds'),
+            });
+
+            expect(init).not.toHaveBeenCalled();
+        } finally {
+            if (previous === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_BULK_TRANSFER_JSON_MAX_BYTES = previous;
+            }
+        }
+    });
 });

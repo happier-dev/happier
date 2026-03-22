@@ -1,6 +1,7 @@
 import { mergeTransferChunks } from '@/sync/domains/transfers/runtime/mergeTransferChunks';
 
 import { downloadBulkPayloadToFile } from './downloadBulkPayloadToFile';
+import { resolveBulkTransferJsonMaxBytes } from './resolveBulkTransferJsonMaxBytes';
 
 export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
     init: (request: Readonly<{ recipientPublicKeyBase64: string }>) =>
@@ -30,6 +31,7 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
     | Readonly<{ ok: false; error: string }>
 > {
     const chunks: Uint8Array[] = [];
+    const jsonMaxBytes = resolveBulkTransferJsonMaxBytes(null);
     const download = await downloadBulkPayloadToFile({
         destination: {
             writeBytes: async (bytes) => {
@@ -40,7 +42,16 @@ export async function downloadBulkJsonPayload<TPayload>(params: Readonly<{
                 chunks.length = 0;
             },
         },
-        init: async (request) => await params.init(request),
+        init: async (request) => {
+            const init = await params.init(request);
+            if (init.success === true && init.sizeBytes > jsonMaxBytes) {
+                return {
+                    success: false as const,
+                    error: `Downloaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
+                };
+            }
+            return init;
+        },
         readChunk: async (request) => await params.readChunk(request),
         finalize: async (request) => await params.finalize(request),
         abort: params.abort ?? null,

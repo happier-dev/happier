@@ -10,8 +10,8 @@ import {
   type PromptAssetTypeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import { ContextBar } from '@/components/contextBar/ContextBar';
-import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
+import { ContextBar } from '@/components/settings/contextBar/ContextBar';
+import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';

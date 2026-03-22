@@ -13,8 +13,8 @@ import type {
 } from '@happier-dev/protocol';
 
 import { defaultPromptAssetTargetInput } from '@/components/settings/prompts/assets/promptAssetExportDefaults';
-import { ContextBar } from '@/components/contextBar/ContextBar';
-import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
+import { ContextBar } from '@/components/settings/contextBar/ContextBar';
+import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

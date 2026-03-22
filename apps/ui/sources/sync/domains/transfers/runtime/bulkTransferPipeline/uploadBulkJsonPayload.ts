@@ -1,6 +1,7 @@
 import { type ChunkUploadProgress } from '@/sync/domains/files/transfers/chunkTransferClient';
 
 import { type BulkTransferFailureResponse, uploadBulkPayloadFromFile } from './uploadBulkPayloadFromFile';
+import { resolveBulkTransferJsonMaxBytes } from './resolveBulkTransferJsonMaxBytes';
 
 type BulkTransferUploadInitSuccess = Readonly<{
     success: true;
@@ -29,6 +30,13 @@ export async function uploadBulkJsonPayload<TFinalize extends { success: boolean
     | Readonly<{ ok: false; error: string }>
 > {
     const encodedPayload = new TextEncoder().encode(JSON.stringify(params.payload));
+    const jsonMaxBytes = resolveBulkTransferJsonMaxBytes(null);
+    if (encodedPayload.byteLength > jsonMaxBytes) {
+        return {
+            ok: false,
+            error: `Uploaded JSON payload exceeds max allowed bytes (${jsonMaxBytes})`,
+        };
+    }
     const upload = await uploadBulkPayloadFromFile<TFinalize>({
         fileReader: {
             sizeBytes: encodedPayload.byteLength,
