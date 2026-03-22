@@ -11,6 +11,7 @@ export type AgentInputChipPickerOption = Readonly<{
     renderDetailContent?: () => React.ReactNode;
     detailActionLabel?: string;
     onDetailAction?: () => void;
+    onSelectImmediate?: () => void;
     onApply?: () => void;
     disabled?: boolean;
 }>;

@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import type { AgentInputAttachment } from './agentInputContracts';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,23 +12,23 @@ const modalShowSpy = vi.fn((config: unknown) => {
 });
 
 vi.mock('react-native', async () => {
-    const actual = await import('@/dev/reactNativeStub');
-    return {
-        ...actual,
-        TurboModuleRegistry: {
-            ...(actual.TurboModuleRegistry ?? null),
-            get: () => ({}),
-            getEnforcing: () => ({}),
-        },
-        Platform: {
-            OS: 'web',
-            select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
-        },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-        Dimensions: {
-            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    TurboModuleRegistry: {
+                                            get: () => ({}),
+                                            getEnforcing: () => ({}),
+                                        },
+                                    Platform: {
+                                    OS: 'web',
+                                    select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
+                                },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    Dimensions: {
+                                            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                        },
+                                }
+    );
 });
 
 vi.mock('expo-image', () => ({
@@ -50,18 +52,22 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (config: unknown) => modalShowSpy(config),
-        alert: vi.fn(),
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (config: unknown) => modalShowSpy(config),
+            alert: vi.fn(),
+            confirm: vi.fn(),
+            prompt: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 const featureEnabledState: Record<string, boolean> = { voice: false };
 
@@ -78,10 +84,9 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -95,7 +100,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     useSessionMessagesById: () => ({}),
     useSessionMessagesVersion: () => 0,
     useSessionMessagesReducerState: () => null,
-    };
+});
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
@@ -121,8 +126,21 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 describe('AgentInput (image attachment thumbnails)', () => {
-    it('opens a larger preview when an image thumbnail is pressed', async () => {
+    async function renderAgentInput(attachments: readonly AgentInputAttachment[]) {
         const { AgentInput } = await import('./AgentInput');
+        return renderScreen(React.createElement(AgentInput, {
+            value: '',
+            placeholder: 'placeholder',
+            onChangeText: () => { },
+            onSend: () => { },
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            attachments,
+            hasSendableAttachments: true,
+        }));
+    }
+
+    it('opens a larger preview when an image thumbnail is pressed', async () => {
         const attachments = [
             {
                 key: 'a1',
@@ -138,30 +156,14 @@ describe('AgentInput (image attachment thumbnails)', () => {
                 preview: { kind: 'image', uri: 'blob:second' },
                 onRemove: () => { },
             },
-        ] as any;
+        ] satisfies readonly AgentInputAttachment[];
 
         modalShowSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(AgentInput, {
-                value: '',
-                placeholder: 'placeholder',
-                onChangeText: () => { },
-                onSend: () => { },
-                autocompletePrefixes: [],
-                autocompleteSuggestions: async () => [],
-                attachments,
-                hasSendableAttachments: true,
-            }));
-        });
+        const screen = await renderAgentInput(attachments);
 
-        const thumbnail = tree!.root.findByProps({ testID: 'agent-input-attachment-image:a1' });
-        expect(typeof thumbnail.props.onPress).toBe('function');
-
-        act(() => {
-            thumbnail.props.onPress();
-        });
+        expect(screen.findByTestId('agent-input-attachment-image:a1')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-attachment-image:a1');
 
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
         const modalConfig = (modalShowSpy.mock.calls[0]?.[0] ?? null) as null | {
@@ -182,7 +184,6 @@ describe('AgentInput (image attachment thumbnails)', () => {
     }, 120_000);
 
     it('renders a thumbnail tile for image attachments', async () => {
-        const { AgentInput } = await import('./AgentInput');
         const attachments = [
             {
                 key: 'a1',
@@ -191,27 +192,14 @@ describe('AgentInput (image attachment thumbnails)', () => {
                 preview: { kind: 'image', uri: 'blob:test' },
                 onRemove: () => { },
             },
-        ] as any;
+        ] satisfies readonly AgentInputAttachment[];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(AgentInput, {
-                value: '',
-                placeholder: 'placeholder',
-                onChangeText: () => { },
-                onSend: () => { },
-                autocompletePrefixes: [],
-                autocompleteSuggestions: async () => [],
-                attachments,
-                hasSendableAttachments: true,
-            }));
-        });
+        const screen = await renderAgentInput(attachments);
 
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-attachment-image:a1' })).not.toThrow();
+        expect(screen.findByTestId('agent-input-attachment-image:a1')).toBeTruthy();
     });
 
     it('uses button accessibility semantics for attachment image thumbnails', async () => {
-        const { AgentInput } = await import('./AgentInput');
         const attachments = [
             {
                 key: 'a1',
@@ -220,27 +208,14 @@ describe('AgentInput (image attachment thumbnails)', () => {
                 preview: { kind: 'image', uri: 'blob:test' },
                 onRemove: () => { },
             },
-        ] as any;
+        ] satisfies readonly AgentInputAttachment[];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(AgentInput, {
-                value: '',
-                placeholder: 'placeholder',
-                onChangeText: () => { },
-                onSend: () => { },
-                autocompletePrefixes: [],
-                autocompleteSuggestions: async () => [],
-                attachments,
-                hasSendableAttachments: true,
-            }));
-        });
+        const screen = await renderAgentInput(attachments);
 
-        expect(tree!.root.findByProps({ testID: 'agent-input-attachment-image:a1' }).props.accessibilityRole).toBe('button');
+        expect(screen.findByTestId('agent-input-attachment-image:a1')?.props.accessibilityRole).toBe('button');
     });
 
     it('disables image remove while uploading', async () => {
-        const { AgentInput } = await import('./AgentInput');
         const attachments = [
             {
                 key: 'a1',
@@ -249,23 +224,10 @@ describe('AgentInput (image attachment thumbnails)', () => {
                 preview: { kind: 'image', uri: 'blob:test' },
                 onRemove: () => { },
             },
-        ] as any;
+        ] satisfies readonly AgentInputAttachment[];
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(React.createElement(AgentInput, {
-                value: '',
-                placeholder: 'placeholder',
-                onChangeText: () => { },
-                onSend: () => { },
-                autocompletePrefixes: [],
-                autocompleteSuggestions: async () => [],
-                attachments,
-                hasSendableAttachments: true,
-            }));
-        });
+        const screen = await renderAgentInput(attachments);
 
-        const removeButton = tree!.root.findByProps({ testID: 'agent-input-attachment-remove:a1' });
-        expect(removeButton.props.disabled).toBe(true);
+        expect(screen.findByTestId('agent-input-attachment-remove:a1')?.props.disabled).toBe(true);
     });
 });

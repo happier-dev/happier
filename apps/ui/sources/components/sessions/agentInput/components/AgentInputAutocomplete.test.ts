@@ -1,27 +1,31 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import renderer, { act, ReactTestInstance } from 'react-test-renderer';
 import { AgentInputAutocomplete } from './AgentInputAutocomplete';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Pressable: 'Pressable',
-    Platform: { OS: 'web' },
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Pressable: 'Pressable',
+                                    Platform: {
+                                    OS: 'web',
+                                },
+                                    View: 'View',
+                                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: { colors: { surfacePressed: '#eee', surfaceSelected: '#ddd' } },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({ colors: { modal: { border: '#ccc' }, shadow: { color: '#000', opacity: 0.2 }, surface: '#fff' } })
-                : styles,
-    },
-}));
+    });
+});
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -71,7 +75,7 @@ describe('AgentInputAutocomplete', () => {
         expect(findOverlay(tree)?.props.maxHeight).toBe(123);
     });
 
-    it('calls onSelect with the pressed index', () => {
+    it('calls onSelect with the pressed index', async () => {
         const onSelect = vi.fn<(index: number) => void>();
         const tree = renderAutocomplete({
             suggestions: [

@@ -1,31 +1,33 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        AppState: rn.AppState,
-        Platform: { ...rn.Platform, OS: 'web' },
-        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, props.children),
-        Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Text', props, props.children),
-        ActivityIndicator: (props: Record<string, unknown>) =>
-            React.createElement('ActivityIndicator', props, null),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                    React.createElement('Pressable', props, props.children),
+                                Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                    React.createElement('Text', props, props.children),
+                                ActivityIndicator: (props: Record<string, unknown>) =>
+                                    React.createElement('ActivityIndicator', props, null),
+                            }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => <>{'.'}</>,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
@@ -36,9 +38,7 @@ describe('ResumeChip', () => {
         const { ResumeChip } = await import('./ResumeChip');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ResumeChip
+        tree = (await renderScreen(<ResumeChip
                     onPress={() => {}}
                     showLabel={false}
                     resumeSessionId={null}
@@ -47,9 +47,7 @@ describe('ResumeChip', () => {
                     labelOptional="Optional"
                     pressableStyle={() => ({})}
                     textStyle={{}}
-                />,
-            );
-        });
+                />)).tree;
 
         const badNodes: Array<{ parent: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {
@@ -70,5 +68,6 @@ describe('ResumeChip', () => {
         walk(tree.toJSON(), null);
 
         expect(badNodes).toEqual([]);
+        expect(tree.root.findByProps({ testID: 'agent-input-resume-chip' })).toBeTruthy();
     });
 });

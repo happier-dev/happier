@@ -11,6 +11,7 @@ export type AgentInputChipPickerDetailPaneProps = Readonly<{
   option: AgentInputChipPickerOption;
   onApply: () => void;
   applyLabel: string;
+  style?: any;
 }>;
 
 export function AgentInputChipPickerDetailPane(
@@ -22,7 +23,7 @@ export function AgentInputChipPickerDetailPane(
     : props.option.detailContent;
 
   return (
-    <View style={styles.detailPane}>
+    <View style={[styles.detailPane, props.style]}>
       {props.option.detailDescription ? (
         <Text style={styles.detailDescription}>
           {props.option.detailDescription}
@@ -62,19 +63,21 @@ export function AgentInputChipPickerDetailPane(
         </Pressable>
       ) : null}
 
-      <Pressable
-        testID="agent-input-chip-picker.apply"
-        accessibilityRole="button"
-        onPress={props.onApply}
-        disabled={props.option.disabled}
-        style={({ pressed }) => [
-          styles.applyButton,
-          pressed ? styles.applyButtonPressed : null,
-          props.option.disabled ? styles.applyButtonDisabled : null,
-        ]}
-      >
-        <Text style={styles.applyButtonText}>{props.applyLabel}</Text>
-      </Pressable>
+      {props.option.onApply ? (
+        <Pressable
+          testID="agent-input-chip-picker.apply"
+          accessibilityRole="button"
+          onPress={props.onApply}
+          disabled={props.option.disabled}
+          style={({ pressed }) => [
+            styles.applyButton,
+            pressed ? styles.applyButtonPressed : null,
+            props.option.disabled ? styles.applyButtonDisabled : null,
+          ]}
+        >
+          <Text style={styles.applyButtonText}>{props.applyLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -83,6 +86,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   detailPane: {
     flex: 1,
     gap: 10,
+    backgroundColor: theme.colors.surface,
   },
   detailHeader: {
     gap: 3,
@@ -97,8 +101,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.textSecondary,
   },
   detailDescription: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     color: theme.colors.text,
   },
   detailCustomContent: {

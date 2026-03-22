@@ -1,16 +1,21 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedPopoverProps: any = null;
+let capturedSelectionPopoverProps: any = null;
 let capturedPopoverSurfaceProps: any = null;
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#111',
@@ -37,68 +42,36 @@ vi.mock('react-native-unistyles', () => ({
                 input: {
                     background: '#fafafa',
                 },
+                modal: {
+                    border: '#ddd',
+                },
+                shadow: {
+                    color: '#000',
+                    opacity: 0.2,
+                },
+                divider: '#ddd',
             },
         },
-    }),
-    StyleSheet: {
-        create: (factory: any) => {
-            const theme = {
-                colors: {
-                    text: '#111',
-                    textSecondary: '#666',
-                    surface: '#fff',
-                    surfaceHigh: '#f2f2f2',
-                    surfaceHighest: '#e9e9e9',
-                    surfacePressed: '#ececec',
-                    surfacePressedOverlay: '#f4f4f4',
-                    surfaceSelected: '#f7f7f7',
-                    backgroundSecondary: '#f5f5f5',
-                    card: { background: '#f8f8f8' },
-                    accent: { blue: '#00f' },
-                    status: { connected: '#0f0' },
-                    button: {
-                        primary: { background: '#00f', tint: '#fff' },
-                    },
-                    groupped: {
-                        background: '#f2f2f2',
-                        border: '#ddd',
-                        separator: '#eee',
-                        sectionTitle: '#777',
-                    },
-                    input: {
-                        background: '#fafafa',
-                    },
-                    modal: {
-                        border: '#ddd',
-                    },
-                    shadow: {
-                        color: '#000',
-                        opacity: 0.2,
-                    },
-                    divider: '#ddd',
-                },
-            };
-            return typeof factory === 'function' ? factory(theme) : factory;
-        },
-    },
-}));
+    });
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/components/ui/popover', () => ({
-    Popover: (props: any) => {
-        capturedPopoverProps = props;
-        return props.open ? React.createElement('Popover', props, props.children({ maxHeight: 320 })) : null;
+vi.mock('@/components/sessions/agentInput/selection/AgentInputSelectionPopover', () => ({
+    AgentInputSelectionPopover: (props: any) => {
+        capturedSelectionPopoverProps = props;
+        return props.open ? React.createElement('AgentInputSelectionPopover', props, props.children({ maxHeight: 320 })) : null;
     },
 }));
 
@@ -116,87 +89,124 @@ describe('AgentInputChipPickerPopover', () => {
         const onRequestClose = vi.fn();
         const anchorRef = { current: { nodeType: 'View' } } as any;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AgentInputChipPickerPopover
-                    open
-                    anchorRef={anchorRef}
-                    title="Pick"
-                    options={[
-                        { id: 'one', label: 'One' },
-                        { id: 'two', label: 'Two' },
-                    ]}
-                    selectedOptionId="one"
-                    onSelect={onSelect}
-                    onRequestClose={onRequestClose}
-                />,
-            );
-        });
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={anchorRef}
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One' },
+                { id: 'two', label: 'Two' },
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
 
-        expect(capturedPopoverProps?.anchorRef).toBe(anchorRef);
-        expect(capturedPopoverProps?.portal?.matchAnchorWidth).toBe(false);
+        expect(capturedSelectionPopoverProps?.anchorRef).toBe(anchorRef);
+        expect(capturedSelectionPopoverProps?.maxWidthCap).toBe(720);
 
-        const item = tree!.root.findByProps({ testID: 'agent-input-chip-picker.option:two' });
-        await act(async () => {
-            item.props.onPress();
-        });
+        expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
 
         expect(onSelect).toHaveBeenCalledWith('two');
         expect(onRequestClose).toHaveBeenCalled();
     });
 
-    it('uses explicit apply in detailed mode inside the popover', async () => {
+    it('selects immediately in detailed mode for pure selection options', async () => {
         const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
         const onSelect = vi.fn();
         const onRequestClose = vi.fn();
         capturedPopoverSurfaceProps = null;
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AgentInputChipPickerPopover
-                    open
-                    anchorRef={{ current: { nodeType: 'View' } } as any}
-                    title="Pick"
-                    options={[
-                        {
-                            id: 'one',
-                            label: 'Primary',
-                            sectionId: 'linked',
-                            sectionLabel: 'Linked',
-                            detailDescription: 'Primary checkout',
-                        },
-                        {
-                            id: 'two',
-                            label: 'Feature',
-                            sectionId: 'linked',
-                            sectionLabel: 'Linked',
-                            detailDescription: 'Feature checkout',
-                        },
-                    ]}
-                    selectedOptionId="one"
-                    onSelect={onSelect}
-                    onRequestClose={onRequestClose}
-                />,
-            );
-        });
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'one',
+                    label: 'Primary',
+                    sectionId: 'linked',
+                    sectionLabel: 'Linked',
+                    detailDescription: 'Primary checkout',
+                },
+                {
+                    id: 'two',
+                    label: 'Feature',
+                    sectionId: 'linked',
+                    sectionLabel: 'Linked',
+                    detailDescription: 'Feature checkout',
+                    onSelectImmediate: () => {
+                        onSelect('two');
+                    },
+                },
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
 
-        const option = tree!.root.findByProps({ testID: 'agent-input-chip-picker.option:two' });
-        await act(async () => {
-            option.props.onPress();
-        });
-
-        expect(onSelect).not.toHaveBeenCalled();
-        expect(capturedPopoverSurfaceProps?.scrollEnabled).toBe(true);
-
-        const apply = tree!.root.findByProps({ testID: 'agent-input-chip-picker.apply' });
-        await act(async () => {
-            apply.props.onPress();
-        });
+        expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
 
         expect(onSelect).toHaveBeenCalledWith('two');
-        expect(onRequestClose).toHaveBeenCalled();
+        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(capturedPopoverSurfaceProps?.scrollEnabled).toBe(true);
+
+        expect(screen.findByTestId('agent-input-chip-picker.apply')).toBeNull();
+    });
+
+    it('does not fall back to generic selection for focus-only detailed options', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'engine:codex',
+                    label: 'Codex',
+                    detailDescription: 'Engine detail',
+                    renderDetailContent: () => React.createElement('Detail'),
+                },
+            ]}
+            selectedOptionId="engine:codex"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.option:engine:codex')).toBeNull();
+        expect(screen.findByType('Detail')).toBeTruthy();
+        expect(onSelect).not.toHaveBeenCalled();
+        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(screen.findByTestId('agent-input-chip-picker.apply')).toBeNull();
+    });
+
+    it('hides the option selector when detailed content has no alternative choice', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'engine:codex',
+                    label: 'Codex',
+                    detailDescription: 'Engine detail',
+                    renderDetailContent: () => React.createElement('Detail'),
+                },
+            ]}
+            selectedOptionId="engine:codex"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.option:engine:codex')).toBeNull();
+        expect(screen.findByType('Detail')).toBeTruthy();
     });
 
     it('supports a secondary detail action inside the popover detail pane', async () => {
@@ -205,38 +215,62 @@ describe('AgentInputChipPickerPopover', () => {
         const onRequestClose = vi.fn();
         const onDetailAction = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <AgentInputChipPickerPopover
-                    open
-                    anchorRef={{ current: { nodeType: 'View' } } as any}
-                    title="Pick"
-                    options={[
-                        {
-                            id: 'one',
-                            label: 'Current folder',
-                            sectionId: 'current',
-                            sectionLabel: 'Current',
-                            detailDescription: 'Current linked workspace',
-                            detailActionLabel: 'Open Settings',
-                            onDetailAction,
-                        },
-                    ]}
-                    selectedOptionId="one"
-                    onSelect={onSelect}
-                    onRequestClose={onRequestClose}
-                />,
-            );
-        });
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'one',
+                    label: 'Current folder',
+                    sectionId: 'current',
+                    sectionLabel: 'Current',
+                    detailDescription: 'Current linked workspace',
+                    detailActionLabel: 'Open Settings',
+                    onDetailAction,
+                },
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
 
-        const detailAction = tree!.root.findByProps({ testID: 'agent-input-chip-picker.detail-action' });
-        await act(async () => {
-            detailAction.props.onPress();
-        });
+        expect(screen.findByTestId('agent-input-chip-picker.detail-action')).toBeTruthy();
+        screen.pressByTestId('agent-input-chip-picker.detail-action');
 
         expect(onDetailAction).toHaveBeenCalledTimes(1);
         expect(onSelect).not.toHaveBeenCalled();
         expect(onRequestClose).not.toHaveBeenCalled();
+    });
+
+    it('retains explicit apply for editor-style detailed options', async () => {
+        const { AgentInputChipPickerPopover } = await import('./AgentInputChipPickerPopover');
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+        const onApply = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPopover
+            open
+            anchorRef={{ current: { nodeType: 'View' } } as any}
+            title="Pick"
+            options={[
+                {
+                    id: 'create',
+                    label: 'Create',
+                    detailDescription: 'Editor flow',
+                    onApply,
+                },
+            ]}
+            selectedOptionId="create"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.apply')).toBeTruthy();
+        screen.pressByTestId('agent-input-chip-picker.apply');
+
+        expect(onApply).toHaveBeenCalledTimes(1);
+        expect(onSelect).not.toHaveBeenCalled();
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 });

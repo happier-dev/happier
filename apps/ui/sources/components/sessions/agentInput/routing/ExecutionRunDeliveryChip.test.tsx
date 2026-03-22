@@ -1,34 +1,42 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedSimpleOptionsPopoverProps: unknown = null;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (options: unknown) =>
-            options && typeof options === 'object' ? (options as any).web ?? (options as any).default : undefined,
-    },
-    useWindowDimensions: () => ({ width: 1024, height: 768 }),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                    OS: 'web',
+                                    select: (options: unknown) =>
+                                            options && typeof options === 'object' ? (options as any).web ?? (options as any).default : undefined,
+                                },
+                                    useWindowDimensions: () => ({ width: 1024, height: 768 }),
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Pressable', props, props.children),
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('View', props, props.children),
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, vars?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, vars?: Record<string, unknown>) => {
         if (vars && typeof vars.label === 'string') return `${key}:${vars.label}`;
         return key;
-    },
-}));
+    } });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -64,16 +72,12 @@ describe('ExecutionRunDeliveryChip', () => {
         } as const;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ExecutionRunDeliveryChip
+        tree = (await renderScreen(<ExecutionRunDeliveryChip
                     ctx={ctx}
                     recipient={{ kind: 'agent_team_broadcast', teamId: 'probe' }}
                     delivery="steer_if_supported"
                     onDeliveryChange={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree!.toJSON()).toBeNull();
         expect(capturedSimpleOptionsPopoverProps).toBeNull();
@@ -93,16 +97,12 @@ describe('ExecutionRunDeliveryChip', () => {
         } as const;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ExecutionRunDeliveryChip
+        tree = (await renderScreen(<ExecutionRunDeliveryChip
                     ctx={ctx}
                     recipient={{ kind: 'execution_run', runId: 'run_1' }}
                     delivery="interrupt"
                     onDeliveryChange={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.open).toBe(false);
 
@@ -135,16 +135,12 @@ describe('ExecutionRunDeliveryChip', () => {
             popoverAnchorRef: { current: null },
         } as const;
 
-        act(() => {
-            renderer.create(
-                <ExecutionRunDeliveryChip
+        await renderScreen(<ExecutionRunDeliveryChip
                     ctx={ctx}
                     recipient={{ kind: 'execution_run', runId: 'run_1' }}
                     delivery="steer_if_supported"
                     onDeliveryChange={onDeliveryChange}
-                />,
-            );
-        });
+                />);
 
         act(() => {
             asSimpleOptionsPopoverProps(capturedSimpleOptionsPopoverProps)?.onSelect('prompt');

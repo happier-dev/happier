@@ -5,8 +5,33 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { t } from '@/text';
 
+import type { ChipOptionInteraction } from '../chipOptionInteraction';
 import type { AgentInputContentPopoverConfig } from '../components/AgentInputContentPopover';
-import type { AgentInputPopoverAnchor } from '../agentInputContracts';
+import type { AgentInputSelectionOverlayId } from '../selection/agentInputSelectionOverlayTypes';
+
+function buildContentPopoverHandler(params: Readonly<{
+    overlayId: Extract<AgentInputSelectionOverlayId, 'machine' | 'path' | 'resume' | 'profile' | 'envVars'>;
+    popover?: AgentInputContentPopoverConfig;
+    onLegacyClick?: () => void;
+    toggleSelectionOverlay: (
+        id: AgentInputSelectionOverlayId,
+        anchor: 'chip' | 'actionMenu',
+        chipKey?: string,
+    ) => void;
+}>): (() => void) | undefined {
+    if (!params.popover && !params.onLegacyClick) {
+        return undefined;
+    }
+
+    return () => {
+        hapticsLight();
+        if (params.popover) {
+            params.toggleSelectionOverlay(params.overlayId, 'chip');
+            return;
+        }
+        params.onLegacyClick?.();
+    };
+}
 
 export function useAgentInputCoreControlHandlers(params: Readonly<{
     agentType?: AgentId;
@@ -15,22 +40,25 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
     onAgentClick?: () => void;
     onPermissionModeChange?: (mode: PermissionMode) => void;
     onPermissionClick?: () => void;
+    sessionModeChipInteraction?: ChipOptionInteraction<string> | null;
+    onSessionModeChange?: (modeId: string) => void;
     profilePopover?: AgentInputContentPopoverConfig;
     onProfileClick?: () => void;
     envVarsPopover?: AgentInputContentPopoverConfig;
     onEnvVarsClick?: () => void;
+    machinePopover?: AgentInputContentPopoverConfig;
     onMachineClick?: () => void;
+    pathPopover?: AgentInputContentPopoverConfig;
     onPathClick?: () => void;
+    resumePopover?: AgentInputContentPopoverConfig;
+    onResumeClick?: () => void;
     setShowActionMenu: React.Dispatch<React.SetStateAction<boolean>>;
-    setShowPermissionPopover: React.Dispatch<React.SetStateAction<boolean>>;
-    setAgentPickerAnchor: React.Dispatch<React.SetStateAction<AgentInputPopoverAnchor>>;
-    setShowAgentPicker: React.Dispatch<React.SetStateAction<boolean>>;
-    setSessionModePickerAnchor: React.Dispatch<React.SetStateAction<AgentInputPopoverAnchor>>;
-    setShowSessionModePicker: React.Dispatch<React.SetStateAction<boolean>>;
-    setProfilePopoverAnchor: React.Dispatch<React.SetStateAction<AgentInputPopoverAnchor>>;
-    setShowProfilePopover: React.Dispatch<React.SetStateAction<boolean>>;
-    setEnvVarsPopoverAnchor: React.Dispatch<React.SetStateAction<AgentInputPopoverAnchor>>;
-    setShowEnvVarsPopover: React.Dispatch<React.SetStateAction<boolean>>;
+    closeSelectionOverlay: (id?: AgentInputSelectionOverlayId) => void;
+    toggleSelectionOverlay: (
+        id: AgentInputSelectionOverlayId,
+        anchor: 'chip' | 'actionMenu',
+        chipKey?: string,
+    ) => void;
 }>): Readonly<{
     hasAgentSelection: boolean;
     resolvedAgentLabel: string;
@@ -41,6 +69,7 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
     handleAgentPress: () => void;
     handleMachinePress?: () => void;
     handlePathPress?: () => void;
+    handleResumePress?: () => void;
 }> {
     const hasAgentSelection = Boolean(params.agentType && (params.onAgentClick || params.hasAgentPickerOptions));
 
@@ -54,7 +83,7 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
         hapticsLight();
         if (params.onPermissionModeChange) {
             params.setShowActionMenu(false);
-            params.setShowPermissionPopover((current) => !current);
+            params.toggleSelectionOverlay('permission', 'chip');
             return;
         }
         params.onPermissionClick?.();
@@ -62,79 +91,81 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
         params.onPermissionClick,
         params.onPermissionModeChange,
         params.setShowActionMenu,
-        params.setShowPermissionPopover,
+        params.toggleSelectionOverlay,
     ]);
 
     const handleModePress = React.useCallback(() => {
         hapticsLight();
-        params.setSessionModePickerAnchor('chip');
-        params.setShowSessionModePicker(true);
-    }, [params.setSessionModePickerAnchor, params.setShowSessionModePicker]);
+        if (params.sessionModeChipInteraction?.kind === 'cycle') {
+            params.onSessionModeChange?.(params.sessionModeChipInteraction.nextOptionId);
+            return;
+        }
+        if (params.sessionModeChipInteraction?.kind === 'picker') {
+            params.toggleSelectionOverlay('sessionMode', 'chip');
+        }
+    }, [params.onSessionModeChange, params.sessionModeChipInteraction, params.toggleSelectionOverlay]);
 
     const handleProfilePress = React.useCallback(() => {
         hapticsLight();
         if (params.profilePopover) {
-            params.setProfilePopoverAnchor('chip');
-            params.setShowProfilePopover((current) => !current);
+            params.toggleSelectionOverlay('profile', 'chip');
             return;
         }
         params.onProfileClick?.();
-    }, [
-        params.onProfileClick,
-        params.profilePopover,
-        params.setProfilePopoverAnchor,
-        params.setShowProfilePopover,
-    ]);
+    }, [params.onProfileClick, params.profilePopover, params.toggleSelectionOverlay]);
 
     const handleEnvVarsPress = React.useCallback(() => {
         hapticsLight();
         if (params.envVarsPopover) {
-            params.setEnvVarsPopoverAnchor('chip');
-            params.setShowEnvVarsPopover((current) => !current);
+            params.toggleSelectionOverlay('envVars', 'chip');
             return;
         }
         params.onEnvVarsClick?.();
-    }, [
-        params.envVarsPopover,
-        params.onEnvVarsClick,
-        params.setEnvVarsPopoverAnchor,
-        params.setShowEnvVarsPopover,
-    ]);
+    }, [params.envVarsPopover, params.onEnvVarsClick, params.toggleSelectionOverlay]);
 
     const handleAgentPress = React.useCallback(() => {
         hapticsLight();
         if (params.hasAgentPickerOptions) {
-            params.setAgentPickerAnchor('chip');
             params.setShowActionMenu(false);
-            params.setShowPermissionPopover(false);
-            params.setShowAgentPicker(true);
+            params.closeSelectionOverlay('permission');
+            params.toggleSelectionOverlay('agent', 'chip');
             return;
         }
         params.onAgentClick?.();
     }, [
+        params.closeSelectionOverlay,
         params.hasAgentPickerOptions,
         params.onAgentClick,
-        params.setAgentPickerAnchor,
         params.setShowActionMenu,
-        params.setShowAgentPicker,
-        params.setShowPermissionPopover,
+        params.toggleSelectionOverlay,
     ]);
 
     const handleMachinePress = React.useMemo(() => {
-        if (!params.onMachineClick) return undefined;
-        return () => {
-            hapticsLight();
-            params.onMachineClick?.();
-        };
-    }, [params.onMachineClick]);
+        return buildContentPopoverHandler({
+            overlayId: 'machine',
+            popover: params.machinePopover,
+            onLegacyClick: params.onMachineClick,
+            toggleSelectionOverlay: params.toggleSelectionOverlay,
+        });
+    }, [params.machinePopover, params.onMachineClick, params.toggleSelectionOverlay]);
 
     const handlePathPress = React.useMemo(() => {
-        if (!params.onPathClick) return undefined;
-        return () => {
-            hapticsLight();
-            params.onPathClick?.();
-        };
-    }, [params.onPathClick]);
+        return buildContentPopoverHandler({
+            overlayId: 'path',
+            popover: params.pathPopover,
+            onLegacyClick: params.onPathClick,
+            toggleSelectionOverlay: params.toggleSelectionOverlay,
+        });
+    }, [params.onPathClick, params.pathPopover, params.toggleSelectionOverlay]);
+
+    const handleResumePress = React.useMemo(() => {
+        return buildContentPopoverHandler({
+            overlayId: 'resume',
+            popover: params.resumePopover,
+            onLegacyClick: params.onResumeClick,
+            toggleSelectionOverlay: params.toggleSelectionOverlay,
+        });
+    }, [params.onResumeClick, params.resumePopover, params.toggleSelectionOverlay]);
 
     return {
         hasAgentSelection,
@@ -146,5 +177,6 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
         handleAgentPress,
         handleMachinePress,
         handlePathPress,
+        handleResumePress,
     };
 }

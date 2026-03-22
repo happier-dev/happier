@@ -1,68 +1,54 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedSimpleOptionsPopoverProps: any = null;
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && typeof options === 'object' ? options.web ?? options.default : undefined),
-    },
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                    OS: 'web',
+                                    select: (options: any) => (options && typeof options === 'object' ? options.web ?? options.default : undefined),
+                                },
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Pressable', props, props.children),
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('View', props, props.children),
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            if (typeof styles === 'function') {
-                return styles({
-                    colors: {
-                        text: '#f4f4f4',
-                        textSecondary: '#9ca3af',
-                        accent: {
-                            blue: '#3b82f6',
-                            green: '#22c55e',
-                            orange: '#f97316',
-                            yellow: '#facc15',
-                            red: '#ef4444',
-                            indigo: '#6366f1',
-                            purple: '#a855f7',
-                        },
-                    },
-                });
-            }
-            return styles;
-        },
-        absoluteFillObject: {},
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000000',
                 textSecondary: '#49454F',
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string, vars?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, vars?: Record<string, unknown>) => {
         if (vars && typeof vars.label === 'string') return `${key}:${vars.label}`;
         if (vars && typeof vars.teamId === 'string') return `${key}:${vars.teamId}`;
         if (vars && typeof vars.runId === 'string') return `${key}:${vars.runId}`;
         return key;
-    },
-}));
+    } });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -98,11 +84,7 @@ describe('RecipientChip', () => {
         } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <RecipientChip ctx={ctx} targets={[]} recipient={null} onRecipientChange={() => {}} />,
-            );
-        });
+        tree = (await renderScreen(<RecipientChip ctx={ctx} targets={[]} recipient={null} onRecipientChange={() => {}} />)).tree;
 
         expect(tree!.toJSON()).toBeNull();
         expect(capturedSimpleOptionsPopoverProps).toBeNull();
@@ -120,11 +102,7 @@ describe('RecipientChip', () => {
         } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <RecipientChip ctx={ctx} targets={[]} recipient={null} onRecipientChange={() => {}} />,
-            );
-        });
+        tree = (await renderScreen(<RecipientChip ctx={ctx} targets={[]} recipient={null} onRecipientChange={() => {}} />)).tree;
 
         expect(() => {
             act(() => {
@@ -157,9 +135,7 @@ describe('RecipientChip', () => {
         } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <RecipientChip
+        tree = (await renderScreen(<RecipientChip
                     ctx={ctx}
                     targets={[
                         {
@@ -170,9 +146,7 @@ describe('RecipientChip', () => {
                     ]}
                     recipient={null}
                     onRecipientChange={() => {}}
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree!.toJSON()).not.toBeNull();
         expect(capturedSimpleOptionsPopoverProps).toEqual(expect.objectContaining({
@@ -196,9 +170,7 @@ describe('RecipientChip', () => {
             popoverAnchorRef: null,
         } as any;
 
-        act(() => {
-            renderer.create(
-                <RecipientChip
+        await renderScreen(<RecipientChip
                     ctx={ctx}
                     targets={[
                         {
@@ -209,9 +181,7 @@ describe('RecipientChip', () => {
                     ]}
                     recipient={null}
                     onRecipientChange={onRecipientChange}
-                />,
-            );
-        });
+                />);
 
         act(() => {
             capturedSimpleOptionsPopoverProps.onSelect('agent_team_member:team_1:alpha');

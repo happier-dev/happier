@@ -5,6 +5,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import type { AcpConfigOptionControl, AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
+import {
+    isBooleanConfigOptionType,
+    resolveBooleanConfigOptionNextValue,
+    resolveBooleanConfigOptionValue,
+} from '@/sync/acp/configOptionsControl';
 import { t } from '@/text';
 
 type AgentInputAcpConfigOptionsSectionProps = Readonly<{
@@ -12,10 +17,6 @@ type AgentInputAcpConfigOptionsSectionProps = Readonly<{
     headerAccessory?: React.ReactNode;
     onSelectValue?: (configId: string, valueId: AcpConfigOptionValueId) => void;
 }>;
-
-function parseAcpBooleanValueId(valueId: string): boolean {
-    return valueId === 'true';
-}
 
 function formatValue(valueId: AcpConfigOptionValueId): string {
     return valueId;
@@ -42,17 +43,17 @@ export function AgentInputAcpConfigOptionsSection(props: AgentInputAcpConfigOpti
             {props.controls.map((control) => {
                 const option = control.option;
                 const effectiveValue = control.effectiveValue;
-                const isBool =
-                    option.type === 'boolean' ||
-                    option.type === 'bool' ||
-                    option.type === 'toggle';
+                const isBool = isBooleanConfigOptionType(option.type);
 
                 if (isBool) {
-                    const boolValue = parseAcpBooleanValueId(effectiveValue);
+                    const boolValue = resolveBooleanConfigOptionValue(option, effectiveValue);
                     return (
                         <Pressable
                             key={option.id}
-                            onPress={() => props.onSelectValue?.(option.id, boolValue ? 'false' : 'true')}
+                            onPress={() => props.onSelectValue?.(
+                                option.id,
+                                resolveBooleanConfigOptionNextValue(option, !boolValue),
+                            )}
                             style={({ pressed }) => [
                                 styles.optionRow,
                                 pressed ? styles.optionRowPressed : null,
@@ -80,7 +81,10 @@ export function AgentInputAcpConfigOptionsSection(props: AgentInputAcpConfigOpti
                                 <View style={styles.switchWrap}>
                                     <Switch
                                         value={boolValue}
-                                        onValueChange={(next) => props.onSelectValue?.(option.id, next ? 'true' : 'false')}
+                                        onValueChange={(next) => props.onSelectValue?.(
+                                            option.id,
+                                            resolveBooleanConfigOptionNextValue(option, next),
+                                        )}
                                     />
                                 </View>
                             </View>
@@ -155,11 +159,11 @@ export function AgentInputAcpConfigOptionsSection(props: AgentInputAcpConfigOpti
 
 const styles = StyleSheet.create((theme) => ({
     section: {
-        gap: 10,
+        gap: 8,
     },
     headerRow: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'space-between',
         gap: 12,
     },
@@ -174,8 +178,8 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
     },
     optionRow: {
-        borderRadius: 14,
-        paddingHorizontal: 12,
+        borderRadius: 12,
+        paddingHorizontal: 10,
         paddingVertical: 10,
         backgroundColor: theme.colors.surface,
         borderWidth: StyleSheet.hairlineWidth,
@@ -192,25 +196,25 @@ const styles = StyleSheet.create((theme) => ({
     optionContent: {
         flex: 1,
         flexShrink: 1,
-        gap: 4,
+        gap: 3,
     },
     optionLabel: {
-        fontSize: 15,
+        fontSize: 14,
         fontWeight: '600',
         color: theme.colors.text,
     },
     optionDescription: {
-        fontSize: 13,
-        lineHeight: 18,
+        fontSize: 12,
+        lineHeight: 16,
         color: theme.colors.textSecondary,
     },
     switchWrap: {
         paddingLeft: 8,
     },
     configCard: {
-        gap: 6,
-        borderRadius: 14,
-        paddingHorizontal: 12,
+        gap: 5,
+        borderRadius: 12,
+        paddingHorizontal: 10,
         paddingVertical: 10,
         backgroundColor: theme.colors.surface,
         borderWidth: StyleSheet.hairlineWidth,
@@ -219,13 +223,13 @@ const styles = StyleSheet.create((theme) => ({
     choiceRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 8,
-        paddingTop: 4,
+        gap: 6,
+        paddingTop: 2,
     },
     choicePill: {
-        minHeight: 34,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
+        minHeight: 30,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
         borderRadius: 999,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
@@ -236,7 +240,7 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.radio.active,
     },
     choiceLabel: {
-        fontSize: 14,
+        fontSize: 12,
         fontWeight: '500',
         color: theme.colors.textSecondary,
     },

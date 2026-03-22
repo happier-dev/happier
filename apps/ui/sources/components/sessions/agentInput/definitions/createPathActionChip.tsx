@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable } from 'react-native';
+import { Pressable, type View } from 'react-native';
 
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 export function createPathActionChip(params: Readonly<{
+    anchorRef?: React.RefObject<View | null>;
     currentPath?: string | null;
     tint: string;
     showLabel: boolean;
@@ -15,13 +17,14 @@ export function createPathActionChip(params: Readonly<{
 }>): React.ReactNode {
     return (
         <Pressable
+            ref={params.anchorRef}
             key="path"
             testID="agent-input-path-chip"
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}
         >
-            <Ionicons name="folder-outline" size={18} color={params.tint} />
+            {normalizeNodeForView(<Ionicons name="folder-outline" size={18} color={params.tint} />)}
             {params.showLabel ? (
                 <Text style={params.textStyle}>
                     {typeof params.currentPath === 'string' && params.currentPath.length > 0

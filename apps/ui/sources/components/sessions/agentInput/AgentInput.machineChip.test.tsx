@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,23 +48,33 @@ function collectBadRawTextNodes(node: any, parentType: string | null = null, out
     return out;
 }
 
-vi.mock('react-native', () => ({
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
-    Dimensions: {
-        get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('View', props, props.children),
+                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Text', props, props.children),
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Pressable', props, props.children),
+                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('ScrollView', props, props.children),
+                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                    Platform: {
+                                    OS: 'ios',
+                                    select: (v: any) => v.ios,
+                                },
+                                    AppState: {
+                                    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+                                },
+                                    useWindowDimensions: () => ({ width: mockEnv.windowWidth, height: 600 }),
+                                    Dimensions: {
+                                        get: () => ({ width: mockEnv.windowWidth, height: 600, scale: 1, fontScale: 1 }),
+                                    },
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => (
@@ -81,14 +93,14 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -109,7 +121,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     useSessionMessagesById: () => ({}),
     useSessionMessagesVersion: () => 0,
     useSessionMessagesReducerState: () => null,
-    };
+});
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
@@ -221,9 +233,10 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
@@ -249,18 +262,11 @@ describe('AgentInput (machine chip)', () => {
     });
 
     afterEach(() => {
-        if (tree) {
-            act(() => {
-                tree?.unmount();
-            });
-        }
-        tree = null;
+        standardCleanup();
     });
 
     it('renders a select-machine label when machine is not yet selected', async () => {
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -270,9 +276,7 @@ describe('AgentInput (machine chip)', () => {
                     onMachineClick: () => {},
                     currentPath: '/tmp',
                     onPathClick: () => {},
-                }),
-            );
-        });
+                }))).tree;
 
         const text = collectText(tree?.toJSON());
         expect(text.join(' ')).toContain('newSession.selectMachineTitle');
@@ -281,9 +285,7 @@ describe('AgentInput (machine chip)', () => {
     it('does not emit raw text nodes under non-Text parents when chip icons render as text', async () => {
         mockEnv.iconsRenderAsText = true;
 
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -297,9 +299,7 @@ describe('AgentInput (machine chip)', () => {
                     onPathClick: () => {},
                     autocompletePrefixes: [],
                     autocompleteSuggestions: async () => [],
-                }),
-            );
-        });
+                }))).tree;
 
         const badNodes = collectBadRawTextNodes(tree?.toJSON());
         expect(badNodes).toEqual([]);
@@ -308,9 +308,7 @@ describe('AgentInput (machine chip)', () => {
     it('shows labels on narrow screens when chip density is auto', async () => {
         mockEnv.windowWidth = 390;
         mockEnv.agentInputChipDensity = 'auto';
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -320,18 +318,14 @@ describe('AgentInput (machine chip)', () => {
                     onMachineClick: () => {},
                     currentPath: '/tmp',
                     onPathClick: () => {},
-                }),
-            );
-        });
+                }))).tree;
 
         const text = collectText(tree?.toJSON());
         expect(text.join(' ')).toContain('newSession.selectMachineTitle');
     });
 
     it('renders a select-path label when path is not yet selected (new-session bootstrap)', async () => {
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -341,18 +335,14 @@ describe('AgentInput (machine chip)', () => {
                     onMachineClick: () => {},
                     currentPath: '',
                     onPathClick: () => {},
-                }),
-            );
-        });
+                }))).tree;
 
         const text = collectText(tree?.toJSON());
         expect(text.join(' ')).toContain('newSession.selectPathTitle');
     });
 
     it('exposes a stable testID for the connection status text (UI e2e locator)', async () => {
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -365,9 +355,7 @@ describe('AgentInput (machine chip)', () => {
                         dotColor: '#0a0',
                         isPulsing: false,
                     },
-                }),
-            );
-        });
+                }))).tree;
 
         const matches = tree?.root.findAll(
             (node) => String(node.type) === 'Text' && node.props?.testID === 'agent-input-connection-status-text'

@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
+import type { AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
 import type { AgentInputControlId } from './controls/agentInputControlTypes';
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
@@ -11,11 +12,13 @@ export type AgentInputExtraActionChipRenderContext = Readonly<{
     iconColor: string;
     textStyle: any;
     countTextStyle: any;
+    chipAnchorRef?: React.RefObject<any>;
     /**
      * Full-width anchor for agent-input popovers (matches the overall composer width).
      * Useful for chip-triggered popovers (e.g. "Link file") that should size like the @ suggestions.
      */
     popoverAnchorRef: React.RefObject<any>;
+    toggleCollapsedPopover?: (chipKey: string) => void;
 }>;
 
 export type AgentInputPopoverAnchor = 'chip' | 'actionMenu';
@@ -49,6 +52,20 @@ export type AgentInputExtraActionChip = Readonly<{
         selectedOptionId?: string | null;
         onSelect: (id: string) => void;
         maxHeightCap?: number;
+    }>;
+    collapsedContentPopover?: Readonly<{
+        title: string;
+        label?: string | null;
+        icon?: (tint: string) => React.ReactNode;
+        renderContent: AgentInputContentPopoverConfig['renderContent'];
+        boundaryRef?: React.RefObject<any> | null;
+        maxHeightCap?: number;
+        maxWidthCap?: number;
+        scrollEnabled?: AgentInputContentPopoverConfig['scrollEnabled'];
+        keyboardShouldPersistTaps?: AgentInputContentPopoverConfig['keyboardShouldPersistTaps'];
+        edgeFades?: AgentInputContentPopoverConfig['edgeFades'];
+        edgeIndicators?: AgentInputContentPopoverConfig['edgeIndicators'];
+        initialVisibility?: AgentInputContentPopoverConfig['initialVisibility'];
     }>;
     render: (ctx: AgentInputExtraActionChipRenderContext) => React.ReactNode;
 }>;

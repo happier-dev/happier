@@ -13,14 +13,18 @@ export function resolveRenderedExtraActionChipNodes(params: Readonly<{
 }>): Readonly<{
     extraChips: readonly React.ReactNode[];
     extraControlNodesById: Partial<Record<AgentInputControlId, ReadonlyArray<React.ReactNode>>>;
+    extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<any>>>;
 }> {
     const extraControlNodesById: Partial<Record<AgentInputControlId, ReadonlyArray<React.ReactNode>>> = {};
     const extraChips: React.ReactNode[] = [];
+    const extraChipAnchorRefsByKey: Record<string, React.RefObject<any>> = {};
 
     for (const chip of params.chips ?? []) {
+        const chipAnchorRef = React.createRef<any>();
+        extraChipAnchorRefsByKey[chip.key] = chipAnchorRef;
         const renderContext = chip.labelPolicy === 'auto-hide'
-            ? params.autoHideRenderContext
-            : params.renderContext;
+            ? { ...params.autoHideRenderContext, chipAnchorRef }
+            : { ...params.renderContext, chipAnchorRef };
         const node = (
             <React.Fragment key={chip.key}>
                 {chip.render(renderContext)}
@@ -41,5 +45,6 @@ export function resolveRenderedExtraActionChipNodes(params: Readonly<{
     return {
         extraChips,
         extraControlNodesById,
+        extraChipAnchorRefsByKey,
     };
 }

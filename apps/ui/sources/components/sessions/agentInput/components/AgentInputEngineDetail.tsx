@@ -7,6 +7,7 @@ import {
   type ModelPickerProbeState,
 } from "@/components/model/ModelPickerOverlay";
 import type {
+  AcpConfigOption,
   AcpConfigOptionControl,
   AcpConfigOptionValueId,
 } from "@/sync/acp/configOptionsControl";
@@ -22,6 +23,7 @@ type AgentInputEngineModelOption = Readonly<{
   value: string;
   label: string;
   description: string;
+  modelOptions?: ReadonlyArray<AcpConfigOption>;
 }>;
 
 type AgentInputEngineDetailProps = Readonly<{
@@ -33,7 +35,12 @@ type AgentInputEngineDetailProps = Readonly<{
   canEnterCustomModel?: boolean;
   modelProbe?: ModelPickerProbeState;
   onSelectModel?: (value: string) => void;
-  onRequestCustomModel?: () => void | Promise<void>;
+  onSubmitCustomModel?: (value: string) => void | Promise<void>;
+  selectedModelOptionControls?: ReadonlyArray<AcpConfigOptionControl> | null;
+  onSelectModelOptionValue?: (
+    configId: string,
+    valueId: AcpConfigOptionValueId,
+  ) => void;
 
   sessionModeOptions?: ReadonlyArray<AgentInputSessionModeOption>;
   selectedSessionModeId?: string;
@@ -105,8 +112,10 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
               customLabel={`${t("profiles.custom")}...`}
               customDescription={t("agentInput.model.customDescription")}
               probe={props.modelProbe}
+              selectedOptionControls={props.selectedModelOptionControls ?? undefined}
+              onSelectOptionControlValue={props.onSelectModelOptionValue}
               onSelect={props.onSelectModel ?? (() => {})}
-              onRequestCustomModel={props.onRequestCustomModel}
+              onSubmitCustomModel={props.onSubmitCustomModel}
             />,
           )
         : null,

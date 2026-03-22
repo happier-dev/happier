@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Pressable, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Ionicons } from "@expo/vector-icons";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Text } from "@/components/ui/text/Text";
 import { t } from "@/text";
@@ -22,6 +23,8 @@ type AgentInputSessionModeSectionProps = Readonly<{
 export function AgentInputSessionModeSection(
   props: AgentInputSessionModeSectionProps,
 ) {
+  const { theme } = useUnistyles();
+
   if (props.options.length === 0) {
     return null;
   }
@@ -43,135 +46,135 @@ export function AgentInputSessionModeSection(
           testID="agent-input-session-mode-summary"
         >
           {typeof props.summary === "string" ? (
-            <Text style={styles.optionDescription}>{props.summary}</Text>
+            <Text style={styles.summaryText}>{props.summary}</Text>
           ) : (
             props.summary
           )}
         </View>
       ) : null}
 
-      {props.options.map((option) => {
-        const isSelected = props.selectedOptionId === option.id;
-        return (
-          <Pressable
-            testID={`agent-input-session-mode-option:${option.id}`}
-            key={option.id}
-            onPress={() => props.onSelectOption?.(option.id)}
-            style={({ pressed }) => [
-              styles.optionRow,
-              pressed ? styles.optionRowPressed : null,
-            ]}
-          >
-            <View
-              style={[
-                styles.radioOuter,
-                isSelected
-                  ? styles.radioOuterSelected
-                  : styles.radioOuterUnselected,
+      <View style={styles.cardsGrid}>
+        {props.options.map((option) => {
+          const selected = props.selectedOptionId === option.id;
+          const hasDescription =
+            typeof option.description === "string" &&
+            option.description.trim().length > 0;
+
+          return (
+            <Pressable
+              key={option.id}
+              testID={`agent-input-session-mode-option:${option.id}`}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              onPress={() => props.onSelectOption?.(option.id)}
+              style={({ pressed }) => [
+                styles.optionCard,
+                props.options.length === 1 ? styles.optionCardFullWidth : null,
+                selected ? styles.optionCardSelected : null,
+                pressed ? styles.optionCardPressed : null,
               ]}
             >
-              {isSelected ? <View style={styles.radioInner} /> : null}
-            </View>
-            <View style={styles.optionContent}>
-              <Text
-                style={[
-                  styles.optionLabel,
-                  isSelected
-                    ? styles.optionLabelSelected
-                    : styles.optionLabelUnselected,
-                ]}
-              >
-                {option.name}
-              </Text>
-              {option.description ? (
-                <Text style={styles.optionDescription}>
+              <View style={styles.optionCardHeader}>
+                <Text
+                  numberOfLines={hasDescription ? 2 : 1}
+                  style={styles.optionCardTitle}
+                >
+                  {option.name}
+                </Text>
+                <View style={styles.optionCardIndicator}>
+                  {selected ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color={theme.colors.button.primary.background}
+                    />
+                  ) : null}
+                </View>
+              </View>
+              {hasDescription ? (
+                <Text style={styles.optionCardDescription}>
                   {option.description}
                 </Text>
               ) : null}
-            </View>
-          </Pressable>
-        );
-      })}
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   section: {
-    gap: 10,
+    gap: 4,
   },
   headerRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 8,
   },
   headerAccessory: {
     flexShrink: 0,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
+    fontSize: 11,
+    fontWeight: "600",
     color: theme.colors.textSecondary,
   },
   summaryRow: {
-    minHeight: 20,
+    minHeight: 0,
   },
-  optionRow: {
+  summaryText: {
+    fontSize: 10,
+    lineHeight: 13,
+    color: theme.colors.textSecondary,
+  },
+  cardsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+  },
+  optionCard: {
+    width: "48.5%",
+    minHeight: 52,
+    borderRadius: 13,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    backgroundColor: theme.colors.surface,
+    gap: 2,
+  },
+  optionCardFullWidth: {
+    width: "100%",
+  },
+  optionCardSelected: {
+    backgroundColor: theme.colors.surfacePressed,
+  },
+  optionCardPressed: {
+    opacity: 0.86,
+  },
+  optionCardHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: theme.colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.divider,
-  },
-  optionRowPressed: {
-    opacity: 0.85,
-  },
-  radioOuter: {
-    width: 16,
-    height: 16,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
-    borderWidth: 2,
-  },
-  radioOuterSelected: {
-    borderColor: theme.colors.radio.active,
-  },
-  radioOuterUnselected: {
-    borderColor: theme.colors.divider,
-  },
-  radioInner: {
-    width: 4,
-    height: 4,
-    borderRadius: 999,
-    backgroundColor: theme.colors.radio.active,
-  },
-  optionContent: {
-    flex: 1,
-    flexShrink: 1,
+    justifyContent: "space-between",
     gap: 4,
   },
-  optionLabel: {
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  optionLabelSelected: {
+  optionCardTitle: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "700",
     color: theme.colors.text,
   },
-  optionLabelUnselected: {
-    color: theme.colors.text,
+  optionCardIndicator: {
+    minWidth: 16,
+    minHeight: 16,
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
   },
-  optionDescription: {
-    fontSize: 13,
-    lineHeight: 18,
+  optionCardDescription: {
+    fontSize: 10,
+    lineHeight: 12,
     color: theme.colors.textSecondary,
   },
 }));

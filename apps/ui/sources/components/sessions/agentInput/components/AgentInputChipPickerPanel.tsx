@@ -1,9 +1,7 @@
 import React from "react";
-import { Pressable, useWindowDimensions, ScrollView, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { useWindowDimensions, ScrollView, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { Typography } from "@/constants/Typography";
 import { Item } from "@/components/ui/lists/Item";
 import { ItemGroup } from "@/components/ui/lists/ItemGroup";
 import { ItemListStatic } from "@/components/ui/lists/ItemList";
@@ -29,7 +27,6 @@ export function AgentInputChipPickerPanel(
   props: AgentInputChipPickerPanelProps,
 ) {
   const { width: windowWidth } = useWindowDimensions();
-  const { theme } = useUnistyles();
   const styles = stylesheet;
   const sections = React.useMemo(
     () => buildAgentInputChipPickerSections(props.options),
@@ -39,6 +36,7 @@ export function AgentInputChipPickerPanel(
     () => agentInputChipPickerHasDetailPane(props.options),
     [props.options],
   );
+  const showDetailedSelector = detailed && props.options.length > 1;
   const [focusedOptionId, setFocusedOptionId] = React.useState<string | null>(
     props.selectedOptionId ?? props.options[0]?.id ?? null,
   );
@@ -74,10 +72,27 @@ export function AgentInputChipPickerPanel(
     [focusedOptionId, props.options],
   );
 
+  const handleDetailedOptionFocus = React.useCallback((optionId: string) => {
+    setFocusedOptionId(optionId);
+    const option = props.options.find((candidate) => candidate.id === optionId) ?? null;
+    if (!option || option.disabled) {
+      return;
+    }
+    if (option.onApply) {
+      return;
+    }
+    if (option.onSelectImmediate) {
+      option.onSelectImmediate();
+      return;
+    }
+  }, [props.options]);
+
   const detailedLayout =
-    detailed && windowWidth < DETAILED_PICKER_STACKED_WIDTH
+    showDetailedSelector && windowWidth < DETAILED_PICKER_STACKED_WIDTH
       ? "stacked"
       : "split";
+  const detailPaneStyle =
+    detailedLayout === "split" ? styles.detailPaneSplit : null;
 
   return (
     <View testID="agent-input-chip-picker" style={styles.container}>
@@ -111,32 +126,52 @@ export function AgentInputChipPickerPanel(
       ) : (
         <View
           style={[
-            styles.body,
             styles.bodyDetailed,
-            detailedLayout === "stacked" ? styles.bodyDetailedStacked : null,
+            showDetailedSelector && detailedLayout === "stacked"
+              ? styles.bodyDetailedStacked
+              : null,
           ]}
         >
-          <AgentInputChipPickerOptionSelector
-            sections={sections}
-            focusedOptionId={focusedOption?.id ?? null}
-            selectedOptionId={props.selectedOptionId}
-            onFocusOption={setFocusedOptionId}
-            variant={detailedLayout === "stacked" ? "stacked" : "rail"}
-          />
+          {showDetailedSelector ? (
+            <ScrollView
+              style={detailedLayout === "split" ? styles.railScroll : null}
+              contentContainerStyle={
+                detailedLayout === "split" ? styles.railScrollContent : null
+              }
+              showsVerticalScrollIndicator={detailedLayout === "split"}
+              keyboardShouldPersistTaps="handled"
+            >
+              <AgentInputChipPickerOptionSelector
+                sections={sections}
+                focusedOptionId={focusedOption?.id ?? null}
+                selectedOptionId={props.selectedOptionId}
+                onFocusOption={handleDetailedOptionFocus}
+                variant={detailedLayout === "stacked" ? "stacked" : "rail"}
+              />
+            </ScrollView>
+          ) : null}
           {focusedOption ? (
-            <AgentInputChipPickerDetailPane
-              option={focusedOption}
-              onApply={() => {
-                if (focusedOption.disabled) return;
-                if (focusedOption.onApply) {
-                  focusedOption.onApply();
-                } else {
-                  props.onSelect(focusedOption.id);
-                }
-                props.onRequestClose();
-              }}
-              applyLabel={props.applyLabel ?? t("common.use")}
-            />
+            <ScrollView
+              style={detailedLayout === "split" ? styles.detailScroll : null}
+              contentContainerStyle={detailedLayout === "split" ? styles.detailScrollContent : null}
+              showsVerticalScrollIndicator={detailedLayout === "split"}
+              keyboardShouldPersistTaps="handled"
+            >
+              <AgentInputChipPickerDetailPane
+                style={detailPaneStyle}
+                option={focusedOption}
+                onApply={() => {
+                  if (focusedOption.disabled) return;
+                  if (focusedOption.onApply) {
+                    focusedOption.onApply();
+                  } else {
+                    props.onSelect(focusedOption.id);
+                  }
+                  props.onRequestClose();
+                }}
+                applyLabel={props.applyLabel ?? t("common.use")}
+              />
+            </ScrollView>
           ) : null}
         </View>
       )}
@@ -147,8 +182,11 @@ export function AgentInputChipPickerPanel(
 const stylesheet = StyleSheet.create((theme) => ({
   container: {
     width: "100%",
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: theme.colors.divider,
+    backgroundColor: theme.colors.surface,
   },
   title: {
     fontSize: 12,
@@ -161,10 +199,38 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   bodyDetailed: {
     flexDirection: "row",
-    gap: 12,
     alignItems: "stretch",
+    minHeight: 272,
+    maxHeight: 520,
+    backgroundColor: theme.colors.surface,
   },
   bodyDetailedStacked: {
     flexDirection: "column",
+    padding: 10,
+    gap: 10,
+    minHeight: 0,
+  },
+  railScroll: {
+    width: 112,
+    maxWidth: "21%",
+    backgroundColor: theme.colors.groupped.background,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.divider,
+  },
+  railScrollContent: {
+    paddingBottom: 10,
+  },
+  detailScroll: {
+    flex: 1,
+    backgroundColor: theme.colors.surface,
+  },
+  detailScrollContent: {
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    flexGrow: 1,
+  },
+  detailPaneSplit: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
 }));

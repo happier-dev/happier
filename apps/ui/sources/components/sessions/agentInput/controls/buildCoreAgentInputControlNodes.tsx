@@ -50,10 +50,13 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     agentChipAnchorRef: React.RefObject<View | null>;
     agentLabel: string;
     onAgentPress: () => void;
+    machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
     machineName?: string | null;
+    pathChipAnchorRef: React.RefObject<View | null>;
     onPathPress?: () => void;
     currentPath?: string | null;
+    resumeChipAnchorRef: React.RefObject<View | null>;
     onResumePress?: () => void;
     blurInput: () => void;
     resumeSessionId: string | null | undefined;
@@ -141,6 +144,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     }) : null;
 
     const machineChip = params.onMachinePress ? createMachineActionChip({
+        anchorRef: params.machineChipAnchorRef,
         machineName: params.machineName,
         tint: params.tint,
         showLabel: params.showChipLabels,
@@ -150,6 +154,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     }) : null;
 
     const pathChip = params.onPathPress ? createPathActionChip({
+        anchorRef: params.pathChipAnchorRef,
         currentPath: params.currentPath,
         tint: params.tint,
         showLabel: params.showChipLabels,
@@ -159,6 +164,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     }) : null;
 
     const resumeChip = createResumeActionChip({
+        anchorRef: params.resumeChipAnchorRef,
         onPress: params.onResumePress,
         blurInput: params.blurInput,
         showLabel: params.showChipLabels,

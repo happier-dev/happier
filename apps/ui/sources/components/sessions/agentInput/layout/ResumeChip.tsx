@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { ActivityIndicator, Pressable } from 'react-native';
+import { ActivityIndicator, Pressable, type View } from 'react-native';
 import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
@@ -24,6 +24,7 @@ export function formatResumeChipLabel(params: {
 }
 
 export type ResumeChipProps = {
+    anchorRef?: React.RefObject<View | null>;
     onPress: () => void;
     showLabel: boolean;
     resumeSessionId: string | null | undefined;
@@ -46,6 +47,8 @@ export function ResumeChip(props: ResumeChipProps) {
 
     return (
         <Pressable
+            ref={props.anchorRef}
+            testID="agent-input-resume-chip"
             onPress={props.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(p) => props.pressableStyle(p.pressed)}

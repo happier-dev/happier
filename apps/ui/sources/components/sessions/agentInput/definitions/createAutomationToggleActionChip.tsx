@@ -1,34 +1,55 @@
 import * as React from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
-import { SessionAuthoringAutomationToggleChip } from '@/components/sessions/authoring/automation/SessionAuthoringAutomationToggleChip';
+import {
+    AutomationSettingsPopoverContent,
+} from '@/components/sessions/agentInput/components/AutomationSettingsPopoverContent';
+import type { AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { Text } from '@/components/ui/text/Text';
 
 export function createAutomationToggleActionChip(params: Readonly<{
     enabled: boolean;
     label: string;
-    onValueChange: (next: boolean) => void;
+    value: AutomationSettingsValue;
+    onChange: (next: AutomationSettingsValue) => void;
 }>): AgentInputExtraActionChip {
     return {
         key: 'new-session-automate',
         controlId: 'automation',
-        collapsedAction: ({ dismiss }) => ({
-            id: 'new-session-automate',
+        collapsedContentPopover: {
+            title: params.label,
             label: params.label,
-            icon: null,
-            onPress: () => {
-                dismiss();
-                params.onValueChange(!params.enabled);
-            },
-        }),
-        render: ({ chipStyle, showLabel, textStyle }) => (
-            <SessionAuthoringAutomationToggleChip
-                value={params.enabled}
-                label={params.label}
-                onValueChange={params.onValueChange}
-                chipStyle={chipStyle}
-                showLabel={showLabel}
-                textStyle={textStyle}
-            />
+            boundaryRef: null,
+            icon: (tint: string) =>
+                normalizeNodeForView(<Ionicons name="flash-outline" size={16} color={tint} />),
+            renderContent: () => (
+                <AutomationSettingsPopoverContent
+                    value={params.value}
+                    onChange={params.onChange}
+                />
+            ),
+            maxHeightCap: 620,
+            maxWidthCap: 680,
+            scrollEnabled: true,
+        },
+        render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef, toggleCollapsedPopover }) => (
+            <Pressable
+                ref={chipAnchorRef}
+                testID="new-session-automation-chip"
+                onPress={() => toggleCollapsedPopover?.('new-session-automate')}
+                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                style={({ pressed }) => chipStyle(pressed)}
+            >
+                {normalizeNodeForView(<Ionicons name="flash-outline" size={16} color={iconColor} />)}
+                {showLabel ? (
+                    <Text numberOfLines={1} style={textStyle}>
+                        {params.label}
+                    </Text>
+                ) : null}
+            </Pressable>
         ),
     };
 }

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { View } from 'react-native';
 
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
@@ -6,6 +7,7 @@ import { t } from '@/text';
 import { ResumeChip } from '../layout/ResumeChip';
 
 export function createResumeActionChip(params: Readonly<{
+    anchorRef: React.RefObject<View | null>;
     onPress?: () => void;
     blurInput: () => void;
     showLabel: boolean;
@@ -22,6 +24,7 @@ export function createResumeActionChip(params: Readonly<{
     return (
         <ResumeChip
             key="resume"
+            anchorRef={params.anchorRef}
             onPress={() => {
                 hapticsLight();
                 params.blurInput();

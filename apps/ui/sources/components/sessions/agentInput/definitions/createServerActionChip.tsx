@@ -3,28 +3,32 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type { AgentInputPopoverContent } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 
 export function createServerActionChip(params: Readonly<{
     label: string;
-    onPress: () => void;
+    popoverContent: AgentInputPopoverContent;
+    maxHeightCap?: number;
+    maxWidthCap?: number;
 }>): AgentInputExtraActionChip {
     return {
         key: 'new-session-target-server',
         controlId: 'server',
-        collapsedAction: ({ tint, dismiss }) => ({
-            id: 'new-session-target-server',
+        collapsedContentPopover: {
+            title: params.label,
             label: params.label,
-            icon: <Ionicons name="server-outline" size={16} color={tint} />,
-            onPress: () => {
-                dismiss();
-                params.onPress();
-            },
-        }),
-        render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
+            icon: (tint: string) =>
+                normalizeNodeForView(<Ionicons name="server-outline" size={16} color={tint} />),
+            renderContent: params.popoverContent,
+            maxHeightCap: params.maxHeightCap,
+            maxWidthCap: params.maxWidthCap,
+        },
+        render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef, toggleCollapsedPopover }) => (
             <Pressable
-                onPress={params.onPress}
+                ref={chipAnchorRef}
+                onPress={() => toggleCollapsedPopover?.('new-session-target-server')}
                 hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                 style={(pressed) => chipStyle(pressed.pressed)}
             >

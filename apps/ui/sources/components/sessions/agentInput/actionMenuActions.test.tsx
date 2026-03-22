@@ -8,9 +8,10 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsLight: vi.fn(),

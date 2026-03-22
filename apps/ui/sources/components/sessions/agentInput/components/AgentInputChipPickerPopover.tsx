@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { Popover } from '@/components/ui/popover';
+import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
 
 import { AgentInputChipPickerSurface } from './AgentInputChipPickerSurface';
 import type { AgentInputChipPickerOption } from './AgentInputChipPickerPanel';
@@ -20,24 +20,12 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
 
 export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverProps) {
     return (
-        <Popover
+        <AgentInputSelectionPopover
             open={props.open}
             anchorRef={props.anchorRef}
-            boundaryRef={null}
-            placement="top"
-            gap={8}
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={props.maxWidthCap ?? 720}
-            closeOnAnchorPress={false}
-            portal={{
-                web: { target: 'body' },
-                native: true,
-                matchAnchorWidth: false,
-                anchorAlign: 'start',
-            }}
             onRequestClose={props.onRequestClose}
-            backdrop={{ style: { backgroundColor: 'transparent' } }}
-            containerStyle={{ paddingHorizontal: 0 }}
         >
             {({ maxHeight }) => (
                 <AgentInputChipPickerSurface
@@ -51,6 +39,6 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
                     maxHeight={maxHeight}
                 />
             )}
-        </Popover>
+        </AgentInputSelectionPopover>
     );
 }

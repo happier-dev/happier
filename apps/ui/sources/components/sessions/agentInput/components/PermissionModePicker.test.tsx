@@ -1,9 +1,11 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import renderer, { act, ReactTestInstance } from 'react-test-renderer';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { PermissionModePicker } from './PermissionModePicker';
 import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -80,7 +82,7 @@ describe('PermissionModePicker', () => {
         expect(findTextNodes(tree, 'Skip prompts').length).toBeGreaterThan(0);
     });
 
-    it('calls onSelect with the chosen mode', () => {
+    it('calls onSelect with the chosen mode', async () => {
         const onSelect = vi.fn<(mode: PermissionMode) => void>();
         const { tree } = renderPicker({ selected: 'default', onSelect });
 

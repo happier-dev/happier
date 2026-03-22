@@ -61,12 +61,18 @@ import { AgentInputAttachmentsRow } from './components/AgentInputAttachmentsRow'
 import { AgentInputOverlayLayer } from './components/AgentInputOverlayLayer';
 import { AgentInputPermissionRequests } from './components/AgentInputPermissionRequests';
 import { AgentInputSubmitButton } from './components/AgentInputSubmitButton';
-import { shouldRenderChipForOptions } from './chipOptionInteraction';
+import {
+    DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
+    resolveChipOptionInteraction,
+    shouldRenderChipForOptions,
+} from './chipOptionInteraction';
 import { resolveSessionModeChipPresentation } from './controls/resolveSessionModeChipPresentation';
 import { useAgentInputActionMenuControls } from './controls/useAgentInputActionMenuControls';
 import { useAgentInputCoreControlHandlers } from './controls/useAgentInputCoreControlHandlers';
-import { useAgentInputOverlayState } from './controls/useAgentInputOverlayState';
 import { useRenderedAgentInputControlRows } from './controls/useRenderedAgentInputControlRows';
+import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
+import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
+import { useAgentInputSelectionOverlayController } from './selection/useAgentInputSelectionOverlayController';
 import { computeSessionModePickerControl } from '@/sync/acp/sessionModeControl';
 import {
     computeAcpConfigOptionControls,
@@ -180,10 +186,13 @@ interface AgentInputProps {
     agentPickerApplyLabel?: string;
     machineName?: string | null;
     onMachineClick?: () => void;
+    machinePopover?: AgentInputContentPopoverConfig;
     currentPath?: string | null;
     onPathClick?: () => void;
+    pathPopover?: AgentInputContentPopoverConfig;
     resumeSessionId?: string | null;
     onResumeClick?: () => void;
+    resumePopover?: AgentInputContentPopoverConfig;
     resumeIsChecking?: boolean;
     isSendDisabled?: boolean;
     isSending?: boolean;
@@ -254,9 +263,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
     },
     overlayInlineRefreshButton: {
-        position: 'absolute',
-        top: 10,
-        right: 16,
         minWidth: 30,
         height: 30,
         borderRadius: 10,
@@ -899,17 +905,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return supportsFreeformModelSelectionForSession(agentId, props.metadata ?? null);
     }, [agentId, props.metadata]);
 
-    const requestCustomModel = React.useCallback(async () => {
+    const submitCustomModel = React.useCallback((value: string) => {
         hapticsLight();
-        const next = await Modal.prompt(
-            t('profiles.model'),
-            t('agentInput.model.customPromptBody'),
-            {
-                placeholder: t('agentInput.model.customPlaceholder'),
-                confirmText: t('common.save'),
-            },
-        );
-        const normalized = typeof next === 'string' ? next.trim() : '';
+        const normalized = value.trim();
         if (!normalized) return;
         props.onModelModeChange?.(normalized);
     }, [props.onModelModeChange]);
@@ -952,7 +950,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (sessionModePickerControl) {
             return {
                 options: sessionModePickerControl.options,
-                selectedId: sessionModePickerControl.requestedModeId ?? 'default',
+                selectedId: (
+                    sessionModePickerControl.requestedModeId
+                    ?? sessionModePickerControl.effectiveModeId
+                    ?? 'default'
+                ),
                 label: sessionModePickerControl.effectiveModeName,
                 isPending: sessionModePickerControl.isPending,
             };
@@ -1000,6 +1002,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const sessionModeChipPresentation = React.useMemo(() => {
         return sessionModeChipControl ? resolveSessionModeChipPresentation(sessionModeChipControl) : null;
+    }, [sessionModeChipControl]);
+
+    const sessionModeChipInteraction = React.useMemo(() => {
+        if (!sessionModeChipControl) return null;
+        const selectableOptionIds = Array.from(new Set(
+            sessionModeChipControl.options
+                .map((option) => option.id?.trim?.() ?? option.id)
+                .filter((id): id is string => typeof id === 'string' && id.length > 0),
+        ));
+        return resolveChipOptionInteraction({
+            currentOptionId: sessionModeChipControl.selectedId,
+            selectableOptionIds,
+            cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
+        });
     }, [sessionModeChipControl]);
 
     const sessionModeSectionSummary = React.useMemo<React.ReactNode>(() => {
@@ -1102,6 +1118,23 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.onAcpConfigOptionChange,
     ]);
 
+    const selectedModelOptionControls = React.useMemo(() => {
+        if (!props.onAcpConfigOptionChange) return null;
+        const selectedModel = modelOptions.find((option) => option.value === effectiveModelPolicy.effectiveModelId) ?? null;
+        if (!selectedModel?.modelOptions?.length) return null;
+        return computeAcpConfigOptionControlsFromOverride({
+            agentId,
+            configOptions: selectedModel.modelOptions,
+            overrides: props.acpConfigOptionOverridesOverride?.overrides ?? null,
+        });
+    }, [
+        agentId,
+        effectiveModelPolicy.effectiveModelId,
+        modelOptions,
+        props.acpConfigOptionOverridesOverride,
+        props.onAcpConfigOptionChange,
+    ]);
+
     const acpConfigSectionHeaderAccessory = React.useMemo<React.ReactNode>(() => {
         if (
             !acpConfigOptionsOverrideProbe
@@ -1165,6 +1198,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 value: option.value,
                 label: option.label,
                 description: option.description,
+                ...(option.modelOptions ? { modelOptions: option.modelOptions } : {}),
             }))}
             selectedModelId={effectiveModelPolicy.effectiveModelId}
             effectiveModelLabel={effectiveModelLabel}
@@ -1176,7 +1210,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 hapticsLight();
                 props.onModelModeChange?.(value);
             }}
-            onRequestCustomModel={canEnterCustomModel ? requestCustomModel : undefined}
+            onSubmitCustomModel={canEnterCustomModel ? submitCustomModel : undefined}
+            selectedModelOptionControls={selectedModelOptionControls}
+            onSelectModelOptionValue={
+                props.onAcpConfigOptionChange
+                    ? (configId, valueId) => {
+                        hapticsLight();
+                        props.onAcpConfigOptionChange?.(configId, valueId);
+                    }
+                    : undefined
+            }
             sessionModeOptions={
                 sessionModePickerControl?.options
                 ?? preflightAcpSessionModeOptions
@@ -1223,7 +1266,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.onAcpConfigOptionChange,
         props.onAcpSessionModeChange,
         props.onModelModeChange,
-        requestCustomModel,
+        submitCustomModel,
+        selectedModelOptionControls,
         sessionModePickerControl,
         sessionModeSectionHeaderAccessory,
         sessionModeSectionSummary,
@@ -1241,7 +1285,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             id: `engine:${props.agentType}`,
             label: props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
             renderDetailContent: () => renderResolvedEngineDetail('carded'),
-            onApply: () => {},
         }];
     }, [
         hasInternalAgentPickerOptions,
@@ -1271,45 +1314,65 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         actionMenuAnchorRef,
         agentChipAnchorRef,
         permissionChipAnchorRef,
+        machineChipAnchorRef,
         sessionModeChipAnchorRef,
+        pathChipAnchorRef,
+        resumeChipAnchorRef,
         profileChipAnchorRef,
         envVarsChipAnchorRef,
-        showActionMenu,
-        setShowActionMenu,
-        closeActionMenu,
-        showAgentPicker,
-        setShowAgentPicker,
-        closeAgentPicker,
-        agentPickerAnchor,
-        setAgentPickerAnchor,
-        showSessionModePicker,
-        setShowSessionModePicker,
-        closeSessionModePicker,
-        sessionModePickerAnchor,
-        setSessionModePickerAnchor,
-        showPermissionPopover,
-        setShowPermissionPopover,
-        closePermissionPopover,
-        showProfilePopover,
-        setShowProfilePopover,
-        closeProfilePopover,
-        profilePopoverAnchor,
-        setProfilePopoverAnchor,
-        showEnvVarsPopover,
-        setShowEnvVarsPopover,
-        closeEnvVarsPopover,
-        envVarsPopoverAnchor,
-        setEnvVarsPopoverAnchor,
+    } = useAgentInputSelectionAnchors();
+    const [showActionMenu, setShowActionMenu] = React.useState(false);
+    const closeActionMenu = React.useCallback(() => {
+        setShowActionMenu(false);
+    }, []);
+    const {
+        activeSelectionOverlay,
         activeExtraCollapsedPopoverChip,
-        setActiveExtraCollapsedPopoverChipKey,
-        closeActiveExtraCollapsedPopoverChip,
-    } = useAgentInputOverlayState({
+        openSelectionOverlay,
+        toggleSelectionOverlay,
+        closeSelectionOverlay,
+        resetSelectionOverlays,
+    } = useAgentInputSelectionOverlayController({
         extraActionChips: props.extraActionChips,
         shouldRenderSessionModeChip,
         canChangePermission: Boolean(props.onPermissionModeChange),
+        hasMachinePopover: Boolean(props.machinePopover),
+        hasPathPopover: Boolean(props.pathPopover),
+        hasResumePopover: Boolean(props.resumePopover),
         hasProfilePopover: Boolean(props.profilePopover),
         hasEnvVarsPopover: Boolean(props.envVarsPopover),
         hasAgentPickerOptions,
+    });
+    const {
+        showAgentPicker,
+        agentPickerAnchor,
+        closeAgentPicker,
+        showSessionModePicker,
+        sessionModePickerAnchor,
+        closeSessionModePicker,
+        showPermissionPopover,
+        closePermissionPopover,
+        showMachinePopover,
+        machinePopoverAnchor,
+        closeMachinePopover,
+        showPathPopover,
+        pathPopoverAnchor,
+        closePathPopover,
+        showResumePopover,
+        resumePopoverAnchor,
+        closeResumePopover,
+        showProfilePopover,
+        profilePopoverAnchor,
+        closeProfilePopover,
+        showEnvVarsPopover,
+        envVarsPopoverAnchor,
+        closeEnvVarsPopover,
+        activeExtraCollapsedPopoverAnchor,
+        closeActiveExtraCollapsedPopoverChip,
+    } = buildAgentInputSelectionOverlayViewModel({
+        activeSelectionOverlay,
+        activeExtraCollapsedPopoverChip,
+        closeSelectionOverlay,
     });
 
     const effectivePermissionLabel = React.useMemo(() => {
@@ -1333,6 +1396,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         handleAgentPress,
         handleMachinePress,
         handlePathPress,
+        handleResumePress,
     } = useAgentInputCoreControlHandlers({
         agentType: props.agentType,
         agentLabel: props.agentLabel,
@@ -1340,22 +1404,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         onAgentClick: props.onAgentClick,
         onPermissionModeChange: props.onPermissionModeChange,
         onPermissionClick: props.onPermissionClick,
+        sessionModeChipInteraction,
+        onSessionModeChange: props.onAcpSessionModeChange,
         profilePopover: props.profilePopover,
         onProfileClick: props.onProfileClick,
         envVarsPopover: props.envVarsPopover,
         onEnvVarsClick: props.onEnvVarsClick,
+        machinePopover: props.machinePopover,
         onMachineClick: props.onMachineClick,
+        pathPopover: props.pathPopover,
         onPathClick: props.onPathClick,
+        resumePopover: props.resumePopover,
+        onResumeClick: props.onResumeClick,
         setShowActionMenu,
-        setShowPermissionPopover,
-        setAgentPickerAnchor,
-        setShowAgentPicker,
-        setSessionModePickerAnchor,
-        setShowSessionModePicker,
-        setProfilePopoverAnchor,
-        setShowProfilePopover,
-        setEnvVarsPopoverAnchor,
-        setShowEnvVarsPopover,
+        closeSelectionOverlay,
+        toggleSelectionOverlay,
     });
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
@@ -1364,9 +1427,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'delivery');
     }, [props.extraActionChips]);
     const hasExtraActionChips = (props.extraActionChips?.length ?? 0) > 0;
-    const hasMachine = Boolean(props.onMachineClick);
-    const hasPath = Boolean(props.onPathClick);
-    const hasResume = Boolean(props.onResumeClick);
+    const hasMachine = Boolean(props.onMachineClick || props.machinePopover);
+    const hasPath = Boolean(props.onPathClick || props.pathPopover);
+    const hasResume = Boolean(props.onResumeClick || props.resumePopover);
     const hasFiles = Boolean(props.sessionId && props.onFileViewerPress);
     const hasStop = Boolean(props.onAbort && props.showAbortButton);
     const hasAnyActions = getHasAnyAgentInputActions({
@@ -1388,7 +1451,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const actionBarIsCollapsed = effectiveActionBarLayout === 'collapsed';
     const showSecondaryControlsRow = shouldShowSecondaryControlRow(
         effectiveActionBarLayout,
-        Boolean(props.onMachineClick) || Boolean(props.onPathClick) || Boolean(props.onResumeClick),
+        hasMachine || hasPath || hasResume,
     );
     const chipStyle = React.useCallback((pressed: boolean) => ([
         styles.actionChip,
@@ -1578,20 +1641,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     } = useAgentInputActionMenuControls({
         showActionMenu,
         setShowActionMenu,
-        setShowPermissionPopover,
-        setShowAgentPicker,
-        setShowSessionModePicker,
-        setShowProfilePopover,
-        setShowEnvVarsPopover,
-        setProfilePopoverAnchor,
-        setEnvVarsPopoverAnchor,
-        setAgentPickerAnchor,
-        setSessionModePickerAnchor,
+        closeSelectionOverlay,
+        openSelectionOverlay,
+        resetSelectionOverlays,
         inputRef,
         profilePopover: props.profilePopover,
         onProfileClick: props.onProfileClick,
         envVarsPopover: props.envVarsPopover,
         onEnvVarsClick: props.onEnvVarsClick,
+        machinePopover: props.machinePopover,
+        pathPopover: props.pathPopover,
+        resumePopover: props.resumePopover,
         hasAgentPickerOptions,
         onAgentClick: props.onAgentClick,
         actionBarIsCollapsed,
@@ -1607,12 +1667,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         resumeSessionId: props.resumeSessionId,
         sessionId: props.sessionId,
         extraActionChips: props.extraActionChips,
-        openCollapsedOptionsPopover: setActiveExtraCollapsedPopoverChipKey,
+        openCollapsedOptionsPopover: (chipKey) => {
+            if (!chipKey) {
+                closeSelectionOverlay('collapsedExtra');
+                return;
+            }
+            openSelectionOverlay('collapsedExtra', 'actionMenu', chipKey);
+        },
         sessionModeLabel: sessionModeChipControl?.label ?? null,
+        sessionModeChipInteraction,
+        onSessionModeChange: props.onAcpSessionModeChange,
         shouldExposeSessionModeAction: actionBarIsCollapsed && shouldRenderSessionModeChip,
-        onMachineClick: props.onMachineClick,
-        onPathClick: props.onPathClick,
-        onResumeClick: props.onResumeClick,
+        onMachineClick: handleMachinePress,
+        onPathClick: handlePathPress,
+        onResumeClick: handleResumePress,
         onFileViewerPress: props.onFileViewerPress,
         canStop: Boolean(props.onAbort && props.showAbortButton),
         onStop: () => {
@@ -1625,10 +1693,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const {
         controlNodes: renderedActionControlNodes,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
+        extraChipAnchorRefsByKey,
     } = useRenderedAgentInputControlRows({
         layout: effectiveActionBarLayout,
         chips: props.extraActionChips,
         overlayAnchorRef,
+        onToggleExtraChipCollapsedPopover: (chipKey) => {
+            toggleSelectionOverlay('collapsedExtra', 'chip', chipKey);
+        },
         themeTint: theme.colors.button.secondary.tint,
         showChipLabels,
         showAutoHideChipLabels,
@@ -1664,11 +1736,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         agentChipAnchorRef,
         agentLabel: resolvedAgentLabel,
         onAgentPress: handleAgentPress,
+        machineChipAnchorRef,
         onMachinePress: handleMachinePress,
         machineName: props.machineName,
+        pathChipAnchorRef,
         onPathPress: handlePathPress,
         currentPath: props.currentPath,
-        onResumePress: props.onResumeClick,
+        resumeChipAnchorRef,
+        onResumePress: handleResumePress,
         blurInput: () => inputRef.current?.blur(),
         resumeSessionId: props.resumeSessionId,
         resumeIsChecking: props.resumeIsChecking,
@@ -1839,12 +1914,29 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     }}
                     onSessionModeRequestClose={closeSessionModePicker}
                     activeExtraCollapsedPopoverChip={activeExtraCollapsedPopoverChip}
+                    activeExtraCollapsedPopoverAnchor={activeExtraCollapsedPopoverAnchor}
+                    extraChipAnchorRefsByKey={extraChipAnchorRefsByKey}
                     onActiveExtraCollapsedPopoverChipClose={closeActiveExtraCollapsedPopoverChip}
+                    showMachinePopover={showMachinePopover}
+                    machinePopoverAnchor={machinePopoverAnchor}
+                    machineChipAnchorRef={machineChipAnchorRef}
+                    machinePopover={props.machinePopover}
+                    onMachinePopoverRequestClose={closeMachinePopover}
                     showProfilePopover={showProfilePopover}
                     profilePopoverAnchor={profilePopoverAnchor}
                     profileChipAnchorRef={profileChipAnchorRef}
                     profilePopover={props.profilePopover}
                     onProfilePopoverRequestClose={closeProfilePopover}
+                    showPathPopover={showPathPopover}
+                    pathPopoverAnchor={pathPopoverAnchor}
+                    pathChipAnchorRef={pathChipAnchorRef}
+                    pathPopover={props.pathPopover}
+                    onPathPopoverRequestClose={closePathPopover}
+                    showResumePopover={showResumePopover}
+                    resumePopoverAnchor={resumePopoverAnchor}
+                    resumeChipAnchorRef={resumeChipAnchorRef}
+                    resumePopover={props.resumePopover}
+                    onResumePopoverRequestClose={closeResumePopover}
                     showEnvVarsPopover={showEnvVarsPopover}
                     envVarsPopoverAnchor={envVarsPopoverAnchor}
                     envVarsChipAnchorRef={envVarsChipAnchorRef}
@@ -2092,17 +2184,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             showChipLabels={showChipLabels}
                                             iconColor={theme.colors.button.secondary.tint}
                                             currentPath={props.currentPath}
+                                            pathChipAnchorRef={pathChipAnchorRef}
                                             emptyPathLabel={t('newSession.selectPathTitle')}
-                                            onPathClick={props.onPathClick ? () => {
-                                                hapticsLight();
-                                                props.onPathClick?.();
-                                            } : undefined}
+                                            onPathClick={handlePathPress}
                                             resumeSessionId={props.resumeSessionId}
-                                            onResumeClick={props.onResumeClick ? () => {
-                                                hapticsLight();
-                                                inputRef.current?.blur();
-                                                props.onResumeClick?.();
-                                            } : undefined}
+                                            resumeChipAnchorRef={resumeChipAnchorRef}
+                                            onResumeClick={handleResumePress}
                                             resumeLabelTitle={t('newSession.resume.title')}
                                             resumeLabelOptional={t('newSession.resume.optional')}
                                         />

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { usePopoverBoundaryRef } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -15,6 +16,7 @@ import type {
 export type AgentInputChipPickerTopSelectorProps = Readonly<{
     sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
     focusedOptionId: string | null;
+    selectedOptionId: string | null;
     onFocusOption: (optionId: string) => void;
 }>;
 
@@ -22,6 +24,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [open, setOpen] = React.useState(false);
+    const popoverBoundaryRef = usePopoverBoundaryRef();
 
     const items = React.useMemo<ReadonlyArray<DropdownMenuItem>>(
         () =>
@@ -53,11 +56,13 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                 open={open}
                 onOpenChange={setOpen}
                 items={items}
-                selectedId={focusedOption?.id ?? null}
+                selectedId={props.selectedOptionId ?? focusedOption?.id ?? null}
                 onSelect={props.onFocusOption}
                 rowKind="item"
                 variant="selectable"
                 matchTriggerWidth
+                popoverBoundaryRef={popoverBoundaryRef}
+                popoverPortalWebTarget="body"
                 trigger={({ toggle }) => (
                     <Pressable
                         testID="agent-input-chip-picker.top-selector-trigger"

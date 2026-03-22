@@ -1,8 +1,8 @@
 import * as React from 'react';
 
-import { Popover } from '@/components/ui/popover';
 import type { FloatingOverlayEdgeFades } from '@/components/ui/overlays/FloatingOverlay';
 import type { ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
+import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
 
 import { AgentInputPopoverSurface } from './AgentInputPopoverSurface';
 
@@ -17,6 +17,7 @@ export type AgentInputPopoverContent =
 
 export type AgentInputContentPopoverConfig = Readonly<{
     renderContent: AgentInputPopoverContent;
+    boundaryRef?: React.RefObject<any> | null;
     maxHeightCap?: number;
     maxWidthCap?: number;
     scrollEnabled?: boolean;
@@ -29,6 +30,7 @@ export type AgentInputContentPopoverConfig = Readonly<{
 export type AgentInputContentPopoverProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
+    boundaryRef?: React.RefObject<any> | null;
     content: AgentInputPopoverContent;
     onRequestClose: () => void;
     maxHeightCap?: number;
@@ -50,24 +52,13 @@ function renderPopoverContent(
 
 export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
     return (
-        <Popover
+        <AgentInputSelectionPopover
             open={props.open}
             anchorRef={props.anchorRef}
-            boundaryRef={null}
-            placement="top"
-            gap={8}
+            boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={props.maxWidthCap ?? 420}
-            closeOnAnchorPress={false}
-            portal={{
-                web: { target: 'body' },
-                native: true,
-                matchAnchorWidth: false,
-                anchorAlign: 'start',
-            }}
             onRequestClose={props.onRequestClose}
-            backdrop={{ style: { backgroundColor: 'transparent' } }}
-            containerStyle={{ paddingHorizontal: 0 }}
         >
             {({ maxHeight }) => (
                 <AgentInputPopoverSurface
@@ -85,6 +76,6 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
                     })}
                 </AgentInputPopoverSurface>
             )}
-        </Popover>
+        </AgentInputSelectionPopover>
     );
 }

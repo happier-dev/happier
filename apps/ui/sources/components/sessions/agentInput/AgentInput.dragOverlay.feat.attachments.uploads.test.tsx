@@ -1,29 +1,31 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastMultiTextInputProps: any = null;
 
 vi.mock('react-native', async () => {
-    const actual = await import('@/dev/reactNativeStub');
-    return {
-        ...actual,
-        TurboModuleRegistry: {
-            ...(actual.TurboModuleRegistry ?? null),
-            get: () => ({}),
-            getEnforcing: () => ({}),
-        },
-        Platform: {
-            OS: 'web',
-            select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
-        },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-        Dimensions: {
-            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    TurboModuleRegistry: {
+                                            get: () => ({}),
+                                            getEnforcing: () => ({}),
+                                        },
+                                    Platform: {
+                                    OS: 'web',
+                                    select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
+                                },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    Dimensions: {
+                                            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                        },
+                                }
+    );
 });
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
@@ -46,9 +48,10 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 const featureEnabledState: Record<string, boolean> = { voice: false };
 
@@ -65,10 +68,9 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -82,7 +84,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     useSessionMessagesById: () => ({}),
     useSessionMessagesVersion: () => 0,
     useSessionMessagesReducerState: () => null,
-    };
+});
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
@@ -114,9 +116,7 @@ describe('AgentInput (attachments drag overlay)', () => {
         lastMultiTextInputProps = null;
 
         let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => { },
@@ -125,9 +125,7 @@ describe('AgentInput (attachments drag overlay)', () => {
                     autocompleteSuggestions: async () => [],
                     onAttachmentsAdded: () => { },
                     hasSendableAttachments: false,
-                }),
-            );
-        });
+                }))).tree;
 
         expect(lastMultiTextInputProps).not.toBeNull();
 

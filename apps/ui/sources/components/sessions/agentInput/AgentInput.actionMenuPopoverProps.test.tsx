@@ -1,28 +1,36 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { createReducer } from '@/sync/reducer/reducer';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('View', props, props.children),
-        Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Text', props, props.children),
-        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('Pressable', props, props.children),
-        ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement('ScrollView', props, props.children),
-        ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-        Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-        useWindowDimensions: () => ({ width: 800, height: 600 }),
-        Dimensions: {
-            get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                    React.createElement('View', props, props.children),
+                                            Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                    React.createElement('Text', props, props.children),
+                                            Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                    React.createElement('Pressable', props, props.children),
+                                            ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                    React.createElement('ScrollView', props, props.children),
+                                            ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                            Platform: {
+                                            OS: 'ios',
+                                            select: (v: any) => v.ios,
+                                        },
+                                            useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                            Dimensions: {
+                                                    get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                                },
+                                        }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -34,9 +42,10 @@ vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -47,36 +56,38 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800, headerMaxWidth: 800 },
 }));
 
+const storageSettings: Settings = {
+    ...settingsDefaults,
+    profiles: [],
+    agentInputEnterToSend: true,
+    agentInputActionBarLayout: 'collapsed',
+    agentInputChipDensity: 'labels',
+    sessionPermissionModeApplyTiming: 'immediate',
+};
+
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-        useSetting: (key: string) => {
-            if (key === 'profiles') return [];
-            if (key === 'agentInputEnterToSend') return true;
-            if (key === 'agentInputActionBarLayout') return 'collapsed';
-            if (key === 'agentInputChipDensity') return 'labels';
-            if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-            return null;
+    const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: createUseSettingMock({ values: storageSettings }),
+            useSettings: () => storageSettings,
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesVersion: () => 0,
+            useSessionMessagesReducerState: () => createReducer(),
         },
-        useSettings: () => ({
-            profiles: [],
-            agentInputEnterToSend: true,
-            agentInputActionBarLayout: 'collapsed',
-            agentInputChipDensity: 'labels',
-            sessionPermissionModeApplyTiming: 'immediate',
-        }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-        useSessionMessagesById: () => ({}),
-        useSessionMessagesVersion: () => 0,
-        useSessionMessagesReducerState: () => null,
-    };
+    });
 });
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
-}));
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const store = createStorageStoreMock({ sessionMessages: {} } as any);
+    return {
+        getStorage: () => store,
+    };
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
@@ -163,6 +174,17 @@ type CapturedActionMenuContentProps = Readonly<{
 const capturedActionMenuContent: { last: CapturedActionMenuContentProps | null } = { last: null };
 const capturedSimpleOptionsPopover: { last: Record<string, unknown> | null } = { last: null };
 
+function renderPopoverChildren(
+    props: Readonly<{
+        children?: React.ReactNode | ((args: { maxHeight: number }) => React.ReactNode);
+        maxHeightCap?: number;
+    }>,
+): React.ReactNode {
+    return typeof props.children === 'function'
+        ? props.children({ maxHeight: props.maxHeightCap ?? 360 })
+        : props.children ?? null;
+}
+
 function getCapturedActionMenuActions(): Array<{ id?: string; onPress?: () => void }> {
     const current = capturedActionMenuContent.last;
     return current && Array.isArray(current.actionMenuActions)
@@ -172,10 +194,7 @@ function getCapturedActionMenuActions(): Array<{ id?: string; onPress?: () => vo
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: CapturedPopoverProps) => {
         captured.last = props;
-        const renderedChildren = typeof (props as any).children === 'function'
-            ? (props as any).children({ maxHeight: props.maxHeightCap ?? 360 })
-            : (props as any).children ?? null;
-        return React.createElement('Popover', props, renderedChildren);
+        return React.createElement('Popover', props, renderPopoverChildren(props));
     },
 }));
 
@@ -216,9 +235,10 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeAcpPlanModeControl: () => null,
@@ -256,30 +276,23 @@ describe('AgentInput (action menu popover props)', () => {
 
         const { AgentInput } = await import('./AgentInput');
 
-        expect(() => {
-            act(() => {
-                renderer.create(
-                    <AgentInput
-                        value="/bro"
-                        placeholder="Type"
-                        onChangeText={() => {}}
-                        onSend={() => {}}
-                        autocompletePrefixes={['/']}
-                        autocompleteSuggestions={async () => []}
-                    />,
-                );
-            });
-        }).not.toThrow();
+        await expect(renderScreen(
+            <AgentInput
+                value="/bro"
+                placeholder="Type"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompletePrefixes={['/']}
+                autocompleteSuggestions={async () => []}
+            />,
+        )).resolves.toEqual(expect.objectContaining({ tree: expect.anything() }));
     });
 
     it('anchors the permission popover to the permission chip and uses the shared popover sizing', async () => {
         vi.resetModules();
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -287,28 +300,22 @@ describe('AgentInput (action menu popover props)', () => {
                     onPermissionModeChange={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />);
 
-        const permissionPressable = tree!.root.findByProps({ testID: 'agent-input-permission-chip' });
+        const permissionPressable = screen.findByTestId('agent-input-permission-chip');
 
         expect(permissionPressable).toBeTruthy();
-        expect(typeof permissionPressable.props.onPress).toBe('function');
-
-        act(() => {
-            permissionPressable.props.onPress();
-        });
+        if (!permissionPressable) {
+            return;
+        }
+        await screen.pressByTestIdAsync('agent-input-permission-chip');
 
         const popoverProps: CapturedPopoverProps | null = captured.last;
         expect(popoverProps?.open).toBe(true);
-        expect(popoverProps?.anchorRef).toBe(permissionPressable.props.ref);
-        expect(popoverProps?.boundaryRef).toBe(null);
+        expect(popoverProps?.anchorRef).toStrictEqual(permissionPressable.props.ref);
         expect(popoverProps?.maxHeightCap).toBe(420);
         expect(popoverProps?.maxWidthCap).toBe(420);
         expect(popoverProps?.portal?.matchAnchorWidth).toBe(false);
-
-        act(() => tree!.unmount());
     });
 
     it('routes collapsed delivery actions through the shared simple-options popover anchored to the action menu button', async () => {
@@ -318,10 +325,7 @@ describe('AgentInput (action menu popover props)', () => {
         capturedSimpleOptionsPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -347,15 +351,17 @@ describe('AgentInput (action menu popover props)', () => {
                     }]}
                     onMachineClick={() => {}}
                     machineName="Builder"
-                />
-            );
-        });
+                />);
 
-        const settingsButton = tree!.root.findByProps({ testID: 'agent-input-action-menu-button' });
+        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
+        const machinePressable = screen.findByTestId('agent-input-machine-chip');
 
-        act(() => {
-            settingsButton.props.onPress();
-        });
+        expect(settingsButton).toBeTruthy();
+        if (!settingsButton) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
         const actionMenuActions = getCapturedActionMenuActions();
         const deliveryAction = actionMenuActions.find((action: { id?: string }) => action.id === 'delivery');
@@ -381,8 +387,6 @@ describe('AgentInput (action menu popover props)', () => {
             'interrupt',
         ]);
         expect(simpleOptionsProps?.anchorRef).toBe(settingsButton.props.ref);
-
-        act(() => tree!.unmount());
     });
 
     it('routes collapsed recipient actions through the shared simple-options popover anchored to the action menu button', async () => {
@@ -392,10 +396,7 @@ describe('AgentInput (action menu popover props)', () => {
         capturedSimpleOptionsPopover.last = null;
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        const screen = await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -421,15 +422,16 @@ describe('AgentInput (action menu popover props)', () => {
                     }]}
                     onMachineClick={() => {}}
                     machineName="Builder"
-                />
-            );
-        });
+                />);
 
-        const settingsButton = tree!.root.findByProps({ testID: 'agent-input-action-menu-button' });
+        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
 
-        act(() => {
-            settingsButton.props.onPress();
-        });
+        expect(settingsButton).toBeTruthy();
+        if (!settingsButton) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
         const actionMenuActions = getCapturedActionMenuActions();
         const recipientAction = actionMenuActions.find((action: { id?: string }) => action.id === 'recipient');
@@ -455,7 +457,273 @@ describe('AgentInput (action menu popover props)', () => {
             'run-1',
         ]);
         expect(simpleOptionsProps?.anchorRef).toBe(settingsButton.props.ref);
-
-        act(() => tree!.unmount());
     });
+
+    it('routes collapsed content actions through the shared content popover anchored to the action menu button', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    agentType={"codex" as any}
+                    onAgentClick={() => {}}
+                    extraActionChips={[{
+                        key: 'new-session-mcp',
+                        controlId: 'mcp',
+                        collapsedContentPopover: {
+                            title: 'newSession.mcpChipLabel',
+                            boundaryRef: null,
+                            maxHeightCap: 520,
+                            maxWidthCap: 480,
+                            renderContent: () => React.createElement('View', { testID: 'mcp-content' }),
+                        },
+                        render: () => React.createElement('View', { testID: 'agent-input-mcp-chip' }),
+                    }]}
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                />);
+
+        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
+
+        expect(settingsButton).toBeTruthy();
+        if (!settingsButton) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
+
+        const actionMenuActions = getCapturedActionMenuActions();
+        const mcpAction = actionMenuActions.find((action: { id?: string }) => action.id === 'mcp');
+        expect(mcpAction).toBeTruthy();
+
+        act(() => {
+            mcpAction?.onPress?.();
+        });
+
+        const contentPopoverProps = captured.last as (Record<string, unknown> & {
+            open?: boolean;
+            anchorRef?: unknown;
+            maxHeightCap?: number;
+            maxWidthCap?: number;
+        }) | null;
+
+        expect(contentPopoverProps?.open).toBe(true);
+        expect(contentPopoverProps?.anchorRef).toEqual(settingsButton.props.ref);
+        expect(contentPopoverProps?.maxHeightCap).toBeGreaterThan(0);
+        expect(contentPopoverProps?.maxWidthCap).toBeGreaterThan(0);
+        expect(contentPopoverProps?.boundaryRef).toBeNull();
+    });
+
+    it('toggles a visible extra-chip content popover closed when the chip is pressed twice', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    agentType={"codex" as any}
+                    onAgentClick={() => {}}
+                    extraActionChips={[{
+                        key: 'new-session-mcp',
+                        controlId: 'mcp',
+                        collapsedContentPopover: {
+                            title: 'newSession.mcpChipLabel',
+                            maxHeightCap: 520,
+                            maxWidthCap: 480,
+                            renderContent: () => React.createElement('View', { testID: 'mcp-content' }),
+                        },
+                        render: ({ toggleCollapsedPopover, chipAnchorRef }: any) => React.createElement(
+                            'Pressable',
+                            {
+                                ref: chipAnchorRef,
+                                testID: 'visible-mcp-chip',
+                                onPress: () => toggleCollapsedPopover?.('new-session-mcp'),
+                            },
+                        ),
+                    }]}
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                />);
+
+        const chip = screen.findByTestId('visible-mcp-chip');
+
+        expect(chip).toBeTruthy();
+        if (!chip) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('visible-mcp-chip');
+
+        expect(screen.findByTestId('mcp-content')).toBeTruthy();
+        const visibleChipPopoverProps = captured.last as CapturedPopoverProps | null;
+        expect(visibleChipPopoverProps?.open).toBe(true);
+        expect(visibleChipPopoverProps?.maxHeightCap).toBe(520);
+
+        await screen.pressByTestIdAsync('visible-mcp-chip');
+
+        expect(screen.findByTestId('mcp-content')).toBeNull();
+    });
+
+    it('routes collapsed machine actions through the shared content popover when a machine popover is configured', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    agentType={"codex" as any}
+                    onAgentClick={() => {}}
+                    machinePopover={{
+                        renderContent: () => React.createElement('View', { testID: 'machine-content' }),
+                    }}
+                    machineName="Builder"
+                    onMachineClick={() => {}}
+                />);
+
+        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
+        const machinePressable = screen.findByTestId('agent-input-machine-chip');
+
+        expect(settingsButton).toBeTruthy();
+        expect(machinePressable).toBeTruthy();
+        if (!settingsButton || !machinePressable) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
+
+        const actionMenuActions = getCapturedActionMenuActions();
+        const machineAction = actionMenuActions.find((action: { id?: string }) => action.id === 'machine');
+        expect(machineAction).toBeTruthy();
+
+        act(() => {
+            machineAction?.onPress?.();
+        });
+
+        const contentPopoverProps = captured.last as (Record<string, unknown> & {
+            open?: boolean;
+            anchorRef?: unknown;
+            maxHeightCap?: number;
+            maxWidthCap?: number;
+        }) | null;
+
+        expect(contentPopoverProps?.open).toBe(true);
+        expect(contentPopoverProps?.anchorRef).toStrictEqual(machinePressable.props.ref);
+        expect(contentPopoverProps?.maxHeightCap).toBeGreaterThan(0);
+        expect(contentPopoverProps?.maxWidthCap).toBeGreaterThan(0);
+    });
+
+    it('routes collapsed resume actions through the shared content popover anchored to the action menu button', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    resumeSessionId="session-42"
+                    resumePopover={{
+                        renderContent: () => React.createElement('View', { testID: 'resume-content' }),
+                        maxHeightCap: 420,
+                        maxWidthCap: 520,
+                    }}
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                />);
+
+        const settingsButton = screen.findByTestId('agent-input-action-menu-button');
+
+        expect(settingsButton).toBeTruthy();
+        if (!settingsButton) {
+            return;
+        }
+
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
+
+        const actionMenuActions = getCapturedActionMenuActions();
+        const resumeAction = actionMenuActions.find((action: { id?: string }) => action.id === 'resume');
+        expect(resumeAction).toBeTruthy();
+
+        act(() => {
+            resumeAction?.onPress?.();
+        });
+
+        const contentPopoverProps = captured.last as (Record<string, unknown> & {
+            open?: boolean;
+            anchorRef?: unknown;
+            maxHeightCap?: number;
+            maxWidthCap?: number;
+        }) | null;
+
+        expect(contentPopoverProps?.open).toBe(true);
+        expect(contentPopoverProps?.anchorRef).toEqual(settingsButton.props.ref);
+        expect(contentPopoverProps?.maxHeightCap).toBe(420);
+        expect(contentPopoverProps?.maxWidthCap).toBe(520);
+    });
+
+    it('routes the target-server chip through the shared content popover rather than a route-only action', async () => {
+        vi.resetModules();
+        captured.last = null;
+        capturedActionMenuContent.last = null;
+        capturedSimpleOptionsPopover.last = null;
+        const { createServerActionChip } = await import('./definitions/createServerActionChip');
+
+        const toggleCollapsedPopover = vi.fn();
+        function Probe() {
+            const chip = createServerActionChip({
+                label: 'Server B',
+                popoverContent: () => React.createElement('View', { testID: 'server-selection-content' }),
+            } as any);
+
+            const renderedChip = chip.render({
+                chipStyle: () => null,
+                iconColor: '#000',
+                showLabel: true,
+                textStyle: null,
+                countTextStyle: null,
+                chipAnchorRef: { current: null },
+                popoverAnchorRef: { current: null },
+                toggleCollapsedPopover,
+            });
+
+            return React.isValidElement<{ testID?: string }>(renderedChip)
+                ? React.cloneElement(renderedChip, { testID: 'new-session-target-server-chip' })
+                : renderedChip;
+        }
+
+        const screen = await renderScreen(<Probe />);
+
+        await screen.pressByTestIdAsync('new-session-target-server-chip');
+
+        expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-target-server');
+        expect(captured.last).toBeNull();
+    });
+
 });

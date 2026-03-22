@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type View as RNView } from 'react-native';
 import { ResumeChip } from './ResumeChip';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
@@ -21,9 +21,11 @@ export type PathAndResumeRowProps = {
     showChipLabels: boolean;
     iconColor: string;
     currentPath?: string | null;
+    pathChipAnchorRef?: React.RefObject<RNView | null>;
     onPathClick?: () => void;
     emptyPathLabel: string;
     resumeSessionId?: string | null;
+    resumeChipAnchorRef?: React.RefObject<RNView | null>;
     onResumeClick?: () => void;
     resumeLabelTitle: string;
     resumeLabelOptional: string;
@@ -41,6 +43,7 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                 {leadingControls}
                 {hasPath ? (
                     <Pressable
+                        ref={props.pathChipAnchorRef}
                         testID="agent-input-path-chip"
                         onPress={props.onPathClick}
                         hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
@@ -71,7 +74,8 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                 ) : null}
 
                 {hasResume ? (
-                    <ResumeChip
+                        <ResumeChip
+                        anchorRef={props.resumeChipAnchorRef}
                         onPress={props.onResumeClick!}
                         showLabel={props.showChipLabels}
                         resumeSessionId={props.resumeSessionId}

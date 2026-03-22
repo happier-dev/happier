@@ -31,6 +31,7 @@ export function AgentInputChipPickerOptionSelector(
       <AgentInputChipPickerTopSelector
         sections={props.sections}
         focusedOptionId={props.focusedOptionId}
+        selectedOptionId={props.selectedOptionId ?? null}
         onFocusOption={props.onFocusOption}
       />
     );
@@ -58,7 +59,8 @@ export function AgentInputChipPickerOptionSelector(
                   if (option.disabled) return;
                   props.onFocusOption(option.id);
                 }}
-                checkColor={theme.colors.status.connected}
+                checkColor={theme.colors.button.primary.background}
+                uncheckedColor={theme.colors.textSecondary}
               />
             ))}
           </View>
@@ -74,6 +76,7 @@ type AgentInputChipPickerOptionButtonProps = Readonly<{
   selected: boolean;
   compact: boolean;
   checkColor: string;
+  uncheckedColor: string;
   onPress: () => void;
 }>;
 
@@ -81,6 +84,11 @@ function AgentInputChipPickerOptionButton(
   props: AgentInputChipPickerOptionButtonProps,
 ) {
   const styles = stylesheet;
+  const normalizedSubtitle = props.option.subtitle?.trim();
+  const shouldShowSubtitle =
+    !props.compact &&
+    Boolean(normalizedSubtitle) &&
+    normalizedSubtitle?.toLowerCase() !== props.option.label.trim().toLowerCase();
 
   return (
     <Pressable
@@ -98,56 +106,59 @@ function AgentInputChipPickerOptionButton(
     >
       <View style={styles.optionTextBlock}>
         <Text style={styles.optionLabel}>{props.option.label}</Text>
-        {props.option.subtitle && !props.compact ? (
-          <Text style={styles.optionSubtitle}>{props.option.subtitle}</Text>
+        {shouldShowSubtitle ? (
+          <Text style={styles.optionSubtitle}>{normalizedSubtitle}</Text>
         ) : null}
       </View>
-      {props.selected ? (
-        <Ionicons name="checkmark" size={18} color={props.checkColor} />
-      ) : null}
+      <Ionicons
+        name={props.selected ? "checkmark-circle" : "ellipse-outline"}
+        size={16}
+        color={props.selected ? props.checkColor : props.uncheckedColor}
+      />
     </Pressable>
   );
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
   railContainer: {
-    width: 220,
-    maxWidth: "40%",
-    paddingRight: 2,
+    width: "100%",
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+    backgroundColor: theme.colors.groupped.background,
   },
   sectionBlock: {
-    gap: 6,
-    marginBottom: 12,
+    gap: 4,
+    marginBottom: 10,
   },
   sectionTitle: {
-    paddingHorizontal: 4,
-    fontSize: 11,
+    paddingHorizontal: 6,
+    fontSize: 12,
     color: theme.colors.groupped.sectionTitle,
     textTransform: "uppercase",
-    letterSpacing: 0.7,
+    letterSpacing: 0.5,
     ...Typography.header(),
   },
   railOptionsColumn: {
     gap: 6,
   },
   optionRow: {
-    minHeight: 44,
+    minHeight: 36,
     borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
-    borderColor: "transparent",
+    gap: 8,
+    backgroundColor: "transparent",
   },
   optionRowCompact: {
-    minHeight: 36,
+    minHeight: 44,
     paddingVertical: 6,
   },
   optionRowFocused: {
-    borderColor: theme.colors.button.primary.background,
-    backgroundColor: theme.colors.surfaceSelected,
+    backgroundColor: theme.colors.surface,
   },
   optionRowPressed: {
     opacity: 0.82,
@@ -157,15 +168,18 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   optionTextBlock: {
     flex: 1,
-    gap: 1,
+    gap: 0,
   },
   optionLabel: {
     fontSize: 13,
+    lineHeight: 15,
     color: theme.colors.text,
     ...Typography.default("semiBold"),
   },
   optionSubtitle: {
+    marginTop: 1,
     fontSize: 11,
+    lineHeight: 14,
     color: theme.colors.textSecondary,
   },
 }));

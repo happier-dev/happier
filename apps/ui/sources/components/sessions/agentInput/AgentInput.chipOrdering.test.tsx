@@ -1,33 +1,35 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: {
-            ...rn.Platform,
-            OS: 'ios',
-            select: (v: any) => v?.ios ?? v?.default ?? rn.Platform.select(v),
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Platform: {
+                                    OS: 'ios',
+                                    select: (v: any) => v?.ios ?? v?.default ?? v?.web ?? v?.native ?? v?.android,
+                                },
+                                }
+    );
 });
 
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -47,7 +49,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     useSessionMessagesVersion: () => 0,
     useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
     useSessionMessagesReducerState: () => null,
-    };
+});
 });
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
@@ -159,9 +161,10 @@ vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: () => null,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
@@ -176,9 +179,7 @@ describe('AgentInput (chip ordering)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -190,9 +191,7 @@ describe('AgentInput (chip ordering)', () => {
                     onAgentClick: () => {},
                     onAcpSessionModeChange: () => {},
                     acpSessionModeOptionsOverride: [{ id: 'plan', name: 'Plan' }],
-                }),
-            );
-        });
+                }))).tree;
 
         type JsonNode =
             | renderer.ReactTestRendererJSON
@@ -251,9 +250,7 @@ describe('AgentInput (chip ordering)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -266,9 +263,7 @@ describe('AgentInput (chip ordering)', () => {
                     currentPath: '/workspace/app',
                     onResumeClick: () => {},
                     resumeSessionId: 'session-1',
-                }),
-            );
-        });
+                }))).tree;
 
         type JsonNode =
             | renderer.ReactTestRendererJSON
@@ -303,9 +298,7 @@ describe('AgentInput (chip ordering)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -337,9 +330,7 @@ describe('AgentInput (chip ordering)', () => {
                             render: () => React.createElement('Pressable', { testID: 'agent-input-delivery-chip' }),
                         },
                     ],
-                }),
-            );
-        });
+                }))).tree;
 
         type JsonNode =
             | renderer.ReactTestRendererJSON

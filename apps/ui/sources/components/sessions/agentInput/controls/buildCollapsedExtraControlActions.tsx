@@ -11,7 +11,7 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
     dismiss: () => void;
     blurInput: () => void;
     openCollapsedOptionsPopover: (chipKey: string) => void;
-    resetCorePopovers: () => void;
+    resetCorePopovers?: () => void;
 }>): Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> {
     const extraControlActions: Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> = {};
 
@@ -32,7 +32,18 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
                 icon: chip.collapsedOptionsPopover.icon?.(params.tint) ?? null,
                 onPress: () => {
                     params.dismiss();
-                    params.resetCorePopovers();
+                    params.resetCorePopovers?.();
+                    params.openCollapsedOptionsPopover(chip.key);
+                },
+            };
+        } else if (chip.collapsedContentPopover) {
+            actions = {
+                id: chip.controlId,
+                label: chip.collapsedContentPopover.label ?? chip.collapsedContentPopover.title,
+                icon: chip.collapsedContentPopover.icon?.(params.tint) ?? null,
+                onPress: () => {
+                    params.dismiss();
+                    params.resetCorePopovers?.();
                     params.openCollapsedOptionsPopover(chip.key);
                 },
             };

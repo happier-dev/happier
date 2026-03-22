@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,24 +17,28 @@ function findSendPressable(tree: renderer.ReactTestRenderer) {
 }
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-    ...rn,
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { ...rn.Platform, OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
-    useWindowDimensions: () => ({ width: 800, height: 600 }),
-    Dimensions: {
-        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-    },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                        React.createElement('View', props, props.children),
+                                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                        React.createElement('Text', props, props.children),
+                                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                        React.createElement('Pressable', props, props.children),
+                                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                                        React.createElement('ScrollView', props, props.children),
+                                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                                    Platform: {
+                                                    OS: 'web',
+                                                    select: (v: any) => v.web ?? v.default ?? null,
+                                                },
+                                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                                    Dimensions: {
+                                                        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                                    },
+                                                }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -48,9 +54,10 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 const featureEnabledState: Record<string, boolean> = { voice: true };
 
@@ -58,10 +65,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
@@ -75,7 +81,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     useSessionMessagesById: () => ({}),
     useSessionMessagesVersion: () => 0,
     useSessionMessagesReducerState: () => null,
-    };
+});
 });
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
@@ -183,9 +189,10 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => null,
@@ -201,9 +208,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -213,9 +218,7 @@ describe('AgentInput (send button accessibility)', () => {
                     isMicActive={false}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         const images = send.findAllByType('Image' as any);
@@ -232,18 +235,14 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value="hello"
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityRole).toBe('button');
@@ -255,9 +254,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value="hello"
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -265,9 +262,7 @@ describe('AgentInput (send button accessibility)', () => {
                     submitAccessibilityLabel="automations.create.createButtonTitle"
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityRole).toBe('button');
@@ -279,18 +274,14 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityHint).toBe('session.inputPlaceholder');
@@ -302,9 +293,7 @@ describe('AgentInput (send button accessibility)', () => {
         const onSend = vi.fn();
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -313,9 +302,7 @@ describe('AgentInput (send button accessibility)', () => {
                     hasSendableAttachments={true}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityHint).toBeUndefined();
@@ -334,9 +321,7 @@ describe('AgentInput (send button accessibility)', () => {
         const secondOnSend = vi.fn();
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     sessionId="session-1"
                     value="hello"
                     placeholder="Type"
@@ -344,9 +329,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={firstOnSend}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         act(() => {
             tree!.update(
@@ -377,18 +360,14 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityRole).toBe('button');
@@ -400,9 +379,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     sessionId="session-1"
                     value="hello"
                     placeholder="Type"
@@ -410,9 +387,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityRole).toBe('button');
@@ -424,9 +399,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -436,9 +409,7 @@ describe('AgentInput (send button accessibility)', () => {
                     isMicActive={false}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         const images = send.findAllByType('Image' as any);
@@ -454,9 +425,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -466,9 +435,7 @@ describe('AgentInput (send button accessibility)', () => {
                     isMicActive={true}
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
-                />
-            );
-        });
+                />)).tree;
 
         const send = findSendPressable(tree!);
         const images = send.findAllByType('Image' as any);
@@ -487,9 +454,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
+        tree = (await renderScreen(<AgentInput
                     value=""
                     placeholder="Type"
                     onChangeText={() => {}}
@@ -502,9 +467,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onPermissionModeChange={() => {}}
                     agentType="codex"
                     onAgentClick={() => {}}
-                />
-            );
-        });
+                />)).tree;
 
         const invalidStrings: Array<{ parentType: string | null; value: string }> = [];
         const walk = (node: any, parentType: string | null) => {

@@ -23,6 +23,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     layout: 'scroll' | 'wrap' | 'collapsed';
     chips: ReadonlyArray<AgentInputExtraActionChip> | undefined;
     overlayAnchorRef: React.RefObject<View | null>;
+    onToggleExtraChipCollapsedPopover: (chipKey: string) => void;
     themeTint: string;
     showChipLabels: boolean;
     showAutoHideChipLabels: boolean;
@@ -58,10 +59,13 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     agentChipAnchorRef: React.RefObject<View | null>;
     agentLabel: string;
     onAgentPress: () => void;
+    machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
     machineName?: string | null;
+    pathChipAnchorRef: React.RefObject<View | null>;
     onPathPress?: () => void;
     currentPath?: string | null;
+    resumeChipAnchorRef: React.RefObject<View | null>;
     onResumePress?: () => void;
     blurInput: () => void;
     resumeSessionId?: string | null;
@@ -78,6 +82,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 }>): Readonly<{
     controlNodes: ReadonlyArray<React.ReactNode>;
     secondaryLeadingControls: ReadonlyArray<React.ReactNode>;
+    extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<View | null>>>;
 }> {
     return React.useMemo(() => {
         const extraControlNodesById = resolveRenderedExtraActionChipNodes({
@@ -88,7 +93,9 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
                 iconColor: params.themeTint,
                 textStyle: params.textStyle,
                 countTextStyle: params.countTextStyle,
+                chipAnchorRef: React.createRef<View | null>(),
                 popoverAnchorRef: params.overlayAnchorRef,
+                toggleCollapsedPopover: params.onToggleExtraChipCollapsedPopover,
             },
             autoHideRenderContext: {
                 chipStyle: params.chipStyleAutoHide,
@@ -96,7 +103,9 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
                 iconColor: params.themeTint,
                 textStyle: params.textStyle,
                 countTextStyle: params.countTextStyle,
+                chipAnchorRef: React.createRef<View | null>(),
                 popoverAnchorRef: params.overlayAnchorRef,
+                toggleCollapsedPopover: params.onToggleExtraChipCollapsedPopover,
             },
         });
 
@@ -128,10 +137,13 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             agentChipAnchorRef: params.agentChipAnchorRef,
             agentLabel: params.agentLabel,
             onAgentPress: params.onAgentPress,
+            machineChipAnchorRef: params.machineChipAnchorRef,
             onMachinePress: params.onMachinePress,
             machineName: params.machineName,
+            pathChipAnchorRef: params.pathChipAnchorRef,
             onPathPress: params.onPathPress,
             currentPath: params.currentPath,
+            resumeChipAnchorRef: params.resumeChipAnchorRef,
             onResumePress: params.onResumePress,
             blurInput: params.blurInput,
             resumeSessionId: params.resumeSessionId,
@@ -165,6 +177,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         return {
             controlNodes: renderedControls.chips,
             secondaryLeadingControls: renderedControls.secondaryLeadingControls,
+            extraChipAnchorRefsByKey: extraControlNodesById.extraChipAnchorRefsByKey as Readonly<Record<string, React.RefObject<View | null>>>,
         };
     }, [
         params.actionBarIsCollapsed,
@@ -185,8 +198,10 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.hasEnvVars,
         params.hasProfile,
         params.isAborting,
+        params.machineChipAnchorRef,
         params.layout,
         params.machineName,
+        params.pathChipAnchorRef,
         params.onAbort,
         params.onAbortPress,
         params.onActionMenuPress,
@@ -199,6 +214,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.onPermissionPress,
         params.onProfilePress,
         params.onResumePress,
+        params.onToggleExtraChipCollapsedPopover,
         params.overlayAnchorRef,
         params.permissionChipAnchorRef,
         params.permissionChipLabel,
@@ -206,6 +222,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.profileIcon,
         params.profileLabel,
         params.resumeIsChecking,
+        params.resumeChipAnchorRef,
         params.resumeSessionId,
         params.sessionId,
         params.sessionModeChipAnchorRef,

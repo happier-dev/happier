@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, type View } from 'react-native';
 
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 
 export function createPermissionActionChip(params: Readonly<{
@@ -22,7 +23,7 @@ export function createPermissionActionChip(params: Readonly<{
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}
         >
-            <Ionicons name="shield-outline" size={18} color={params.tint} />
+            {normalizeNodeForView(<Ionicons name="shield-outline" size={18} color={params.tint} />)}
             {params.showLabel && params.label ? (
                 <Text style={params.textStyle}>{params.label}</Text>
             ) : null}

@@ -28,7 +28,7 @@ export function createSessionModeActionChip(params: Readonly<{
             accessibilityLabel={params.accessibilityLabel}
         >
             {params.iconKind === 'octicon' ? (
-                <Octicons name={params.iconName as never} size={18} color={params.tint} />
+                <Octicons name={params.iconName as never} size={16} color={params.tint} />
             ) : (
                 <Ionicons name={(params.iconName ?? 'list-outline') as never} size={18} color={params.tint} />
             )}

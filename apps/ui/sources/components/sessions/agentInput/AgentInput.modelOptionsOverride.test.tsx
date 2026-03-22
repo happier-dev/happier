@@ -1,94 +1,84 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+import { createReducer } from '@/sync/reducer/reducer';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastModelPickerOverlayProps: any = null;
 let mockSessionModePickerControl: any = null;
 const modalShowMock = vi.fn();
+const modalPromptMock = vi.fn();
 let lastPopoverProps: any = null;
 let mockAgentInputActionBarLayout: 'wrap' | 'collapsed' = 'wrap';
-
-function nodeContainsExactText(node: renderer.ReactTestInstance, value: string): boolean {
-    return node.children.some((child) => {
-        if (typeof child === 'string') return child === value;
-        return child && typeof child === 'object' && 'children' in child
-            ? nodeContainsExactText(child as any, value)
-            : false;
-    });
-}
-
-function findTextNode(tree: renderer.ReactTestRenderer, value: string): renderer.ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.type === 'string' &&
-        String(node.type) === 'Text' &&
-        nodeContainsExactText(node, value)
-    ))[0];
-}
-
-function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string): renderer.ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.type === 'string' &&
-        String(node.type) === 'Pressable' &&
-        nodeContainsExactText(node, label)
-    ))[0];
-}
-
-function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): renderer.ReactTestInstance | undefined {
-    return tree.root.findAll((node) => (
-        typeof node.type === 'string' &&
-        String(node.type) === 'Pressable' &&
-        typeof (node.props as any)?.accessibilityLabel === 'string' &&
-        (node.props as any).accessibilityLabel === label
-    ))[0];
-}
+const supportsFreeformModelSelectionState = vi.hoisted(() => ({ value: false }));
+const storageSettings: Settings = {
+    ...settingsDefaults,
+    profiles: [],
+    agentInputEnterToSend: true,
+    agentInputActionBarLayout: 'wrap',
+    agentInputChipDensity: 'labels',
+    sessionPermissionModeApplyTiming: 'immediate',
+};
 
 function findIconNode(
-    tree: renderer.ReactTestRenderer | renderer.ReactTestInstance,
+    tree: Awaited<ReturnType<typeof renderScreen>>['tree'] | ReactTestInstance,
     type: 'Ionicons' | 'Octicons',
     name: string,
-): renderer.ReactTestInstance | undefined {
+): ReactTestInstance | undefined {
     const root = 'root' in tree ? tree.root : tree;
-    return root.findAll((node: renderer.ReactTestInstance) => (
+    return root.findAll((node: ReactTestInstance) => (
         typeof node.type === 'string' &&
         String(node.type) === type &&
         (node.props as any)?.name === name
     ))[0];
 }
 
-function findSettingsPressable(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance | null {
-    const gearIcons = tree.root.findAll(
-        (node) => String(node.type) === 'Octicons' && (node.props as any)?.name === 'gear',
-    );
-    const gearIcon = gearIcons[0] ?? null;
-    if (!gearIcon) return null;
-    let current: any = gearIcon;
-    while (current && String(current.type) !== 'Pressable') {
-        current = current.parent;
+function collectTextContent(node: ReactTestInstance | string | number | null | undefined): string {
+    if (node == null) return '';
+    if (typeof node === 'string' || typeof node === 'number') {
+        return String(node);
     }
-    return current ?? null;
+
+    return node.children
+        .map((child) => collectTextContent(child as ReactTestInstance | string | number | null | undefined))
+        .join('');
+}
+
+function findPressableByText(
+    scope: Pick<Awaited<ReturnType<typeof renderScreen>>['tree'] | ReactTestInstance, 'findAllByType'>,
+    text: string,
+): ReactTestInstance | undefined {
+    return scope.findAllByType('Pressable').find((node) => collectTextContent(node).includes(text));
 }
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-    ...rn,
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('ScrollView', props, props.children),
-    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-    useWindowDimensions: () => ({ width: 800, height: 600 }),
-    Dimensions: {
-        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-    },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('View', props, props.children),
+                                    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Text', props, props.children),
+                                    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('Pressable', props, props.children),
+                                    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+                                        React.createElement('ScrollView', props, props.children),
+                                    ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
+                                    Platform: {
+                                    OS: 'ios',
+                                    select: (v: any) => v.ios,
+                                },
+                                    useWindowDimensions: () => ({ width: 800, height: 600 }),
+                                    Dimensions: {
+                                        get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
+                                    },
+                                }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -104,43 +94,47 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: { name?: string }) => {
-        if (key === 'agentInput.mode.badgeA11y') return `Mode: ${params?.name ?? ''}`;
-        return key;
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return mockAgentInputActionBarLayout;
-        if (key === 'agentInputChipDensity') return 'labels';
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        return null;
-    },
-    useSettings: () => ({
-        profiles: [],
-        agentInputEnterToSend: true,
-        agentInputActionBarLayout: mockAgentInputActionBarLayout,
-        agentInputChipDensity: 'labels',
-        sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-    useSessionMessagesById: () => ({}),
-    useSessionMessagesVersion: () => 0,
-    useSessionMessagesReducerState: () => null,
-    };
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string, params?: { name?: string }) => {
+            if (key === 'agentInput.mode.badgeA11y') return `Mode: ${params?.name ?? ''}`;
+            return key;
+        },
+    });
 });
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: createUseSettingMock({
+                fallback: (key) => {
+                    if (key === 'agentInputActionBarLayout') return mockAgentInputActionBarLayout;
+                    return storageSettings[key];
+                },
+            }),
+            useSettings: () => ({
+                ...storageSettings,
+                agentInputActionBarLayout: mockAgentInputActionBarLayout,
+            }),
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesVersion: () => 0,
+            useSessionMessagesReducerState: () => createReducer(),
+        },
+    });
+});
+
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const store = createStorageStoreMock({ sessionMessages: {}, localSettings: { uiFontScale: 1 } } as any);
+    return {
+        getStorage: () => store,
+    };
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
@@ -179,7 +173,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
             { value: 'session-model', label: 'Session Model', description: '' },
         ];
     },
-    supportsFreeformModelSelectionForSession: () => false,
+    supportsFreeformModelSelectionForSession: () => supportsFreeformModelSelectionState.value,
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
@@ -280,9 +274,13 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), prompt: vi.fn(), show: (...args: any[]) => modalShowMock(...args) },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMock.spies.show.mockImplementation((...args) => modalShowMock(...args));
+    modalMock.spies.prompt.mockImplementation((...args) => modalPromptMock(...args));
+    return modalMock.module;
+});
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
     computeSessionModePickerControl: () => mockSessionModePickerControl,
@@ -301,15 +299,19 @@ vi.mock('./components/PermissionModePicker', () => ({
 }));
 
 describe('AgentInput (modelOptionsOverride)', () => {
+    beforeEach(() => {
+        supportsFreeformModelSelectionState.value = false;
+        modalPromptMock.mockReset();
+        modalShowMock.mockReset();
+        mockAgentInputActionBarLayout = 'wrap';
+    });
+
     it('prefers modelOptionsOverride over getModelOptionsForSession()', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         lastModelPickerOverlayProps = null;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -325,16 +327,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         { value: 'default', label: 'Default (override)', description: '' },
                         { value: 'override-model', label: 'Override Model', description: '' },
                     ],
-                }),
-            );
-        });
-
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+                }));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(lastModelPickerOverlayProps).not.toBeNull();
         expect((lastModelPickerOverlayProps.options ?? []).map((o: any) => o.value)).toEqual(['default', 'override-model']);
@@ -346,10 +341,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         lastModelPickerOverlayProps = null;
         const onRefresh = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -365,19 +357,47 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         { value: 'default', label: 'Default (override)', description: '' },
                     ],
                     modelOptionsOverrideProbe: { phase: 'loading', onRefresh },
-                } as any),
-            );
-        });
-
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(lastModelPickerOverlayProps?.probe?.phase).toBe('loading');
         expect(lastModelPickerOverlayProps?.probe?.onRefresh).toBe(onRefresh);
+    });
+
+    it('submits inline custom models through ModelPickerOverlay without opening a modal prompt', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onModelModeChange = vi.fn();
+        supportsFreeformModelSelectionState.value = true;
+        lastModelPickerOverlayProps = null;
+
+        const screen = await renderScreen(React.createElement(AgentInput, {
+                    value: 'hello',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    agentType: 'codex',
+                    permissionMode: 'default',
+                    onPermissionModeChange: () => {},
+                    modelMode: 'default',
+                    onModelModeChange,
+                    modelOptionsOverride: [
+                        { value: 'default', label: 'Default (override)', description: '' },
+                    ],
+                }));
+
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
+
+        expect(typeof lastModelPickerOverlayProps?.onSubmitCustomModel).toBe('function');
+
+        await act(async () => {
+            lastModelPickerOverlayProps.onSubmitCustomModel('custom-model');
+        });
+
+        expect(onModelModeChange).toHaveBeenCalledWith('custom-model');
+        expect(modalPromptMock).not.toHaveBeenCalled();
     });
 
     it('shows a loading probe when session models are expected but not yet available', async () => {
@@ -396,10 +416,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             },
         } as any;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -412,16 +429,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
-                } as any),
-            );
-        });
-
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(lastModelPickerOverlayProps?.probe?.phase).toBe('loading');
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default']);
@@ -443,10 +453,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             },
         } as any;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -459,16 +466,9 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
-                } as any),
-            );
-        });
-
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(lastModelPickerOverlayProps?.probe?.phase).toBe('loading');
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default']);
@@ -499,10 +499,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             },
         } as any;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -515,21 +512,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
-                } as any),
-            );
-        });
-
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(lastModelPickerOverlayProps?.probe?.phase).toBe('loading');
 
         await act(async () => {
-            tree!.update(
+            screen.tree.update(
                 React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
@@ -576,10 +566,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             },
         } as any;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -592,22 +579,15 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
-                } as any),
-            );
-        });
-
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
         expect(lastModelPickerOverlayProps?.probe).toBeUndefined();
 
         await act(async () => {
-            tree!.update(
+            screen.tree.update(
                 React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
@@ -632,10 +612,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
     it('renders an ACP session mode picker from preflight override options when provided', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -654,33 +631,21 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     ],
                     acpSessionModeSelectedIdOverride: null,
                     onAcpSessionModeChange: () => {},
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-chip-picker-popover' })).not.toThrow();
-        expect(findTextNode(tree!, 'agentInput.mode.sectionTitle')).toBeTruthy();
-        expect(findPressableByLabel(tree!, 'Plan')).toBeTruthy();
-        expect(findPressableByLabel(tree!, 'Build')).toBeTruthy();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-session-mode-option:plan' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-session-mode-option:build' })).not.toThrow();
+        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('agentInput.mode.sectionTitle');
+        expect(screen.findByTestId('agent-input-session-mode-option:plan')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-session-mode-option:build')).toBeTruthy();
     });
 
     it('calls onAcpSessionModeChange when selecting a preflight ACP mode', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onAcpSessionModeChange = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -698,36 +663,21 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     ],
                     acpSessionModeSelectedIdOverride: null,
                     onAcpSessionModeChange,
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        const plan = findPressableByLabel(tree!, 'Plan');
-        expect(plan).toBeTruthy();
-
-        await act(async () => {
-            plan!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-session-mode-option:plan');
 
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
     });
 
-    it('opens the ACP mode picker in the shared chip popover even when selectable options are within the former cycle threshold', async () => {
+    it('cycles the ACP mode chip directly when only simple build-plan options are available', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onAcpSessionModeChange = vi.fn();
         modalShowMock.mockReset();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -740,46 +690,30 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     modelMode: 'default',
                     onModelModeChange: () => {},
                     acpSessionModeOptionsOverride: [
-                        { id: 'default', name: 'Default' },
-                        { id: 'plan', name: 'Plan' },
                         { id: 'build', name: 'Build' },
+                        { id: 'plan', name: 'Plan' },
                     ],
                     acpSessionModeSelectedIdOverride: 'build',
                     onAcpSessionModeChange,
-                } as any),
-            );
-        });
+                } as any));
 
-        const modeChip = findPressableByAccessibilityLabel(tree!, 'Build');
+        const modeChip = screen.findByTestId('agent-input-session-mode-chip');
         expect(modeChip).toBeTruthy();
-        expect(nodeContainsExactText(modeChip!, 'Build')).toBe(true);
+        expect(modeChip?.props.accessibilityLabel).toContain('Build');
         expect(findIconNode(modeChip!, 'Octicons', 'rocket')).toBeTruthy();
         expect(findIconNode(modeChip!, 'Ionicons', 'list-outline')).toBeUndefined();
 
-        await act(async () => {
-            modeChip!.props.onPress();
-        });
-
-        expect(onAcpSessionModeChange).not.toHaveBeenCalled();
-        expect(modalShowMock).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-simple-options-popover' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-simple-option:plan' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-simple-option:build' })).not.toThrow();
-
-        await act(async () => {
-            tree!.root.findByProps({ testID: 'agent-input-simple-option:plan' }).props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-session-mode-chip');
 
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+        expect(modalShowMock).not.toHaveBeenCalled();
+        expect(screen.findByTestId('agent-input-simple-options-popover')).toBeNull();
     });
 
     it('keeps the existing list icon and bare mode label when the selected ACP mode is Plan', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -797,13 +731,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     ],
                     acpSessionModeSelectedIdOverride: 'plan',
                     onAcpSessionModeChange: () => {},
-                } as any),
-            );
-        });
-
-        const modeChip = findPressableByAccessibilityLabel(tree!, 'Plan');
+                } as any));
+        const modeChip = screen.findByTestId('agent-input-session-mode-chip');
         expect(modeChip).toBeTruthy();
-        expect(nodeContainsExactText(modeChip!, 'Plan')).toBe(true);
+        expect(modeChip?.props.accessibilityLabel).toContain('Plan');
         expect(findIconNode(modeChip!, 'Ionicons', 'list-outline')).toBeTruthy();
         expect(findIconNode(modeChip!, 'Octicons', 'rocket')).toBeUndefined();
     });
@@ -813,10 +744,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const onAcpSessionModeChange = vi.fn();
         modalShowMock.mockReset();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -836,25 +764,17 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     ],
                     acpSessionModeSelectedIdOverride: null,
                     onAcpSessionModeChange,
-                } as any),
-            );
-        });
-
-        const modeChip = findPressableByAccessibilityLabel(tree!, 'Default');
+                } as any));
+        const modeChip = screen.findByTestId('agent-input-session-mode-chip');
         expect(modeChip).toBeTruthy();
 
-        await act(async () => {
-            modeChip!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-session-mode-chip');
 
         expect(onAcpSessionModeChange).not.toHaveBeenCalled();
         expect(modalShowMock).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-simple-options-popover' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-simple-option:review' })).not.toThrow();
-
-        await act(async () => {
-            tree!.root.findByProps({ testID: 'agent-input-simple-option:build' }).props.onPress();
-        });
+        expect(screen.findByTestId('agent-input-simple-options-popover')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-simple-option:review')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-simple-option:build');
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('build');
     });
 
@@ -862,10 +782,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const { AgentInput } = await import('./AgentInput');
         const onEnvVarsClick = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -886,36 +803,24 @@ describe('AgentInput (modelOptionsOverride)', () => {
                             null,
                         ),
                     },
-                } as any),
-            );
-        });
-
-        const envVarsChip = findPressableByLabel(tree!, 'agentInput.envVars.title');
+                } as any));
+        const envVarsChip = screen.findByTestId('agent-input-env-vars-chip');
         expect(envVarsChip).toBeTruthy();
 
-        await act(async () => {
-            envVarsChip!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-env-vars-chip');
 
         expect(onEnvVarsClick).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'env-vars-close-button' })).not.toThrow();
-
-        await act(async () => {
-            tree!.root.findByProps({ testID: 'env-vars-close-button' }).props.onPress();
-        });
-
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).toThrow();
+        expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
+        expect(screen.findByTestId('env-vars-close-button')).toBeTruthy();
+        await screen.pressByTestIdAsync('env-vars-close-button');
+        expect(screen.findByTestId('agent-input-content-popover')).toBeNull();
     });
 
     it('opens profile chip popover content instead of invoking the legacy profile click callback when custom content exists', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onProfileClick = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -935,36 +840,24 @@ describe('AgentInput (modelOptionsOverride)', () => {
                             null,
                         ),
                     },
-                } as any),
-            );
-        });
-
-        const profileChip = findPressableByLabel(tree!, 'profiles.noProfile');
+                } as any));
+        const profileChip = screen.findByTestId('agent-input-profile-chip');
         expect(profileChip).toBeTruthy();
 
-        await act(async () => {
-            profileChip!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-profile-chip');
 
         expect(onProfileClick).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'profile-close-button' })).not.toThrow();
-
-        await act(async () => {
-            tree!.root.findByProps({ testID: 'profile-close-button' }).props.onPress();
-        });
-
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).toThrow();
+        expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
+        expect(screen.findByTestId('profile-close-button')).toBeTruthy();
+        await screen.pressByTestIdAsync('profile-close-button');
+        expect(screen.findByTestId('agent-input-content-popover')).toBeNull();
     });
 
     it('opens the permission chip with the shared popover instead of invoking the legacy permission click callback', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onPermissionClick = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -977,18 +870,12 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
                     onModelModeChange: () => {},
-                } as any),
-            );
-        });
+                } as any));
 
-        const permissionChip = tree!.root.findByProps({ testID: 'agent-input-permission-chip' });
-
-        await act(async () => {
-            permissionChip.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-permission-chip');
 
         expect(onPermissionClick).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
+        expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
     });
 
     it('closes the collapsed action menu when opening the permission chip popover', async () => {
@@ -996,10 +883,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         mockAgentInputActionBarLayout = 'collapsed';
 
         try {
-            let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(
-                    React.createElement(AgentInput, {
+            const screen = await renderScreen(React.createElement(AgentInput, {
                         value: 'hello',
                         placeholder: 'placeholder',
                         onChangeText: () => {},
@@ -1011,26 +895,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         onPermissionModeChange: () => {},
                         modelMode: 'default',
                         onModelModeChange: () => {},
-                    } as any),
-                );
-            });
+                    } as any));
+            expect(screen.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
-            const settings = findSettingsPressable(tree!);
-            expect(settings).toBeTruthy();
-
-            await act(async () => {
-                settings!.props.onPress();
-            });
-
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).not.toThrow();
-
-            const permissionChip = tree!.root.findByProps({ testID: 'agent-input-permission-chip' });
-            await act(async () => {
-                permissionChip.props.onPress();
-            });
-
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).toThrow();
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
+            await screen.pressByTestIdAsync('agent-input-permission-chip');
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
+            expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
         } finally {
             mockAgentInputActionBarLayout = 'wrap';
         }
@@ -1041,10 +913,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         mockAgentInputActionBarLayout = 'collapsed';
 
         try {
-            let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(
-                    React.createElement(AgentInput, {
+            const screen = await renderScreen(React.createElement(AgentInput, {
                         value: 'hello',
                         placeholder: 'placeholder',
                         onChangeText: () => {},
@@ -1056,26 +925,15 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         onPermissionModeChange: () => {},
                         modelMode: 'default',
                         onModelModeChange: () => {},
-                    } as any),
-                );
-            });
+                    } as any));
+            await screen.pressByTestIdAsync('agent-input-permission-chip');
+            expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
 
-            const permissionChip = tree!.root.findByProps({ testID: 'agent-input-permission-chip' });
-            await act(async () => {
-                permissionChip.props.onPress();
-            });
+            expect(screen.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
-
-            const settings = findSettingsPressable(tree!);
-            expect(settings).toBeTruthy();
-
-            await act(async () => {
-                settings!.props.onPress();
-            });
-
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).not.toThrow();
+            expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
         } finally {
             mockAgentInputActionBarLayout = 'wrap';
         }
@@ -1086,10 +944,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const onAgentPickerSelect = vi.fn();
         modalShowMock.mockReset();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1111,21 +966,13 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onAgentClick: () => {
                         throw new Error('fallback agent click should not run when picker props exist');
                     },
-                } as any),
-            );
-        });
+                } as any));
 
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(modalShowMock).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-chip-picker-popover' })).not.toThrow();
-
-        await act(async () => {
-            tree!.root.findByProps({ testID: 'agent-input-chip-picker.option:agent:codex' }).props.onPress();
-        });
+        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:agent:codex');
 
         expect(onAgentPickerSelect).toHaveBeenCalledWith('agent:codex');
     });
@@ -1133,10 +980,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
     it('closes the permission popover before showing the shared engine picker in wrap layout', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1155,27 +999,16 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     ],
                     agentPickerSelectedOptionId: 'agent:claude',
                     onAgentPickerSelect: () => {},
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
 
-        expect(findSettingsPressable(tree!)).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-permission-chip');
+        expect(screen.findByTestId('agent-input-content-popover')).toBeTruthy();
 
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        const permissionChip = tree!.root.findByProps({ testID: 'agent-input-permission-chip' });
-        await act(async () => {
-            permissionChip.props.onPress();
-        });
-
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).not.toThrow();
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-content-popover' })).toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-chip-picker-popover' })).not.toThrow();
+        expect(screen.findByTestId('agent-input-content-popover')).toBeNull();
+        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
     });
 
     it('prefers the shared live engine picker over the legacy agent click callback when live model access exists', async () => {
@@ -1183,10 +1016,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const onAgentClick = vi.fn();
         lastModelPickerOverlayProps = null;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1207,17 +1037,12 @@ describe('AgentInput (modelOptionsOverride)', () => {
                             ],
                         },
                     },
-                } as any),
-            );
-        });
+                } as any));
 
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
         expect(onAgentClick).not.toHaveBeenCalled();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-chip-picker-popover' })).not.toThrow();
+        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
     });
 
@@ -1227,10 +1052,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         lastModelPickerOverlayProps = null;
         lastPopoverProps = null;
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1250,18 +1072,18 @@ describe('AgentInput (modelOptionsOverride)', () => {
                             ],
                         },
                     },
-                } as any),
-            );
-        });
+                } as any));
 
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
+        const agentChip = screen.findByTestId('agent-input-agent-chip');
         expect(agentChip).toBeTruthy();
+        if (!agentChip) {
+            throw new Error('Expected agent chip');
+        }
 
-        await act(async () => {
-            agentChip.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-chip-picker-popover' })).not.toThrow();
+        expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-chip-picker.option:engine:codex')).toBeNull();
         expect(lastPopoverProps?.anchorRef).toBe(agentChip.props.ref);
         expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
 
@@ -1279,10 +1101,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         lastPopoverProps = null;
 
         try {
-            let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(
-                    React.createElement(AgentInput, {
+            const screen = await renderScreen(React.createElement(AgentInput, {
                         value: 'hello',
                         placeholder: 'placeholder',
                         onChangeText: () => {},
@@ -1302,30 +1121,23 @@ describe('AgentInput (modelOptionsOverride)', () => {
                                 ],
                             },
                         },
-                    } as any),
-                );
-            });
+                    } as any));
+            expect(screen.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
-            const settings = findSettingsPressable(tree!);
-            expect(settings).toBeTruthy();
-
-            await act(async () => {
-                settings!.props.onPress();
-            });
-
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).not.toThrow();
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
             expect(lastModelPickerOverlayProps).toBeNull();
 
-            const engineAction = findPressableByLabel(tree!, 'agents.codex');
+            const engineAction = findPressableByText(screen.tree, 'agents.codex');
             expect(engineAction).toBeTruthy();
 
             await act(async () => {
                 engineAction!.props.onPress();
             });
 
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).toThrow();
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-chip-picker-popover' })).not.toThrow();
-            expect(lastPopoverProps?.anchorRef).toBe(settings!.props.ref);
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
+            expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
+            expect(lastPopoverProps?.anchorRef).toBe(screen.findByTestId('agent-input-action-menu-button')!.props.ref);
             expect((lastModelPickerOverlayProps?.options ?? []).map((o: any) => o.value)).toEqual(['default', 'session-model']);
         } finally {
             mockAgentInputActionBarLayout = 'wrap';
@@ -1354,10 +1166,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const onAcpSessionModeChange = vi.fn();
 
         try {
-            let tree: renderer.ReactTestRenderer | undefined;
-            await act(async () => {
-                tree = renderer.create(
-                    React.createElement(AgentInput, {
+            const screen = await renderScreen(React.createElement(AgentInput, {
                         value: 'hello',
                         placeholder: 'placeholder',
                         onChangeText: () => {},
@@ -1368,35 +1177,22 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         permissionMode: 'default',
                         onPermissionModeChange: () => {},
                         onAcpSessionModeChange,
-                    } as any),
-                );
-            });
+                    } as any));
+            expect(screen.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+            await screen.pressByTestIdAsync('agent-input-action-menu-button');
 
-            const settings = findSettingsPressable(tree!);
-            expect(settings).toBeTruthy();
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
+            expect(screen.getTextContent()).not.toContain('agentInput.mode.sectionTitle');
 
-            await act(async () => {
-                settings!.props.onPress();
-            });
-
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).not.toThrow();
-            expect(findTextNode(tree!, 'agentInput.mode.sectionTitle')).toBeUndefined();
-
-            const modeAction = findPressableByLabel(tree!, 'Build');
+            const modeAction = findPressableByText(screen.tree, 'Build');
             expect(modeAction).toBeTruthy();
 
             await act(async () => {
                 modeAction!.props.onPress();
             });
 
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-action-menu-overlay' })).toThrow();
-            expect(() => tree!.root.findByProps({ testID: 'agent-input-simple-options-popover' })).not.toThrow();
-            expect(lastPopoverProps?.anchorRef).toBe(settings!.props.ref);
-
-            await act(async () => {
-                tree!.root.findByProps({ testID: 'agent-input-simple-option:plan' }).props.onPress();
-            });
-
+            expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
+            expect(screen.findByTestId('agent-input-simple-options-popover')).toBeNull();
             expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
         } finally {
             mockSessionModePickerControl = null;
@@ -1421,10 +1217,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             isPending: false,
         };
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1443,19 +1236,12 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     acpSessionModeSelectedIdOverride: 'plan',
                     acpSessionModeOptionsOverrideProbe: { phase: 'idle', onRefresh },
                     onAcpSessionModeChange: () => {},
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        expect(findTextNode(tree!, 'agentInput.mode.sectionTitle')).toBeTruthy();
-        expect(findPressableByAccessibilityLabel(tree!, 'agentInput.mode.refreshModesA11y')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('agentInput.mode.sectionTitle');
+        expect(screen.findByTestId('agent-input-session-mode-refresh')).toBeTruthy();
 
         mockSessionModePickerControl = null;
     });
@@ -1464,10 +1250,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const { AgentInput } = await import('./AgentInput');
         const onRefresh = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1486,24 +1269,13 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     acpSessionModeSelectedIdOverride: null,
                     acpSessionModeOptionsOverrideProbe: { phase: 'idle', onRefresh },
                     onAcpSessionModeChange: () => {},
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        const refresh = findPressableByAccessibilityLabel(tree!, 'agentInput.mode.refreshModesA11y');
+        const refresh = screen.findByTestId('agent-input-session-mode-refresh');
         expect(refresh).toBeTruthy();
-        expect(refresh?.props?.testID).toBe('agent-input-session-mode-refresh');
-
-        await act(async () => {
-            refresh!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-session-mode-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
@@ -1512,10 +1284,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const { AgentInput } = await import('./AgentInput');
         const onAcpConfigOptionChange = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1547,26 +1316,16 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         },
                     },
                     onAcpConfigOptionChange,
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
+        expect(screen.findByTestId('agent-input-config-option:speed')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('agentInput.acp.optionsSectionTitle');
+        expect(screen.getTextContent()).toContain('Speed');
+        expect(screen.getTextContent()).toContain('agentInput.acp.pendingValue');
 
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-config-option:speed' })).not.toThrow();
-        expect(findTextNode(tree!, 'agentInput.acp.optionsSectionTitle')).toBeTruthy();
-        expect(findTextNode(tree!, 'Speed')).toBeTruthy();
-        expect(findTextNode(tree!, 'agentInput.acp.pendingValue')).toBeTruthy();
-
-        const fast = tree!.root.findByProps({ testID: 'agent-input-config-option-option:speed:fast' });
-        await act(async () => {
-            fast.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-config-option-option:speed:fast');
 
         expect(onAcpConfigOptionChange).toHaveBeenCalledWith('speed', 'fast');
     });
@@ -1574,10 +1333,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
     it('renders a config-options loading affordance when ACP config preflight is still loading', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1591,29 +1347,19 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onModelModeChange: () => {},
                     acpConfigOptionsOverrideProbe: { phase: 'loading', onRefresh: () => {} },
                     onAcpConfigOptionChange: () => {},
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        expect(findTextNode(tree!, 'agentInput.acp.optionsSectionTitle')).toBeTruthy();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-config-options-refresh' })).not.toThrow();
+        expect(screen.getTextContent()).toContain('agentInput.acp.optionsSectionTitle');
+        expect(screen.findByTestId('agent-input-config-options-refresh')).toBeTruthy();
     });
 
     it('calls refresh handler for preflight ACP config options when no options are loaded yet', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onRefresh = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(AgentInput, {
+        const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -1627,23 +1373,17 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onModelModeChange: () => {},
                     acpConfigOptionsOverrideProbe: { phase: 'idle', onRefresh },
                     onAcpConfigOptionChange: () => {},
-                } as any),
-            );
-        });
+                } as any));
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-agent-chip');
 
-        expect(findSettingsPressable(tree!)).toBeNull();
-        const agentChip = tree!.root.findByProps({ testID: 'agent-input-agent-chip' });
-
-        await act(async () => {
-            agentChip.props.onPress();
-        });
-
-        const refresh = tree!.root.findByProps({ testID: 'agent-input-config-options-refresh' });
+        const refresh = screen.findByTestId('agent-input-config-options-refresh');
+        expect(refresh).toBeTruthy();
+        if (!refresh) {
+            throw new Error('Expected ACP config refresh action');
+        }
         expect(typeof refresh.props.onPress).toBe('function');
-
-        await act(async () => {
-            refresh.props.onPress();
-        });
+        await screen.pressByTestIdAsync('agent-input-config-options-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });

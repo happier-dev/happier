@@ -1,6 +1,5 @@
 import * as React from "react";
-import { Platform, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { View } from "react-native";
 import {
   FloatingOverlay,
   type FloatingOverlayArrow,
@@ -26,24 +25,6 @@ export type AgentInputPopoverSurfaceProps = Readonly<{
   initialVisibility?: Partial<ScrollEdgeVisibility>;
 }>;
 
-const stylesheet = StyleSheet.create((theme) => ({
-  frame: {
-    overflow: "hidden",
-    elevation: 5,
-  },
-}));
-
-const NonScrollableOverlayFrame = React.memo(
-  (props: Readonly<{ maxHeight: number; children: React.ReactNode }>) => {
-    const styles = stylesheet;
-    return (
-      <View style={[styles.frame, { maxHeight: props.maxHeight }]}>
-        {props.children}
-      </View>
-    );
-  },
-);
-
 export const AgentInputPopoverSurface = React.memo(
   (props: AgentInputPopoverSurfaceProps) => {
     const {
@@ -59,29 +40,20 @@ export const AgentInputPopoverSurface = React.memo(
       initialVisibility,
     } = props;
 
-    if (scrollEnabled) {
-      return (
-        <View testID={testID} collapsable={false}>
-          <FloatingOverlay
-            maxHeight={maxHeight}
-            showScrollIndicator={showScrollIndicator}
-            keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-            edgeFades={edgeFades}
-            edgeIndicators={edgeIndicators}
-            arrow={arrow}
-            initialVisibility={initialVisibility}
-          >
-            {children}
-          </FloatingOverlay>
-        </View>
-      );
-    }
-
     return (
       <View testID={testID} collapsable={false}>
-        <NonScrollableOverlayFrame maxHeight={maxHeight}>
+        <FloatingOverlay
+          maxHeight={maxHeight}
+          scrollEnabled={scrollEnabled}
+          showScrollIndicator={showScrollIndicator}
+          keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+          edgeFades={edgeFades}
+          edgeIndicators={edgeIndicators}
+          arrow={arrow}
+          initialVisibility={initialVisibility}
+        >
           {children}
-        </NonScrollableOverlayFrame>
+        </FloatingOverlay>
       </View>
     );
   },
