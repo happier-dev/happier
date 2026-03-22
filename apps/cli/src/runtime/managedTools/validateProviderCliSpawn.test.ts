@@ -1,33 +1,37 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { resolveProviderCliManagedCommandPath } from './providerCliResolution';
 import { validateProviderCliSpawn } from './validateProviderCliSpawn';
 
-const ORIGINAL_ENV = {
-  HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-  PATH: process.env.PATH,
-  HAPPIER_GEMINI_PATH: process.env.HAPPIER_GEMINI_PATH,
-};
-
 const TEMP_DIRS = new Set<string>();
+let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH']);
 
 afterEach(() => {
-  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
+  envScope.restore();
+  envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH']);
   for (const dir of TEMP_DIRS) {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDirSync(dir);
   }
   TEMP_DIRS.clear();
 });
 
+function writeExecutable(filePath: string): void {
+  writeExecutableShimSync({
+    dir: dirname(filePath),
+    fileName: basename(filePath),
+    contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+  });
+}
+
 describe('validateProviderCliSpawn', () => {
   it('accepts managed provider CLIs when PATH is missing the system install', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-provider-spawn-'));
+    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
     TEMP_DIRS.add(root);
     process.env.HAPPIER_HOME_DIR = join(root, 'home');
     process.env.PATH = join(root, 'empty-path');
@@ -35,9 +39,7 @@ describe('validateProviderCliSpawn', () => {
     mkdirSync(process.env.PATH, { recursive: true });
 
     const managedPath = resolveProviderCliManagedCommandPath('gemini', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
-    mkdirSync(join(managedPath, '..'), { recursive: true });
-    writeFileSync(managedPath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
-    if (process.platform !== 'win32') chmodSync(managedPath, 0o755);
+    writeExecutable(managedPath);
 
     await expect(validateProviderCliSpawn({ agentId: 'gemini' })).resolves.toEqual({ ok: true });
   });
@@ -57,13 +59,12 @@ describe('validateProviderCliSpawn', () => {
   });
 
   it('fails closed when an explicit override is set but invalid', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-provider-spawn-'));
+    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
     TEMP_DIRS.add(root);
     const systemBin = join(root, 'system-bin');
     mkdirSync(systemBin, { recursive: true });
     const systemGeminiPath = join(systemBin, process.platform === 'win32' ? 'gemini.cmd' : 'gemini');
-    writeFileSync(systemGeminiPath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
-    if (process.platform !== 'win32') chmodSync(systemGeminiPath, 0o755);
+    writeExecutable(systemGeminiPath);
     process.env.PATH = systemBin;
     process.env.HAPPIER_GEMINI_PATH = join(root, 'missing-gemini');
 
