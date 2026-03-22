@@ -343,16 +343,23 @@ describe('startDaemon session handoff wiring (integration)', () => {
         harness.directPeerRegistry.clearPublishedTransfer.mockClear();
     });
 
-    it('forwards direct-peer publish requests into the daemon registry without speculative seam flags', async () => {
+    it('forwards file-backed direct-peer publish requests into the daemon registry without inline fallback', async () => {
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
         try {
             const { startDaemon } = await import('./startDaemon');
-            const { sessionHandoffTransferredBundlesCodec } = await import('@/session/handoff/transfer/sessionHandoffTransferredBundles');
             await startDaemon();
 
             const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
             expect(handlers?.directPeerTransfer).toBeDefined();
+            expect(handlers?.directPeerTransfer.requestPayloadFile).toEqual(expect.any(Function));
+            const payloadSource = {
+                kind: 'file' as const,
+                filePath: '/tmp/handoff-payload.bin',
+                sizeBytes: 123,
+                manifestHash: 'sha256:test-manifest',
+                dispose: vi.fn(async () => {}),
+            };
 
             const endpointCandidates = handlers.directPeerTransfer.publishTransfer({
                 transferId: 'handoff_rns',
@@ -363,6 +370,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
                         transcriptBase64: 'e30K',
                     },
                 },
+                payloadSource,
             });
 
             expect(harness.directPeerRegistry.publishTransfer).toHaveBeenCalledTimes(1);
@@ -370,17 +378,10 @@ describe('startDaemon session handoff wiring (integration)', () => {
             expect(publishedCall).toBeDefined();
             const [published] = publishedCall as unknown as readonly [{
                 transferId: string;
-                payload: Buffer;
+                payloadSource: typeof payloadSource;
             }];
             expect(published.transferId).toBe('handoff_rns');
-            expect(Buffer.isBuffer(published.payload)).toBe(true);
-            expect(published.payload.equals(sessionHandoffTransferredBundlesCodec.encode({
-                providerBundle: {
-                    providerId: 'claude',
-                    remoteSessionId: 'claude_session_source',
-                    transcriptBase64: 'e30K',
-                },
-            }))).toBe(true);
+            expect(published.payloadSource).toBe(payloadSource);
             expect(endpointCandidates).toEqual([
                 {
                     kind: 'http',
@@ -389,6 +390,135 @@ describe('startDaemon session handoff wiring (integration)', () => {
                     expiresAt: 30_000,
                 },
             ]);
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
+    it('wires a local session metadata loader for handoff-back starts', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
+            type TrackedSessionRef = {
+                startedBy: string;
+                pid: number;
+                happySessionId?: string;
+                happySessionMetadataFromLocalWebhook?: Record<string, unknown>;
+                vendorResumeId?: string;
+                spawnOptions?: Record<string, unknown>;
+            };
+            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
+                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+                return vi.fn();
+            });
+
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0] as {
+                loadLocalSessionMetadata?: (sessionId: string) => Promise<unknown>;
+            } | undefined;
+
+            expect(handlers?.loadLocalSessionMetadata).toEqual(expect.any(Function));
+
+            const trackedSessions = trackedSessionCapture.current;
+            if (!trackedSessions) {
+                throw new Error('Expected tracked session map from webhook wiring');
+            }
+            trackedSessions.set(1557, {
+                startedBy: 'daemon',
+                pid: 1557,
+                happySessionId: 'sess_handoff_back',
+                happySessionMetadataFromLocalWebhook: {
+                    machineId: 'machine_target',
+                    path: '/repo-source',
+                    homeDir: '/Users/tester',
+                    flavor: 'claude',
+                    claudeSessionId: 'sess-handoff-direct',
+                },
+            });
+
+            await expect(handlers?.loadLocalSessionMetadata?.('sess_handoff_back')).resolves.toEqual(
+                expect.objectContaining({
+                    exportMetadata: expect.objectContaining({
+                        machineId: 'machine_target',
+                        path: '/repo-source',
+                    }),
+                    runtimeLocalMetadata: expect.objectContaining({
+                        claudeSessionId: 'sess-handoff-direct',
+                    }),
+                }),
+            );
+            trackedSessions.set(2660, {
+                startedBy: 'daemon',
+                pid: 2660,
+                happySessionId: 'sess_handoff_pre_webhook',
+                vendorResumeId: 'sess-handoff-direct',
+                spawnOptions: {
+                    directory: '/repo-source-current',
+                    backendTarget: {
+                        kind: 'builtInAgent',
+                        agentId: 'claude',
+                    },
+                    transcriptStorage: 'direct',
+                    environmentVariables: {
+                        HOME: '/Users/target',
+                        CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+                    },
+                },
+            });
+
+            await expect(handlers?.loadLocalSessionMetadata?.('sess_handoff_pre_webhook')).resolves.toEqual(
+                expect.objectContaining({
+                    exportMetadata: expect.objectContaining({
+                        machineId: 'machine-session-handoff',
+                        path: '/repo-source-current',
+                        homeDir: '/Users/target',
+                        flavor: 'claude',
+                    }),
+                    runtimeLocalMetadata: expect.objectContaining({
+                        claudeSessionId: 'sess-handoff-direct',
+                        directSessionV1: expect.objectContaining({
+                            remoteSessionId: 'sess-handoff-direct',
+                            machineId: 'machine-session-handoff',
+                            source: expect.objectContaining({
+                                kind: 'claudeConfig',
+                                configDir: '/tmp/claude-config',
+                                projectId: '-repo-source-current',
+                            }),
+                        }),
+                    }),
+                }),
+            );
+            await expect(handlers?.loadLocalSessionMetadata?.('missing_session')).resolves.toBeNull();
+        } finally {
+            exitSpy.mockRestore();
+        }
+    });
+
+    it('fails closed when a direct-peer publish request omits the file-backed payload source', async () => {
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+        try {
+            const { startDaemon } = await import('./startDaemon');
+            await startDaemon();
+
+            const handlers = harness.apiMachine.setRPCHandlers.mock.calls[0]?.[0];
+            expect(handlers?.directPeerTransfer).toBeDefined();
+
+            expect(() => handlers.directPeerTransfer.publishTransfer({
+                transferId: 'handoff_missing_payload_source',
+                payload: {
+                    providerBundle: {
+                        providerId: 'claude',
+                        remoteSessionId: 'claude_session_source',
+                        transcriptBase64: 'e30K',
+                    },
+                },
+            })).toThrow('Direct peer handoff publish requires a file-backed payload source');
+            expect(harness.directPeerRegistry.publishTransfer).not.toHaveBeenCalled();
         } finally {
             exitSpy.mockRestore();
         }

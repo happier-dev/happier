@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
-import { fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
-import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
@@ -271,9 +271,9 @@ vi.mock('./shutdownPolicy', () => ({
   getDaemonShutdownWatchdogTimeoutMs: vi.fn(() => 10_000),
 }));
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: vi.fn(async () =>
-    makeSessionFixtureRow({
+    createSessionRecordFixture({
       id: 'sess_plain',
       encryptionMode: 'plain',
       metadata: JSON.stringify({ flavor: 'codex', codexSessionId: 'vendor-plain-1', path: '/tmp' }),
