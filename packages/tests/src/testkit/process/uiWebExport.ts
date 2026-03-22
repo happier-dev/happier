@@ -9,14 +9,16 @@ import { yarnCommand } from './commands';
 import { readPositiveEnvInt } from './uiWebEnv';
 import type { StartedUiWeb } from './uiWebTypes';
 
-const EXPORTED_DIST_PARENT = resolvePath(repoRootDir(), '.project', 'tmp', 'ui-web-export');
-const EXPORTED_DIST_DIR = resolvePath(EXPORTED_DIST_PARENT, 'dist');
-const EXPORTED_DIST_LOCK_PATH = resolvePath(EXPORTED_DIST_PARENT, 'build.lock');
-const EXPORTED_DIST_CACHE_KEY_PATH = resolvePath(EXPORTED_DIST_PARENT, 'cache-key.json');
+export function resolveUiWebExportRootDir(env: NodeJS.ProcessEnv = process.env): string {
+  const rootDir = resolvePath(repoRootDir(), '.project', 'tmp', 'ui-web-export');
+  const namespace = String(env.HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE ?? '').trim();
+  return namespace ? resolvePath(rootDir, namespace) : rootDir;
+}
 
 let sharedExportPromise: Promise<string> | null = null;
 let sharedExportDir: string | null = null;
 let sharedExportCacheKey: string | null = null;
+const UI_WEB_EXPORT_MANIFEST_VERSION = 1;
 
 type UiWebRuntimeConfig = Readonly<{
   serverUrl: string;
@@ -59,8 +61,12 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withUiWebExportLock<T>(fn: () => Promise<T>, options?: { timeoutMs?: number; staleAfterMs?: number }): Promise<T> {
-  mkdirSync(dirname(EXPORTED_DIST_LOCK_PATH), { recursive: true });
+async function withUiWebExportLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+  options?: { timeoutMs?: number; staleAfterMs?: number },
+): Promise<T> {
+  mkdirSync(dirname(lockPath), { recursive: true });
   const timeoutMs = options?.timeoutMs ?? 900_000;
   const staleAfterMs = options?.staleAfterMs ?? timeoutMs;
   const startedAt = Date.now();
@@ -68,7 +74,7 @@ async function withUiWebExportLock<T>(fn: () => Promise<T>, options?: { timeoutM
   let fd: number | null = null;
   while (true) {
     try {
-      fd = openSync(EXPORTED_DIST_LOCK_PATH, 'wx');
+      fd = openSync(lockPath, 'wx');
       writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAtMs: Date.now() }), 'utf8');
       break;
     } catch (error: any) {
@@ -76,7 +82,7 @@ async function withUiWebExportLock<T>(fn: () => Promise<T>, options?: { timeoutM
 
       let reclaim = false;
       try {
-        const owner = parseLockOwner(readFileSync(EXPORTED_DIST_LOCK_PATH, 'utf8'));
+        const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
         if (owner.pid == null && owner.createdAtMs == null) reclaim = true;
         else if (owner.pid != null && !isRunningPid(owner.pid)) reclaim = true;
         else if (owner.createdAtMs != null && Date.now() - owner.createdAtMs > staleAfterMs) reclaim = true;
@@ -86,7 +92,7 @@ async function withUiWebExportLock<T>(fn: () => Promise<T>, options?: { timeoutM
 
       if (reclaim) {
         try {
-          unlinkSync(EXPORTED_DIST_LOCK_PATH);
+          unlinkSync(lockPath);
           continue;
         } catch {
           // ignore and continue waiting
@@ -94,7 +100,7 @@ async function withUiWebExportLock<T>(fn: () => Promise<T>, options?: { timeoutM
       }
 
       if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for UI web export build lock: ${EXPORTED_DIST_LOCK_PATH}`);
+        throw new Error(`Timed out waiting for UI web export build lock: ${lockPath}`);
       }
       await sleep(250);
     }
@@ -109,7 +115,7 @@ async function withUiWebExportLock<T>(fn: () => Promise<T>, options?: { timeoutM
       // ignore
     }
     try {
-      unlinkSync(EXPORTED_DIST_LOCK_PATH);
+      unlinkSync(lockPath);
     } catch {
       // ignore
     }
@@ -159,6 +165,7 @@ function buildExportEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     NODE_ENV: 'production',
     EXPO_NO_TELEMETRY: '1',
     EXPO_PUBLIC_DEBUG: debug,
+    EXPO_PUBLIC_POSTHOG_KEY: String(env.EXPO_PUBLIC_POSTHOG_KEY ?? 'phc-clear-export').trim() || 'phc-clear-export',
     EXPO_PUBLIC_HAPPIER_SERVER_URL: '',
     EXPO_PUBLIC_HAPPY_SERVER_URL: '',
     EXPO_PUBLIC_SERVER_URL: '',
@@ -184,10 +191,10 @@ function buildUiWebExportCacheKey(env: NodeJS.ProcessEnv): string {
   return JSON.stringify(relevantEntries);
 }
 
-function readPersistedUiWebExportCacheKey(): string | null {
+function readPersistedUiWebExportCacheKey(cacheKeyPath: string): string | null {
   try {
-    if (!existsSync(EXPORTED_DIST_CACHE_KEY_PATH)) return null;
-    const raw = readFileSync(EXPORTED_DIST_CACHE_KEY_PATH, 'utf8').trim();
+    if (!existsSync(cacheKeyPath)) return null;
+    const raw = readFileSync(cacheKeyPath, 'utf8').trim();
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { cacheKey?: unknown };
     const cacheKey = typeof parsed.cacheKey === 'string' ? parsed.cacheKey.trim() : '';
@@ -197,34 +204,66 @@ function readPersistedUiWebExportCacheKey(): string | null {
   }
 }
 
-function writePersistedUiWebExportCacheKey(cacheKey: string): void {
-  writeFileSync(EXPORTED_DIST_CACHE_KEY_PATH, JSON.stringify({ cacheKey }), 'utf8');
+function writePersistedUiWebExportCacheKey(cacheKeyPath: string, cacheKey: string): void {
+  writeFileSync(cacheKeyPath, JSON.stringify({ cacheKey }), 'utf8');
 }
 
-function canReusePersistedUiWebExport(cacheKey: string): boolean {
-  if (!existsSync(resolvePath(EXPORTED_DIST_DIR, 'index.html'))) return false;
-  return readPersistedUiWebExportCacheKey() === cacheKey;
+function hasPersistedUiWebExportManifest(manifestPath: string): boolean {
+  try {
+    if (!existsSync(manifestPath)) return false;
+    const raw = readFileSync(manifestPath, 'utf8').trim();
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { formatVersion?: unknown };
+    return parsed.formatVersion === UI_WEB_EXPORT_MANIFEST_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function writePersistedUiWebExportManifest(manifestPath: string): void {
+  writeFileSync(manifestPath, JSON.stringify({
+    formatVersion: UI_WEB_EXPORT_MANIFEST_VERSION,
+    createdAtMs: Date.now(),
+  }), 'utf8');
+}
+
+function canReusePersistedUiWebExport(
+  params: { distDir: string; cacheKeyPath: string; cacheKey: string; manifestPath: string },
+): boolean {
+  if (!existsSync(resolvePath(params.distDir, 'index.html'))) return false;
+  if (!hasPersistedUiWebExportManifest(params.manifestPath)) return false;
+  return readPersistedUiWebExportCacheKey(params.cacheKeyPath) === params.cacheKey;
 }
 
 async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<string> {
   const cacheKey = buildUiWebExportCacheKey(params.env);
   const clearRaw = (params.env.HAPPIER_E2E_EXPO_CLEAR ?? '').toString().trim().toLowerCase();
   const clearCache = clearRaw === '1' || clearRaw === 'true' || clearRaw === 'yes' || clearRaw === 'y';
+  const exportedDistParent = resolveUiWebExportRootDir(params.env);
+  const exportedDistDir = resolvePath(exportedDistParent, 'dist');
+  const exportedDistLockPath = resolvePath(exportedDistParent, 'build.lock');
+  const exportedDistCacheKeyPath = resolvePath(exportedDistParent, 'cache-key.json');
+  const exportedDistManifestPath = resolvePath(exportedDistParent, 'export-manifest.json');
 
   if (sharedExportDir && sharedExportCacheKey === cacheKey) return sharedExportDir;
   if (sharedExportPromise && sharedExportCacheKey === cacheKey) return await sharedExportPromise;
-  if (canReusePersistedUiWebExport(cacheKey)) {
-    sharedExportDir = EXPORTED_DIST_DIR;
+  if (canReusePersistedUiWebExport({
+    distDir: exportedDistDir,
+    cacheKeyPath: exportedDistCacheKeyPath,
+    cacheKey,
+    manifestPath: exportedDistManifestPath,
+  })) {
+    sharedExportDir = exportedDistDir;
     sharedExportCacheKey = cacheKey;
-    return EXPORTED_DIST_DIR;
+    return exportedDistDir;
   }
 
-  const buildPromise = withUiWebExportLock(async () => {
-    const stagingDir = resolvePath(EXPORTED_DIST_PARENT, `dist-staging-${process.pid}-${Date.now()}`);
+  const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
+    const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
     const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
     const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
 
-    await mkdir(EXPORTED_DIST_PARENT, { recursive: true });
+    await mkdir(exportedDistParent, { recursive: true });
     await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
 
     try {
@@ -248,10 +287,11 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
 
       const indexPath = resolvePath(stagingDir, 'index.html');
       await stat(indexPath);
-      await rm(EXPORTED_DIST_DIR, { recursive: true, force: true }).catch(() => {});
-      await rename(stagingDir, EXPORTED_DIST_DIR);
-      writePersistedUiWebExportCacheKey(cacheKey);
-      return EXPORTED_DIST_DIR;
+      await rm(exportedDistDir, { recursive: true, force: true }).catch(() => {});
+      await rename(stagingDir, exportedDistDir);
+      writePersistedUiWebExportCacheKey(exportedDistCacheKeyPath, cacheKey);
+      writePersistedUiWebExportManifest(exportedDistManifestPath);
+      return exportedDistDir;
     } catch (error) {
       const stdoutTail = await readFile(stdoutPath, 'utf8').catch(() => '');
       const stderrTail = await readFile(stderrPath, 'utf8').catch(() => '');
@@ -265,9 +305,9 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
       await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
     }
   }, {
-    timeoutMs: resolveUiWebExportLockTimeoutMs(params.env),
-    staleAfterMs: resolveUiWebExportBuildTimeoutMs(params.env),
-  });
+        timeoutMs: resolveUiWebExportLockTimeoutMs(params.env),
+        staleAfterMs: resolveUiWebExportBuildTimeoutMs(params.env),
+      });
   sharedExportPromise = buildPromise;
   sharedExportCacheKey = cacheKey;
 

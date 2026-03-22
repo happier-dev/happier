@@ -108,6 +108,7 @@ function buildUiWebExportCacheKeyLike(env: NodeJS.ProcessEnv): string {
     NODE_ENV: 'production',
     EXPO_NO_TELEMETRY: '1',
     EXPO_PUBLIC_DEBUG: debug,
+    EXPO_PUBLIC_POSTHOG_KEY: String(env.EXPO_PUBLIC_POSTHOG_KEY ?? 'phc-clear-export').trim() || 'phc-clear-export',
     EXPO_PUBLIC_HAPPIER_SERVER_URL: '',
     EXPO_PUBLIC_HAPPY_SERVER_URL: '',
     EXPO_PUBLIC_SERVER_URL: '',
@@ -129,6 +130,40 @@ function buildUiWebExportCacheKeyLike(env: NodeJS.ProcessEnv): string {
   return JSON.stringify(relevantEntries);
 }
 
+function writeUiWebExportManifestLike(path: string): void {
+  writeFileSync(path, JSON.stringify({
+    formatVersion: 1,
+    createdAtMs: Date.now(),
+  }), 'utf8');
+}
+
+function buildUniqueUiWebExportNamespace(label: string): string {
+  return `uiweb-${label}-${Date.now()}`;
+}
+
+async function removePathWithRetries(path: string, options?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? 15_000;
+  const intervalMs = options?.intervalMs ?? 100;
+  const retryableCodes = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM']);
+  const startedAt = Date.now();
+
+  while (true) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (!retryableCodes.has(code ?? '')) {
+        throw error;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+}
+
 describe('startUiWeb baseUrl resolution', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -142,10 +177,38 @@ describe('startUiWeb baseUrl resolution', () => {
     spawnStderrText = null;
   });
 
-  it('uses exported web mode by default and reuses the shared export build', async () => {
+  it('uses a shared export root directory by default', async () => {
+    const { resolveUiWebExportRootDir } = await import('./uiWeb');
+    expect(resolveUiWebExportRootDir()).toBe(resolve(repoRootDir(), '.project', 'tmp', 'ui-web-export'));
+  });
+
+  it('uses a stable PostHog key when export env omits one', async () => {
+    vi.resetModules();
     const { startUiWeb } = await import('./uiWeb');
-    const cacheDir = resolve(repoRootDir(), '.project', 'tmp', 'ui-web-export');
-    await rm(cacheDir, { recursive: true, force: true });
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    const started = await startUiWeb({
+      testDir,
+      env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `uiweb-posthog-${Date.now()}`,
+      },
+    });
+
+    try {
+      expect(runLoggedCalls).toHaveLength(1);
+      expect(runLoggedCalls[0]?.env?.EXPO_PUBLIC_POSTHOG_KEY).toBe('phc-clear-export');
+    } finally {
+      await started.stop();
+    }
+  });
+
+  it('uses exported web mode by default and reuses the shared export build', async () => {
+    const { startUiWeb, resolveUiWebExportRootDir } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('shared-export-build');
+    const cacheDir = resolveUiWebExportRootDir({
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
+    });
+    await removePathWithRetries(cacheDir);
 
     const testDirA = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     const testDirB = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -153,6 +216,7 @@ describe('startUiWeb baseUrl resolution', () => {
     const startedA = await startUiWeb({
       testDir: testDirA,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4011',
         EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({ changesPageLimit: 12 }),
       },
@@ -160,6 +224,7 @@ describe('startUiWeb baseUrl resolution', () => {
     const startedB = await startUiWeb({
       testDir: testDirB,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4012',
       },
     });
@@ -187,10 +252,14 @@ describe('startUiWeb baseUrl resolution', () => {
   });
 
   it('reuses a persisted export cache without rerunning expo export', async () => {
-    const { startUiWeb } = await import('./uiWeb');
-    const cacheDir = resolve(repoRootDir(), '.project', 'tmp', 'ui-web-export');
+    const { startUiWeb, resolveUiWebExportRootDir } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('persisted-cache');
+    const cacheDir = resolveUiWebExportRootDir({
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
+    });
     const distDir = resolve(cacheDir, 'dist');
     const cacheKeyPath = resolve(cacheDir, 'cache-key.json');
+    const manifestPath = resolve(cacheDir, 'export-manifest.json');
 
     await mkdir(distDir, { recursive: true });
     await writeFile(join(distDir, 'index.html'), '<!doctype html><html><head></head><body>cached</body></html>', 'utf8');
@@ -198,12 +267,14 @@ describe('startUiWeb baseUrl resolution', () => {
     await writeFile(join(distDir, '_expo', 'static', 'js', 'web', 'index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
 
     const env = {
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
       EXPO_PUBLIC_DEBUG: '1',
       EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4011',
       EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: 'e2e-cache-test',
     };
     await mkdir(dirname(cacheKeyPath), { recursive: true });
     writeFileSync(cacheKeyPath, JSON.stringify({ cacheKey: buildUiWebExportCacheKeyLike(env) }), 'utf8');
+    writeUiWebExportManifestLike(manifestPath);
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     const started = await startUiWeb({ testDir, env });
@@ -218,9 +289,46 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   });
 
+  it('rebuilds a persisted export cache that is missing the export manifest', async () => {
+    const { startUiWeb, resolveUiWebExportRootDir } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('persisted-cache-missing-manifest');
+    const cacheDir = resolveUiWebExportRootDir({
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
+    });
+    const distDir = resolve(cacheDir, 'dist');
+    const cacheKeyPath = resolve(cacheDir, 'cache-key.json');
+
+    await mkdir(distDir, { recursive: true });
+    await writeFile(join(distDir, 'index.html'), '<!doctype html><html><head></head><body>cached</body></html>', 'utf8');
+    await mkdir(join(distDir, '_expo', 'static', 'js', 'web'), { recursive: true });
+    await writeFile(join(distDir, '_expo', 'static', 'js', 'web', 'index.js'), 'globalThis.__HAPPIER_E2E__ = true;', 'utf8');
+
+    const env = {
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:4011',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: 'e2e-cache-test',
+    };
+    await mkdir(dirname(cacheKeyPath), { recursive: true });
+    writeFileSync(cacheKeyPath, JSON.stringify({ cacheKey: buildUiWebExportCacheKeyLike(env) }), 'utf8');
+
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
+    const started = await startUiWeb({ testDir, env });
+
+    try {
+      expect(runLoggedCalls).toHaveLength(1);
+      expect(spawnCallCount).toBe(0);
+      const html = await fetch(started.baseUrl).then((response) => response.text());
+      expect(html).toContain('__HAPPIER_WEB_RUNTIME_CONFIG__');
+    } finally {
+      await started.stop();
+    }
+  });
+
   it('rebuilds the exported web bundle when build-time public env changes', async () => {
     vi.resetModules();
     const { startUiWeb } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('build-time-env-change');
 
     const testDirA = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     const testDirB = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -228,12 +336,14 @@ describe('startUiWeb baseUrl resolution', () => {
     const startedA = await startUiWeb({
       testDir: testDirA,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_PUBLIC_POSTHOG_KEY: 'phc_first',
       },
     });
     const startedB = await startUiWeb({
       testDir: testDirB,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_PUBLIC_POSTHOG_KEY: 'phc_second',
       },
     });
@@ -251,6 +361,7 @@ describe('startUiWeb baseUrl resolution', () => {
   it('rebuilds the exported web bundle when only EXPO_UPDATES_CHANNEL changes', async () => {
     vi.resetModules();
     const { startUiWeb } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('updates-channel-change');
 
     const testDirA = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     const testDirB = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -258,12 +369,14 @@ describe('startUiWeb baseUrl resolution', () => {
     const startedA = await startUiWeb({
       testDir: testDirA,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_UPDATES_CHANNEL: 'preview',
       },
     });
     const startedB = await startUiWeb({
       testDir: testDirB,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_UPDATES_CHANNEL: 'production',
       },
     });
@@ -280,9 +393,15 @@ describe('startUiWeb baseUrl resolution', () => {
 
   it('stops the exported web server cleanly', async () => {
     const { startUiWeb } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('server-stop');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
-    const started = await startUiWeb({ testDir, env: {} });
+    const started = await startUiWeb({
+      testDir,
+      env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
+      },
+    });
 
     await started.stop();
 
@@ -298,16 +417,20 @@ describe('startUiWeb baseUrl resolution', () => {
 
   it('reclaims an unreadable shared export lock before building', async () => {
     vi.resetModules();
-    const { startUiWeb } = await import('./uiWeb');
+    const { startUiWeb, resolveUiWebExportRootDir } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('reclaim-lock');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
-    const lockPath = resolve(repoRootDir(), '.project', 'tmp', 'ui-web-export', 'build.lock');
+    const lockPath = resolve(resolveUiWebExportRootDir({
+      HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
+    }), 'build.lock');
     await mkdir(dirname(lockPath), { recursive: true });
     writeFileSync(lockPath, '', 'utf8');
 
     const started = await startUiWeb({
       testDir,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_PUBLIC_POSTHOG_KEY: `phc-lock-${Date.now()}`,
       },
     });
@@ -325,11 +448,13 @@ describe('startUiWeb baseUrl resolution', () => {
 
   it('escapes sync tuning JSON before injecting it into exported html', async () => {
     const { startUiWeb } = await import('./uiWeb');
+    const exportNamespace = buildUniqueUiWebExportNamespace('sync-tuning-escape');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
     const started = await startUiWeb({
       testDir,
       env: {
+        HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: exportNamespace,
         EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({ injected: '</script><script>window.__BROKEN__=true</script>' }),
       },
     });
@@ -527,6 +652,7 @@ describe('startUiWeb baseUrl resolution', () => {
         env: {
           HAPPIER_E2E_UI_WEB_MODE: 'export',
           HAPPIER_E2E_EXPO_CLEAR: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `uiweb-clear-${Date.now()}`,
           EXPO_PUBLIC_POSTHOG_KEY: 'phc-clear-export',
         },
       }),
@@ -893,6 +1019,7 @@ describe('startUiWeb baseUrl resolution', () => {
         env: {
           HAPPIER_E2E_UI_WEB_MODE: 'export',
           HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '1',
+          HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `uiweb-fallback-${Date.now()}`,
         },
       });
 

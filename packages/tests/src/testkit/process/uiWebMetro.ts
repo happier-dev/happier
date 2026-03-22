@@ -4,6 +4,12 @@ import { resolve as resolvePath } from 'node:path';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { repoRootDir } from '../paths';
 import { waitFor } from '../timing';
+import {
+  inspectOwnedProcess,
+  registerProcessOwnershipLease,
+  resolveProcessOwnershipLeasesDir,
+  sweepProcessOwnershipLeases,
+} from './processOwnershipLease';
 import { readPositiveEnvInt } from './uiWebEnv';
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
 import { spawnLoggedProcess } from './spawnProcess';
@@ -11,6 +17,17 @@ import type { StartedUiWeb } from './uiWebTypes';
 
 function stripAnsi(text: string): string {
   return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+}
+
+function looksLikeUiWebMetroCommand(command: string): boolean {
+  const normalized = command.replaceAll('\\', '/');
+  return normalized.includes('start --web')
+    && normalized.includes('--host localhost')
+    && (normalized.includes('/expo/bin/cli') || normalized.includes('expo') || normalized.includes('node'));
+}
+
+export function resolveUiWebMetroOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
+  return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'ui-web-metro' });
 }
 
 export function resolveUiWebBaseUrlTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -210,6 +227,17 @@ export async function startUiWebMetro(params: {
   env: NodeJS.ProcessEnv;
   port?: number;
 }): Promise<StartedUiWeb> {
+  const currentOwnerInspection = inspectOwnedProcess(process.pid);
+  if (currentOwnerInspection.ok) {
+    await sweepProcessOwnershipLeases({
+      rootDir: repoRootDir(),
+      leaseKind: 'ui-web-metro',
+      currentOwnerPid: process.pid,
+      currentOwnerStartTime: currentOwnerInspection.startTime,
+      isOwnedProcessCommand: (command) => looksLikeUiWebMetroCommand(command),
+    });
+  }
+
   const stdoutPath = resolvePath(params.testDir, 'ui.web.stdout.log');
   const stderrPath = resolvePath(params.testDir, 'ui.web.stderr.log');
 
@@ -252,6 +280,18 @@ export async function startUiWebMetro(params: {
     },
     stdoutPath,
     stderrPath,
+  });
+
+  await registerProcessOwnershipLease({
+    rootDir: repoRootDir(),
+    leaseKind: 'ui-web-metro',
+    child: proc.child,
+    ownerPid: process.pid,
+    ownerStartTime: currentOwnerInspection.ok ? currentOwnerInspection.startTime : null,
+    metadata: {
+      port: metroPort,
+      testDir: params.testDir,
+    },
   });
 
   let baseUrl: string;
