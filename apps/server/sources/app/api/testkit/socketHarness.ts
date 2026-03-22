@@ -8,6 +8,7 @@ type SocketTimeoutEmitter = {
 
 export type FakeSocket = {
     connected: boolean;
+    data?: Record<string, unknown>;
     id: string;
     handlers: Map<string, SocketHandler>;
     emit: ReturnType<typeof vi.fn>;
@@ -48,4 +49,12 @@ export function getSocketHandler(
         throw new Error(`Missing socket handler for ${event}`);
     }
     return handler;
+}
+
+export async function triggerSocketHandler(
+    socket: Pick<FakeSocket, "handlers">,
+    event: string,
+    ...args: any[]
+): Promise<void> {
+    await getSocketHandler(socket, event)(...args);
 }

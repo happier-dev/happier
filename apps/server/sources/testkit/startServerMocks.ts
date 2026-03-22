@@ -1,6 +1,7 @@
 import { vi } from 'vitest'
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
 
-export type EnvValues = Record<string, string | undefined>
+export { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
 
 export const START_SERVER_ENV_KEYS = [
   'SERVER_ROLE',
@@ -20,29 +21,6 @@ export const START_SERVER_ENV_KEYS = [
   'HAPPIER_SERVER_LIGHT_DATA_DIR',
   'HAPPIER_SERVER_RETENTION__ENABLED',
 ] as const
-
-export function applyEnvValues(values: EnvValues): void {
-  for (const [key, value] of Object.entries(values)) {
-    if (value === undefined) {
-      delete process.env[key]
-      continue
-    }
-    process.env[key] = value
-  }
-}
-
-export function snapshotEnvValues(keys: readonly string[]): EnvValues {
-  const snapshot: EnvValues = {}
-  for (const key of keys) {
-    const value = process.env[key]
-    snapshot[key] = value === undefined ? undefined : value
-  }
-  return snapshot
-}
-
-export function restoreEnvValues(snapshot: EnvValues): void {
-  applyEnvValues(snapshot)
-}
 
 export function snapshotStartServerEnv(): EnvValues {
   return snapshotEnvValues(START_SERVER_ENV_KEYS)
@@ -79,4 +57,64 @@ export function installStartServerCommonWiringMocks(): void {
   vi.mock('@/app/presence/presenceRedisQueue', () => ({
     startPresenceRedisWorker: vi.fn(() => ({ stop: vi.fn(async () => {}) })),
   }))
+}
+
+type StartServerDbProviderReader = (env: unknown, fallback: unknown) => unknown
+
+type StartServerDbMockOptions = Readonly<{
+  getDbProviderFromEnv?: StartServerDbProviderReader
+}>
+
+export function createStartServerDbMocks(options: StartServerDbMockOptions = {}) {
+  const dbConnect = vi.fn()
+  const dbDisconnect = vi.fn()
+  const initDbPostgres = vi.fn()
+  const initDbPglite = vi.fn()
+  const initDbMysql = vi.fn()
+  const initDbSqlite = vi.fn()
+  const shutdownDbPglite = vi.fn()
+  const getDbProviderFromEnv = vi.fn<StartServerDbProviderReader>()
+
+  const reset = () => {
+    dbConnect.mockReset().mockImplementation(async () => {})
+    dbDisconnect.mockReset().mockImplementation(async () => {})
+    initDbPostgres.mockReset().mockImplementation(() => {})
+    initDbPglite.mockReset().mockImplementation(async () => {})
+    initDbMysql.mockReset().mockImplementation(async () => {})
+    initDbSqlite.mockReset().mockImplementation(async () => {})
+    shutdownDbPglite.mockReset().mockImplementation(async () => {})
+    getDbProviderFromEnv.mockReset().mockImplementation(options.getDbProviderFromEnv ?? ((_env, fallback) => fallback))
+  }
+
+  reset()
+
+  return {
+    module: {
+      db: {
+        $connect: (...args: any[]) => dbConnect(...args),
+        $disconnect: (...args: any[]) => dbDisconnect(...args),
+      },
+      getDbProviderFromEnv: (...args: Parameters<StartServerDbProviderReader>) => getDbProviderFromEnv(...args),
+      initDbPostgres: (...args: any[]) => initDbPostgres(...args),
+      initDbPglite: (...args: any[]) => initDbPglite(...args),
+      initDbMysql: (...args: any[]) => initDbMysql(...args),
+      initDbSqlite: (...args: any[]) => initDbSqlite(...args),
+      shutdownDbPglite: (...args: any[]) => shutdownDbPglite(...args),
+    },
+    dbConnect,
+    dbDisconnect,
+    getDbProviderFromEnv,
+    initDbPostgres,
+    initDbPglite,
+    initDbMysql,
+    initDbSqlite,
+    shutdownDbPglite,
+    reset,
+    }
+}
+
+export function installStartServerDbModuleMock(
+    dbMocks: ReturnType<typeof createStartServerDbMocks>,
+): void {
+    vi.doMock("@/storage/db", () => ({ ...dbMocks.module }))
 }
