@@ -14,7 +14,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.slow.test.ts'],
     exclude: [...configDefaults.exclude, ...resolveVitestFeatureTestExcludeGlobs({ ...process.env, ...testEnv })],
-    globalSetup: ['./src/test-setup.ts'],
+    globalSetup: ['./src/test-setup.slow.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

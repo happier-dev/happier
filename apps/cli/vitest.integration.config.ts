@@ -51,7 +51,7 @@ export default defineConfig({
             'scripts/**/*.integration.test.ts',
         ],
         exclude: [...configDefaults.exclude, ...resolveVitestFeatureTestExcludeGlobs(process.env)],
-        globalSetup: ['./src/test-setup.ts'],
+        globalSetup: ['./src/test-setup.integration.ts'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],

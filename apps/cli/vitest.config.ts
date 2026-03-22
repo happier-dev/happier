@@ -45,7 +45,7 @@ export default defineConfig({
             '**/*.e2e.test.ts',
             ...resolveVitestFeatureTestExcludeGlobs(process.env),
         ],
-        globalSetup: ['./src/test-setup.ts'],
+        globalSetup: ['./src/test-setup.unit.ts'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
