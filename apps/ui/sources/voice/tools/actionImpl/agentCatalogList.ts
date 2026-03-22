@@ -1,5 +1,5 @@
 import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -127,10 +127,34 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
   return { items: limit ? items.slice(0, limit) : items };
 }
 
-export async function listAgentModelsForVoiceTool(params: Readonly<{ agentId: string; machineId?: string; limit?: number }>): Promise<unknown> {
-  const agentIdRaw = normalizeId(params.agentId);
+export async function listAgentModelsForVoiceTool(params: Readonly<{
+  agentId?: string;
+  machineId?: string;
+  limit?: number;
+  backendTargetKey?: string;
+}>): Promise<unknown> {
+  const backendTargetKey = normalizeId(params.backendTargetKey);
+  let backendTarget: ReturnType<typeof parseBackendTargetKey> | null = null;
+  if (backendTargetKey) {
+    try {
+      backendTarget = parseBackendTargetKey(backendTargetKey);
+    } catch {
+      return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+    }
+  }
+  const agentIdRaw = normalizeId(params.agentId)
+    || (backendTarget?.kind === 'builtInAgent' ? backendTarget.agentId : backendTarget?.kind === 'configuredAcpBackend' ? 'customAcp' : '');
   if (!agentIdRaw || !isAgentId(agentIdRaw)) {
     return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent', agentId: agentIdRaw };
+  }
+  if (backendTarget && backendTarget.kind === 'builtInAgent' && agentIdRaw !== backendTarget.agentId) {
+    return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', agentId: agentIdRaw };
+  }
+  if (backendTarget && backendTarget.kind === 'configuredAcpBackend' && agentIdRaw !== 'customAcp') {
+    return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', agentId: agentIdRaw };
+  }
+  if (agentIdRaw === 'customAcp' && !backendTarget) {
+    return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', agentId: agentIdRaw };
   }
   const agentId = agentIdRaw as AgentId;
   const limitRaw = Number(params.limit);
@@ -150,7 +174,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{ agentId: st
     const serverId = normalizeId(getActiveServerSnapshot()?.serverId) || null;
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId,
-      targetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId }),
+      targetKey: backendTargetKey || buildBackendTargetKey({ kind: 'builtInAgent', agentId }),
       serverId,
       cwd: null,
     });
@@ -191,7 +215,10 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{ agentId: st
           {
             id: `cli.${agentId}` as any,
             method: 'probeModels',
-            params: { timeoutMs: 15_000 },
+            params: {
+              timeoutMs: 15_000,
+              ...(backendTarget ? { backendTarget } : {}),
+            },
           },
           { ...(serverId ? { serverId } : {}) },
         );

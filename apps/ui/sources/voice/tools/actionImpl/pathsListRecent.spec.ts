@@ -38,11 +38,14 @@ const state: any = {
     getProjectForSession: () => null,
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
-        getState: () => state,
-    },
-}));
+            getState: () => state,
+        } as typeof import('@/sync/domains/state/storage').storage,
+});
+});
 
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({
     useVoiceTargetStore: {

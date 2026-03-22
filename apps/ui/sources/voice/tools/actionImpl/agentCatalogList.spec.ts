@@ -35,11 +35,14 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
-    getState: () => state,
-  },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
+            getState: () => state,
+        } as typeof import('@/sync/domains/state/storage').storage,
+});
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
@@ -165,5 +168,70 @@ describe('agent catalog voice tools', () => {
     await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
 
     expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes configured ACP backend models through backendTargetKey', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'model-review', name: 'Review Model' },
+          ],
+          supportsFreeform: true,
+        },
+      },
+    });
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const params: Parameters<typeof listAgentModelsForVoiceTool>[0] & Readonly<{ backendTargetKey: string; limit: number }> = {
+      backendTargetKey: 'acpBackend:team-review',
+      machineId: 'm1',
+      limit: 2,
+    };
+    const res: any = await listAgentModelsForVoiceTool({
+      ...params,
+    });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+      'm1',
+      {
+        id: 'cli.customAcp',
+        method: 'probeModels',
+        params: {
+          timeoutMs: 15_000,
+          backendTarget: { kind: 'configuredAcpBackend', backendId: 'team-review' },
+        },
+      },
+      { serverId: 'server-a' },
+    );
+    expect(res).toMatchObject({
+      agentId: 'customAcp',
+      machineId: 'm1',
+      source: 'preflight',
+      supportsFreeform: true,
+      items: [
+        { modelId: 'default', label: 'Default' },
+        { modelId: 'model-review', label: 'Review Model' },
+      ],
+    });
+  });
+
+  it('rejects ambiguous customAcp model lookup without backendTargetKey', async () => {
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+
+    const res: any = await listAgentModelsForVoiceTool({
+      agentId: 'customAcp',
+      machineId: 'm1',
+    });
+
+    expect(res).toMatchObject({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      errorMessage: 'invalid_parameters',
+    });
+    expect(machineCapabilitiesInvoke).not.toHaveBeenCalled();
   });
 });

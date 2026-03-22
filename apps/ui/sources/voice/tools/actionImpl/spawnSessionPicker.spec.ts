@@ -1,26 +1,39 @@
 import { describe, expect, it, vi } from 'vitest';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const modalShow = vi.fn();
 const machineSpawnNewSession = vi.fn();
 const refreshSessions = vi.fn(async () => {});
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patcher: unknown) => {});
 const sendMessage = vi.fn(async (_sessionId: string, _message: string) => {});
-
-vi.mock('@/modal', () => ({
-  Modal: {
-    show: (cfg: any) => modalShow(cfg),
+const state: any = {
+  settings: {
+    ...settingsDefaults,
+    lastUsedAgent: 'claude',
   },
-}));
+};
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            show: (cfg: any) => modalShow(cfg),
+        },
+    }).module;
+});
 
 vi.mock('@/voice/pickers/VoiceSessionSpawnPickerModal', () => ({
   VoiceSessionSpawnPickerModal: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
-    getState: () => ({ settings: { lastUsedAgent: 'claude' } }),
-  },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
+            getState: () => state,
+        } as typeof import('@/sync/domains/state/storage').storage,
+});
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),

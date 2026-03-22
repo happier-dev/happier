@@ -1,14 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getState = vi.fn();
 const getActiveServerSnapshot = vi.fn();
 const getServerProfileById = vi.fn();
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState,
+const state: any = {
+  settings: {
+    voice: {
+      privacy: {
+        shareDeviceInventory: true,
+      },
     },
-}));
+  },
+  sessionListViewDataByServerId: {},
+};
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
+            getState: () => state,
+        } as typeof import('@/sync/domains/state/storage').storage,
+});
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot,
@@ -24,25 +36,17 @@ describe('listServersForVoiceTool', () => {
     });
 
     it('prefers saved server profile names over raw server ids', async () => {
-        getState.mockReturnValue({
-            settings: {
-                voice: {
-                    privacy: {
-                        shareDeviceInventory: true,
-                    },
+        state.settings.voice.privacy.shareDeviceInventory = true;
+        state.sessionListViewDataByServerId = {
+            'server-b': [
+                {
+                    type: 'session',
+                    serverId: 'server-b',
+                    serverName: 'Review Server',
+                    session: { id: 's-review' },
                 },
-            },
-            sessionListViewDataByServerId: {
-                'server-b': [
-                    {
-                        type: 'session',
-                        serverId: 'server-b',
-                        serverName: 'Review Server',
-                        session: { id: 's-review' },
-                    },
-                ],
-            },
-        });
+            ],
+        };
         getActiveServerSnapshot.mockReturnValue({ serverId: 'server-a' });
         getServerProfileById.mockImplementation((serverId: string) => {
             if (serverId === 'server-a') {
@@ -70,31 +74,23 @@ describe('listServersForVoiceTool', () => {
     });
 
     it('falls back to human-friendly generic labels instead of raw server ids', async () => {
-        getState.mockReturnValue({
-            settings: {
-                voice: {
-                    privacy: {
-                        shareDeviceInventory: true,
-                    },
+        state.settings.voice.privacy.shareDeviceInventory = true;
+        state.sessionListViewDataByServerId = {
+            'server-b': [
+                {
+                    type: 'session',
+                    serverId: 'server-b',
+                    session: { id: 's-review' },
                 },
-            },
-            sessionListViewDataByServerId: {
-                'server-b': [
-                    {
-                        type: 'session',
-                        serverId: 'server-b',
-                        session: { id: 's-review' },
-                    },
-                ],
-                'server-c': [
-                    {
-                        type: 'session',
-                        serverId: 'server-c',
-                        session: { id: 's-mobile' },
-                    },
-                ],
-            },
-        });
+            ],
+            'server-c': [
+                {
+                    type: 'session',
+                    serverId: 'server-c',
+                    session: { id: 's-mobile' },
+                },
+            ],
+        };
         getActiveServerSnapshot.mockReturnValue({ serverId: 'server-a' });
         getServerProfileById.mockReturnValue(null);
 

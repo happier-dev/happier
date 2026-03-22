@@ -19,11 +19,14 @@ const state: any = {
 
 const getMachineCapabilitiesSnapshot = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
-    getState: () => state,
-  },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
+            getState: () => state,
+        } as typeof import('@/sync/domains/state/storage').storage,
+});
+});
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
   getMachineCapabilitiesSnapshot: (...args: any[]) => getMachineCapabilitiesSnapshot(...args),

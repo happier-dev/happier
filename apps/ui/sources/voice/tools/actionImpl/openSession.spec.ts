@@ -63,11 +63,14 @@ const state: any = {
   },
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
-    getState: () => state,
-  },
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: {
+            getState: () => state,
+        } as typeof import('@/sync/domains/state/storage').storage,
+});
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
   getCurrentAuth: () => ({
@@ -87,11 +90,15 @@ vi.mock('./sessionTargets', () => ({
   setPrimaryActionSessionId: (params: any) => setPrimaryActionSessionForVoiceTool(params),
 }));
 
-vi.mock('expo-router', () => ({
-  router: {
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        router: {
     navigate: (path: any, options: any) => routerNavigate(path, options),
   },
-}));
+    });
+    return expoRouterMock.module;
+});
 
 describe('openSessionForVoiceTool', () => {
   beforeEach(() => {
