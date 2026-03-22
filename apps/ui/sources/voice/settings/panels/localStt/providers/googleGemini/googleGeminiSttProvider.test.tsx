@@ -1,34 +1,34 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', () => {
-  const theme = { colors: { textSecondary: '#999' } };
-  return {
-    useUnistyles: () => ({ theme }),
-    StyleSheet: {
-      create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-      absoluteFillObject: {},
-    },
-  };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(),
-    alert: vi.fn(),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -67,9 +67,7 @@ describe('GoogleGeminiSttSettings', () => {
     const { googleGeminiSttProviderSpec } = await import('./googleGeminiSttProvider');
 
     let tree: any;
-    await act(async () => {
-      tree = renderer.create(
-        React.createElement(googleGeminiSttProviderSpec.Settings, {
+    tree = (await renderScreen(React.createElement(googleGeminiSttProviderSpec.Settings, {
           cfgStt: {
             provider: 'google_gemini',
             openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
@@ -77,10 +75,7 @@ describe('GoogleGeminiSttSettings', () => {
           },
           setStt,
           popoverBoundaryRef: null,
-        }),
-      );
-      await Promise.resolve();
-    });
+        }))).tree;
 
     const modelDropdown = tree.root
       .findAllByType('DropdownMenu' as any)

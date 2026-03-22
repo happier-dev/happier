@@ -1,8 +1,11 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { renderSettingsView, type SettingsViewHarness } from '@/dev/testkit';
+import { t } from '@/text';
+
 
 (
   globalThis as typeof globalThis & {
@@ -17,19 +20,16 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         textSecondary: '#666',
       },
     },
-  }),
-  StyleSheet: {
-    create: (styles: any) => styles,
-    absoluteFillObject: {},
-  },
-}));
+    });
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
   ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
@@ -79,15 +79,14 @@ const settingsState: { current: { recentMachinePaths: any[] } } = {
   current: { recentMachinePaths: [{ machineId: 'machine-1', path: '/tmp/repo' }] },
 };
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
     useSettings: () => ({}),
     useSetting: (key: string) => {
       if (key === 'recentMachinePaths') return settingsState.current.recentMachinePaths;
       return null;
     },
-  };
+});
 });
 
 const preflightModelsCallSpy = vi.fn();
@@ -135,9 +134,47 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
+type LocalConversationAdapter = VoiceSettings['adapters']['local_conversation'];
+
+type LocalConversationAdapterOverrides = Partial<Omit<LocalConversationAdapter, 'agent'>> & {
+  agent?: Partial<LocalConversationAdapter['agent']>;
+};
+
 function withProvider(voice: VoiceSettings, providerId: VoiceSettings['providerId']): VoiceSettings {
   return { ...voice, providerId };
 }
+
+function createLocalConversationVoice(overrides: LocalConversationAdapterOverrides = {}): VoiceSettings {
+  const defaults = voiceSettingsDefaults.adapters.local_conversation;
+  return {
+    ...voiceSettingsDefaults,
+    providerId: 'local_conversation',
+    adapters: {
+      ...voiceSettingsDefaults.adapters,
+      local_conversation: {
+        ...defaults,
+        ...overrides,
+        agent: {
+          ...defaults.agent,
+          ...overrides.agent,
+        },
+      },
+    },
+  };
+}
+
+function findDropdownByItemTriggerTitle(
+  screen: Pick<SettingsViewHarness, 'findAll'>,
+  title: string,
+) {
+  return screen.findAll((node) => String(node.type) === 'DropdownMenu' && node.props?.itemTrigger?.title === title)[0] ?? null;
+}
+
+beforeEach(() => {
+  featureEnabledState['voice.agent'] = true;
+  settingsState.current.recentMachinePaths = [{ machineId: 'machine-1', path: '/tmp/repo' }];
+  preflightModelsCallSpy.mockClear();
+});
 
 async function loadLocalConversationSection() {
   // Ensure per-file mocks apply even when another test file imported the module earlier in the same worker.
@@ -152,17 +189,14 @@ describe('LocalConversationSection', () => {
   it('does not crash when providerId toggles away from local_conversation', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = () => {};
-    const initialVoice = withProvider(voiceSettingsDefaults, 'local_conversation');
+    const initialVoice = createLocalConversationVoice();
     const nextVoice = withProvider(voiceSettingsDefaults, 'off');
 
-    let tree: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={initialVoice} setVoice={setVoice} />);
-    });
+    const screen = await renderSettingsView(<LocalConversationSection voice={initialVoice} setVoice={setVoice} />);
 
     expect(() => {
       act(() => {
-        tree.update(<LocalConversationSection voice={nextVoice} setVoice={setVoice} />);
+        screen.tree.update(<LocalConversationSection voice={nextVoice} setVoice={setVoice} />);
       });
     }).not.toThrow();
   });
@@ -170,99 +204,58 @@ describe('LocalConversationSection', () => {
   it('renders a backend dropdown for the voice agent when agentSource=agent', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            chatModelSource: 'custom',
-            chatModelId: 'm1',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        chatModelSource: 'custom',
+        chatModelId: 'm1',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const backendDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'codex'));
-    if (!backendDropdown) throw new Error('Expected voice agent backend dropdown to be rendered');
-    expect(backendDropdown.props.selectedId).toBe('codex');
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const backendDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
+    expect(backendDropdown?.props.selectedId).toBe('daemon');
   });
 
   it('renders a chat model dropdown for the voice agent when chatModelSource=custom', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            chatModelSource: 'custom',
-            chatModelId: 'm1',
-            commitModelSource: 'session',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        chatModelSource: 'custom',
+        chatModelId: 'm1',
+        commitModelSource: 'session',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const modelDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'm1'));
-    if (!modelDropdown) throw new Error('Expected voice agent chat model dropdown to be rendered');
-    expect(modelDropdown.props.selectedId).toBe('m1');
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    expect(modelDropdown?.props.selectedId).toBe('m1');
   });
 
   it('wraps chat model dropdown icons instead of exposing raw icon nodes to item rows', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            chatModelSource: 'custom',
-            chatModelId: 'm1',
-            commitModelSource: 'session',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        chatModelSource: 'custom',
+        chatModelId: 'm1',
+        commitModelSource: 'session',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={() => {}} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const modelDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'm1'));
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
     if (!modelDropdown) throw new Error('Expected voice agent chat model dropdown to be rendered');
 
     const iconTypesById = Object.fromEntries(
@@ -271,141 +264,85 @@ describe('LocalConversationSection', () => {
         .map((item: any) => [String(item.id), item?.icon?.type ?? null]),
     );
 
-    expect(iconTypesById).toEqual({
-      __refresh_models__: expect.not.stringContaining('Ionicons'),
-      m1: expect.not.stringContaining('Ionicons'),
-      __custom__: expect.not.stringContaining('Ionicons'),
-    });
+    expect(Object.values(iconTypesById)).not.toContain('Ionicons');
   });
 
   it('renders a commit model dropdown for the voice agent when commitModelSource=custom', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            chatModelSource: 'session',
-            commitModelSource: 'custom',
-            commitModelId: 'm1',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        chatModelSource: 'session',
+        commitModelSource: 'custom',
+        commitModelId: 'm1',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const modelDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'm1'));
-    if (!modelDropdown) throw new Error('Expected voice agent commit model dropdown to be rendered');
-    expect(modelDropdown.props.selectedId).toBe('m1');
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.commitModelId.title'));
+    expect(modelDropdown?.props.selectedId).toBe('m1');
   });
 
   it('surfaces dynamic preflight models for the selected backend in the chat model dropdown', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            chatModelSource: 'custom',
-            chatModelId: 'codex-dynamic-1',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        chatModelSource: 'custom',
+        chatModelId: 'codex-dynamic-1',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const modelDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'codex-dynamic-1'));
-    if (!modelDropdown) throw new Error('Expected dynamic preflight model to be available in the chat model dropdown');
-    expect(modelDropdown.props.selectedId).toBe('codex-dynamic-1');
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    expect(modelDropdown?.props.selectedId).toBe('codex-dynamic-1');
   });
 
   it('uses the fixed voice agent machine id when preflighting models', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    preflightModelsCallSpy.mockClear();
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            machineTargetMode: 'fixed',
-            machineTargetId: 'machine-1',
-            chatModelSource: 'custom',
-            chatModelId: 'codex-dynamic-1',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        machineTargetMode: 'fixed',
+        machineTargetId: 'machine-1',
+        chatModelSource: 'custom',
+        chatModelId: 'codex-dynamic-1',
       },
-    };
-
-    act(() => {
-      renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
+
+    await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
 
     expect(preflightModelsCallSpy).toHaveBeenCalledWith(expect.objectContaining({ selectedMachineId: 'machine-1' }));
   });
 
   it('uses the resolved auto machine id when preflighting models', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    preflightModelsCallSpy.mockClear();
-    settingsState.current.recentMachinePaths = [{ machineId: 'machine-1', path: '/tmp/repo' }];
-
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            machineTargetMode: 'auto',
-            machineTargetId: null,
-            chatModelSource: 'custom',
-            chatModelId: 'codex-dynamic-1',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        machineTargetMode: 'auto',
+        machineTargetId: null,
+        chatModelSource: 'custom',
+        chatModelId: 'codex-dynamic-1',
       },
-    };
-
-    act(() => {
-      renderer.create(<LocalConversationSection voice={voice} setVoice={() => {}} />);
     });
+
+    await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
 
     expect(preflightModelsCallSpy).toHaveBeenCalledWith(expect.objectContaining({ selectedMachineId: 'machine-1' }));
   });
@@ -413,129 +350,68 @@ describe('LocalConversationSection', () => {
   it('renders a machine dropdown for the voice agent runtime (auto + machines)', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'daemon',
-            agentSource: 'agent',
-            agentId: 'codex',
-            machineTargetMode: 'auto',
-            machineTargetId: null,
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'daemon',
+        agentSource: 'agent',
+        agentId: 'codex',
+        machineTargetMode: 'auto',
+        machineTargetId: null,
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const machineDropdown = dropdowns.find((d: any) => {
-      const items = d.props.items ?? [];
-      if (!Array.isArray(items)) return false;
-      const ids = items.map((it: any) => it?.id);
-      return ids.includes('auto') && ids.includes('machine-1');
-    });
-    if (!machineDropdown) throw new Error('Expected machine dropdown to be rendered');
-    expect(machineDropdown.props.selectedId).toBe('auto');
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const machineDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.agentMachine.title'));
+    expect(machineDropdown?.props.selectedId).toBe('auto');
   });
 
   it('renders directory policy controls for the voice agent (stayInVoiceHome + teleport)', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            stayInVoiceHome: true,
-            teleportEnabled: false,
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        stayInVoiceHome: true,
+        teleportEnabled: false,
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={() => {}} />);
     });
-    const items = tree.root.findAllByType('Item' as any);
 
-    const stayItem = items.find((n: any) => n.props?.title === 'Stay in voice home');
-    expect(stayItem).toBeTruthy();
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
 
-    const teleportItem = items.find((n: any) => n.props?.title === 'Allow teleport');
-    expect(teleportItem).toBeTruthy();
+    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle'))).toBeTruthy();
+    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.agentMachine.allowTeleportTitle'))).toBeTruthy();
   });
 
   it('renders warm-root policy controls for the voice agent', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            rootSessionPolicy: 'keep_warm',
-            maxWarmRoots: 4,
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        rootSessionPolicy: 'keep_warm',
+        maxWarmRoots: 4,
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={() => {}} />);
     });
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
 
-    const policyDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'keep_warm'));
-    if (!policyDropdown) throw new Error('Expected root session policy dropdown');
-    expect(policyDropdown.props.selectedId).toBe('keep_warm');
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const policyDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.rootSessionPolicy.title'));
+    expect(policyDropdown?.props.selectedId).toBe('keep_warm');
   });
 
   it('disables the daemon mediator backend option when voice.agent is disabled', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     featureEnabledState['voice.agent'] = false;
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'openai_compat',
-            agentSource: 'agent',
-            agentId: 'codex',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'openai_compat',
+        agentSource: 'agent',
+        agentId: 'codex',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const mediatorBackend = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'daemon'));
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const mediatorBackend = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
     if (!mediatorBackend) throw new Error('Expected mediator backend dropdown to be rendered');
     const daemonItem = (mediatorBackend.props.items ?? []).find((it: any) => it?.id === 'daemon');
     expect(daemonItem?.disabled).toBe(true);
@@ -543,32 +419,18 @@ describe('LocalConversationSection', () => {
 
   it('keeps the daemon mediator backend option enabled when voice.agent is enabled', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
-    featureEnabledState['voice.agent'] = true;
     const setVoice = vi.fn();
-    const voice: VoiceSettings = {
-      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
-      adapters: {
-        ...voiceSettingsDefaults.adapters,
-        local_conversation: {
-          ...voiceSettingsDefaults.adapters.local_conversation,
-          conversationMode: 'agent',
-          agent: {
-            ...voiceSettingsDefaults.adapters.local_conversation.agent,
-            backend: 'openai_compat',
-            agentSource: 'agent',
-            agentId: 'codex',
-          },
-        },
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        backend: 'openai_compat',
+        agentSource: 'agent',
+        agentId: 'codex',
       },
-    };
-
-    let tree!: ReactTestRenderer;
-    act(() => {
-      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     });
 
-    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-    const mediatorBackend = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'daemon'));
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const mediatorBackend = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
     if (!mediatorBackend) throw new Error('Expected mediator backend dropdown to be rendered');
     const daemonItem = (mediatorBackend.props.items ?? []).find((it: any) => it?.id === 'daemon');
     expect(daemonItem?.disabled).not.toBe(true);

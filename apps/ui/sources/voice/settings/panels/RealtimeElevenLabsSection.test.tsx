@@ -1,31 +1,29 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const decryptSecretValueMock = vi.fn((): string | null => null);
 
-vi.mock('react-native', () => {
-  const React = require('react');
-  return {
-    Linking: {
-      canOpenURL: async () => true,
-      openURL: async () => {},
-    },
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-  };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            Linking: {
+                canOpenURL: async () => true,
+                openURL: async () => {},
+            },
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => {
-  const theme = { colors: { textSecondary: '#666' } };
-  return {
-    useUnistyles: () => ({ theme }),
-    StyleSheet: {
-      create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-      absoluteFillObject: {},
-    },
-  };
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -35,17 +33,21 @@ vi.mock('@expo/vector-icons', () => ({
   },
 }));
 
-vi.mock('@/text', () => ({
-  t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: vi.fn(),
-    confirm: vi.fn(),
-    alert: vi.fn(),
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: vi.fn(),
+            confirm: vi.fn(),
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -107,11 +109,9 @@ describe('RealtimeElevenLabsSection', () => {
     };
 
     let tree: ReturnType<typeof renderer.create> | undefined;
-    act(() => {
-      tree = renderer.create(React.createElement(RealtimeElevenLabsSection, { voice, setVoice }));
-    });
+    tree = (await renderScreen(React.createElement(RealtimeElevenLabsSection, { voice, setVoice }))).tree;
 
-    const dropdowns = tree!.root.findAllByType('DropdownMenu' as any);
+    const dropdowns = tree!.findAllByType('DropdownMenu' as any);
     const voiceDropdown = dropdowns.find((d: any) => d.props?.search === true && d.props?.searchPlaceholder === 'settingsVoice.byo.voiceSearchPlaceholder');
     expect(voiceDropdown).toBeTruthy();
 
@@ -147,11 +147,9 @@ describe('RealtimeElevenLabsSection', () => {
     };
 
     let tree: ReturnType<typeof renderer.create> | undefined;
-    act(() => {
-      tree = renderer.create(React.createElement(RealtimeElevenLabsSection, { voice, setVoice }));
-    });
+    tree = (await renderScreen(React.createElement(RealtimeElevenLabsSection, { voice, setVoice }))).tree;
 
-    const dropdowns = tree!.root.findAllByType('DropdownMenu' as any);
+    const dropdowns = tree!.findAllByType('DropdownMenu' as any);
     const welcomeDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'on_first_turn'));
     expect(welcomeDropdown).toBeTruthy();
 
@@ -205,15 +203,13 @@ describe('RealtimeElevenLabsSection', () => {
     };
 
     let tree: ReturnType<typeof renderer.create> | undefined;
-    act(() => {
-      tree = renderer.create(React.createElement(RealtimeElevenLabsSection, { voice, setVoice }));
-    });
+    tree = (await renderScreen(React.createElement(RealtimeElevenLabsSection, { voice, setVoice }))).tree;
 
-    const createItem = tree!.root.findAllByType('Item' as any).find((n: any) => n.props?.title === 'settingsVoice.byo.autoprovCreate');
+    const createItem = findTestInstanceByTypeWithProps(tree!, 'Item' as any, { title: 'settingsVoice.byo.autoprovCreate' });
     expect(createItem).toBeTruthy();
 
     await act(async () => {
-      await createItem!.props.onPress?.();
+      await pressTestInstanceAsync(createItem!);
     });
 
     expect(createHappierElevenLabsAgent as any).not.toHaveBeenCalled();
