@@ -10,16 +10,6 @@ import { createCodexMcpExecutionRunBackend } from './createCodexMcpExecutionRunB
 import { probeCodexAppServerExecutionRunAvailability } from './probeCodexAppServerExecutionRunAvailability';
 import { selectCodexExecutionRunTransport } from './selectCodexExecutionRunTransport';
 
-function withProcessEnv<T>(overrides: NodeJS.ProcessEnv, run: () => T): T {
-  const previous = process.env;
-  process.env = { ...previous, ...overrides };
-  try {
-    return run();
-  } finally {
-    process.env = previous;
-  }
-}
-
 export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
   const baseEnv = opts.isolation?.env;
   const env = buildCodexAcpEnvOverrides({ baseEnv, projectDir: opts.cwd });
@@ -53,7 +43,7 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
 
   const shouldUseMcp = transport === 'mcp' || (() => {
     try {
-      const spawnSpec = withProcessEnv(env, () => resolveCodexAcpSpawn({ permissionMode }));
+      const spawnSpec = resolveCodexAcpSpawn({ permissionMode, env });
       return !validateCodexAcpSpawnAvailability(spawnSpec, { env }).ok;
     } catch {
       return true;

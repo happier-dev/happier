@@ -111,6 +111,7 @@ describe('executionRunBackendFactory (codex)', () => {
   it('resolves Codex ACP against the isolated env when deciding whether to fall back to MCP', async () => {
     const acpCalls: Array<Record<string, unknown>> = [];
     const mcpCalls: Array<Record<string, unknown>> = [];
+    const spawnResolutionCalls: Array<Record<string, unknown>> = [];
 
     vi.doMock('@/backends/codex/acp/backend', () => ({
       createCodexAcpBackend: (options: Record<string, unknown>) => {
@@ -125,7 +126,10 @@ describe('executionRunBackendFactory (codex)', () => {
       },
     }));
     vi.doMock('@/backends/codex/acp/resolveCommand', () => ({
-      resolveCodexAcpSpawn: () => ({ command: '/tmp/isolated-bin/codex-acp', args: [] }),
+      resolveCodexAcpSpawn: (options: Record<string, unknown>) => {
+        spawnResolutionCalls.push(options);
+        return { command: '/tmp/isolated-bin/codex-acp', args: [] };
+      },
     }));
     vi.doMock('@/backends/codex/acp/spawnAvailability', () => ({
       validateCodexAcpSpawnAvailability: (_spec: Record<string, unknown>, opts?: Record<string, unknown>) => {
@@ -154,6 +158,15 @@ describe('executionRunBackendFactory (codex)', () => {
 
     expect(acpCalls).toHaveLength(1);
     expect(mcpCalls).toHaveLength(0);
+    expect(spawnResolutionCalls).toEqual([
+      expect.objectContaining({
+        permissionMode: 'read-only',
+        env: expect.objectContaining({
+          PATH: `${resolve('/tmp/happier-worktree', 'scripts', 'shims')}${delimiter}/tmp/isolated-bin:/usr/bin`,
+          HAPPIER_CODEX_EXECUTION_RUN_TRANSPORT: 'acp',
+        }),
+      }),
+    ]);
   });
 
   it('creates the app-server backend when the isolated execution-run transport opts into it', async () => {
