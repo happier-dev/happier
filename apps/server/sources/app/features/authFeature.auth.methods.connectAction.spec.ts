@@ -36,4 +36,3 @@ describe("resolveAuthFeature (auth.methods connect action)", () => {
         );
     });
 });
-
