@@ -444,7 +444,6 @@ export async function codexLocalLauncher<TMode>(opts: {
 
     mirror = new CodexRolloutMirror({
       filePath: candidateFile.filePath,
-      codexHome: process.env.CODEX_HOME ?? null,
       debug,
       session: opts.session,
       onCodexSessionId: async (id) => {

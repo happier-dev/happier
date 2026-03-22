@@ -150,7 +150,7 @@ describe('codexLocalLauncher', () => {
 
       await waitFor(() => {
         expect(existsSync(envDumpPath)).toBe(true);
-      }, { timeoutMs: 5_000 });
+      }, { timeoutMs: 1_000 });
 
 	      const envDump = JSON.parse(await readFile(envDumpPath, 'utf8')) as Record<string, unknown>;
 	      expect(envDump.CODEX_THREAD_ID).toBeUndefined();

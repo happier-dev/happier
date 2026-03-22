@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { dirname } from 'node:path';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getCodexElicitationToolCallId, getCodexEventToolCallId } from './codexMcpClient';
 import type { Mock } from 'vitest';
 import { getCodexMcpCommand } from './mcp/version';
 import { getCodexElicitationToolCallId as getCodexElicitationToolCallIdFromModule } from './mcp/elicitationTypes';
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { createExecutableShim } from '@/testkit/fs/executableShim';
-import { removeTempDir } from '@/testkit/fs/tempDir';
 
 // NOTE: This test suite uses mocks because the real Codex CLI / MCP transport
 // is not guaranteed to be available in CI or local test environments.
@@ -66,30 +65,33 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
     return { Client };
 });
 
-const envKeys = ['PATH', 'HAPPIER_CODEX_PATH'] as const;
+const ORIGINAL_ENV = {
+    PATH: process.env.PATH,
+    HAPPIER_CODEX_PATH: process.env.HAPPIER_CODEX_PATH,
+};
 const TEMP_DIRS = new Set<string>();
-let envScope = createEnvKeyScope(envKeys);
 
-async function createFakeCodexBinary(): Promise<string> {
-    const binPath = await createExecutableShim({
-        dirPrefix: 'happier-codex-mcp-client-',
-        fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
-        contents: process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
-    });
-    const dir = dirname(binPath);
+function createFakeCodexBinary(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-codex-mcp-client-'));
     TEMP_DIRS.add(dir);
+    const isWindows = process.platform === 'win32';
+    const binPath = join(dir, isWindows ? 'codex.cmd' : 'codex');
+    writeFileSync(binPath, isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
+    if (!isWindows) chmodSync(binPath, 0o755);
     return binPath;
 }
 
-beforeEach(async () => {
+beforeEach(() => {
     process.env.PATH = '';
-    process.env.HAPPIER_CODEX_PATH = await createFakeCodexBinary();
+    process.env.HAPPIER_CODEX_PATH = createFakeCodexBinary();
 });
 
-afterEach(async () => {
-    envScope.restore();
-    envScope = createEnvKeyScope(envKeys);
-    for (const dir of TEMP_DIRS) await removeTempDir(dir);
+afterEach(() => {
+    if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
+    else process.env.PATH = ORIGINAL_ENV.PATH;
+    if (ORIGINAL_ENV.HAPPIER_CODEX_PATH === undefined) delete process.env.HAPPIER_CODEX_PATH;
+    else process.env.HAPPIER_CODEX_PATH = ORIGINAL_ENV.HAPPIER_CODEX_PATH;
+    for (const dir of TEMP_DIRS) rmSync(dir, { recursive: true, force: true });
     TEMP_DIRS.clear();
 });
 
