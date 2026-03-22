@@ -8,11 +8,18 @@ describe('resolveSharedManagedOpenCodeServerBaseUrl', () => {
   it('reuses an existing healthy managed server when pid is alive', async () => {
     const deps = {
       withLock: async <T>(fn: () => Promise<T>) => await fn(),
-      readState: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:1234', pid: 111, startedAtMs: 1, status: 'ready' as const })),
+      readState: vi.fn(async () => ({
+        baseUrl: 'http://127.0.0.1:1234',
+        pid: 111,
+        startedAtMs: 1,
+        status: 'ready' as const,
+        launchEnvFingerprint: 'scope-a',
+      })),
       writeState: vi.fn(async () => {}),
       isPidAlive: vi.fn(() => true),
       probeHealth: vi.fn(async () => true),
       startServer: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:9999', pid: 222 })),
+      currentLaunchFingerprint: 'scope-a',
       nowMs: () => 5,
     };
 
@@ -21,6 +28,39 @@ describe('resolveSharedManagedOpenCodeServerBaseUrl', () => {
     expect(out).toEqual({ baseUrl: 'http://127.0.0.1:1234', didStart: false });
     expect(deps.startServer).not.toHaveBeenCalled();
     expect(deps.writeState).not.toHaveBeenCalled();
+  });
+
+  it('restarts a healthy managed server when its launch env fingerprint no longer matches the current desired scope', async () => {
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({
+        baseUrl: 'http://127.0.0.1:1234',
+        pid: 111,
+        startedAtMs: 1,
+        status: 'ready' as const,
+      })),
+      writeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => true),
+      getProcessInfo: vi.fn(async () => ({ name: 'opencode', cmd: 'opencode serve --hostname=127.0.0.1 --port=1234' })),
+      killPid: vi.fn(() => true),
+      startServer: vi.fn(async (params?: { onSpawned?: (started: { baseUrl: string; pid: number }) => void | Promise<void> }) => {
+        await params?.onSpawned?.({ baseUrl: 'http://127.0.0.1:9999', pid: 222 });
+        return { baseUrl: 'http://127.0.0.1:9999', pid: 222 };
+      }),
+      currentLaunchFingerprint: 'scope-b',
+      nowMs: () => 5,
+    };
+
+    const out = await resolveSharedManagedOpenCodeServerBaseUrl(deps);
+
+    expect(out).toEqual({ baseUrl: 'http://127.0.0.1:9999', didStart: true });
+    expect(deps.killPid).toHaveBeenCalledWith(111);
+    expect(deps.startServer).toHaveBeenCalledTimes(1);
+    expect(deps.writeState.mock.calls).toEqual([
+      [{ baseUrl: 'http://127.0.0.1:9999', pid: 222, startedAtMs: 5, status: 'starting', launchEnvFingerprint: 'scope-b' }],
+      [{ baseUrl: 'http://127.0.0.1:9999', pid: 222, startedAtMs: 5, status: 'ready', launchEnvFingerprint: 'scope-b' }],
+    ]);
   });
 
   it('does not probe health for non-loopback state baseUrl (prevents SSRF if state file is tampered)', async () => {

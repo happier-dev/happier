@@ -15,7 +15,7 @@ describe('startManagedOpenCodeServer (exit before ready)', () => {
       await writeFile(
         scriptPath,
         `#!/usr/bin/env node
-process.exit(3);
+setTimeout(() => process.kill(process.pid, 'SIGTERM'), 10);
 `,
         'utf8',
       );

@@ -6,9 +6,9 @@ import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import {
   resolveSessionEncryptionContextFromCredentials,
-} from '@/sessionControl/sessionEncryptionContext';
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { createOpenCodeServerRuntimeClient, type OpenCodeServerRuntimeClient } from './client';
 import { extractOpenCodeTextHistoryItems } from './openCodeSessionMessageImport';

@@ -11,6 +11,7 @@ import {
 } from './openCodeServerProcessState';
 import { withOpenCodeServerFileLock } from './openCodeServerFileLock';
 import { startManagedOpenCodeServer } from './openCodeManagedServer';
+import { resolveOpenCodeManagedServerLaunchFingerprint } from './openCodeManagedServerEnv';
 import { terminateManagedOpenCodeServerPidBestEffort } from './terminateManagedOpenCodeServerPidBestEffort';
 
 export type SharedManagedOpenCodeServerState = Readonly<{
@@ -19,6 +20,7 @@ export type SharedManagedOpenCodeServerState = Readonly<{
   startedAtMs: number;
   status?: 'starting' | 'ready' | 'failed';
   lastFailureAtMs?: number;
+  launchEnvFingerprint?: string;
 }>;
 
 type ManagedServerProcessInfo = OpenCodeServerProcessInfo;
@@ -33,6 +35,7 @@ type ResolveDeps = Readonly<{
   getProcessInfo?: (pid: number) => Promise<ManagedServerProcessInfo | null>;
   resolveLaunchSpec?: () => ManagedServerLaunchSpec | null;
   killPid?: (pid: number) => Promise<boolean> | boolean;
+  currentLaunchFingerprint?: string | null;
   startServer: (params?: {
     onSpawned?: (started: Readonly<{ baseUrl: string; pid: number }>) => void | Promise<void>;
   }) => Promise<{ baseUrl: string; pid: number }>;
@@ -45,6 +48,9 @@ function normalizeSharedManagedServerState(
   return {
     ...state,
     status: state.status === 'starting' || state.status === 'failed' ? state.status : 'ready',
+    ...(typeof state.launchEnvFingerprint === 'string' && state.launchEnvFingerprint.trim()
+      ? { launchEnvFingerprint: state.launchEnvFingerprint.trim() }
+      : {}),
   };
 }
 
@@ -72,8 +78,18 @@ export async function resolveSharedManagedOpenCodeServerBaseUrl(
   return await deps.withLock(async () => {
     const rawState = await deps.readState();
     const state = rawState ? normalizeSharedManagedServerState(rawState) : null;
+    const desiredLaunchFingerprint = typeof deps.currentLaunchFingerprint === 'string'
+      ? deps.currentLaunchFingerprint.trim()
+      : '';
+    const launchFingerprintMismatch = Boolean(
+      state
+      && desiredLaunchFingerprint
+      && state.launchEnvFingerprint !== desiredLaunchFingerprint,
+    );
     if (state && deps.isPidAlive(state.pid) && isLoopbackManagedOpenCodeBaseUrl(state.baseUrl)) {
-      const healthy = await deps.probeHealth(state.baseUrl).catch(() => false);
+      const healthy = launchFingerprintMismatch
+        ? false
+        : await deps.probeHealth(state.baseUrl).catch(() => false);
       if (healthy) {
         if (state.status === 'failed') {
           await deps.writeState({
@@ -81,12 +97,13 @@ export async function resolveSharedManagedOpenCodeServerBaseUrl(
             pid: state.pid,
             startedAtMs: state.startedAtMs,
             status: 'ready',
+            ...(state.launchEnvFingerprint ? { launchEnvFingerprint: state.launchEnvFingerprint } : {}),
           });
         }
         return { baseUrl: state.baseUrl, didStart: false };
       }
 
-      if (state.status === 'failed') {
+      if (state.status === 'failed' || launchFingerprintMismatch) {
         if (deps.getProcessInfo && deps.killPid) {
           const info = await deps.getProcessInfo(state.pid).catch(() => null);
           if (looksLikeManagedOpenCodeServe(info, state.baseUrl, deps.resolveLaunchSpec)) {
@@ -115,6 +132,7 @@ export async function resolveSharedManagedOpenCodeServerBaseUrl(
             pid: spawned.pid,
             startedAtMs: nowMs,
             status: 'starting',
+            ...(desiredLaunchFingerprint ? { launchEnvFingerprint: desiredLaunchFingerprint } : {}),
           });
         },
       });
@@ -123,6 +141,7 @@ export async function resolveSharedManagedOpenCodeServerBaseUrl(
         pid: started.pid,
         startedAtMs: nowMs,
         status: 'ready',
+        ...(desiredLaunchFingerprint ? { launchEnvFingerprint: desiredLaunchFingerprint } : {}),
       };
       await deps.writeState(nextState);
       return { baseUrl: started.baseUrl, didStart: true };
@@ -161,6 +180,9 @@ async function readStateFile(statePath: string): Promise<SharedManagedOpenCodeSe
     const lastFailureAtMsRaw = typeof (parsed as any).lastFailureAtMs === 'number'
       ? (parsed as any).lastFailureAtMs
       : Number((parsed as any).lastFailureAtMs);
+    const launchEnvFingerprint = typeof (parsed as any).launchEnvFingerprint === 'string'
+      ? String((parsed as any).launchEnvFingerprint).trim()
+      : '';
     if (!baseUrl) return null;
     if (!Number.isFinite(pid) || pid <= 0) return null;
     if (!Number.isFinite(startedAtMs) || startedAtMs <= 0) return null;
@@ -170,6 +192,7 @@ async function readStateFile(statePath: string): Promise<SharedManagedOpenCodeSe
       startedAtMs: Math.floor(startedAtMs),
       ...(statusRaw === 'starting' || statusRaw === 'failed' || statusRaw === 'ready' ? { status: statusRaw } : {}),
       ...(Number.isFinite(lastFailureAtMsRaw) && lastFailureAtMsRaw > 0 ? { lastFailureAtMs: Math.floor(lastFailureAtMsRaw) } : {}),
+      ...(launchEnvFingerprint ? { launchEnvFingerprint } : {}),
     };
   } catch {
     return null;
@@ -213,6 +236,11 @@ export async function ensureSharedManagedOpenCodeServerBaseUrl(params: Readonly<
     getProcessInfo: async (pid) => await getProcessInfoBestEffort(pid),
     resolveLaunchSpec: resolveManagedOpenCodeLaunchSpecBestEffort,
     killPid: killPidBestEffort,
+    currentLaunchFingerprint: resolveOpenCodeManagedServerLaunchFingerprint({
+      baseEnv: process.env,
+      xdgRootDir,
+      isolateConfig: false,
+    }),
     startServer: async (startParams) => {
       const started = await startManagedOpenCodeServer({
         ...(xdgRootDir ? { xdgRootDir } : {}),

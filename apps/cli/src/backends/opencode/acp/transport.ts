@@ -13,8 +13,11 @@
  * Agent-specific stderr parsing can be added later if needed.
  */
 
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import {
+  CHANGE_TITLE_TOOL_NAME_ALIASES,
+  isChangeTitleToolNameAlias,
+  redactBugReportSensitiveText,
+} from '@happier-dev/protocol';
 import type {
   TransportHandler,
   ToolPattern,

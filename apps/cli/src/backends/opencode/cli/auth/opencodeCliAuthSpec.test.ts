@@ -1,39 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { opencodeCliAuthSpec } from './opencodeCliAuthSpec';
-
-function makeTempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
-}
-
-function writeExecutableShim(params: Readonly<{ dir: string; name: string; body: string }>): string {
-  const filePath = join(params.dir, params.name);
-  writeFileSync(filePath, `#!/bin/sh\n${params.body}\n`, 'utf8');
-  chmodSync(filePath, 0o755);
-  return filePath;
-}
 
 describe('opencodeCliAuthSpec', () => {
   let workDir = '';
 
   beforeEach(() => {
-    workDir = makeTempDir('happier-opencode-auth-');
+    workDir = createTempDirSync('happier-opencode-auth-');
   });
 
   afterEach(() => {
-    if (workDir) rmSync(workDir, { recursive: true, force: true });
+    if (workDir) removeTempDirSync(workDir);
   });
 
   it.skipIf(process.platform === 'win32')('treats a moderately slow auth list probe as logged in when the command succeeds', async () => {
     const binDir = join(workDir, 'bin');
     mkdirSync(binDir, { recursive: true });
-    const resolvedPath = writeExecutableShim({
+    const resolvedPath = writeExecutableShimSync({
       dir: binDir,
-      name: 'opencode',
-      body: [
+      fileName: 'opencode',
+      contents: [
+        '#!/bin/sh',
         'if [ "$1" = "auth" ] && [ "$2" = "list" ]; then',
         '  sleep 2',
         '  echo "OpenAI alice@example.com oauth"',

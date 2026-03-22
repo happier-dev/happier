@@ -4,6 +4,7 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { resolveOpenCodeServerAuthHeadersFromEnv } from './openCodeServerAuth';
 import { subscribeSseJson } from './openCodeSse';
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodeSession } from './types';
+import { waitForOpenCodeServerHealth } from './waitForOpenCodeServerHealth';
 import {
   ensureSharedManagedOpenCodeServerBaseUrl,
   isLoopbackManagedOpenCodeBaseUrl,
@@ -47,6 +48,23 @@ async function fetchJson<T>(params: {
   }
   if (response.status === 204) return undefined as unknown as T;
   return (await response.json()) as T;
+}
+
+function isRetryableManagedServerTransportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.startsWith('opencode http ')) return false;
+  return (
+    normalized.includes('fetch failed')
+    || normalized.includes('econnrefused')
+    || normalized.includes('econnreset')
+    || normalized.includes('socket hang up')
+    || normalized.includes('connect_error')
+    || normalized.includes('terminated')
+    || normalized.includes('networkerror')
+    || normalized.includes('other side closed')
+  );
 }
 
 export type OpenCodeServerRuntimeClient = Readonly<{
@@ -202,6 +220,36 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
     }
   };
 
+  const waitForManagedServerHealthAfterRefreshBestEffort = async (): Promise<void> => {
+    if (!usingManagedServer) return;
+    try {
+      await waitForOpenCodeServerHealth({
+        baseUrl,
+        timeoutMs: 2_000,
+        pollIntervalMs: 100,
+        headers,
+      });
+    } catch {
+      // best-effort only; caller will decide whether to propagate the original error
+    }
+  };
+
+  const fetchJsonWithManagedServerRetry = async <T>(
+    request: (currentBaseUrl: string) => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await request(baseUrl);
+    } catch (error) {
+      if (!usingManagedServer || !isRetryableManagedServerTransportError(error)) {
+        throw error;
+      }
+      logger.debug('[OpenCodeServer] Retrying managed HTTP request after transient transport failure', error);
+      await refreshBaseUrlIfManagedBestEffort();
+      await waitForManagedServerHealthAfterRefreshBestEffort();
+      return await request(baseUrl);
+    }
+  };
+
   // Best-effort health probe (useful for diagnostics if url is stale).
   try {
     await fetchJson<{ healthy: boolean; version: string }>({
@@ -249,30 +297,30 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       });
     },
     sessionMessagesList: async ({ sessionId }) => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/message`, { directory: resolveDirectory() }),
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/message`, { directory: resolveDirectory() }),
         method: 'GET',
         headers,
-      });
+      }));
       return Array.isArray(raw) ? raw : [];
     },
     sessionDiff: async ({ sessionId, messageId }) => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/diff`, {
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/diff`, {
           directory: resolveDirectory(),
           ...(messageId ? { messageID: messageId } : {}),
         }),
         method: 'GET',
         headers,
-      });
+      }));
       return Array.isArray(raw) ? raw : [];
     },
     sessionStatusList: async () => {
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, '/session/status', { directory: resolveDirectory() }),
+      const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({
+        url: buildUrl(currentBaseUrl, '/session/status', { directory: resolveDirectory() }),
         method: 'GET',
         headers,
-      });
+      }));
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
       return raw as Record<string, { type?: string }>;
     },
@@ -324,8 +372,8 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       });
     },
     sessionPromptAsync: async ({ sessionId, messageId, parts, agent, model, config }) => {
-      await fetchJson<void>({
-        url: buildUrl(baseUrl, `/session/${encodeURIComponent(sessionId)}/prompt_async`, { directory: resolveDirectory() }),
+      await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<void>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}/prompt_async`, { directory: resolveDirectory() }),
         method: 'POST',
         headers,
         body: {
@@ -335,7 +383,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
           ...(config ? { config } : {}),
           parts,
         },
-      });
+      }));
     },
     sessionAbort: async ({ sessionId }) => {
       await fetchJson<void>({
