@@ -3,21 +3,27 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sendMessageSpy = vi.fn(async () => undefined);
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
-    Pressable: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Pressable', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+                    Pressable: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Pressable', props, children),
+                }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: unknown) => styles,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Text', props, children),
@@ -27,14 +33,15 @@ vi.mock('@/components/sessions/agents/list/SessionSubagentRow', () => ({
     SessionSubagentRow: (props: { subagent: SessionSubagent }) => React.createElement('SessionSubagentRow', { testID: `row:${props.subagent.id}` }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, values?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
         if (key === 'session.subagents.panel.groupCount' && typeof values?.count === 'number') {
             return `${values.count} agents`;
         }
         return key;
-    },
-}));
+    } });
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -73,9 +80,7 @@ describe('SessionSubagentGroup', () => {
         }];
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentGroup
+        tree = (await renderScreen(<SessionSubagentGroup
                     sessionId="s1"
                     label="qa-team"
                     subagents={subagents}
@@ -84,15 +89,13 @@ describe('SessionSubagentGroup', () => {
                     onOpenPreview={vi.fn()}
                     onOpenFull={vi.fn()}
                     onOpenAdvanced={vi.fn()}
-                />,
-            );
-        });
+                />)).tree;
 
-        const [deleteButton] = tree!.root.findAllByProps({ testID: 'session-subagent-team-delete:qa-team' });
+        const [deleteButton] = tree!.findAllByTestId('session-subagent-team-delete:qa-team');
         expect(deleteButton).toBeTruthy();
 
         await act(async () => {
-            await deleteButton.props.onPress();
+            await pressTestInstanceAsync(deleteButton);
         });
 
         expect(sendMessageSpy).toHaveBeenCalledWith(
@@ -148,9 +151,7 @@ describe('SessionSubagentGroup', () => {
         ];
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentGroup
+        tree = (await renderScreen(<SessionSubagentGroup
                     sessionId="s1"
                     label="qa-team"
                     subagents={subagents}
@@ -159,9 +160,7 @@ describe('SessionSubagentGroup', () => {
                     onOpenPreview={vi.fn()}
                     onOpenFull={vi.fn()}
                     onOpenAdvanced={vi.fn()}
-                />,
-            );
-        });
+                />)).tree;
 
         const text = JSON.stringify(tree!.toJSON());
         expect(text).toContain('qa-team');
@@ -189,9 +188,7 @@ describe('SessionSubagentGroup', () => {
         }];
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentGroup
+        tree = (await renderScreen(<SessionSubagentGroup
                     sessionId="s1"
                     label="qa-team"
                     subagents={subagents}
@@ -201,15 +198,13 @@ describe('SessionSubagentGroup', () => {
                     onOpenFull={vi.fn()}
                     onOpenAdvanced={vi.fn()}
                     onLaunchTeammate={launchTeammateSpy}
-                />,
-            );
-        });
+                />)).tree;
 
-        const [addButton] = tree!.root.findAllByProps({ testID: 'session-subagent-team-add:qa-team' });
+        const [addButton] = tree!.findAllByTestId('session-subagent-team-add:qa-team');
         expect(addButton).toBeTruthy();
 
         await act(async () => {
-            await addButton.props.onPress();
+            await pressTestInstanceAsync(addButton);
         });
 
         expect(launchTeammateSpy).toHaveBeenCalledWith('qa-team');

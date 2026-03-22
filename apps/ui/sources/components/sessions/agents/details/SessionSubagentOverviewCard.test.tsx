@@ -1,20 +1,26 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: ({ children, ...props }: any) => React.createElement('View', props, children),
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
                     colors: {
                         surface: '#111',
                         surfaceHigh: '#222',
@@ -22,25 +28,25 @@ vi.mock('react-native-unistyles', () => ({
                         text: '#eee',
                         textSecondary: '#aaa',
                     },
-                })
-                : styles,
-    },
-}));
+                },
+    });
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, values?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
         if (key === 'session.subagents.kind.execution_run') return 'Subagent';
         if (key === 'session.subagents.intent.review') return 'Review';
         if (key === 'session.subagents.panel.typeFact' && values?.value) return `Type: ${values.value}`;
         if (key === 'session.subagents.panel.backendFact' && values?.value) return `Backend: ${values.value}`;
         if (key === 'session.subagents.panel.intentFact' && values?.value) return `Intent: ${values.value}`;
         return key;
-    },
-}));
+    } });
+});
 
 describe('SessionSubagentOverviewCard', () => {
     it('renders the shared compact fact pills for execution runs', async () => {
@@ -59,9 +65,7 @@ describe('SessionSubagentOverviewCard', () => {
         };
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionSubagentOverviewCard subagent={subagent} />);
-        });
+        tree = (await renderScreen(<SessionSubagentOverviewCard subagent={subagent} />)).tree;
         expect(tree).toBeTruthy();
         const textContent = tree!.root.findAllByType('Text').map((node: renderer.ReactTestInstance) => String(node.props.children)).join(' ');
 

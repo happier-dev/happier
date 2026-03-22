@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,11 +27,12 @@ vi.mock('@/theme', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => {
         return key;
-    },
-}));
+    } });
+});
 
 describe('buildDirectBrowseCandidatePresentation', () => {
     it('renders full-path metadata with item-aligned text hierarchy and hides remote ids when a meaningful title exists', async () => {
@@ -59,9 +62,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
         expect((subtitle as any).type).toBe('Text');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement('View', null, subtitle));
-        });
+        tree = (await renderScreen(React.createElement('View', null, subtitle))).tree;
         const textNodes = tree.root.findAllByType('Text');
         expect(String(textNodes[1]?.props?.children)).toMatch(/\d+y ago/);
         expect(textNodes[1]?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ color: '#666' })]));
@@ -94,9 +95,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
         }, mockTheme, 'compact');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement('View', null, subtitle));
-        });
+        tree = (await renderScreen(React.createElement('View', null, subtitle))).tree;
         expect(JSON.stringify(tree.toJSON())).toContain('sess_raw_1');
     });
 
@@ -124,9 +123,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
         }, mockTheme, 'compact');
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement('View', null, subtitle));
-        });
+        tree = (await renderScreen(React.createElement('View', null, subtitle))).tree;
         expect(JSON.stringify(tree.toJSON())).toContain('directSessions.browseActivityRunningNow');
         expect(JSON.stringify(tree.toJSON())).toContain('/tmp/happier/dev');
         expect(JSON.stringify(tree.toJSON())).not.toContain('3y ago');

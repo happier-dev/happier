@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,20 +48,22 @@ let machinesState = [
     { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
 ];
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        View: 'View',
-        TextInput: 'TextInput',
-        ActivityIndicator: 'ActivityIndicator',
-        Pressable: 'Pressable',
-        ScrollView: 'ScrollView',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: 'View',
+            TextInput: 'TextInput',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: 'Pressable',
+            ScrollView: 'ScrollView',
+        }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -77,44 +81,37 @@ vi.mock('react-native-unistyles', () => ({
                 header: { tint: '#000' },
             },
         },
-    }),
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                textTertiary: '#444',
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                surfacePressedOverlay: '#eee',
-                success: '#0f0',
-                accent: { orange: '#f90' },
-                modal: { border: '#ddd' },
-                shadow: { color: '#000' },
-                groupped: { background: '#fff' },
-                header: { tint: '#000' },
-            },
-        }),
-    },
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-    Stack: { Screen: () => null },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: modalAlertSpy },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: modalAlertSpy,
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useAllMachines: () => machinesState,
-}));
+});
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => profileMock,
@@ -164,9 +161,7 @@ describe('DirectSessionsBrowseScreen', () => {
     it('loads candidates for the default machine and provider', async () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
@@ -177,15 +172,15 @@ describe('DirectSessionsBrowseScreen', () => {
             limit: 50,
         });
 
-        const machineDropdown = tree.root.findAll((node) =>
+        const machineDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-machine-picker-trigger'
         )[0];
-        const providerDropdown = tree.root.findAll((node) =>
+        const providerDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-provider-picker-trigger'
         )[0];
-        const sourceDropdown = tree.root.findAll((node) =>
+        const sourceDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-source-picker-trigger'
         )[0];
@@ -193,7 +188,7 @@ describe('DirectSessionsBrowseScreen', () => {
         expect(machineDropdown).toBeTruthy();
         expect(providerDropdown).toBeTruthy();
         expect(sourceDropdown).toBeTruthy();
-        const itemGroups = tree.root.findAllByType('ItemGroup');
+        const itemGroups = tree.findAllByType('ItemGroup');
         expect(itemGroups[0]?.props.title).toBe('directSessions.browseFiltersTitle');
         expect(machineDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
         expect(providerDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
@@ -220,7 +215,7 @@ describe('DirectSessionsBrowseScreen', () => {
             subtitle: undefined,
         })).toBe('My Codex home');
 
-        const candidateItems = tree.root.findAllByType('Item').filter((node) => node.props.testID?.startsWith('direct-session-candidate:'));
+        const candidateItems = tree.findAllByType('Item').filter((node) => node.props.testID?.startsWith('direct-session-candidate:'));
         expect(candidateItems).toHaveLength(1);
         expect(candidateItems[0]?.props.title).toBe('Existing Codex Session');
         const candidateSubtitle = candidateItems[0]?.props.subtitle;
@@ -259,13 +254,11 @@ describe('DirectSessionsBrowseScreen', () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
-        const candidateItem = tree.root.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:claude-session-1');
+        const candidateItem = tree.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:claude-session-1');
         expect(candidateItem).toBeTruthy();
         const candidateSubtitle = candidateItem?.props.subtitle;
         expect(React.isValidElement(candidateSubtitle)).toBe(true);
@@ -287,9 +280,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
@@ -300,7 +291,7 @@ describe('DirectSessionsBrowseScreen', () => {
             limit: 50,
         });
 
-        const machineDropdown = tree.root.findAll((node) =>
+        const machineDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-machine-picker-trigger'
         )[0];
@@ -331,20 +322,18 @@ describe('DirectSessionsBrowseScreen', () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
-        const searchInput = tree.root.findByProps({ testID: 'direct-session-candidates-search-input' });
+        const searchInput = tree.findByProps({ testID: 'direct-session-candidates-search-input' });
         expect(searchInput.props.placeholder).toBe('directSessions.browseSearchPlaceholder');
 
         await act(async () => {
             searchInput.props.onChangeText('opencode');
         });
 
-        const candidateItems = tree.root.findAllByType('Item').filter((node) => node.props.testID?.startsWith('direct-session-candidate:'));
+        const candidateItems = tree.findAllByType('Item').filter((node) => node.props.testID?.startsWith('direct-session-candidate:'));
         expect(candidateItems).toHaveLength(1);
         expect(candidateItems[0]?.props.testID).toBe('direct-session-candidate:codex-session-2');
     });
@@ -352,13 +341,11 @@ describe('DirectSessionsBrowseScreen', () => {
     it('links the selected provider session and navigates to the Happier session', async () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
-        const candidateItem = tree.root.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:codex-session-1');
+        const candidateItem = tree.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();
 
         await act(async () => {
@@ -380,14 +367,12 @@ describe('DirectSessionsBrowseScreen', () => {
     it('switches to the codex connected-service source before linking', async () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
         candidatesListSpy.mockClear();
 
-        const sourceDropdown = tree.root.findAll((node) =>
+        const sourceDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-source-picker-trigger'
         )[0];
@@ -432,7 +417,7 @@ describe('DirectSessionsBrowseScreen', () => {
             limit: 50,
         });
 
-        const candidateItem = tree.root.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:codex-session-1');
+        const candidateItem = tree.findAllByType('Item').find((node) => node.props.testID === 'direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();
 
         await act(async () => {
@@ -453,13 +438,11 @@ describe('DirectSessionsBrowseScreen', () => {
     it('recovers when the selected machine disappears from the machine list', async () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
-        const machineDropdown = tree.root.findAll((node) =>
+        const machineDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-machine-picker-trigger'
         )[0];
@@ -483,7 +466,7 @@ describe('DirectSessionsBrowseScreen', () => {
         });
         await act(async () => {});
 
-        const rerenderedMachineDropdown = tree.root.findAll((node) =>
+        const rerenderedMachineDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-machine-picker-trigger'
         )[0];
@@ -536,13 +519,11 @@ describe('DirectSessionsBrowseScreen', () => {
         const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<DirectSessionsBrowseScreen />);
-        });
+        tree = (await renderScreen(<DirectSessionsBrowseScreen />)).tree;
 
         await act(async () => {});
 
-        const machineDropdown = tree.root.findAll((node) =>
+        const machineDropdown = tree.findAll((node) =>
             typeof node.props?.onSelect === 'function'
             && node.props?.itemTrigger?.itemProps?.testID === 'direct-session-machine-picker-trigger'
         )[0];
@@ -592,7 +573,7 @@ describe('DirectSessionsBrowseScreen', () => {
         });
 
         // The displayed candidates should be from machine-1, not the stale machine-2 request
-        const candidateItems = tree.root.findAllByType('Item').filter((node) => node.props.testID?.startsWith('direct-session-candidate:'));
+        const candidateItems = tree.findAllByType('Item').filter((node) => node.props.testID?.startsWith('direct-session-candidate:'));
         expect(candidateItems).toHaveLength(1);
         expect(candidateItems[0]?.props.title).toBe('Fresh Session');
         expect(candidateItems[0]?.props.testID).toBe('direct-session-candidate:fresh-session-1');

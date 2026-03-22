@@ -1,10 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { SessionSubagentDetailsView } from './SessionSubagentDetailsView';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,19 +15,23 @@ const messageDetailsSpy = vi.fn();
 const overviewCardSpy = vi.fn();
 const participantComposerSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
-    Platform: {
-        OS: 'web',
-        select: (value: { web?: unknown; default?: unknown }) => value.web ?? value.default,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+            View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
+            Platform: {
+                OS: 'web',
+                select: (value: { web?: unknown; default?: unknown }) => value.web ?? value.default,
+            },
+        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: unknown) => styles,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('Text', props, children),
@@ -35,9 +41,10 @@ vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
     ToolFullView: () => React.createElement('ToolFullView'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 const sessionState: {
     session: {
@@ -59,11 +66,14 @@ const sessionState: {
     resolvedMessageId: 'tool-msg-1',
 };
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSession: () => sessionState.session,
     useResolvedSessionMessageRouteId: () => sessionState.resolvedMessageId,
     useMessage: () => sessionState.message,
-}));
+});
+});
 
 vi.mock('@/sync/store/hooks', () => ({
     useSessionMessages: () => ({ messages: [] }),
@@ -140,15 +150,11 @@ describe('SessionSubagentDetailsView', () => {
         participantComposerSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentDetailsView
+        tree = (await renderScreen(<SessionSubagentDetailsView
                     sessionId="s1"
                     scopeId="session:s1"
                     subagentId="execution_run:run_1"
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree).toBeTruthy();
         expect(messageDetailsSpy).toHaveBeenCalledWith(
@@ -208,15 +214,11 @@ describe('SessionSubagentDetailsView', () => {
         participantComposerSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentDetailsView
+        tree = (await renderScreen(<SessionSubagentDetailsView
                     sessionId="s1"
                     scopeId="session:s1"
                     subagentId="execution_run:run_1"
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree).toBeTruthy();
         expect(executionRunDetailsSpy).toHaveBeenCalledWith(
@@ -271,15 +273,11 @@ describe('SessionSubagentDetailsView', () => {
         participantComposerSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentDetailsView
+        tree = (await renderScreen(<SessionSubagentDetailsView
                     sessionId="s1"
                     scopeId="session:s1"
                     subagentId="agent_team_member:qa-team:alpha"
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree).toBeTruthy();
         expect(messageDetailsSpy).toHaveBeenCalledWith(
@@ -347,15 +345,11 @@ describe('SessionSubagentDetailsView', () => {
         participantComposerSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionSubagentDetailsView
+        tree = (await renderScreen(<SessionSubagentDetailsView
                     sessionId="s1"
                     scopeId="session:s1"
                     subagentId="execution_run:run_owner"
-                />,
-            );
-        });
+                />)).tree;
 
         expect(tree).toBeTruthy();
         expect(participantComposerSpy).toHaveBeenCalledWith(
