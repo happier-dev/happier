@@ -1,6 +1,12 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,33 +20,51 @@ let mockAgentCore: any = {
     resume: {},
     ui: { agentPickerIconName: 'code-slash-outline' },
 };
+const AnimatedValue = vi.hoisted(
+    () =>
+        class AnimatedValue {
+            constructor(_value: unknown) {}
+
+            setValue(_value: unknown) {}
+
+            interpolate(_config: unknown) {
+                return 1;
+            }
+        },
+);
 const mockResolveAgentIdFromFlavor = vi.fn<(flavor: string | null | undefined) => string | undefined>(() => 'claude');
 const useSessionSpy = vi.fn<(sessionId: string) => any>(() => mockSession);
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: mockSessionId }),
-    useRouter: () => ({ push: routerPushSpy }),
-}));
-
-vi.mock('react-native', async (importOriginal) => {
-    const rn = await importOriginal<typeof import('react-native')>();
-    class AnimatedValue {
-        constructor(public value = 1) {}
-        setValue(next: number) {
-            this.value = next;
-        }
-    }
-    return {
-        ...rn,
-        View: 'View',
-        Animated: {
-            View: 'AnimatedView',
-            Value: AnimatedValue,
-            loop: vi.fn(() => ({ start: vi.fn() })),
-            sequence: vi.fn(() => ({ start: vi.fn() })),
-            timing: vi.fn(() => ({ start: vi.fn() })),
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            push: routerPushSpy,
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
         },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => ({ id: mockSessionId }),
     };
+});
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        View: 'View',
+                                        Animated: {
+                                            View: 'AnimatedView',
+                                            Value: AnimatedValue,
+                                            loop: vi.fn(() => ({ start: vi.fn() })),
+                                            sequence: vi.fn(() => ({ start: vi.fn() })),
+                                            timing: vi.fn(() => ({ start: vi.fn() })),
+                                        },
+                                    }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -48,8 +72,9 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 text: '#000',
@@ -57,16 +82,27 @@ vi.mock('react-native-unistyles', () => ({
                 accent: { blue: '#00f', purple: '#80f' },
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => ({}) },
-    useSession: (sessionId: string) => useSessionSpy(sessionId),
-    useIsDataReady: () => isDataReady,
-    useLocalSetting: () => false,
-    useSetting: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            storage: { getState: () => ({}) } as any,
+            useSession: (sessionId: string) => useSessionSpy(sessionId),
+            useIsDataReady: () => isDataReady,
+            useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
+                if (name === 'devModeEnabled') {
+                    return false as LocalSettings[K];
+                }
+                return null as unknown as LocalSettings[K];
+            },
+            useSetting: () => null,
+        },
+    });
+});
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
@@ -76,22 +112,38 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: () => sessionHydrated,
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
-vi.mock('@/components/ui/lists/Item', () => ({ Item: 'Item' }));
+vi.mock('@/components/ui/text/Text', () => ({ Text: (props: any) => React.createElement('Text', props, props.children) }));
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: (props: any) => React.createElement('Item', { ...props, testID: props.testID ?? props.title }, props.children),
+}));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: 'ItemGroup' }));
 vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: 'ItemList' }));
-vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
+vi.mock('@/components/ui/avatar/Avatar', () => ({
+    Avatar: (props: any) => React.createElement('Avatar', { ...props, testID: props.testID ?? 'session-info-avatar' }),
+}));
 vi.mock('@/components/ui/media/CodeView', () => ({ CodeView: 'CodeView' }));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: () => [false, vi.fn()] }));
-vi.mock('@/modal', () => ({ Modal: { alert: vi.fn(), confirm: vi.fn(), show: vi.fn() } }));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 vi.mock('@/sync/ops', () => ({ sessionArchiveWithServerScope: vi.fn(), sessionDelete: vi.fn(), sessionRename: vi.fn(), sessionStop: vi.fn() }));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
-vi.mock('@/agents/catalog/catalog', () => ({
-    DEFAULT_AGENT_ID: 'claude',
-    getAgentCore: () => mockAgentCore,
-    resolveAgentIdFromFlavor: (flavor: string | null | undefined) => mockResolveAgentIdFromFlavor(flavor),
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        DEFAULT_AGENT_ID: 'claude',
+        getAgentCore: () => mockAgentCore,
+        resolveAgentIdFromFlavor: (flavor: string | null | undefined) => mockResolveAgentIdFromFlavor(flavor),
+    };
+});
 vi.mock('@/hooks/session/useSessionSharingSupport', () => ({ useSessionSharingSupport: () => false }));
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({ useAutomationsSupport: () => ({ enabled: false }) }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => false }));
@@ -146,25 +198,24 @@ describe('/session/[id]/info', () => {
         vi.clearAllMocks();
     });
 
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    async function renderInfoScreen() {
+        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
+        return renderScreen(<Screen />);
+    }
+
     it('shows loading while the route hydration is still in progress', async () => {
         sessionHydrated = false;
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-
-        const texts = tree!.root.findAllByType('Text' as any).map((node: any) => node.props.children);
-        expect(texts).toContain('common.loading');
+        const screen = await renderInfoScreen();
+        expect(screen.getTextContent()).toContain('common.loading');
     });
 
     it('normalizes the route id before looking up the session', async () => {
         mockSessionId = ['session-2 '] as any;
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-
+        await renderInfoScreen();
         expect(useSessionSpy).toHaveBeenCalledWith('session-2');
     });
 
@@ -199,15 +250,9 @@ describe('/session/[id]/info', () => {
             },
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-
-        const itemTitles = tree!.root.findAllByType('Item' as any).map((node: any) => node.props.title);
-        expect(itemTitles).toContain('sessionInfo.openCodeSessionId');
-        expect(itemTitles).toContain('sessionInfo.copyResumeCommand');
+        const screen = await renderInfoScreen();
+        expect(screen.findByTestId('sessionInfo.openCodeSessionId')).toBeTruthy();
+        expect(screen.findByTestId('sessionInfo.copyResumeCommand')).toBeTruthy();
     });
 
     it('infers the provider from agentRuntimeDescriptorV1 when flavor is missing', async () => {
@@ -239,16 +284,13 @@ describe('/session/[id]/info', () => {
             },
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-
-        const itemTitles = tree!.root.findAllByType('Item' as any).map((node: any) => node.props.title);
-        expect(itemTitles).toContain('sessionInfo.openCodeSessionId');
+        const screen = await renderInfoScreen();
+        expect(screen.findByTestId('sessionInfo.openCodeSessionId')).toBeTruthy();
         expect(mockResolveAgentIdFromFlavor).not.toHaveBeenCalled();
-        const avatar = tree!.root.findByType('Avatar' as any);
+        const avatar = screen.findByTestId('session-info-avatar');
+        if (!avatar) {
+            throw new Error('expected session info avatar');
+        }
         expect(avatar.props.flavor).toBe('opencode');
     });
 
@@ -271,13 +313,8 @@ describe('/session/[id]/info', () => {
             },
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/info')).default;
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-
-        const viewMachineItem = tree!.root.findAllByType('Item' as any).find((node: any) => node.props.title === 'sessionInfo.viewMachine');
+        const screen = await renderInfoScreen();
+        const viewMachineItem = screen.findByTestId('sessionInfo.viewMachine');
         expect(viewMachineItem).toBeTruthy();
 
         await act(async () => {

@@ -1,6 +1,11 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,24 +33,33 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => isFocused,
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const rn = await importOriginal<typeof import('react-native')>();
-    return {
-        ...rn,
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        View: 'View',
+                                        ActivityIndicator: 'ActivityIndicator',
+                                    }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: mockSessionId }),
-    useRouter: () => ({
-        back: routerBackSpy,
-        push: routerPushSpy,
-        replace: routerReplaceSpy,
-    }),
-    useNavigation: () => ({ canGoBack: () => canGoBack }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            back: routerBackSpy,
+            push: routerPushSpy,
+            replace: routerReplaceSpy,
+            setParams: vi.fn(),
+        },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => ({ id: mockSessionId }),
+        useGlobalSearchParams: () => ({ id: mockSessionId }),
+        useNavigation: () => ({ canGoBack: () => canGoBack }),
+    };
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -79,9 +93,16 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => terminalFeatureEnabled,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: () => terminalDockLocation,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            // Narrow boundary fixture: this route only reads the embedded-terminal dock setting.
+            useLocalSetting: ((key: string) => (key === 'embeddedTerminalDockLocation' ? terminalDockLocation : null)) as any,
+        },
+    });
+});
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => deviceType,
@@ -121,19 +142,18 @@ describe('/session/[id]/terminal', () => {
         vi.clearAllMocks();
     });
 
-    async function renderScreen() {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionTerminalRouteScreen />);
-            await Promise.resolve();
-        });
-        return tree!;
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    async function renderRouteScreen() {
+        return renderScreen(<SessionTerminalRouteScreen />);
     }
 
     it('opens the right pane with the terminal tab selected', async () => {
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
-        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        const panel = screen.root.findByType('SessionRightPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'terminal' });
@@ -146,22 +166,22 @@ describe('/session/[id]/terminal', () => {
             details: null,
         };
 
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'terminal' });
         expect(setRightTabSpy).toHaveBeenCalledWith('terminal');
     });
 
     it('hydrates the session for deep links by requesting session visibility', async () => {
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-1');
     });
 
     it('closes by navigating back and closing the right-pane state', async () => {
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
-        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        const panel = screen.root.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -173,9 +193,9 @@ describe('/session/[id]/terminal', () => {
     it('falls back to the parent session route when there is no back stack', async () => {
         canGoBack = false;
 
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
-        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        const panel = screen.root.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -187,7 +207,7 @@ describe('/session/[id]/terminal', () => {
     it('does not open the terminal pane when the route is unavailable and is redirecting away', async () => {
         terminalFeatureEnabled = false;
 
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(openRightSpy).not.toHaveBeenCalled();
         expect(setRightTabSpy).not.toHaveBeenCalled();
@@ -211,7 +231,7 @@ describe('/session/[id]/terminal', () => {
             },
         };
 
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
         expect(routerPushSpy).toHaveBeenCalledTimes(1);
         expect(routerPushSpy).toHaveBeenLastCalledWith({
@@ -221,10 +241,7 @@ describe('/session/[id]/terminal', () => {
 
         mockSessionId = 'session-2';
 
-        await act(async () => {
-            tree.update(<SessionTerminalRouteScreen />);
-            await Promise.resolve();
-        });
+        await screen.update(<SessionTerminalRouteScreen />);
 
         expect(routerPushSpy).toHaveBeenCalledTimes(2);
         expect(routerPushSpy).toHaveBeenLastCalledWith({

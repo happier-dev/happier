@@ -1,6 +1,17 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
+import {
+    createExpoRouterMock,
+    createStackOptionsCapture,
+} from '@/dev/testkit/mocks/router';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,6 +21,17 @@ const hydrateSpy = vi.fn((sessionId: string, tag: string) => {
     void tag;
     return hydrateReady;
 });
+const useSessionSpy = vi.fn<(sessionId: string) => Session | null>(() => null);
+const useExecutionRunsBackendsForSessionSpy = vi.fn<(sessionId: string) => Record<string, { available?: boolean; intents?: string[] }> | null>(() => executionRunsBackendsMock);
+const useSessionExecutionRunLaunchabilitySpy = vi.fn<(sessionId: string, session: unknown) => {
+    canLaunchExecutionRuns: boolean;
+    executionRunsBackends: Record<string, { available?: boolean; intents?: string[] }> | null;
+    executionRunsSupported: boolean;
+}>(() => ({
+    canLaunchExecutionRuns: canLaunchExecutionRunsMock,
+    executionRunsBackends: executionRunsBackendsMock,
+    executionRunsSupported: canLaunchExecutionRunsMock,
+}));
 
 type ExecutionRunListArgs = [string, Record<string, unknown>];
 type ExecutionRunSummary = Readonly<{
@@ -27,6 +49,17 @@ type ExecutionRunListResult =
     | Readonly<{ ok: false; error: string; errorCode?: string }>
     | Readonly<{ runs: readonly ExecutionRunSummary[] }>;
 
+function createDeferredExecutionRunListResult(): {
+    promise: Promise<ExecutionRunListResult>;
+    resolve: (value: ExecutionRunListResult) => void;
+} {
+    let resolve!: (value: ExecutionRunListResult) => void;
+    const promise = new Promise<ExecutionRunListResult>((nextResolve) => {
+        resolve = nextResolve;
+    });
+    return { promise, resolve };
+}
+
 const listRunsSpy = vi.fn<(...args: ExecutionRunListArgs) => Promise<ExecutionRunListResult>>(
     async (_sessionId: string, _params: Record<string, unknown>) => ({
         runs: [] as const,
@@ -34,7 +67,9 @@ const listRunsSpy = vi.fn<(...args: ExecutionRunListArgs) => Promise<ExecutionRu
 );
 
 const routerPushSpy = vi.fn();
-const stackScreenSpy = vi.fn((_props: any) => null);
+const routerBackSpy = vi.fn();
+const routerReplaceSpy = vi.fn();
+const stackOptionsCapture = createStackOptionsCapture();
 let focusEffectHandler: (() => void | (() => void)) | null = null;
 let executionRunsBackendsMock: Record<string, { available?: boolean; intents?: string[] }> | null = {
     claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
@@ -42,31 +77,59 @@ let executionRunsBackendsMock: Record<string, { available?: boolean; intents?: s
 };
 let canLaunchExecutionRunsMock = true;
 
-vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
+const routerMock = createExpoRouterMock({
+    params: { id: 'session-1' },
+    router: {
+        push: routerPushSpy,
+        back: routerBackSpy,
+        replace: routerReplaceSpy,
+        setParams: vi.fn(),
+    },
+    stackOptionsCapture,
+});
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: 'session-1' }),
-    useRouter: () => ({ push: routerPushSpy, back: vi.fn() }),
+    ...routerMock.module,
     useFocusEffect: (handler: () => void | (() => void)) => {
         focusEffectHandler = handler;
     },
-    Stack: { Screen: (props: any) => stackScreenSpy(props) },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+
+vi.mock('@/react-native-unistyles', () => ({}));
+
+vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
+    ConstrainedScreenContent: (props: any) => React.createElement('ConstrainedScreenContent', props, props.children),
 }));
-vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string, tag: string) => hydrateSpy(sessionId, tag),
 }));
 
+vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
+    useExecutionRunsBackendsForSession: (sessionId: string) => useExecutionRunsBackendsForSessionSpy(sessionId),
+}));
+
+vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
+    useSessionExecutionRunLaunchability: (sessionId: string, session: any) =>
+        useSessionExecutionRunLaunchabilitySpy(sessionId, session),
+}));
+
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunList: (...args: ExecutionRunListArgs) => listRunsSpy(...args),
 }));
+
 vi.mock('@/components/sessions/runs/ExecutionRunList', () => ({
     ExecutionRunList: ({ runs, onPressRun }: any) => (
         React.createElement(
@@ -75,28 +138,35 @@ vi.mock('@/components/sessions/runs/ExecutionRunList', () => ({
             ...(Array.isArray(runs)
                 ? runs.map((run: any) => React.createElement(
                     'Pressable',
-                    { key: run.runId, onPress: () => onPressRun?.(run) },
+                    {
+                        key: run.runId,
+                        onPress: () => onPressRun?.(run),
+                        accessibilityLabel: `run:${run.runId}`,
+                        testID: `run:${run.runId}`,
+                    },
                     React.createElement('Text', null, run.runId),
                 ))
                 : []),
         )
     ),
 }));
-vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
-    useExecutionRunsBackendsForSession: () => executionRunsBackendsMock,
-}));
-vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
-    useSessionExecutionRunLaunchability: () => ({
-        canLaunchExecutionRuns: canLaunchExecutionRunsMock,
-        executionRunsBackends: executionRunsBackendsMock,
-        executionRunsSupported: canLaunchExecutionRunsMock,
-    }),
-}));
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useSession: (sessionId: string) => useSessionSpy(sessionId),
+    });
+});
+
+const Screen = (await import('@/app/(app)/session/[id]/runs')).default;
 
 describe('Session Runs Screen', () => {
-    afterEach(() => {
+    beforeEach(() => {
         hydrateReady = true;
         hydrateSpy.mockClear();
+        useSessionSpy.mockClear();
+        useExecutionRunsBackendsForSessionSpy.mockClear();
+        useSessionExecutionRunLaunchabilitySpy.mockClear();
         listRunsSpy.mockReset();
         listRunsSpy.mockResolvedValue({ runs: [] });
         executionRunsBackendsMock = {
@@ -104,32 +174,59 @@ describe('Session Runs Screen', () => {
             codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
         };
         canLaunchExecutionRunsMock = true;
+        focusEffectHandler = null;
+        routerPushSpy.mockClear();
+        routerBackSpy.mockClear();
+        routerReplaceSpy.mockClear();
+        stackOptionsCapture.reset();
+        routerMock.state.params = { id: 'session-1' };
     });
+
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    async function renderRunsScreen() {
+        const screen = await renderScreen(<Screen />);
+        await flushHookEffects({ cycles: 3 });
+        return screen;
+    }
+
+    async function renderHeaderRight() {
+        const options = stackOptionsCapture.getResolved();
+        expect(options?.headerTitle).toBe('runs.title');
+        expect(typeof options?.headerRight).toBe('function');
+        return renderScreen(React.createElement(options!.headerRight as React.ComponentType));
+    }
+
+    function readHeaderRightLabels(screen: Awaited<ReturnType<typeof renderScreen>>) {
+        return screen
+            .findAllByType('Pressable' as any)
+            .map((button: any) => button.props.accessibilityLabel);
+    }
 
     it('waits for session hydration before listing runs', async () => {
         hydrateReady = false;
         listRunsSpy.mockClear();
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        await act(async () => {
-            renderer.create(React.createElement(RunsScreen));
-        });
+        await renderRunsScreen();
 
         expect(hydrateSpy).toHaveBeenCalled();
         expect(listRunsSpy).toHaveBeenCalledTimes(0);
     });
 
+    it('does not invoke session-dependent launchability hooks before hydration settles', async () => {
+        hydrateReady = false;
+
+        await renderRunsScreen();
+
+        expect(useSessionSpy).not.toHaveBeenCalled();
+        expect(useExecutionRunsBackendsForSessionSpy).not.toHaveBeenCalled();
+        expect(useSessionExecutionRunLaunchabilitySpy).not.toHaveBeenCalled();
+    });
+
     it('reloads runs when the screen regains focus', async () => {
-        listRunsSpy.mockClear();
-        listRunsSpy.mockResolvedValue({ runs: [] });
-        focusEffectHandler = null;
-
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        await act(async () => {
-            renderer.create(React.createElement(RunsScreen));
-        });
+        await renderRunsScreen();
 
         expect(listRunsSpy).toHaveBeenCalledTimes(1);
         expect(typeof focusEffectHandler).toBe('function');
@@ -137,34 +234,83 @@ describe('Session Runs Screen', () => {
         await act(async () => {
             focusEffectHandler?.();
         });
+        await flushHookEffects({ cycles: 2 });
 
         expect(listRunsSpy).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps the newest run-list result when overlapping loads resolve out of order', async () => {
+        const first = createDeferredExecutionRunListResult();
+        const second = createDeferredExecutionRunListResult();
+
+        listRunsSpy
+            .mockImplementationOnce(() => first.promise)
+            .mockImplementationOnce(() => second.promise);
+
+        const screen = await renderScreen(<Screen />);
+        await flushHookEffects({ cycles: 2 });
+
+        expect(listRunsSpy).toHaveBeenCalledTimes(1);
+        expect(typeof focusEffectHandler).toBe('function');
+
+        await act(async () => {
+            focusEffectHandler?.();
+            await flushHookEffects({ cycles: 1 });
+        });
+
+        expect(listRunsSpy).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            second.resolve({
+                runs: [
+                    {
+                        runId: 'run_new',
+                        callId: 'call_new',
+                        sidechainId: 'call_new',
+                        intent: 'review',
+                        backendId: 'claude',
+                        status: 'running',
+                        startedAtMs: 2,
+                        finishedAtMs: 0,
+                    },
+                ],
+            });
+            await flushHookEffects({ cycles: 2 });
+        });
+
+        expect(screen.getTextContent()).toContain('run_new');
+
+        await act(async () => {
+            first.resolve({
+                runs: [
+                    {
+                        runId: 'run_old',
+                        callId: 'call_old',
+                        sidechainId: 'call_old',
+                        intent: 'review',
+                        backendId: 'claude',
+                        status: 'succeeded',
+                        startedAtMs: 1,
+                        finishedAtMs: 2,
+                    },
+                ],
+            });
+            await flushHookEffects({ cycles: 2 });
+        });
+
+        expect(screen.getTextContent()).toContain('run_new');
+        expect(screen.getTextContent()).not.toContain('run_old');
+    });
+
     it('configures a runs header and navigates when Run review is pressed', async () => {
-        routerPushSpy.mockClear();
-        stackScreenSpy.mockClear();
-        listRunsSpy.mockResolvedValueOnce({ runs: [] });
+        await renderRunsScreen();
+        const headerRightScreen = await renderHeaderRight();
+        const buttons = headerRightScreen.findAllByType('Pressable' as any);
+        const runReview = buttons.find((button: any) => button.props.accessibilityLabel === 'executionRuns.newRun.intents.review');
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-        });
-
-        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-        expect(stackOptions?.headerTitle).toBe('runs.title');
-        expect(typeof stackOptions?.headerRight).toBe('function');
-        let headerRightTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        });
-        const buttons = headerRightTree!.root.findAllByType('Pressable');
-        const runReview = buttons.find((b: any) => b.props.accessibilityLabel === 'executionRuns.newRun.intents.review');
         expect(runReview).toBeDefined();
 
-        await act(async () => {
+        act(() => {
             runReview!.props.onPress?.();
         });
 
@@ -172,106 +318,69 @@ describe('Session Runs Screen', () => {
     });
 
     it('navigates to the new run screen when Delegate task is pressed', async () => {
-        routerPushSpy.mockClear();
-        stackScreenSpy.mockClear();
-        listRunsSpy.mockResolvedValueOnce({ runs: [] });
+        await renderRunsScreen();
+        const headerRightScreen = await renderHeaderRight();
+        const buttons = headerRightScreen.findAllByType('Pressable' as any);
+        const delegate = buttons.find((button: any) => button.props.accessibilityLabel === 'executionRuns.newRun.intents.delegate');
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-        });
-
-        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-        expect(typeof stackOptions?.headerRight).toBe('function');
-        let headerRightTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        });
-        const buttons = headerRightTree!.root.findAllByType('Pressable');
-        const delegate = buttons.find((b: any) => b.props.accessibilityLabel === 'executionRuns.newRun.intents.delegate');
         expect(delegate).toBeDefined();
 
-        await act(async () => {
+        act(() => {
             delegate!.props.onPress?.();
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/runs/new?intent=delegate');
     });
 
+    it('shows only launch intents that the session backends actually support', async () => {
+        executionRunsBackendsMock = {
+            planner: { available: true, intents: ['plan'] },
+        };
+
+        await renderRunsScreen();
+        const headerRightScreen = await renderHeaderRight();
+        const labels = readHeaderRightLabels(headerRightScreen);
+
+        expect(labels).toContain('executionRuns.newRun.intents.plan');
+        expect(labels).not.toContain('executionRuns.newRun.intents.review');
+        expect(labels).not.toContain('executionRuns.newRun.intents.delegate');
+    });
+
     it('hides new-run header actions when the session has no live execution-run backends', async () => {
-        stackScreenSpy.mockClear();
         executionRunsBackendsMock = null;
         canLaunchExecutionRunsMock = false;
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+        await renderRunsScreen();
+        const headerRightScreen = await renderHeaderRight();
+        const labels = readHeaderRightLabels(headerRightScreen);
 
-        await act(async () => {
-            renderer.create(React.createElement(RunsScreen));
-        });
-
-        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-        let headerRightTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        });
-        const buttons = headerRightTree!.root.findAllByType('Pressable');
-        const labels = buttons.map((button: any) => button.props.accessibilityLabel);
         expect(labels).not.toContain('executionRuns.newRun.intents.review');
         expect(labels).not.toContain('executionRuns.newRun.intents.delegate');
         expect(labels).toContain('common.refresh');
     });
 
     it('hides new-run header actions when launchability is disabled even if backend discovery is populated', async () => {
-        stackScreenSpy.mockClear();
         canLaunchExecutionRunsMock = false;
         executionRunsBackendsMock = {
             claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
         };
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+        await renderRunsScreen();
+        const headerRightScreen = await renderHeaderRight();
+        const labels = readHeaderRightLabels(headerRightScreen);
 
-        await act(async () => {
-            renderer.create(React.createElement(RunsScreen));
-        });
-
-        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-        let headerRightTree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        });
-        const buttons = headerRightTree!.root.findAllByType('Pressable');
-        const labels = buttons.map((button: any) => button.props.accessibilityLabel);
         expect(labels).not.toContain('executionRuns.newRun.intents.review');
         expect(labels).not.toContain('executionRuns.newRun.intents.delegate');
         expect(labels).toContain('common.refresh');
     });
 
-    it('constrains content to the shared max width', async () => {
-        listRunsSpy.mockResolvedValueOnce({ runs: [] });
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+    it('renders runs inside the constrained route content wrapper', async () => {
+        const screen = await renderRunsScreen();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-        });
-
-        const views = tree!.root.findAllByType('View');
-        const hasConstrainedContainer = views.some((node: any) => {
-            const raw = node.props.style;
-            const styles = Array.isArray(raw) ? raw : [raw];
-            return styles.some((entry: any) => {
-                if (!entry || typeof entry !== 'object') return false;
-                return entry.maxWidth === 999 && entry.width === '100%' && entry.alignSelf === 'center';
-            });
-        });
-
-        expect(hasConstrainedContainer).toBe(true);
+        expect(screen.findAllByType('ConstrainedScreenContent' as any)).toHaveLength(1);
     });
 
     it('lists execution runs for the session', async () => {
-        routerPushSpy.mockClear();
         listRunsSpy.mockResolvedValueOnce({
             runs: [
                 {
@@ -287,21 +396,13 @@ describe('Session Runs Screen', () => {
             ],
         });
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-        });
+        const screen = await renderRunsScreen();
 
         expect(listRunsSpy).toHaveBeenCalledWith('session-1', {});
-        expect(tree).not.toBeNull();
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
+        expect(screen.getTextContent()).toContain('run_1');
     });
 
     it('retries once when execution run list returns RPC_METHOD_NOT_AVAILABLE', async () => {
-        listRunsSpy.mockReset();
         listRunsSpy
             .mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' })
             .mockResolvedValueOnce({
@@ -319,41 +420,23 @@ describe('Session Runs Screen', () => {
                 ],
             });
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        const screen = await renderRunsScreen();
 
         expect(listRunsSpy).toHaveBeenCalledTimes(2);
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((n: any) => String(n.props.children).includes('run_retry'))).toBe(true);
+        expect(screen.getTextContent()).toContain('run_retry');
     });
 
     it('shows a daemon-unavailable message when execution run list remains unsupported after retry', async () => {
-        listRunsSpy.mockReset();
         listRunsSpy
             .mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' })
             .mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' });
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+        const screen = await renderRunsScreen();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        const textNodes = tree!.root.findAllByType('Text');
-        expect(textNodes.some((n: any) => String(n.props.children).includes('errors.daemonUnavailableBody'))).toBe(true);
+        expect(screen.getTextContent()).toContain('errors.daemonUnavailableBody');
     });
 
     it('navigates to the run details screen when a run is pressed', async () => {
-        routerPushSpy.mockClear();
         listRunsSpy.mockResolvedValueOnce({
             runs: [
                 {
@@ -369,27 +452,8 @@ describe('Session Runs Screen', () => {
             ],
         });
 
-        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(RunsScreen));
-        });
-
-        const textNodes = tree!.root.findAllByType('Text');
-        const runText = textNodes.find((n: any) => String(n.props.children).includes('run_2'));
-        expect(runText).toBeDefined();
-
-        let cursor: any = runText!;
-        while (cursor && cursor.type !== 'Pressable') {
-            cursor = cursor.parent;
-        }
-        expect(cursor?.type).toBe('Pressable');
-        const target = cursor;
-
-        await act(async () => {
-            target.props.onPress?.();
-        });
+        const screen = await renderRunsScreen();
+        screen.pressByTestId('run:run_2');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/runs/run_2');
     });

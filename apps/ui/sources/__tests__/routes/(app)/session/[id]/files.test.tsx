@@ -1,6 +1,11 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,26 +29,35 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => isFocused,
 }));
 
-vi.mock('react-native', async (importOriginal) => {
-    const rn = await importOriginal<typeof import('react-native')>();
-    return {
-        ...rn,
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        View: 'View',
+                                        ActivityIndicator: 'ActivityIndicator',
+                                    }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: mockSessionId }),
-    useRouter: () => ({
-        back: routerBackSpy,
-        push: routerPushSpy,
-        replace: routerReplaceSpy,
-    }),
-    useNavigation: () => ({
-        canGoBack: () => canGoBack,
-    }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            back: routerBackSpy,
+            push: routerPushSpy,
+            replace: routerReplaceSpy,
+            setParams: vi.fn(),
+        },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => ({ id: mockSessionId }),
+        useGlobalSearchParams: () => ({ id: mockSessionId }),
+        useNavigation: () => ({
+            canGoBack: () => canGoBack,
+        }),
+    };
+});
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
@@ -104,19 +118,18 @@ describe('/session/[id]/files', () => {
         vi.clearAllMocks();
     });
 
-    async function renderScreen() {
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(<SessionFilesRouteScreen />);
-            await Promise.resolve();
-        });
-        return tree!;
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    async function renderRouteScreen() {
+        return renderScreen(<SessionFilesRouteScreen />);
     }
 
     it('renders the shared SessionRightPanel surface fullscreen and opens the right pane state', async () => {
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
-        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        const panel = screen.root.findByType('SessionRightPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
@@ -129,22 +142,22 @@ describe('/session/[id]/files', () => {
             details: null,
         };
 
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
         expect(setRightTabSpy).toHaveBeenCalledWith('files');
     });
 
     it('hydrates the session for deep links by requesting session visibility', async () => {
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-1');
     });
 
     it('closes by navigating back and closing the right-pane state', async () => {
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
-        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        const panel = screen.root.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -155,9 +168,9 @@ describe('/session/[id]/files', () => {
 
     it('falls back to the session route when closed without back history', async () => {
         canGoBack = false;
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
-        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        const panel = screen.root.findByType('SessionRightPanel' as any);
         await act(async () => {
             panel.props.onRequestClose();
         });
@@ -177,7 +190,7 @@ describe('/session/[id]/files', () => {
                 tabState: {},
             },
         };
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/session/[id]/details',
@@ -190,7 +203,7 @@ describe('/session/[id]/files', () => {
             right: { isOpen: true, activeTabId: 'git', tabState: {} },
             details: { isOpen: false, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md', tabState: {} },
         };
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(routerPushSpy).not.toHaveBeenCalled();
     });
@@ -201,7 +214,7 @@ describe('/session/[id]/files', () => {
             right: { isOpen: true, activeTabId: 'git', tabState: {} },
             details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md', tabState: {} },
         };
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(routerPushSpy).not.toHaveBeenCalled();
     });
@@ -217,7 +230,7 @@ describe('/session/[id]/files', () => {
             },
         };
 
-        await renderScreen();
+        await renderRouteScreen();
 
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/session/[id]/details',
@@ -230,7 +243,7 @@ describe('/session/[id]/files', () => {
             right: { isOpen: true, activeTabId: 'git', tabState: {} },
             details: { isOpen: true, tabs: [{ key: 'scmReview:working' }], activeTabKey: 'scmReview:working', tabState: {} },
         };
-        let tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
         expect(routerPushSpy).toHaveBeenCalledTimes(1);
 
@@ -242,10 +255,7 @@ describe('/session/[id]/files', () => {
             details: { ...scopeState.details, isOpen: false },
         };
 
-        await act(async () => {
-            tree!.update(<SessionFilesRouteScreen />);
-            await Promise.resolve();
-        });
+        await screen.update(<SessionFilesRouteScreen />);
 
         isFocused = true;
         scopeState = {
@@ -253,10 +263,7 @@ describe('/session/[id]/files', () => {
             details: { ...scopeState.details, isOpen: true },
         };
 
-        await act(async () => {
-            tree!.update(<SessionFilesRouteScreen />);
-            await Promise.resolve();
-        });
+        await screen.update(<SessionFilesRouteScreen />);
 
         expect(routerPushSpy).toHaveBeenCalledTimes(2);
     });
@@ -272,7 +279,7 @@ describe('/session/[id]/files', () => {
             },
         };
 
-        const tree = await renderScreen();
+        const screen = await renderRouteScreen();
 
         expect(routerPushSpy).toHaveBeenCalledTimes(1);
         expect(routerPushSpy).toHaveBeenLastCalledWith({
@@ -282,10 +289,7 @@ describe('/session/[id]/files', () => {
 
         mockSessionId = 'session-2';
 
-        await act(async () => {
-            tree.update(<SessionFilesRouteScreen />);
-            await Promise.resolve();
-        });
+        await screen.update(<SessionFilesRouteScreen />);
 
         expect(routerPushSpy).toHaveBeenCalledTimes(2);
         expect(routerPushSpy).toHaveBeenLastCalledWith({

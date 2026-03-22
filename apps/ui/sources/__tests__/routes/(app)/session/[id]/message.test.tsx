@@ -1,10 +1,15 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { DeferredPromise } from './testUtils/deferredPromise';
 import { createDeferredPromise } from './testUtils/deferredPromise';
+import {
+  flushHookEffects,
+  renderScreen,
+  standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,7 +24,6 @@ let mockCommittedMessages: any[] = [];
 const toolFullViewSpy = vi.fn();
 const deriveSessionParticipantTargetsMock = vi.fn<(..._args: unknown[]) => ReadonlyArray<SessionParticipantTarget>>(() => []);
 const deriveAutoRecipientFromFocusedToolTranscriptMock = vi.fn<(..._args: unknown[]) => ParticipantRecipientV1 | null>(() => null);
-const recipientChipSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const routerCanGoBackSpy = vi.fn(() => false);
@@ -41,39 +45,58 @@ const mockTheme = {
   },
 } as const;
 
-vi.mock('expo-router', () => ({
-  useLocalSearchParams: () => mockSearchParams,
-  useRouter: () => ({ back: routerBackSpy, replace: routerReplaceSpy, canGoBack: routerCanGoBackSpy }),
-  Stack: { Screen: () => null },
-}));
-
-vi.mock('react-native', async () => {
-  const stub = await import('@/dev/reactNativeStub');
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  const routerMock = createExpoRouterMock({
+    router: {
+      back: routerBackSpy,
+      push: vi.fn(),
+      replace: routerReplaceSpy,
+      setParams: vi.fn(),
+      canGoBack: routerCanGoBackSpy,
+    } as any,
+  });
   return {
-    ...stub,
-    TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
+    ...routerMock.module,
+    useLocalSearchParams: () => mockSearchParams,
+    Stack: { Screen: () => null },
   };
 });
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: mockTheme,
-  }),
-  StyleSheet: { create: (value: any) => value },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    TurboModuleRegistry: { get: () => ({}) },
+                                  }
+    );
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  storage: {
-    getState: () => ({
-      sessions: {},
-      sessionListViewDataByServerId: {},
-    }),
-  },
-  useSession: () => mockSession,
-  useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded }),
-  useMessage: (_sessionId: string, messageId: string) => mockMessagesById[messageId] ?? mockMessage,
-  useResolvedSessionMessageRouteId: (_sessionId: string, _routeMessageId: string) => mockResolvedRouteMessageId,
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+  return createUnistylesMock({
+    theme: mockTheme as any,
+  });
+});
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+  const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+  return createStorageModuleMock({
+    importOriginal,
+    overrides: {
+      storage: {
+        getState: () => ({
+          sessions: {},
+          sessionListViewDataByServerId: {},
+        }),
+      } as any,
+      useSession: () => mockSession,
+      useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded }),
+      useMessage: (_sessionId: string, messageId: string) => mockMessagesById[messageId] ?? mockMessage,
+      useResolvedSessionMessageRouteId: (_sessionId: string, _routeMessageId: string) => mockResolvedRouteMessageId,
+    },
+  });
+});
 
 vi.mock('@/sync/store/hooks', () => ({
   useSessionMessages: () => ({ messages: mockCommittedMessages, isLoaded: mockMessagesLoaded }),
@@ -92,12 +115,26 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', async () => {
+  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  return createTextModuleMock({
+    translate: (key: string) => key,
+  });
+});
 vi.mock('@/components/ui/forms/Deferred', () => ({ Deferred: ({ children }: any) => React.createElement(React.Fragment, null, children) }));
 vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
   ToolFullView: (props: any) => {
     toolFullViewSpy(props);
-    return React.createElement('ToolFullView');
+    return React.createElement(
+      'ToolFullView',
+      { testID: 'tool-full-view' },
+      ...(props.messages ?? []).map((message: { id: string }) =>
+        React.createElement('View', {
+          key: message.id,
+          testID: `tool-fullview-transcript-message-${message.id}`,
+        }),
+      ),
+    );
   },
 }));
 vi.mock('@/components/tools/shell/presentation/ToolHeader', () => ({ ToolHeader: () => React.createElement('ToolHeader') }));
@@ -109,14 +146,21 @@ vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) =>
     React.createElement(
       'AgentInput',
-      props,
+      { ...props, testID: 'session-composer-input' },
+      React.createElement('Pressable', {
+        testID: 'session-composer-send',
+        onPress: props.onSend,
+      }),
       (props.extraActionChips ?? []).map((chip: any, idx: number) =>
         React.createElement(React.Fragment, { key: String(chip?.key ?? idx) }, chip.render({})),
       ),
     ),
 }));
 vi.mock('@/components/autocomplete/suggestions', () => ({ getSuggestions: () => [] }));
-vi.mock('@/modal', () => ({ Modal: { alert: () => {} } }));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock().module;
+});
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (fn: Promise<any>) => void fn }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => false }));
 vi.mock('@/sync/domains/session/participants/deriveSessionParticipantTargets', () => ({
@@ -125,8 +169,10 @@ vi.mock('@/sync/domains/session/participants/deriveSessionParticipantTargets', (
 }));
 vi.mock('@/components/sessions/agentInput/routing/RecipientChip', () => ({
   RecipientChip: (props: any) => {
-    recipientChipSpy(props);
-    return React.createElement('RecipientChip', props);
+    return React.createElement('RecipientChip', {
+      ...props,
+      testID: 'agent-input-recipient-chip',
+    });
   },
 }));
 vi.mock('@/sync/domains/input/participants/resolveParticipantRoutedSend', async () => {
@@ -160,7 +206,6 @@ describe('Session message route hydration', () => {
     routerCanGoBackSpy.mockClear();
     syncOnSessionVisibleSpy.mockClear();
     syncLoadOlderMessagesSpy.mockClear();
-    recipientChipSpy.mockClear();
     toolFullViewSpy.mockClear();
 	    deriveSessionParticipantTargetsMock.mockReset();
 	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReset();
@@ -168,17 +213,20 @@ describe('Session message route hydration', () => {
 	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(null);
 	  });
 
+  afterEach(() => {
+    standardCleanup();
+    vi.useRealTimers();
+  });
+
+  async function renderMessageScreen(Screen: React.ComponentType<any>) {
+    return renderScreen(React.createElement(Screen));
+  }
+
   it('renders invalid link fallback when session id param is missing', async () => {
     mockSearchParams = { id: '', messageId: 'message-1' };
     const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
-
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByProps({ testID: 'session-invalid-link' })).toHaveLength(1);
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.findAllByTestId('session-invalid-link')).toHaveLength(1);
     expect(syncOnSessionVisibleSpy).not.toHaveBeenCalled();
   });
 
@@ -189,9 +237,8 @@ describe('Session message route hydration', () => {
     ensureSessionVisibleDeferred.resolve();
     loadOlderDeferred = createDeferredPromise();
 
-    await act(async () => {
-      renderer.create(React.createElement(MessageScreen));
-    });
+    const screen = await renderMessageScreen(MessageScreen);
+    await flushHookEffects();
 
     expect(syncOnSessionVisibleSpy).toHaveBeenCalledWith('session-1');
     expect(syncLoadOlderMessagesSpy).toHaveBeenCalledWith('session-1');
@@ -223,13 +270,8 @@ describe('Session message route hydration', () => {
       },
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByType('ToolFullView' as any)).toHaveLength(1);
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.root.findAllByType('ToolFullView' as any)).toHaveLength(1);
     expect(routerReplaceSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).not.toHaveBeenCalled();
   });
@@ -316,18 +358,11 @@ describe('Session message route hydration', () => {
       memberLabel: 'beta',
     });
 
-    await act(async () => {
-      renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
+    const screen = await renderMessageScreen(MessageScreen);
 
-    const toolFullViewProps = toolFullViewSpy.mock.calls.at(-1)?.[0];
-    expect(toolFullViewProps.messages).toEqual([
-      expect.objectContaining({
-        id: 'meaningful',
-        text: 'Meaningful teammate output',
-      }),
-    ]);
+    expect(screen.findAllByTestId('tool-fullview-transcript-message-meaningful')).toHaveLength(1);
+    expect(screen.findAllByTestId('tool-fullview-transcript-message-lifecycle-1')).toHaveLength(0);
+    expect(screen.findAllByTestId('tool-fullview-transcript-message-lifecycle-2')).toHaveLength(0);
   });
 
   it('keeps waiting when older paging is not ready instead of redirecting away from the deep link', async () => {
@@ -338,23 +373,11 @@ describe('Session message route hydration', () => {
     ensureSessionVisibleDeferred.resolve();
     syncLoadOlderMessagesSpy.mockImplementation(async () => ({ loaded: 0, hasMore: true, status: 'not_ready' as const }));
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
+    await renderMessageScreen(MessageScreen);
+    await flushHookEffects({ advanceTimersMs: 3000, cycles: 1 });
 
     expect(routerReplaceSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).not.toHaveBeenCalled();
-
-    await act(async () => {
-      tree?.unmount();
-    });
-    vi.useRealTimers();
   });
 
   it('does not crash when message kind changes between renders', async () => {
@@ -372,11 +395,7 @@ describe('Session message route hydration', () => {
       meta: null,
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
+    const screen = await renderMessageScreen(MessageScreen);
 
     mockMessage = {
       kind: 'tool-call',
@@ -387,10 +406,8 @@ describe('Session message route hydration', () => {
       children: [],
     };
 
-    await act(async () => {
-      tree!.update(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
+    await screen.update(React.createElement(MessageScreen));
+    await flushHookEffects();
   });
 
   it('does not render the focused-tool composer when there are no participant targets', async () => {
@@ -408,13 +425,8 @@ describe('Session message route hydration', () => {
       children: [],
     };
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(0);
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.findAllByTestId('session-composer-input')).toHaveLength(0);
   });
 
   it('keeps the focused tool transcript container shrinkable so the sidechain list can measure on web', async () => {
@@ -453,22 +465,16 @@ describe('Session message route hydration', () => {
 
 	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue({ kind: 'execution_run', runId: 'run_auto_1' } satisfies ParticipantRecipientV1);
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
-    expect(recipientChipSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targets: expect.arrayContaining([
-          expect.objectContaining({
-            key: 'execution_run:run_auto_1',
-            recipient: expect.objectContaining({ kind: 'execution_run', runId: 'run_auto_1' }),
-          }),
-        ]),
-      }),
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
+    expect(screen.findAllByTestId('agent-input-delivery-chip')).toHaveLength(1);
+    expect(screen.findByTestId('agent-input-recipient-chip')?.props.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'execution_run:run_auto_1',
+          recipient: expect.objectContaining({ kind: 'execution_run', runId: 'run_auto_1' }),
+        }),
+      ]),
     );
   });
 
@@ -492,22 +498,15 @@ describe('Session message route hydration', () => {
       teamId: 'team-1',
     } satisfies ParticipantRecipientV1);
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
-    expect(recipientChipSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targets: expect.arrayContaining([
-          expect.objectContaining({
-            key: 'agent_team_broadcast:team-1',
-            recipient: expect.objectContaining({ kind: 'agent_team_broadcast', teamId: 'team-1' }),
-          }),
-        ]),
-      }),
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
+    expect(screen.findByTestId('agent-input-recipient-chip')?.props.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'agent_team_broadcast:team-1',
+          recipient: expect.objectContaining({ kind: 'agent_team_broadcast', teamId: 'team-1' }),
+        }),
+      ]),
     );
   });
 
@@ -533,27 +532,20 @@ describe('Session message route hydration', () => {
       memberLabel: 'Alpha',
     } satisfies ParticipantRecipientV1);
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
-    expect(recipientChipSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targets: expect.arrayContaining([
-          expect.objectContaining({
-            key: 'agent_team_member:team-1:alpha@team-1',
-            recipient: expect.objectContaining({
-              kind: 'agent_team_member',
-              teamId: 'team-1',
-              memberId: 'alpha@team-1',
-              memberLabel: 'Alpha',
-            }),
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
+    expect(screen.findByTestId('agent-input-recipient-chip')?.props.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'agent_team_member:team-1:alpha@team-1',
+          recipient: expect.objectContaining({
+            kind: 'agent_team_member',
+            teamId: 'team-1',
+            memberId: 'alpha@team-1',
+            memberLabel: 'Alpha',
           }),
-        ]),
-      }),
+        }),
+      ]),
     );
   });
 
@@ -581,12 +573,7 @@ describe('Session message route hydration', () => {
     ]);
     deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(null);
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(MessageScreen));
-      await Promise.resolve();
-    });
-
-    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(0);
+    const screen = await renderMessageScreen(MessageScreen);
+    expect(screen.findAllByTestId('session-composer-input')).toHaveLength(0);
   });
 });

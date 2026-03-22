@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,21 +15,25 @@ const sessionReadLogTailMock = vi.fn(async (_sessionId?: string, _options?: unkn
 let devModeEnabled = false;
 let sessionLogPath: string | null = null;
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: 'session-1' }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        params: { id: 'session-1' },
+    });
+    return routerMock.module;
+});
 
 vi.mock('react-native', async () => {
-    const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        Platform: {
-            ...rn.Platform,
-            OS: 'ios',
-            select: (spec: Record<string, unknown>) =>
-                spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'ios',
+                                                select: (spec: Record<string, unknown>) =>
+                                                        spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+                                            },
+                                        }
+    );
 });
 
 vi.mock('@expo/vector-icons', async () => {
@@ -51,7 +57,9 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: { code: string }) => React.createElement('CodeView', { code }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSession: () =>
         sessionLogPath
             ? {
@@ -64,15 +72,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
     useLocalSetting: (name: string) => (name === 'devModeEnabled' ? devModeEnabled : null),
     useIsDataReady: () => true,
-}));
+});
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionReadLogTail: (sessionId: string, options?: unknown) => sessionReadLogTailMock(sessionId, options),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 describe('Session log screen', () => {
     beforeEach(() => {
@@ -84,9 +94,7 @@ describe('Session log screen', () => {
     it('does not fetch log tail when developer mode is disabled', async () => {
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
-        await act(async () => {
-            renderer.create(React.createElement(SessionLogScreen));
-        });
+        await renderScreen(React.createElement(SessionLogScreen));
 
         expect(sessionReadLogTailMock).not.toHaveBeenCalled();
     });
@@ -96,9 +104,7 @@ describe('Session log screen', () => {
         sessionLogPath = '/tmp/.happier/logs/session.log';
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
-        await act(async () => {
-            renderer.create(React.createElement(SessionLogScreen));
-        });
+        await renderScreen(React.createElement(SessionLogScreen));
 
         expect(sessionReadLogTailMock).toHaveBeenCalledWith('session-1', { maxBytes: 200000 });
     });

@@ -1,43 +1,60 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockShaParam = '';
 const routerReplaceSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
+const routerMock = createCommitRouteRouterMock();
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({
-        id: 'session-1',
-        sha: mockShaParam,
-    }),
-    useRouter: () => ({
-        back: vi.fn(),
-        push: vi.fn(),
-        replace: routerReplaceSpy,
-    }),
-}));
-
-vi.mock('react-native', async () => {
-    const actual = await vi.importActual<typeof import('react-native')>('react-native');
-    return {
-        ...actual,
-        Platform: { ...actual.Platform, OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? null },
-        View: (props: any) => React.createElement('View', props, props.children),
-        useWindowDimensions: () => ({
-            width: 1400,
-            height: 900,
-            scale: 1,
-            fontScale: 1,
+function createCommitRouteRouterMock() {
+    return createExpoRouterMock({
+        router: {
+            back: vi.fn(),
+            push: vi.fn(),
+            replace: routerReplaceSpy,
+        },
+        params: () => ({
+            id: 'session-1',
+            sha: mockShaParam,
         }),
-    };
+    });
+}
+
+vi.mock('expo-router', async () => {
+    return routerMock.module;
 });
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'ios',
+                                                select: (value: any) => value?.ios ?? value?.default ?? null,
+                                            },
+                                            View: (props: any) => React.createElement('View', props, props.children),
+                                            useWindowDimensions: () => ({
+                                                    width: 1400,
+                                                    height: 900,
+                                                    scale: 1,
+                                                    fontScale: 1,
+                                                }),
+                                        }
+    );
+});
+
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useLocalSetting: () => false,
-}));
+});
+});
 
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/utils/platform/responsive')>();
@@ -77,13 +94,12 @@ describe('CommitScreen native route fallback', () => {
         vi.resetModules();
         const { default: CommitScreen } = await import('@/app/(app)/session/[id]/commit');
         mockShaParam = '';
+        routerMock.state.params = { id: 'session-1', sha: mockShaParam };
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            act(() => {
-                tree = renderer.create(React.createElement(CommitScreen));
-            });
+            tree = (await renderScreen(React.createElement(CommitScreen))).tree;
             await act(async () => {
                 await new Promise((r) => setTimeout(r, 0));
             });
@@ -102,14 +118,12 @@ describe('CommitScreen native route fallback', () => {
         vi.resetModules();
         const { default: CommitScreen } = await import('@/app/(app)/session/[id]/commit');
         mockShaParam = 'abc123';
+        routerMock.state.params = { id: 'session-1', sha: mockShaParam };
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
         let tree: renderer.ReactTestRenderer | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(React.createElement(CommitScreen));
-                await Promise.resolve();
-            });
+            tree = (await renderScreen(React.createElement(CommitScreen))).tree;
 
             expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
             expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
@@ -119,6 +133,7 @@ describe('CommitScreen native route fallback', () => {
             });
 
             mockShaParam = 'def456';
+            routerMock.state.params = { id: 'session-1', sha: mockShaParam };
 
             await act(async () => {
                 tree!.update(React.createElement(CommitScreen));

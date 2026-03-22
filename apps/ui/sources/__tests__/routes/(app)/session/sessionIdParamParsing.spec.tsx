@@ -1,26 +1,39 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { renderScreen } from '@/dev/testkit';
+
 
 type SearchParams = { id?: string; jumpSeq?: string };
 let searchParams: SearchParams = {};
 const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve());
 let hydrateReady = true;
+const routerMock = createSessionRouterMock();
+
+function createSessionRouterMock() {
+    return createExpoRouterMock({
+        params: () => searchParams,
+    });
+}
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        View: (props: any) => React.createElement('View', props, props.children),
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                    Platform: {
+                        OS: 'web',
+                    },
+                    View: (props: any) => React.createElement('View', props, props.children),
+                }
+    );
 });
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => searchParams,
-}));
+vi.mock('expo-router', async () => {
+    return routerMock.module;
+});
 
 vi.mock('@react-navigation/native', () => ({
     useRoute: () => {
@@ -43,12 +56,11 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
 }));
 
 async function renderSessionScreenTree() {
+    routerMock.state.params = searchParams;
     const Screen = (await import('@/app/(app)/session/[id]')).default;
 
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        tree = renderer.create(React.createElement(Screen));
-    });
+    tree = (await renderScreen(React.createElement(Screen))).tree;
     await act(async () => {
         await Promise.resolve();
     });
