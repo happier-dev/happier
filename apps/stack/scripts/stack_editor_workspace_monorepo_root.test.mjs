@@ -5,16 +5,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
+import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
 import { writeStackCodeWorkspace } from './utils/stack/editor_workspace.mjs';
-
-async function createMonorepoCheckout(rootDir) {
-  await mkdir(join(rootDir, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(rootDir, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(rootDir, 'apps', 'server'), { recursive: true });
-  await writeFile(join(rootDir, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(rootDir, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(rootDir, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-}
 
 async function withStackEnvDirectories(tmp, callback) {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -22,18 +15,15 @@ async function withStackEnvDirectories(tmp, callback) {
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
 
-  const prevStorage = process.env.HAPPIER_STACK_STORAGE_DIR;
-  const prevHome = process.env.HAPPIER_STACK_HOME_DIR;
-  process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
-  process.env.HAPPIER_STACK_HOME_DIR = homeDir;
+  const restore = withPatchedProcessEnv(null, {
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+  });
 
   try {
     await callback({ rootDir, storageDir });
   } finally {
-    if (prevStorage == null) delete process.env.HAPPIER_STACK_STORAGE_DIR;
-    else process.env.HAPPIER_STACK_STORAGE_DIR = prevStorage;
-    if (prevHome == null) delete process.env.HAPPIER_STACK_HOME_DIR;
-    else process.env.HAPPIER_STACK_HOME_DIR = prevHome;
+    restore();
   }
 }
 
@@ -46,7 +36,7 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
   await withStackEnvDirectories(tmp, async ({ rootDir, storageDir }) => {
     const stackName = 'exp-test';
     const monoRoot = join(tmp, 'mono');
-    await createMonorepoCheckout(monoRoot);
+    await ensureMinimalMonorepoLayout(monoRoot);
 
     const envPath = join(storageDir, stackName, 'env');
     await mkdir(dirname(envPath), { recursive: true });
@@ -78,7 +68,7 @@ test('stack code workspace normalizes nested monorepo package path to monorepo r
   await withStackEnvDirectories(tmp, async ({ rootDir, storageDir }) => {
     const stackName = 'exp-subdir';
     const monoRoot = join(tmp, 'mono');
-    await createMonorepoCheckout(monoRoot);
+    await ensureMinimalMonorepoLayout(monoRoot);
 
     const envPath = join(storageDir, stackName, 'env');
     await mkdir(dirname(envPath), { recursive: true });

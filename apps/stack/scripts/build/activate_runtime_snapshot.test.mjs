@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 
 import { activateRuntimeSnapshot } from './activate_runtime_snapshot.mjs';
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { writeRuntimeSnapshotLayout } from '../testkit/core/runtime_snapshot_layout.mjs';
 
 function createSourceMetadata() {
   return {
@@ -53,40 +54,29 @@ async function createArtifact(rootDir, component, files) {
 }
 
 async function createSnapshotPayload(stackBaseDir, snapshotId, filesByComponent, createdAt = '2026-03-07T12:00:00.000Z') {
-  const snapshotDir = join(stackBaseDir, 'runtime', 'builds', snapshotId);
-  for (const [componentDir, files] of Object.entries(filesByComponent)) {
-    for (const [relativePath, content] of Object.entries(files)) {
-      const targetPath = join(snapshotDir, componentDir, relativePath);
-      await mkdir(join(targetPath, '..'), { recursive: true });
-      await writeFile(targetPath, content);
-    }
-  }
-  await writeFile(
-    join(snapshotDir, 'manifest.json'),
-    JSON.stringify({
-      version: 1,
-      snapshotId,
-      sourceFingerprint: 'source-fingerprint',
-      createdAt,
-      source: createSourceMetadata(),
-      components: {
-        web: { artifactFingerprint: 'web-old', entrypoint: 'ui/index.html' },
-        server: { artifactFingerprint: 'server-old', entrypoint: 'server/happier-server' },
-        daemon: { artifactFingerprint: 'daemon-old', entrypoint: 'cli/happier' },
-      },
-    }, null, 2) + '\n',
-    'utf8',
-  );
-  await writeFile(
-    join(stackBaseDir, 'runtime', 'current.json'),
-    JSON.stringify({
-      version: 1,
-      snapshotId,
-      snapshotPath: snapshotDir,
-      sourceFingerprint: 'source-fingerprint',
-    }, null, 2) + '\n',
-    'utf8',
-  );
+  const { snapshotDir } = await writeRuntimeSnapshotLayout({
+    stackDir: stackBaseDir,
+    snapshotId,
+    sourceFingerprint: 'source-fingerprint',
+    createdAt,
+    writeCurrentMirror: true,
+    source: createSourceMetadata(),
+    web: {
+      content: filesByComponent.ui?.['index.html'] ?? '<html></html>',
+      artifactFingerprint: 'web-old',
+    },
+    server: {
+      content: filesByComponent.server?.['happier-server'] ?? '#!/bin/sh\necho old server\n',
+      artifactFingerprint: 'server-old',
+    },
+    daemon: {
+      content: filesByComponent.cli?.['happier'] ?? '#!/bin/sh\necho old daemon\n',
+      artifactFingerprint: 'daemon-old',
+      nodeEntrypoint: 'cli/package-dist/index.mjs',
+      nodeContent: filesByComponent.cli?.['package-dist/index.mjs'] ?? "console.log('old daemon');\n",
+    },
+  });
+  return snapshotDir;
 }
 
 test('activateRuntimeSnapshot assembles a complete runtime and updates current.json', async () => {

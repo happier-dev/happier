@@ -1,22 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('close', (code, signal) => resolve({ code: code ?? (signal ? 128 : 0), signal, stdout, stderr }));
-  });
-}
+import { buildStackHarnessEnv, writeFakeBin } from '../scripts/testkit/core/fake_bin_harness.mjs';
+import { ensureMinimalMonorepoLayout } from '../scripts/testkit/core/minimal_monorepo_layout.mjs';
+import { runNodeCapture } from '../scripts/testkit/core/run_node_capture.mjs';
+import { createTempFixture } from '../scripts/testkit/core/temp_fixture.mjs';
 
 async function writeYarnOkPackage({ dir, name, scriptOutput }) {
   await mkdir(join(dir, 'node_modules'), { recursive: true });
@@ -41,24 +32,12 @@ async function writeYarnOkPackage({ dir, name, scriptOutput }) {
   await writeFile(join(dir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 }
 
-async function ensureMinimalHappierMonorepo({ monoRoot }) {
-  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
-  await writeYarnOkPackage({ dir: monoRoot, name: 'monorepo', scriptOutput: 'ROOT_TEST_RUN' });
-  await writeYarnOkPackage({ dir: join(monoRoot, 'apps', 'ui'), name: 'happier-ui', scriptOutput: 'UI_TEST_RUN' });
-  await writeYarnOkPackage({ dir: join(monoRoot, 'apps', 'cli'), name: 'happier-cli', scriptOutput: 'CLI_TEST_RUN' });
-  await writeYarnOkPackage({ dir: join(monoRoot, 'apps', 'server'), name: 'happier-server', scriptOutput: 'SERVER_TEST_RUN' });
-}
-
 async function makeFakeYarn({ sandboxDir }) {
-  const binDir = join(sandboxDir, 'bin');
   const logPath = join(sandboxDir, 'fake-yarn.log');
-  const yarnPath = join(binDir, 'yarn');
-  await mkdir(binDir, { recursive: true });
-  await writeFile(
-    yarnPath,
-    [
+  const { binDir } = writeFakeBin({
+    root: sandboxDir,
+    name: 'yarn',
+    content: [
       '#!/bin/sh',
       'set -eu',
       'if [ -n "${HSTACK_FAKE_YARN_LOG:-}" ]; then',
@@ -70,30 +49,33 @@ async function makeFakeYarn({ sandboxDir }) {
       'exit 0',
       '',
     ].join('\n'),
-    'utf-8'
-  );
-  await chmod(yarnPath, 0o755);
+  });
   return { binDir, logPath };
 }
 
 async function runStackTestWrapperScenario({ expectedTarget, expectedTestOutput, repoRoot, sandbox, targetArg }) {
   const monoRoot = join(sandbox, 'mono');
-  await ensureMinimalHappierMonorepo({ monoRoot });
+  const { uiDir, cliDir, serverDir } = await ensureMinimalMonorepoLayout(monoRoot);
+  await writeYarnOkPackage({ dir: monoRoot, name: 'monorepo', scriptOutput: 'ROOT_TEST_RUN' });
+  await writeYarnOkPackage({ dir: uiDir, name: 'happier-ui', scriptOutput: 'UI_TEST_RUN' });
+  await writeYarnOkPackage({ dir: cliDir, name: 'happier-cli', scriptOutput: 'CLI_TEST_RUN' });
+  await writeYarnOkPackage({ dir: serverDir, name: 'happier-server', scriptOutput: 'SERVER_TEST_RUN' });
   const fakeYarn = await makeFakeYarn({ sandboxDir: sandbox });
 
   const stackEnvPath = join(sandbox, 'storage', 'main', 'env');
   await mkdir(dirname(stackEnvPath), { recursive: true });
   await writeFile(stackEnvPath, `HAPPIER_STACK_REPO_DIR=${monoRoot}\n`, 'utf-8');
 
-  const env = {
-    ...process.env,
-    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    HAPPIER_STACK_UPDATE_CHECK: '0',
-    PATH: `${fakeYarn.binDir}${delimiter}${process.env.PATH ?? ''}`,
-    HSTACK_FAKE_YARN_LOG: fakeYarn.logPath,
-  };
+  const env = buildStackHarnessEnv({
+    binDirs: [fakeYarn.binDir],
+    extraEnv: {
+      HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+      HAPPIER_STACK_UPDATE_CHECK: '0',
+      HSTACK_FAKE_YARN_LOG: fakeYarn.logPath,
+    },
+  });
   const args = [targetArg].filter(Boolean);
-  const res = await runNode([hstackBinPath(repoRoot), '--sandbox-dir', sandbox, 'stack', 'test', 'main', ...args, '--json'], {
+  const res = await runNodeCapture([hstackBinPath(repoRoot), '--sandbox-dir', sandbox, 'stack', 'test', 'main', ...args, '--json'], {
     cwd: repoRoot,
     env,
   });
@@ -113,36 +95,28 @@ function hstackBinPath(repoRoot) {
   return join(repoRoot, 'apps', 'stack', 'bin', 'hstack.mjs');
 }
 
-test('hstack stack test <name> runs test_cmd under stack env and keeps stdout JSON-only', async () => {
+test('hstack stack test <name> runs test_cmd under stack env and keeps stdout JSON-only', async (t) => {
   const testDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = join(testDir, '..', '..', '..');
-  const sandbox = await mkdtemp(join(tmpdir(), 'hstack-sandbox-'));
-  try {
-    await runStackTestWrapperScenario({
-      expectedTarget: 'cli',
-      expectedTestOutput: 'CLI_TEST_RUN',
-      repoRoot,
-      sandbox,
-      targetArg: 'cli',
-    });
-  } finally {
-    await rm(sandbox, { recursive: true, force: true });
-  }
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sandbox-' });
+  await runStackTestWrapperScenario({
+    expectedTarget: 'cli',
+    expectedTestOutput: 'CLI_TEST_RUN',
+    repoRoot,
+    sandbox: fixture.root,
+    targetArg: 'cli',
+  });
 });
 
-test('hstack stack test <name> forwards alternate target to test_cmd wrapper', async () => {
+test('hstack stack test <name> forwards alternate target to test_cmd wrapper', async (t) => {
   const testDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = join(testDir, '..', '..', '..');
-  const sandbox = await mkdtemp(join(tmpdir(), 'hstack-sandbox-'));
-  try {
-    await runStackTestWrapperScenario({
-      expectedTarget: 'ui',
-      expectedTestOutput: 'ROOT_TEST_RUN',
-      repoRoot,
-      sandbox,
-      targetArg: 'ui',
-    });
-  } finally {
-    await rm(sandbox, { recursive: true, force: true });
-  }
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sandbox-' });
+  await runStackTestWrapperScenario({
+    expectedTarget: 'ui',
+    expectedTestOutput: 'ROOT_TEST_RUN',
+    repoRoot,
+    sandbox: fixture.root,
+    targetArg: 'ui',
+  });
 });

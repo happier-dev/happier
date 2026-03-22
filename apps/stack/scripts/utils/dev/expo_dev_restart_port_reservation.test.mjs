@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import net from 'node:net';
 
 import { ensureDevExpoServer } from './expo_dev.mjs';
 import { getExpoStatePaths, writePidState } from '../expo/expo.mjs';
+import { spawnDetachedInlineNodeTestProcess, spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 function listenEphemeralPort() {
   return new Promise((resolve, reject) => {
@@ -89,11 +89,9 @@ test('ensureDevExpoServer does not reserve prior metro port when restart cannot 
     );
     await chmod(expoBin, 0o755);
 
-    const foreign = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      detached: true,
+    const foreign = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
       stdio: 'ignore',
     });
-    foreign.unref();
     foreignPid = foreign.pid;
 
     const priorPort = await listenEphemeralPort();
@@ -390,7 +388,7 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
 
     // Spawn a process that (1) holds the port and (2) carries the same Expo isolation env marker,
     // so ensureDevExpoServer can identify and stop it without bumping the stable port.
-    const holder = spawn(
+    const holder = spawnDetachedTestProcess(
       process.execPath,
       [
         '-e',
@@ -403,7 +401,6 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
         ].join(''),
       ],
       {
-        detached: true,
         stdio: 'ignore',
         env: {
           ...process.env,
@@ -414,7 +411,6 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
         },
       }
     );
-    holder.unref();
     holderPid = holder.pid;
 
     const envPath = join(tmp, 'stack.env');

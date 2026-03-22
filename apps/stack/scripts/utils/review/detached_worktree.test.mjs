@@ -3,23 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildGitIdentityEnv } from '../../testkit/core/env_scope.mjs';
 import { run, runCapture } from '../proc/proc.mjs';
 import { computeDetachedWorktreeDir, withDetachedWorktree } from './detached_worktree.mjs';
-
-function gitEnv() {
-  const clean = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('HAPPIER_STACK_')) continue;
-    clean[k] = v;
-  }
-  return {
-    ...clean,
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.com',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.com',
-  };
-}
 
 test('computeDetachedWorktreeDir includes nonce to avoid collisions', () => {
   const dir1 = computeDetachedWorktreeDir({ repoRootDir: '/repo', label: 'coderabbit-1-of-21', headCommit: 'abcdef0123456789', nonce: 'n1' });
@@ -31,7 +17,7 @@ test('computeDetachedWorktreeDir includes nonce to avoid collisions', () => {
 
 test('withDetachedWorktree can be called repeatedly without directory collisions', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'happy-review-wt-'));
-  const env = gitEnv();
+  const env = buildGitIdentityEnv();
 
   try {
     await run('git', ['init', '-q'], { cwd: repo, env });

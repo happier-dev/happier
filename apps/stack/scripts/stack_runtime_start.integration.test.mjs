@@ -17,7 +17,7 @@ function stackRootDirFromMeta(metaUrl) {
 
 test('hstack stack start --runtime --background launches the active runtime snapshot', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-prod', serverPort: 4315 });
+  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-prod' });
 
   const env = {
     ...process.env,

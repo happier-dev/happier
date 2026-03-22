@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { cmdService } from './stack/delegated_script_commands.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -34,15 +35,9 @@ test('hstack stack service passes through service subcommand flags', async (t) =
     'utf-8',
   );
 
-  const previousStorage = process.env.HAPPIER_STACK_STORAGE_DIR;
-  const previousOutput = process.env.HAPPIER_TEST_OUTPUT_PATH;
-  process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
-  process.env.HAPPIER_TEST_OUTPUT_PATH = outputPath;
-  t.after(() => {
-    if (previousStorage == null) delete process.env.HAPPIER_STACK_STORAGE_DIR;
-    else process.env.HAPPIER_STACK_STORAGE_DIR = previousStorage;
-    if (previousOutput == null) delete process.env.HAPPIER_TEST_OUTPUT_PATH;
-    else process.env.HAPPIER_TEST_OUTPUT_PATH = previousOutput;
+  withPatchedProcessEnv(t, {
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_TEST_OUTPUT_PATH: outputPath,
   });
 
   await cmdService({ rootDir: commandRoot, stackName, svcCmd: 'status', args: ['--help'] });

@@ -1,27 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
+import { createHappierCliMonorepoFixture } from './testkit/happier_cli_monorepo_testkit.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
-async function createMonorepoFixture({ prefix }) {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
-  const cliDistDir = join(dir, 'apps', 'cli', 'dist');
-  await mkdir(cliDistDir, { recursive: true });
-  await mkdir(join(dir, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(dir, 'apps', 'server'), { recursive: true });
-
-  await writeFile(join(dir, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(dir, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(dir, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-
-  await writeFile(
-    join(cliDistDir, 'index.mjs'),
-    [
+async function createMonorepoFixture(t, { prefix }) {
+  return createHappierCliMonorepoFixture(t, {
+    prefix,
+    distIndexScript: [
       "// Parse --server-url from argv",
       "let serverUrlFromArg = null;",
       "for (let i = 0; i < process.argv.length; i++) {",
@@ -45,15 +35,7 @@ async function createMonorepoFixture({ prefix }) {
       "}));",
       '',
     ].join('\n'),
-    'utf-8',
-  );
-
-  return {
-    dir,
-    async cleanup() {
-      await rm(dir, { recursive: true, force: true });
-    },
-  };
+  });
 }
 
 function stackRootDirFromMeta(metaUrl) {
@@ -61,9 +43,9 @@ function stackRootDirFromMeta(metaUrl) {
   return dirname(scriptsDir);
 }
 
-test('hstack happier defaults serverUrl/webappUrl from existing CLI settings (no localServerUrl)', async () => {
+test('hstack happier defaults serverUrl/webappUrl from existing CLI settings (no localServerUrl)', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-settings-defaults-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-settings-defaults-' });
 
   const homeDir = join(fixture.dir, '.happy-home');
   await mkdir(homeDir, { recursive: true });
@@ -100,23 +82,19 @@ test('hstack happier defaults serverUrl/webappUrl from existing CLI settings (no
   delete env.HAPPIER_LOCAL_SERVER_URL;
   delete env.HAPPIER_WEBAPP_URL;
 
-  try {
-    const res = await runNodeCapture([hstackBinPath(rootDir), 'happier'], { cwd: rootDir, env });
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.serverUrl, 'http://localhost:53288');
-    assert.equal(parsed.webappUrl, 'http://happier.example.localhost:19364');
-    assert.equal(parsed.publicServerUrl, null);
-    assert.equal(parsed.localServerUrl, null);
-    assert.equal(parsed.homeDir, homeDir);
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture([hstackBinPath(rootDir), 'happier'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.serverUrl, 'http://localhost:53288');
+  assert.equal(parsed.webappUrl, 'http://happier.example.localhost:19364');
+  assert.equal(parsed.publicServerUrl, null);
+  assert.equal(parsed.localServerUrl, null);
+  assert.equal(parsed.homeDir, homeDir);
 });
 
-test('hstack happier defaults serverUrl via localServerUrl when present in settings', async () => {
+test('hstack happier defaults serverUrl via localServerUrl when present in settings', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-settings-local-defaults-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-settings-local-defaults-' });
 
   const homeDir = join(fixture.dir, '.happy-home');
   await mkdir(homeDir, { recursive: true });
@@ -154,22 +132,18 @@ test('hstack happier defaults serverUrl via localServerUrl when present in setti
   delete env.HAPPIER_LOCAL_SERVER_URL;
   delete env.HAPPIER_WEBAPP_URL;
 
-  try {
-    const res = await runNodeCapture([hstackBinPath(rootDir), 'happier'], { cwd: rootDir, env });
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.publicServerUrl, 'https://public.example.test');
-    assert.equal(parsed.localServerUrl, 'http://127.0.0.1:53288');
-    assert.equal(parsed.serverUrl, 'http://127.0.0.1:53288');
-    assert.equal(parsed.webappUrl, 'https://app.example.test');
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture([hstackBinPath(rootDir), 'happier'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.publicServerUrl, 'https://public.example.test');
+  assert.equal(parsed.localServerUrl, 'http://127.0.0.1:53288');
+  assert.equal(parsed.serverUrl, 'http://127.0.0.1:53288');
+  assert.equal(parsed.webappUrl, 'https://app.example.test');
 });
 
-test('hstack happier treats non-prefix --server as explicit server selection', async () => {
+test('hstack happier treats non-prefix --server as explicit server selection', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-subcommand-server-flag-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-subcommand-server-flag-' });
 
   const homeDir = join(fixture.dir, '.happy-home');
   await mkdir(homeDir, { recursive: true });
@@ -207,24 +181,20 @@ test('hstack happier treats non-prefix --server as explicit server selection', a
   delete env.HAPPIER_WEBAPP_URL;
   delete env.HAPPIER_ACTIVE_SERVER_ID;
 
-  try {
-    const res = await runNodeCapture(
-      [hstackBinPath(rootDir), 'happier', 'doctor', '--server', 'example'],
-      { cwd: rootDir, env },
-    );
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.serverUrl, null, 'serverUrl should not use stack defaults when --server is explicit');
-    assert.equal(parsed.webappUrl, null, 'webappUrl should not use stack defaults when --server is explicit');
-    assert.equal(parsed.activeServerId, null, 'activeServerId should be cleared when --server is explicit');
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture(
+    [hstackBinPath(rootDir), 'happier', 'doctor', '--server', 'example'],
+    { cwd: rootDir, env },
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.serverUrl, null, 'serverUrl should not use stack defaults when --server is explicit');
+  assert.equal(parsed.webappUrl, null, 'webappUrl should not use stack defaults when --server is explicit');
+  assert.equal(parsed.activeServerId, null, 'activeServerId should be cleared when --server is explicit');
 });
 
-test('hstack happier honors explicit --server-url even when other top-level flags appear first', async () => {
+test('hstack happier honors explicit --server-url even when other top-level flags appear first', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-server-url-after-json-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-server-url-after-json-' });
 
   const homeDir = join(fixture.dir, '.happy-home');
   await mkdir(homeDir, { recursive: true });
@@ -262,29 +232,23 @@ test('hstack happier honors explicit --server-url even when other top-level flag
   delete env.HAPPIER_WEBAPP_URL;
   delete env.HAPPIER_ACTIVE_SERVER_ID;
 
-  try {
-    const res = await runNodeCapture(
-      [hstackBinPath(rootDir), 'happier', '--json', '--server-url=https://override.example'],
-      { cwd: rootDir, env },
-    );
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    // The explicit --server-url should override the settings default
-    assert.equal(parsed.serverUrl, 'https://override.example', 'serverUrl should use explicit --server-url override');
-    // The activeServerId should be derived from the override URL, not the stack default
-    assert.notEqual(
-      parsed.activeServerId,
-      buildStackStableScopeId({ stackName: 'test-stack', cliIdentity: 'default' }),
-      'activeServerId should not use stack-stable id when explicit server is selected',
-    );
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture(
+    [hstackBinPath(rootDir), 'happier', '--json', '--server-url=https://override.example'],
+    { cwd: rootDir, env },
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.serverUrl, 'https://override.example', 'serverUrl should use explicit --server-url override');
+  assert.notEqual(
+    parsed.activeServerId,
+    buildStackStableScopeId({ stackName: 'test-stack', cliIdentity: 'default' }),
+    'activeServerId should not use stack-stable id when explicit server is selected',
+  );
 });
 
-test('hstack happier honors explicit --server-url after a forwarded subcommand', async () => {
+test('hstack happier honors explicit --server-url after a forwarded subcommand', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-server-url-after-subcommand-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-server-url-after-subcommand-' });
 
   const homeDir = join(fixture.dir, '.happy-home');
   await mkdir(homeDir, { recursive: true });
@@ -322,27 +286,23 @@ test('hstack happier honors explicit --server-url after a forwarded subcommand',
   delete env.HAPPIER_WEBAPP_URL;
   delete env.HAPPIER_ACTIVE_SERVER_ID;
 
-  try {
-    const res = await runNodeCapture(
-      [hstackBinPath(rootDir), 'happier', 'auth', 'login', '--server-url=https://override.example'],
-      { cwd: rootDir, env },
-    );
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.serverUrl, 'https://override.example', 'serverUrl should use explicit --server-url override');
-    assert.notEqual(
-      parsed.activeServerId,
-      buildStackStableScopeId({ stackName: 'test-stack', cliIdentity: 'default' }),
-      'activeServerId should not use stack-stable id when explicit server is selected',
-    );
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture(
+    [hstackBinPath(rootDir), 'happier', 'auth', 'login', '--server-url=https://override.example'],
+    { cwd: rootDir, env },
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.serverUrl, 'https://override.example', 'serverUrl should use explicit --server-url override');
+  assert.notEqual(
+    parsed.activeServerId,
+    buildStackStableScopeId({ stackName: 'test-stack', cliIdentity: 'default' }),
+    'activeServerId should not use stack-stable id when explicit server is selected',
+  );
 });
 
-test('hstack happier treats auth subcommand --server as explicit server selection', async () => {
+test('hstack happier treats auth subcommand --server as explicit server selection', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createMonorepoFixture({ prefix: 'hstack-happier-auth-server-subcommand-' });
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-auth-server-subcommand-' });
 
   const homeDir = join(fixture.dir, '.happy-home');
   await mkdir(homeDir, { recursive: true });
@@ -380,17 +340,13 @@ test('hstack happier treats auth subcommand --server as explicit server selectio
   delete env.HAPPIER_WEBAPP_URL;
   delete env.HAPPIER_ACTIVE_SERVER_ID;
 
-  try {
-    const res = await runNodeCapture(
-      [hstackBinPath(rootDir), 'happier', 'auth', 'login', '--server', 'example'],
-      { cwd: rootDir, env },
-    );
-    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.serverUrl, null, 'serverUrl should not use stack defaults when auth forwards --server');
-    assert.equal(parsed.webappUrl, null, 'webappUrl should not use stack defaults when auth forwards --server');
-    assert.equal(parsed.activeServerId, null, 'activeServerId should be cleared when auth forwards explicit --server');
-  } finally {
-    await fixture.cleanup();
-  }
+  const res = await runNodeCapture(
+    [hstackBinPath(rootDir), 'happier', 'auth', 'login', '--server', 'example'],
+    { cwd: rootDir, env },
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  assert.equal(parsed.serverUrl, null, 'serverUrl should not use stack defaults when auth forwards --server');
+  assert.equal(parsed.webappUrl, null, 'webappUrl should not use stack defaults when auth forwards --server');
+  assert.equal(parsed.activeServerId, null, 'activeServerId should be cleared when auth forwards explicit --server');
 });

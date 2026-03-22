@@ -2,21 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { stopLocalDaemon } from './daemon.mjs';
+import { spawnDetachedTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 
 async function writeStubHappyCli({ cliDir }) {
-  await mkdir(join(cliDir, 'bin'), { recursive: true });
-  await mkdir(join(cliDir, 'dist'), { recursive: true });
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
-  // Ensure stopLocalDaemon launches via dist entrypoint (preferred).
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), 'process.exit(0);\n', 'utf-8');
-
   const script = `
 import { writeFileSync } from 'node:fs';
 
@@ -30,15 +24,20 @@ if (args[0] === 'daemon' && args[1] === 'stop') {
 }
 process.exit(0);
 `.trimStart();
-
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), script, 'utf-8');
-  return join(cliDir, 'bin', 'happier.mjs');
+  const monoRoot = join(cliDir, '..', '..');
+  const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    packageJsonContent: '{}\n',
+    distIndexScript: script,
+    // Ensure stopLocalDaemon launches via dist entrypoint (preferred).
+    binHappierScript: 'process.exit(0);\n',
+  });
+  return join(cliBinDir, 'happier.mjs');
 }
 
 async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
   const logDir = join(cliHomeDir, 'logs');
   await mkdir(logDir, { recursive: true });
-  const child = spawn(
+  const child = spawnDetachedTestProcess(
     process.execPath,
     [
       '-e',
@@ -47,7 +46,6 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
       'start-sync',
     ],
     {
-      detached: true,
       stdio: 'ignore',
       env: {
         ...process.env,
@@ -56,7 +54,6 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
       },
     },
   );
-  child.unref();
   return child.pid;
 }
 

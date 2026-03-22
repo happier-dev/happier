@@ -1,11 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createTempFixtureSync } from '../../scripts/testkit/core/temp_fixture.mjs';
 
 export function createTempDir(t, prefix) {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  t.after(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-  return dir;
+  return createTempFixtureSync(t, { prefix }).root;
 }

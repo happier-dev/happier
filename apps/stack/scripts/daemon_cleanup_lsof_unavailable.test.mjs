@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { cleanupStaleDaemonState } from './daemon.mjs';
+import { spawnDetachedTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 
 async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
   const logDir = join(cliHomeDir, 'logs');
   await mkdir(logDir, { recursive: true });
-  const child = spawn(
+  const child = spawnDetachedTestProcess(
     process.execPath,
     [
       '-e',
@@ -21,7 +21,6 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
       'start-sync',
     ],
     {
-      detached: true,
       stdio: 'ignore',
       env: {
         ...process.env,
@@ -31,7 +30,6 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
       },
     },
   );
-  child.unref();
   return child.pid;
 }
 
@@ -112,4 +110,3 @@ test('cleanupStaleDaemonState removes lock/state when daemon is not running', as
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

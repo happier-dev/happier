@@ -1,22 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolvePromise, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolvePromise({ code: code ?? (signal ? 1 : 0), signal, stdout, stderr }));
-  });
-}
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 
 test('repo cli activate configures init with cli-root-dir pointing at this checkout', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -51,4 +39,3 @@ test('repo cli activate configures init with cli-root-dir pointing at this check
     rmSync(canonicalHomeDir, { recursive: true, force: true });
   }
 });
-
