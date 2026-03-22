@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,42 +12,43 @@ const updatePromptDocMock = vi.hoisted(() => vi.fn(async () => undefined));
 const updateSkillPromptBundleMock = vi.hoisted(() => vi.fn(async () => undefined));
 const setPromptFoldersMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-  View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                            },
+                                        }
+    );
+});
 
-vi.mock('expo-router', () => ({
-  Stack: { Screen: 'StackScreen' },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (factory: any) => factory({
-      colors: {
-        groupped: { background: '#fff' },
-        accent: { blue: '#00f', indigo: '#60f' },
-      },
-    }),
-  },
-  useUnistyles: () => ({
-    theme: {
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+        theme: {
       colors: {
         accent: { blue: '#00f', indigo: '#60f' },
       },
     },
-  }),
-}));
+    });
+});
 
-vi.mock('@/text', () => ({
-  t: (key: string, params?: any) => {
-    if (key === 'promptLibrary.folderUsageCount') return `${params?.count ?? 0} items`;
-    return key;
-  },
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 960 },
@@ -67,12 +70,15 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
   ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
-vi.mock('@/modal', () => ({
-  Modal: {
-    prompt: promptModalMock,
-    confirm: confirmModalMock,
-  },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            prompt: promptModalMock,
+            confirm: confirmModalMock,
+        },
+    }).module;
+});
 
 vi.mock('@/platform/randomUUID', () => ({
   randomUUID: () => 'folder-2',
@@ -109,9 +115,11 @@ const artifactsState = vi.hoisted(() => ({
   ],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  useArtifacts: () => artifactsState.value,
-  useSettingMutable: (key: string) => {
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useArtifacts: () => artifactsState.value,
+    useSettingMutable: (key: string) => {
     if (key === 'promptFoldersV1') {
       return [{
         v: 1,
@@ -120,12 +128,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
     }
     return [null, vi.fn()];
   },
-  storage: {
+    storage: {
     getState: () => ({
       updateArtifact: vi.fn(),
     }),
   },
-}));
+});
+});
 
 describe('PromptFoldersScreen', () => {
   beforeEach(() => {
@@ -153,14 +162,9 @@ describe('PromptFoldersScreen', () => {
     promptModalMock.mockResolvedValueOnce('Release' as string | null);
     const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<PromptFoldersScreen />);
-    });
+    const screen = await renderScreen(<PromptFoldersScreen />);
 
-    await act(async () => {
-      tree.root.findByProps({ testID: 'promptFolders.add' }).props.onPress();
-    });
+    await screen.pressByTestIdAsync('promptFolders.add');
 
     expect(setPromptFoldersMock).toHaveBeenCalledWith({
       v: 1,
@@ -174,16 +178,15 @@ describe('PromptFoldersScreen', () => {
   it('removes folder assignments from linked docs before deleting the folder', async () => {
     const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<PromptFoldersScreen />);
-    });
+    const screen = await renderScreen(<PromptFoldersScreen />);
 
-    const rowActions = tree.root.findByType('ItemRowActions');
-    const deleteAction = rowActions.props.actions.find((action: any) => action.id === 'delete');
+    const rowActions = findTestInstanceByTypeWithProps(screen.tree, 'ItemRowActions', { title: 'Ops' });
+    expect(rowActions).toBeDefined();
+    const deleteAction = rowActions?.props.actions.find((action: any) => action.id === 'delete');
+    expect(deleteAction).toBeDefined();
 
     await act(async () => {
-      await deleteAction.onPress();
+      await deleteAction?.onPress();
     });
 
     expect(updatePromptDocMock).toHaveBeenCalledWith({
@@ -211,16 +214,15 @@ describe('PromptFoldersScreen', () => {
 
     const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
 
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(<PromptFoldersScreen />);
-    });
+    const screen = await renderScreen(<PromptFoldersScreen />);
 
-    const rowActions = tree.root.findByType('ItemRowActions');
-    const deleteAction = rowActions.props.actions.find((action: any) => action.id === 'delete');
+    const rowActions = findTestInstanceByTypeWithProps(screen.tree, 'ItemRowActions', { title: 'Ops' });
+    expect(rowActions).toBeDefined();
+    const deleteAction = rowActions?.props.actions.find((action: any) => action.id === 'delete');
+    expect(deleteAction).toBeDefined();
 
     await act(async () => {
-      await deleteAction.onPress();
+      await deleteAction?.onPress();
     });
 
     expect(updatePromptDocMock).not.toHaveBeenCalled();

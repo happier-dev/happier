@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,22 +10,23 @@ const routerPushSpy = vi.fn();
 const setInvocationsMock = vi.fn();
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
 
-vi.mock('react-native', () => ({
-    ScrollView: 'ScrollView',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            ScrollView: 'ScrollView',
+                                            View: 'View',
+                                            Platform: {
+                                                OS: 'web',
+                                                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
+                                            },
+                                        }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                groupped: { background: 'white' },
-                accent: { blue: '#00f' },
-                textSecondary: '#999',
-            },
-        }),
-    },
-    useUnistyles: () => ({
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
         theme: {
             colors: {
                 groupped: { background: 'white' },
@@ -31,13 +34,16 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#999',
             },
         },
-    }),
-}));
+    });
+});
 
-vi.mock('expo-router', () => ({
-    Stack: { Screen: () => null },
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushSpy },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -59,14 +65,19 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalConfirmMock,
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: modalConfirmMock,
+            alert: vi.fn(),
+        },
+    }).module;
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'promptInvocationsV1') {
             return {
@@ -103,11 +114,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useArtifacts: () => ([
         { id: 'doc-1', title: 'Prompt One', header: { kind: 'prompt_doc.v2', title: 'Prompt One' } },
     ]),
-}));
+});
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('PromptTemplatesScreen', () => {
     beforeEach(() => {
@@ -120,9 +133,7 @@ describe('PromptTemplatesScreen', () => {
         const { PromptTemplatesScreen } = await import('./PromptTemplatesScreen');
 
         let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PromptTemplatesScreen));
-        });
+        tree = (await renderScreen(React.createElement(PromptTemplatesScreen))).tree;
 
         const items = tree.root.findAllByType('Item');
         expect(items.map((node) => node.props?.testID)).toEqual([
