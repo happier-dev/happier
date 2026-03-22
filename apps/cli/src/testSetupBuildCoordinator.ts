@@ -58,15 +58,23 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function serializeBuildLockMetadata(metadata: BuildLockMetadata): string {
+  return `${JSON.stringify(metadata)}\n`
+}
+
+async function writeBuildLockMetadata(lockPath: string): Promise<void> {
+  const metadata: BuildLockMetadata = {
+    pid: process.pid,
+    createdAtMs: Date.now(),
+  }
+  await fs.writeFile(lockPath, serializeBuildLockMetadata(metadata), 'utf8')
+}
+
 async function tryAcquireBuildLock(lockPath: string): Promise<boolean> {
   try {
     const handle = await fs.open(lockPath, 'wx')
     try {
-      const metadata: BuildLockMetadata = {
-        pid: process.pid,
-        createdAtMs: Date.now(),
-      }
-      await handle.writeFile(`${JSON.stringify(metadata)}\n`, 'utf8')
+      await handle.writeFile(serializeBuildLockMetadata({ pid: process.pid, createdAtMs: Date.now() }), 'utf8')
     } finally {
       await handle.close()
     }
@@ -126,12 +134,17 @@ async function reclaimStaleBuildLock(params: {
   }
 
   const metadata = parseBuildLockMetadata(raw)
-  if (metadata && !isProcessAlive(metadata.pid)) {
+  if (metadata) {
+    if (!isProcessAlive(metadata.pid)) {
+      await fs.rm(lockPath, { force: true }).catch(() => undefined)
+      return true
+    }
+
+    if (Date.now() - metadata.createdAtMs < staleAfterMs) return false
+
     await fs.rm(lockPath, { force: true }).catch(() => undefined)
     return true
   }
-
-  if (metadata) return false
 
   if (Date.now() - stats.mtimeMs < staleAfterMs) return false
 
@@ -152,11 +165,21 @@ export async function ensureBuildArtifactsReadyOnce(
     if (buildMarkersExist(options.markerPaths)) return
 
     if (await tryAcquireBuildLock(options.lockPath)) {
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null
       try {
+        if (staleAfterMs > 0) {
+          const heartbeatIntervalMs = Math.max(250, Math.min(5_000, Math.floor(staleAfterMs / 4) || 250))
+          heartbeatTimer = setInterval(() => {
+            void writeBuildLockMetadata(options.lockPath).catch(() => undefined)
+          }, heartbeatIntervalMs)
+          heartbeatTimer.unref?.()
+        }
+
         if (buildMarkersExist(options.markerPaths)) return
         await options.runBuild()
         return
       } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer)
         await fs.rm(options.lockPath, { force: true }).catch(() => undefined)
       }
     }

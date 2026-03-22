@@ -13,6 +13,19 @@ import { createHash } from 'node:crypto'
 
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 
+export type CliTestBuildMode = 'shared-only' | 'full'
+
+type CliTestSetupDependencies = {
+  resolveProjectRoot: () => string
+  ensureSharedDepsBuiltOnce: (projectRoot: string) => Promise<void>
+  ensureDistBuiltOnce: (projectRoot: string) => Promise<void>
+}
+
+type CliTestSetupOptions = {
+  buildMode?: CliTestBuildMode
+  dependencies?: Partial<CliTestSetupDependencies>
+}
+
 function resolveCliProjectRoot(): string {
   const __dirname = dirname(fileURLToPath(import.meta.url))
   return resolve(__dirname, '..')
@@ -112,23 +125,36 @@ async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
   })
 }
 
-export async function setup() {
+function readSkipBuildOverride(): boolean {
+  const raw = process.env.HAPPIER_CLI_TEST_SKIP_BUILD
+  if (typeof raw !== 'string') return false
+  return ['1', 'true', 'yes'].includes(raw.trim().toLowerCase())
+}
+
+export async function setup(options: CliTestSetupOptions = {}) {
   // Extend test timeout for integration tests
   process.env.VITEST_POOL_TIMEOUT = '60000'
 
-  const skipBuild = (() => {
-    const raw = process.env.HAPPIER_CLI_TEST_SKIP_BUILD
-    if (typeof raw !== 'string') return false
-    return ['1', 'true', 'yes'].includes(raw.trim().toLowerCase())
-  })()
+  const skipBuild = readSkipBuildOverride()
 
-  // Make sure to build the project before running tests (opt-out).
-  // We rely on the dist files to spawn our CLI in some integration tests.
+  // Allow global opt-out for low-level setup tests and targeted local debugging.
   if (skipBuild) return
 
-  const projectRoot = resolveCliProjectRoot()
-  await ensureSharedDepsBuiltOnce(projectRoot)
-  await ensureDistBuiltOnce(projectRoot)
+  const dependencies: CliTestSetupDependencies = {
+    resolveProjectRoot: resolveCliProjectRoot,
+    ensureSharedDepsBuiltOnce,
+    ensureDistBuiltOnce,
+    ...options.dependencies,
+  }
+
+  const buildMode = options.buildMode ?? 'full'
+  const projectRoot = dependencies.resolveProjectRoot()
+
+  await dependencies.ensureSharedDepsBuiltOnce(projectRoot)
+
+  if (buildMode === 'full') {
+    await dependencies.ensureDistBuiltOnce(projectRoot)
+  }
 }
 
 export default async function globalSetup() {

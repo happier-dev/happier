@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function deriveServerIdFromUrl(url: string): string {
     let h = 2166136261;
@@ -13,44 +14,25 @@ function deriveServerIdFromUrl(url: string): string {
 }
 
 describe('changes cursor persistence', () => {
-    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-    const previousServerUrl = process.env.HAPPIER_SERVER_URL;
-    const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-    const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
+    const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_ACTIVE_SERVER_ID'] as const;
+    let envScope = createEnvKeyScope(envKeys);
 
     afterEach(() => {
-        if (previousHomeDir === undefined) {
-            delete process.env.HAPPIER_HOME_DIR;
-        } else {
-            process.env.HAPPIER_HOME_DIR = previousHomeDir;
-        }
-        if (previousServerUrl === undefined) {
-            delete process.env.HAPPIER_SERVER_URL;
-        } else {
-            process.env.HAPPIER_SERVER_URL = previousServerUrl;
-        }
-        if (previousWebappUrl === undefined) {
-            delete process.env.HAPPIER_WEBAPP_URL;
-        } else {
-            process.env.HAPPIER_WEBAPP_URL = previousWebappUrl;
-        }
-        if (previousActiveServerId === undefined) {
-            delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-        } else {
-            process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
-        }
+        envScope.restore();
+        envScope = createEnvKeyScope(envKeys);
+        vi.resetModules();
     });
 
     it('roundtrips lastChangesCursorByServerIdByAccountId via settings file', async () => {
-        const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-changes-cursor-'));
+        await withTempDir('happy-cli-changes-cursor-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_SERVER_URL: undefined,
+                HAPPIER_WEBAPP_URL: undefined,
+                HAPPIER_ACTIVE_SERVER_ID: undefined,
+            });
 
-        vi.resetModules();
-        process.env.HAPPIER_HOME_DIR = homeDir;
-        delete process.env.HAPPIER_SERVER_URL;
-        delete process.env.HAPPIER_WEBAPP_URL;
-        delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-
-        try {
             const [{ configuration }, { readLastChangesCursor, writeLastChangesCursor }] = await Promise.all([
                 import('./configuration'),
                 import('./persistence'),
@@ -67,23 +49,22 @@ describe('changes cursor persistence', () => {
             // Writing 0 removes the entry to keep settings small.
             await writeLastChangesCursor('acc-1', 0);
             expect(await readLastChangesCursor('acc-1')).toBe(0);
-        } finally {
-            rmSync(homeDir, { recursive: true, force: true });
-        }
+        });
     });
 
     it('reads and writes cursor using effective active server id from env override', async () => {
-        const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-changes-cursor-override-'));
-        const serverUrl = 'http://127.0.0.1:12345';
-        const envServerId = deriveServerIdFromUrl(serverUrl);
+        await withTempDir('happy-cli-changes-cursor-override-', async (homeDir) => {
+            const serverUrl = 'http://127.0.0.1:12345';
+            const envServerId = deriveServerIdFromUrl(serverUrl);
 
-        vi.resetModules();
-        process.env.HAPPIER_HOME_DIR = homeDir;
-        process.env.HAPPIER_SERVER_URL = serverUrl;
-        process.env.HAPPIER_WEBAPP_URL = serverUrl;
-        delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_SERVER_URL: serverUrl,
+                HAPPIER_WEBAPP_URL: serverUrl,
+                HAPPIER_ACTIVE_SERVER_ID: undefined,
+            });
 
-        try {
             const settingsPath = join(homeDir, 'settings.json');
             const seed = {
                 schemaVersion: 5,
@@ -117,8 +98,6 @@ describe('changes cursor persistence', () => {
             const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
             expect(raw.lastChangesCursorByServerIdByAccountId.cloud['acc-1']).toBe(5);
             expect(raw.lastChangesCursorByServerIdByAccountId[envServerId]['acc-1']).toBe(12);
-        } finally {
-            rmSync(homeDir, { recursive: true, force: true });
-        }
+        });
     });
 });

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 function deriveServerIdFromUrl(url: string): string {
   // Mirror apps/cli/src/configuration.ts deriveServerIdFromUrl.
@@ -14,32 +16,30 @@ function deriveServerIdFromUrl(url: string): string {
 }
 
 describe('readSettings (active server override)', () => {
-  const previousHomeDir = process.env.HAPPIER_HOME_DIR;
-  const previousServerUrl = process.env.HAPPIER_SERVER_URL;
-  const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
+  const envKeys = [
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_SERVER_URL',
+    'HAPPIER_WEBAPP_URL',
+    'HAPPIER_ACTIVE_SERVER_ID',
+  ] as const;
+  let envScope = createEnvKeyScope(envKeys);
 
   afterEach(() => {
-    if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = previousHomeDir;
-    if (previousServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = previousServerUrl;
-    if (previousWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = previousWebappUrl;
-    if (previousActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-    else process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
   });
 
   it('derives machineId from configuration.activeServerId when HAPPIER_SERVER_URL is set', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-settings-active-server-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:12345';
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:12345';
-    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-
-    try {
-      const envServerId = deriveServerIdFromUrl(process.env.HAPPIER_SERVER_URL);
+    await withTempDir('happier-cli-settings-active-server-', async (homeDir) => {
+      const serverUrl = 'http://127.0.0.1:12345';
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: serverUrl,
+        HAPPIER_WEBAPP_URL: serverUrl,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
+      });
+      const envServerId = deriveServerIdFromUrl(serverUrl);
       writeFileSync(
         join(homeDir, 'settings.json'),
         JSON.stringify(
@@ -74,20 +74,19 @@ describe('readSettings (active server override)', () => {
       const { readSettings } = await import('./persistence');
       const settings = await readSettings();
       expect(settings.machineId).toBe('machine-env');
-    } finally {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+    });
   }, 15_000);
 
   it('clears machine id for the effective active server id under env override', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-clear-machine-id-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:23456';
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:23456';
-    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
-
-    try {
-      const envServerId = deriveServerIdFromUrl(process.env.HAPPIER_SERVER_URL);
+    await withTempDir('happier-cli-clear-machine-id-', async (homeDir) => {
+      const serverUrl = 'http://127.0.0.1:23456';
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: serverUrl,
+        HAPPIER_WEBAPP_URL: serverUrl,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
+      });
+      const envServerId = deriveServerIdFromUrl(serverUrl);
       const settingsPath = join(homeDir, 'settings.json');
       writeFileSync(
         settingsPath,
@@ -132,19 +131,17 @@ describe('readSettings (active server override)', () => {
       expect(raw.machineIdByServerId[envServerId]).toBeUndefined();
       expect(raw.machineIdConfirmedByServerByServerId.cloud).toBe(true);
       expect(raw.machineIdConfirmedByServerByServerId[envServerId]).toBeUndefined();
-    } finally {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+    });
   }, 15_000);
 
   it('uses HAPPIER_ACTIVE_SERVER_ID for machineId scope selection', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-active-server-id-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:23456';
-    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:23456';
-    process.env.HAPPIER_ACTIVE_SERVER_ID = 'stack_main__id_default';
-
-    try {
+    await withTempDir('happier-cli-active-server-id-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: 'http://127.0.0.1:23456',
+        HAPPIER_WEBAPP_URL: 'http://127.0.0.1:23456',
+        HAPPIER_ACTIVE_SERVER_ID: 'stack_main__id_default',
+      });
       writeFileSync(
         join(homeDir, 'settings.json'),
         JSON.stringify(
@@ -180,8 +177,6 @@ describe('readSettings (active server override)', () => {
       const { readSettings } = await import('./persistence');
       const settings = await readSettings();
       expect(settings.machineId).toBe('machine-stack');
-    } finally {
-      rmSync(homeDir, { recursive: true, force: true });
-    }
+    });
   });
 });
