@@ -4,7 +4,7 @@ import { registerReadFileHandler } from './readFileHandler';
 import { registerWriteFileHandler } from './writeFileHandler';
 import { registerDirectoryHandlers } from './directoryHandlers';
 import { registerPathMutationHandlers } from './pathMutationHandlers';
-import { registerWorkspaceFileTransferRpcHandlers } from '@/transfers/rpc/registerWorkspaceFileTransferRpcHandlers';
+import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
   const value = getDirectories?.() ?? [];
@@ -34,7 +34,7 @@ export function registerFileSystemHandlers(
     getAdditionalAllowedReadDirs: () => normalizeAllowedDirectories(getAdditionalAllowedReadDirs),
   });
   registerPathMutationHandlers(rpcHandlerManager, { workingDirectory });
-  registerWorkspaceFileTransferRpcHandlers(rpcHandlerManager, {
+  registerSessionTransferRpcHandlers(rpcHandlerManager, {
     workingDirectory,
     getAdditionalAllowedReadDirs,
     getAdditionalAllowedWriteDirs,

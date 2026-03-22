@@ -5,11 +5,37 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { stat } from 'fs/promises';
+import {
+  createEncryptedTransferChunkEnvelope,
+  createTransferRecipientKeyPair,
+  decryptEncryptedTransferChunkEnvelope,
+} from '@/machines/transfer/transferChunkEncryption';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
-import { registerWorkspaceFileTransferRpcHandlers } from '@/transfers/rpc/registerWorkspaceFileTransferRpcHandlers';
+import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
 
 type Handler = (data: unknown) => Promise<unknown> | unknown;
+
+function createEncryptedUploadChunkRequest(input: Readonly<{
+  uploadId: string;
+  index: number;
+  payload: Buffer;
+  recipientPublicKeyBase64: string;
+}>) {
+  const encryptedChunk = createEncryptedTransferChunkEnvelope({
+    transferId: input.uploadId,
+    sequence: input.index,
+    payload: input.payload,
+    recipientPublicKeyBase64: input.recipientPublicKeyBase64,
+  });
+
+  return {
+    uploadId: input.uploadId,
+    index: input.index,
+    payloadBase64: encryptedChunk.payloadBase64,
+    encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+  };
+}
 
 function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHandler: (method: string, handler: Handler) => void } {
   const handlers = new Map<string, Handler>();
@@ -37,7 +63,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerWorkspaceFileTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -46,19 +72,19 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const configure = mgr.handlers.get(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-      if (!configure) throw new Error('expected attachments upload handlers to be registered');
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      if (!init) throw new Error('expected attachments upload handlers to be registered');
 
-      const configRes = await configure({
+      const initRes = await init({
+        messageLocalId: 'message-1',
+        fileName: 'hello.txt',
+        sizeBytes: 11,
         uploadLocation: 'workspace',
         workspaceRelativeDir: '.happier/uploads',
         vcsIgnoreStrategy: 'git_info_exclude',
         vcsIgnoreWritesEnabled: true,
       });
-      expect(configRes).toMatchObject({
-        success: true,
-        uploadBasePath: '.happier/uploads/messages',
-      });
+      expect(initRes).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
       await expect(stat(join(workingDirectory, '.git'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
@@ -84,7 +110,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerWorkspaceFileTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -93,16 +119,19 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const configure = mgr.handlers.get(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-      if (!configure) throw new Error('expected attachments upload handlers to be registered');
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      if (!init) throw new Error('expected attachments upload handlers to be registered');
 
-      const configRes = await configure({
+      const initRes = await init({
+        messageLocalId: 'message-1',
+        fileName: 'hello.txt',
+        sizeBytes: 11,
         uploadLocation: 'workspace',
         workspaceRelativeDir: '.happier/uploads',
         vcsIgnoreStrategy: 'git_info_exclude',
         vcsIgnoreWritesEnabled: true,
       });
-      expect(configRes).toMatchObject({ success: true });
+      expect(initRes).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
       const excludeContents = await readFile(join(workingDirectory, '.git', 'info', 'exclude'), 'utf8');
       expect(excludeContents).toContain('# existing');
@@ -131,7 +160,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerWorkspaceFileTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -140,19 +169,19 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const configure = mgr.handlers.get(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-      if (!configure) throw new Error('expected attachments upload handlers to be registered');
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      if (!init) throw new Error('expected attachments upload handlers to be registered');
 
-      const configRes = await configure({
+      const initRes = await init({
+        messageLocalId: 'message-1',
+        fileName: 'hello.txt',
+        sizeBytes: 11,
         uploadLocation: 'workspace',
         workspaceRelativeDir: '.happier/uploads',
         vcsIgnoreStrategy: 'gitignore',
         vcsIgnoreWritesEnabled: true,
       });
-      expect(configRes).toMatchObject({
-        success: true,
-        uploadBasePath: '.happier/uploads/messages',
-      });
+      expect(initRes).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
       const ignoreContents = await readFile(join(workingDirectory, '.gitignore'), 'utf8');
       expect(ignoreContents).toContain('# existing');
@@ -162,7 +191,7 @@ describe('attachments upload (chunked)', () => {
     }
   });
 
-  it('registers attachment policy plus generic files.upload handlers', async () => {
+  it('registers dedicated attachment upload handlers', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-files-upload-'));
     const readAllowedDirs: { current: string[] } = { current: [] };
     const writeAllowedDirs: { current: string[] } = { current: [] };
@@ -177,7 +206,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerWorkspaceFileTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -186,48 +215,40 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      expect(mgr.handlers.has(RPC_METHODS.ATTACHMENTS_CONFIGURE)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.FILES_UPLOAD_INIT)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.FILES_UPLOAD_CHUNK)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.FILES_UPLOAD_FINALIZE)).toBe(true);
-      expect(mgr.handlers.has(RPC_METHODS.FILES_UPLOAD_ABORT)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE)).toBe(true);
+      expect(mgr.handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_ABORT)).toBe(true);
 
-      const configure = mgr.handlers.get(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-      const init = mgr.handlers.get(RPC_METHODS.FILES_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.FILES_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.FILES_UPLOAD_FINALIZE);
-      if (!configure || !init || !chunk || !finalize) {
-        throw new Error('expected attachment policy and files upload handlers to be registered');
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
+      if (!init || !chunk || !finalize) {
+        throw new Error('expected attachment upload handlers to be registered');
       }
 
-      const configured: any = await configure({
+      const initResult: any = await init({
+        messageLocalId: 'message-1',
+        fileName: 'hello.txt',
+        sizeBytes: 11,
         uploadLocation: 'workspace',
         workspaceRelativeDir: '.happier/uploads',
         vcsIgnoreStrategy: 'none',
         vcsIgnoreWritesEnabled: false,
       });
-      expect(configured).toMatchObject({
-        success: true,
-        uploadBasePath: '.happier/uploads/messages',
-      });
+      expect(initResult).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
-      const initResult: any = await init({
-        path: `${configured.uploadBasePath}/message-1/hello.txt`,
-        sizeBytes: 11,
-        overwrite: false,
-      });
-      expect(initResult).toMatchObject({ success: true });
-
-      expect(await chunk({
+      expect(await chunk(createEncryptedUploadChunkRequest({
         uploadId: initResult.uploadId,
         index: 0,
-        contentBase64: Buffer.from('hello world', 'utf8').toString('base64'),
-      })).toEqual({ success: true });
+        payload: Buffer.from('hello world', 'utf8'),
+        recipientPublicKeyBase64: initResult.recipientPublicKeyBase64,
+      }))).toEqual({ success: true });
 
       const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
       expect(finalizeResult).toMatchObject({
         success: true,
-        path: `${configured.uploadBasePath}/message-1/hello.txt`,
+        path: expect.stringMatching(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-hello\.txt$/),
         sizeBytes: 11,
       });
       await expect(readFile(resolve(workingDirectory, finalizeResult.path), 'utf8')).resolves.toBe('hello world');
@@ -236,7 +257,7 @@ describe('attachments upload (chunked)', () => {
     }
   });
 
-  it('returns an os_temp upload base path that works with generic files.upload and files.download', async () => {
+  it('supports os_temp attachment uploads and subsequent file download through the dedicated transfer handlers', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-os-temp-'));
     const readAllowedDirs: { current: string[] } = { current: [] };
     const writeAllowedDirs: { current: string[] } = { current: [] };
@@ -251,7 +272,7 @@ describe('attachments upload (chunked)', () => {
           writeAllowedDirs.current = [...dirs];
         },
       });
-      registerWorkspaceFileTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
+      registerSessionTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
         workingDirectory,
         getAdditionalAllowedReadDirs: () => readAllowedDirs.current,
         getAdditionalAllowedWriteDirs: () => writeAllowedDirs.current,
@@ -260,47 +281,47 @@ describe('attachments upload (chunked)', () => {
         },
       });
 
-      const configure = mgr.handlers.get(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-      const init = mgr.handlers.get(RPC_METHODS.FILES_UPLOAD_INIT);
-      const chunk = mgr.handlers.get(RPC_METHODS.FILES_UPLOAD_CHUNK);
-      const finalize = mgr.handlers.get(RPC_METHODS.FILES_UPLOAD_FINALIZE);
-      const downloadInit = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
-      const downloadChunk = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_CHUNK);
-      const downloadFinalize = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_FINALIZE);
-      if (!configure || !init || !chunk || !finalize || !downloadInit || !downloadChunk || !downloadFinalize) {
-        throw new Error('expected attachment policy plus generic files upload/download handlers to be registered');
+      const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+      const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+      const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
+      const downloadInit = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
+      const downloadChunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK);
+      const downloadFinalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE);
+      if (!init || !chunk || !finalize || !downloadInit || !downloadChunk || !downloadFinalize) {
+        throw new Error('expected dedicated attachment upload and file download handlers to be registered');
       }
 
-      const configured: any = await configure({ uploadLocation: 'os_temp' });
-      expect(configured).toMatchObject({
-        success: true,
-        uploadLocation: 'os_temp',
-      });
-      expect(typeof configured.uploadBasePath).toBe('string');
-      expect(configured.uploadBasePath).toMatch(/^\/.+/);
-
-      const targetPath = `${configured.uploadBasePath}/message-2/note.txt`;
       const initResult: any = await init({
-        path: targetPath,
+        messageLocalId: 'message-2',
+        fileName: 'note.txt',
         sizeBytes: 3,
-        overwrite: false,
+        uploadLocation: 'os_temp',
+        workspaceRelativeDir: '.happier/uploads',
+        vcsIgnoreStrategy: 'git_info_exclude',
+        vcsIgnoreWritesEnabled: true,
       });
-      expect(initResult).toMatchObject({ success: true });
+      expect(initResult).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
-      expect(await chunk({
+      const downloadRecipientKeyPair = createTransferRecipientKeyPair();
+
+      expect(await chunk(createEncryptedUploadChunkRequest({
         uploadId: initResult.uploadId,
         index: 0,
-        contentBase64: Buffer.from('hey', 'utf8').toString('base64'),
-      })).toEqual({ success: true });
+        payload: Buffer.from('hey', 'utf8'),
+        recipientPublicKeyBase64: initResult.recipientPublicKeyBase64,
+      }))).toEqual({ success: true });
 
       const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
       expect(finalizeResult).toMatchObject({
         success: true,
-        path: targetPath,
+        path: expect.stringMatching(/\/messages\/message-2\/[0-9a-f]{8}-note\.txt$/),
         sizeBytes: 3,
       });
 
-      const downloadInitResult: any = await downloadInit({ path: finalizeResult.path });
+      const downloadInitResult: any = await downloadInit({
+        path: finalizeResult.path,
+        recipientPublicKeyBase64: downloadRecipientKeyPair.recipientPublicKeyBase64,
+      });
       expect(downloadInitResult).toMatchObject({ success: true });
 
       const downloadChunkResult: any = await downloadChunk({
@@ -308,7 +329,15 @@ describe('attachments upload (chunked)', () => {
         index: 0,
       });
       expect(downloadChunkResult).toMatchObject({ success: true, isLast: true });
-      expect(Buffer.from(String(downloadChunkResult.contentBase64 ?? ''), 'base64').toString('utf8')).toBe('hey');
+      expect(
+        decryptEncryptedTransferChunkEnvelope({
+          transferId: downloadInitResult.downloadId,
+          sequence: 0,
+          payloadBase64: String(downloadChunkResult.payloadBase64 ?? ''),
+          encryptedDataKeyEnvelopeBase64: String(downloadChunkResult.encryptedDataKeyEnvelopeBase64 ?? ''),
+          recipientSecretKeySeed: downloadRecipientKeyPair.recipientSecretKeySeed,
+        }).toString('utf8'),
+      ).toBe('hey');
       await expect(downloadFinalize({ downloadId: downloadInitResult.downloadId })).resolves.toEqual({ success: true });
     } finally {
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});

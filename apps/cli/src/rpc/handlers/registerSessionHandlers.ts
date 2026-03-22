@@ -21,7 +21,7 @@ import { registerBashHandler } from './bash';
 import { registerSessionLogTailHandler } from './sessionLogTail';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
-import { registerWorkspaceFileTransferRpcHandlers } from '@/transfers/rpc/registerWorkspaceFileTransferRpcHandlers';
+import { registerSessionTransferRpcHandlers } from '@/transfers/rpc/registerSessionTransferRpcHandlers';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
@@ -102,7 +102,6 @@ export interface SpawnSessionOptions {
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     approvedNewDirectoryCreation?: boolean;
     backendTarget?: BackendTargetRefV1;
-    token?: string;
     /**
      * Daemon/runtime terminal configuration for the spawned session (non-secret).
      * Preferred over legacy TMUX_* env vars.
@@ -197,7 +196,7 @@ export function registerSessionHandlers(
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
     registerSessionLogTailHandler(rpcHandlerManager, { getSessionMetadata: opts?.getSessionMetadata });
-    registerWorkspaceFileTransferRpcHandlers(rpcHandlerManager, {
+    registerSessionTransferRpcHandlers(rpcHandlerManager, {
         workingDirectory,
         store: transferStore,
         getAdditionalAllowedReadDirs: () => [...pathAllowanceRegistry.getAdditionalAllowedReadDirs()],

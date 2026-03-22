@@ -1,14 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
 
 import { registerSessionHandlers } from './registerSessionHandlers';
 
-describe('registerSessionHandlers attachments policy', () => {
+function createEncryptedUploadChunkRequest(input: Readonly<{
+  uploadId: string;
+  index: number;
+  payload: Buffer;
+  recipientPublicKeyBase64: string;
+}>) {
+  const encryptedChunk = createEncryptedTransferChunkEnvelope({
+    transferId: input.uploadId,
+    sequence: input.index,
+    payload: input.payload,
+    recipientPublicKeyBase64: input.recipientPublicKeyBase64,
+  });
+
+  return {
+    uploadId: input.uploadId,
+    index: input.index,
+    payloadBase64: encryptedChunk.payloadBase64,
+    encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+  };
+}
+
+describe('registerSessionHandlers attachments uploads', () => {
   let workingDirectory: string;
 
   beforeEach(async () => {
@@ -19,7 +41,7 @@ describe('registerSessionHandlers attachments policy', () => {
     await rm(workingDirectory, { recursive: true, force: true });
   });
 
-  it('registers attachment policy configuration for os_temp uploads', async () => {
+  it('registers workspace attachment uploads without a separate configure RPC', async () => {
     const handlers = new Map<string, RpcHandler>();
     const mgr: RpcHandlerRegistrar = {
       registerHandler(method, handler) {
@@ -29,18 +51,46 @@ describe('registerSessionHandlers attachments policy', () => {
 
     registerSessionHandlers(mgr, workingDirectory);
 
-    const configure = handlers.get(RPC_METHODS.ATTACHMENTS_CONFIGURE);
-    if (!configure) {
-      throw new Error('expected attachment policy handler to be registered');
+    expect('ATTACHMENTS_CONFIGURE' in RPC_METHODS).toBe(false);
+
+    const init = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+    const chunk = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+    const finalize = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
+    if (!init) {
+      throw new Error('expected attachment upload init handler to be registered');
+    }
+    if (!chunk || !finalize) {
+      throw new Error('expected attachment upload lifecycle handlers to be registered');
     }
 
-    const configureResult: any = await configure({ uploadLocation: 'os_temp' });
-    expect(configureResult).toMatchObject({
-      success: true,
-      uploadLocation: 'os_temp',
+    const initResult: any = await init({
+      messageLocalId: 'message-1',
+      fileName: 'file.txt',
+      sizeBytes: 11,
+      uploadLocation: 'workspace',
+      workspaceRelativeDir: '.happier/uploads',
+      vcsIgnoreStrategy: 'none',
+      vcsIgnoreWritesEnabled: false,
     });
-    expect(typeof configureResult.uploadBasePath).toBe('string');
-    expect(configureResult.uploadBasePath.startsWith('/')).toBe(true);
-    expect(handlers.has(RPC_METHODS.READ_FILE)).toBe(false);
+    expect(initResult).toMatchObject({
+      success: true,
+      recipientPublicKeyBase64: expect.any(String),
+    });
+
+    expect(await chunk(createEncryptedUploadChunkRequest({
+      uploadId: initResult.uploadId,
+      index: 0,
+      payload: Buffer.from('hello world', 'utf8'),
+      recipientPublicKeyBase64: initResult.recipientPublicKeyBase64,
+    }))).toEqual({ success: true });
+
+    const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
+    expect(finalizeResult).toMatchObject({
+      success: true,
+      path: expect.stringMatching(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-file\.txt$/),
+      sizeBytes: 11,
+      sha256: expect.any(String),
+    });
+    expect(await readFile(join(workingDirectory, finalizeResult.path), 'utf8')).toBe('hello world');
   });
 });

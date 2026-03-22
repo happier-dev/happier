@@ -11,7 +11,7 @@ import { configuration } from '@/configuration';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '@/transfers/policy/sessionRpcTransferPolicy';
-import { registerDownloadTransferHandlers } from '@/transfers/rpc/registerDownloadTransferHandlers';
+import { registerSessionFileDownloadTransferRpcHandlers } from '@/transfers/rpc/registerSessionFileDownloadTransferRpcHandlers';
 
 type Handler = (data: any) => Promise<any>;
 
@@ -71,9 +71,9 @@ describe('file transfers (download)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected download handlers');
 
     const bytes = await downloadAllChunks({ init, chunk, finalize, path: 'file.txt' });
@@ -90,9 +90,9 @@ describe('file transfers (download)', () => {
     const mgr = createRpcHandlerManager();
     registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
-    const init = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected download handlers');
 
     const bytes = await downloadAllChunks({ init, chunk, finalize, path: 'folder', asZip: true });
@@ -110,12 +110,12 @@ describe('file transfers (download)', () => {
 
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerDownloadTransferHandlers(mgr as unknown as RpcHandlerManager, {
+    registerSessionFileDownloadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
     if (!init) throw new Error('expected download init handler');
     const recipientKeyPair = createTransferRecipientKeyPair();
 
@@ -146,11 +146,11 @@ describe('file transfers (download)', () => {
 
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerDownloadTransferHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
+    registerSessionFileDownloadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
 
-    const init = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected download handlers');
     const recipientKeyPair = createTransferRecipientKeyPair();
 
@@ -177,13 +177,13 @@ describe('file transfers (download)', () => {
 
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerDownloadTransferHandlers(mgr as unknown as RpcHandlerManager, {
+    registerSessionFileDownloadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
       sessionRpcTransferMaxBytes: 4,
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
     if (!init) throw new Error('expected download init handler');
     const recipientKeyPair = createTransferRecipientKeyPair();
 
@@ -204,15 +204,15 @@ describe('file transfers (download)', () => {
 
     const store = new TransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
-    registerDownloadTransferHandlers(mgr as unknown as RpcHandlerManager, {
+    registerSessionFileDownloadTransferRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
       store,
       getAdditionalAllowedReadDirs: () => [externalRoot],
     });
 
-    const init = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_INIT);
-    const chunk = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_CHUNK);
-    const finalize = mgr.handlers.get(RPC_METHODS.FILES_DOWNLOAD_FINALIZE);
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
+    const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK);
+    const finalize = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE);
     if (!init || !chunk || !finalize) throw new Error('expected download handlers');
 
     const bytes = await downloadAllChunks({ init, chunk, finalize, path: externalPath });
