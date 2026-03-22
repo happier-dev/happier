@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const {
   dispatchCliMock,
@@ -86,8 +87,6 @@ function createDeferred() {
 describe('CLI startup runtime reexec', () => {
   const originalArgv = process.argv;
   const originalExitCode = process.exitCode;
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
-
   afterEach(() => {
     process.argv = originalArgv;
     process.exitCode = originalExitCode;
@@ -108,8 +107,6 @@ describe('CLI startup runtime reexec', () => {
     installConsoleWriteErrorGuardsMock.mockReset();
     shouldInstallConsoleWriteErrorGuardsMock.mockReset();
     shouldInstallConsoleWriteErrorGuardsMock.mockReturnValue(true);
-    consoleErrorSpy?.mockRestore();
-    consoleErrorSpy = null;
     vi.resetModules();
   });
 
@@ -137,14 +134,18 @@ describe('CLI startup runtime reexec', () => {
     const startupError = new Error('startup blew up');
     dispatchCliMock.mockRejectedValue(startupError);
     process.argv = ['node', '/repo/apps/cli/dist/index.mjs', 'install', 'provider', 'codex'];
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const output = captureConsoleText();
 
-    await import('./index');
+    try {
+      await import('./index');
 
-    await vi.waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Error:', 'startup blew up');
-      expect(process.exitCode).toBe(1);
-    });
+      await vi.waitFor(() => {
+        expect(output.lines).toContain('Error: startup blew up');
+        expect(process.exitCode).toBe(1);
+      });
+    } finally {
+      output.restore();
+    }
   });
 
   it('skips console stream guard installation when the runtime says not to', async () => {
