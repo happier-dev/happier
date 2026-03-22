@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import {
+    invokeTestInstanceHandler,
     flushHookEffects,
     renderScreen,
     standardCleanup,
@@ -47,7 +48,7 @@ function toTestIdSafeValue(value: string) {
 }
 
 function changedFilesReviewListTestId() {
-    return 'changed-files-review-list';
+    return 'scm-review-list';
 }
 
 function changedFilesReviewRowTestId() {
@@ -1193,7 +1194,11 @@ describe('ChangedFilesReview', () => {
 
         await flushReviewEffects();
 
-        const listBefore = screen.findByType('FlashList' as any);
+        const listBefore = screen.findByTestId(changedFilesReviewListTestId());
+        expect(listBefore).toBeTruthy();
+        if (!listBefore) {
+            throw new Error('Unable to find scm-review-list before diff resolution');
+        }
         const renderItemBefore = listBefore.props.renderItem;
 
         await act(async () => {
@@ -1202,7 +1207,11 @@ describe('ChangedFilesReview', () => {
         });
         await flushReviewEffects();
 
-        const listAfter = screen.findByType('FlashList' as any);
+        const listAfter = screen.findByTestId(changedFilesReviewListTestId());
+        expect(listAfter).toBeTruthy();
+        if (!listAfter) {
+            throw new Error('Unable to find scm-review-list after diff resolution');
+        }
         expect(listAfter.props.renderItem).toBe(renderItemBefore);
     });
 
@@ -1262,9 +1271,10 @@ describe('ChangedFilesReview', () => {
         const row = screen.findByType('ScmChangeRow' as any);
         expect(typeof row.props.onPressPinned).toBe('function');
 
-        act(() => {
-            row.props.onPressPinned();
-        });
+        invokeTestInstanceHandler(row, 'onPressPinned', {
+            preventDefault: () => {},
+            stopPropagation: () => {},
+        }, 'ScmChangeRow.onPressPinned');
 
         expect(onFilePressPinned).toHaveBeenCalledTimes(1);
         expect(onFilePressPinned).toHaveBeenCalledWith(fileA);

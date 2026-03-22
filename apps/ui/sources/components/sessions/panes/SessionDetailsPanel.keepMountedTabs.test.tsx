@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { findTestInstanceByTypeWithProps, flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -125,7 +125,9 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 
 async function renderSessionDetailsPanel() {
     const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-    return renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+    const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+    await flushHookEffects({ cycles: 1, frames: 1 });
+    return screen;
 }
 
 describe('SessionDetailsPanel (keep mounted tabs)', () => {
@@ -136,12 +138,6 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         removeEventListenerSpy.mockClear();
         wheelHandlers.length = 0;
         touchMoveHandlers.length = 0;
-        vi.stubGlobal('requestAnimationFrame', (() => 0) as typeof requestAnimationFrame);
-        vi.stubGlobal('cancelAnimationFrame', (() => undefined) as typeof cancelAnimationFrame);
-    });
-
-    afterEach(() => {
-        vi.unstubAllGlobals();
     });
 
     it('keeps inactive tab contents mounted so state can be preserved', async () => {
@@ -214,11 +210,11 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
             throw new Error('Unable to find pinned tab affordances');
         }
 
-        const aIcon = pinnedA.findByType('Octicons');
-        const reviewIcon = pinnedReview.findByType('Octicons');
+        const aIcon = findTestInstanceByTypeWithProps(pinnedA, 'Octicons', { name: 'pin-slash' });
+        const reviewIcon = findTestInstanceByTypeWithProps(pinnedReview, 'Octicons', { name: 'pin-slash' });
 
-        expect((aIcon.props as any).name).toBe('pin-slash');
-        expect((reviewIcon.props as any).name).toBe('pin-slash');
+        expect(aIcon).toBeTruthy();
+        expect(reviewIcon).toBeTruthy();
     });
 
     it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {
@@ -247,8 +243,8 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
             if (!pinButton) {
                 throw new Error('Unable to find preview pin affordance');
             }
-            const pinIcon = pinButton.findByType('Octicons');
-            expect((pinIcon.props as any).name).toBe('pin');
+            const pinIcon = findTestInstanceByTypeWithProps(pinButton, 'Octicons', { name: 'pin' });
+            expect(pinIcon).toBeTruthy();
         } finally {
             scopeState = {
                 ...scopeState,

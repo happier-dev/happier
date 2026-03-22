@@ -1,6 +1,5 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -120,7 +119,8 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => ({
 }));
 
 vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
-    PermissionFooter: (props: Record<string, unknown>) => React.createElement('PermissionFooter', props, null),
+    PermissionFooter: (props: Record<string, unknown>) =>
+        React.createElement('PermissionFooter', { ...props, testID: 'agent-input-permission-footer' }, null),
 }));
 
 vi.mock('@/components/tools/normalization/policy/permissionSummary', () => ({
@@ -300,44 +300,39 @@ describe('AgentInput (permission requests)', () => {
     it('renders PermissionFooter when pending permission requests are provided', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(AgentInput as any, {
-                    value: '',
-                    placeholder: 'Type',
-                    onChangeText: () => {},
-                    sessionId: 's1',
-                    onSend: () => {},
-                    autocompletePrefixes: [],
-                    autocompleteSuggestions: async () => [],
-                    permissionRequests: [
-                        { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
-                    ],
-                }))).tree;
+        const screen = await renderScreen(React.createElement(AgentInput as any, {
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            sessionId: 's1',
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            permissionRequests: [
+                { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
+            ],
+        }));
 
-        expect(tree!.root.findAllByType('PermissionFooter' as any)).toHaveLength(1);
+        expect(screen.findByTestId('agent-input-permission-footer')).toBeTruthy();
     });
 
     it('renders permission requests inside a clamped scroll container', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(AgentInput as any, {
-                    value: '',
-                    placeholder: 'Type',
-                    onChangeText: () => {},
-                    sessionId: 's1',
-                    onSend: () => {},
-                    autocompletePrefixes: [],
-                    autocompleteSuggestions: async () => [],
-                    permissionRequests: [
-                        { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
-                        { id: 'req2', tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 124 },
-                    ],
-                }))).tree;
+        const screen = await renderScreen(React.createElement(AgentInput as any, {
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            sessionId: 's1',
+            onSend: () => {},
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            permissionRequests: [
+                { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
+                { id: 'req2', tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 124 },
+            ],
+        }));
 
-        const scrolls = tree!.root.findAll(
-            (node) => (node.type as any) === 'ScrollView' && node.props.testID === 'agentInput.permissionRequests.scroll',
-        );
-        expect(scrolls).toHaveLength(1);
+        expect(screen.findByTestId('agentInput.permissionRequests.scroll')).toBeTruthy();
     });
 });

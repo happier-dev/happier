@@ -1,7 +1,7 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { collectUnexpectedRawTextNodes, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,16 +11,32 @@ const mockEnv = vi.hoisted(() => ({
 }));
 const agentInputPropsRef: { current: Record<string, unknown> | null } = { current: null };
 
-function stubQueuedRequestAnimationFrame(): { readonly queuedFrame: FrameRequestCallback | null } {
-    const state = { queuedFrame: null as FrameRequestCallback | null };
+afterEach(() => {
+    standardCleanup();
+    vi.unstubAllGlobals();
+    agentInputPropsRef.current = null;
+});
+
+function stubQueuedRequestAnimationFrame(): {
+    readonly queuedFrame: FrameRequestCallback | null;
+    flushAll: (timestamp?: number) => void;
+} {
+    const state = { queuedFrames: [] as FrameRequestCallback[] };
     vi.stubGlobal('requestAnimationFrame', vi.fn((cb: FrameRequestCallback) => {
-        state.queuedFrame = cb;
-        return 1;
+        state.queuedFrames.push(cb);
+        return state.queuedFrames.length;
     }));
 
     return {
         get queuedFrame() {
-            return state.queuedFrame;
+            return state.queuedFrames[state.queuedFrames.length - 1] ?? null;
+        },
+        flushAll(timestamp = 16) {
+            const queuedFrames = [...state.queuedFrames];
+            state.queuedFrames.length = 0;
+            for (const frame of queuedFrames) {
+                frame(timestamp);
+            }
         },
     };
 }
@@ -483,8 +499,9 @@ describe('NewSessionSimplePanel', () => {
         const firstHandleCreateSession = vi.fn();
         const secondHandleCreateSession = vi.fn();
         const raf = stubQueuedRequestAnimationFrame();
+        agentInputPropsRef.current = null;
 
-        let tree!: renderer.ReactTestRenderer;
+        let screen!: Awaited<ReturnType<typeof renderScreen>>;
         const renderPanel = (handleCreateSession: () => void) => (
             <NewSessionSimplePanel
                 popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
@@ -522,34 +539,32 @@ describe('NewSessionSimplePanel', () => {
             />
         );
 
-        tree = (await renderScreen(renderPanel(firstHandleCreateSession))).tree;
+        screen = await renderScreen(renderPanel(firstHandleCreateSession));
 
-        await act(async () => {
-            tree.update(renderPanel(secondHandleCreateSession));
+        act(() => {
+            screen.tree.update(renderPanel(secondHandleCreateSession));
         });
 
-        expect(tree.findByTestId('new-session-composer-send')).toBeTruthy();
+        const sendButton = screen.findByTestId('new-session-composer-send');
+        expect(sendButton).toBeTruthy();
 
         try {
-            await act(async () => {
-                tree.pressByTestId('new-session-composer-send');
+            act(() => {
+                invokeTestInstanceHandler(sendButton, 'onPress', undefined, 'new-session-composer-send');
             });
 
             expect(firstHandleCreateSession).not.toHaveBeenCalled();
             expect(secondHandleCreateSession).not.toHaveBeenCalled();
             expect(raf.queuedFrame).toBeTypeOf('function');
 
-            await act(async () => {
-                raf.queuedFrame?.(16);
+            act(() => {
+                raf.flushAll();
             });
 
             expect(firstHandleCreateSession).not.toHaveBeenCalled();
             expect(secondHandleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
-            vi.unstubAllGlobals();
-            act(() => {
-                tree.unmount();
-            });
+            await screen.unmount();
         }
     });
 
@@ -557,6 +572,7 @@ describe('NewSessionSimplePanel', () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const handleCreateSession = vi.fn();
         const raf = stubQueuedRequestAnimationFrame();
+        agentInputPropsRef.current = null;
 
         let screen = undefined as Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
@@ -595,20 +611,22 @@ describe('NewSessionSimplePanel', () => {
                         selectedProfileId={null}
             />);
 
-            await act(async () => {
-                screen?.findByTestId('new-session-composer-send')?.props.onPress();
+            const sendButton = screen.findByTestId('new-session-composer-send');
+            expect(sendButton).toBeTruthy();
+
+            act(() => {
+                invokeTestInstanceHandler(sendButton, 'onPress', undefined, 'new-session-composer-send');
             });
 
             expect(handleCreateSession).not.toHaveBeenCalled();
             expect(raf.queuedFrame).toBeTypeOf('function');
 
-            await act(async () => {
-                raf.queuedFrame?.(16);
+            act(() => {
+                raf.flushAll();
             });
 
             expect(handleCreateSession).toHaveBeenCalledTimes(1);
         } finally {
-            vi.unstubAllGlobals();
             if (screen) {
                 await screen.unmount();
             }

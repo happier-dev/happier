@@ -1,6 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,16 +22,6 @@ const createEditorSpy = vi.fn(() => ({
 function assertCallable(value: unknown, label: string): (...args: unknown[]) => unknown {
     if (typeof value !== 'function') throw new Error(`expected ${label} to be callable`);
     return value as (...args: unknown[]) => unknown;
-}
-
-async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
-    vi.useFakeTimers();
-    try {
-        return await run();
-    } finally {
-        vi.clearAllTimers();
-        vi.useRealTimers();
-    }
 }
 
 function setupMonacoGlobals() {
@@ -85,10 +77,14 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 import { MonacoEditorSurface } from './MonacoEditorSurface.web';
-import { renderScreen } from '@/dev/testkit';
 
 
 describe('MonacoEditorSurface (web)', () => {
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
     it('boots Monaco even when initially not ready', async () => {
         setupMonacoGlobals();
 
@@ -106,129 +102,127 @@ describe('MonacoEditorSurface (web)', () => {
     });
 
     it('debounces onChange when changeDebounceMs is set', async () => {
-        await withFakeTimers(async () => {
-            let currentValue = 'start';
-            let changeHandler: null | ((..._args: any[]) => void) = null;
-            let blurHandler: null | ((..._args: any[]) => void) = null;
+        vi.useFakeTimers();
 
-            (globalThis as any).window = (globalThis as any).window ?? {};
-            (globalThis as any).document = (globalThis as any).document ?? {};
+        let currentValue = 'start';
+        let changeHandler: null | ((..._args: any[]) => void) = null;
+        let blurHandler: null | ((..._args: any[]) => void) = null;
 
-            (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
-                if (typeof onOk === 'function') onOk();
-            };
-            (globalThis as any).window.monaco = {
-                editor: {
-                    createModel: () => ({
-                        getValue: () => currentValue,
-                        setValue: () => {},
-                        dispose: () => {},
-                    }),
-                    create: () => ({
-                        onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
-                            changeHandler = handler;
-                            return { dispose: () => {} };
-                        },
-                        onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
-                            blurHandler = handler;
-                            return { dispose: () => {} };
-                        },
-                        updateOptions: () => {},
-                        dispose: () => {},
-                    }),
-                },
-            };
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
 
-            const onChange = vi.fn();
+        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+            if (typeof onOk === 'function') onOk();
+        };
+        (globalThis as any).window.monaco = {
+            editor: {
+                createModel: () => ({
+                    getValue: () => currentValue,
+                    setValue: () => {},
+                    dispose: () => {},
+                }),
+                create: () => ({
+                    onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                        changeHandler = handler;
+                        return { dispose: () => {} };
+                    },
+                    onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
+                        blurHandler = handler;
+                        return { dispose: () => {} };
+                    },
+                    updateOptions: () => {},
+                    dispose: () => {},
+                }),
+            },
+        };
 
-            await renderScreen(React.createElement(MonacoEditorSurface, {
-                        resetKey: '1',
-                        value: currentValue,
-                        language: 'markdown',
-                        onChange,
-                        changeDebounceMs: 50,
-                    }));
+        const onChange = vi.fn();
 
-            const triggerChange = assertCallable(changeHandler, 'change handler');
+        await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: currentValue,
+                    language: 'markdown',
+                    onChange,
+                    changeDebounceMs: 50,
+                }));
 
-            currentValue = 'a';
-            triggerChange({});
-            currentValue = 'ab';
-            triggerChange({});
-            currentValue = 'abc';
-            triggerChange({});
+        const triggerChange = assertCallable(changeHandler, 'change handler');
 
-            expect(onChange).toHaveBeenCalledTimes(0);
+        currentValue = 'a';
+        triggerChange({});
+        currentValue = 'ab';
+        triggerChange({});
+        currentValue = 'abc';
+        triggerChange({});
 
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(50);
-            });
+        expect(onChange).toHaveBeenCalledTimes(0);
 
-            expect(onChange).toHaveBeenCalledTimes(1);
-            expect(onChange).toHaveBeenLastCalledWith('abc');
-        });
+        await flushHookEffects({ advanceTimersMs: 50 });
+
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange).toHaveBeenLastCalledWith('abc');
     });
 
     it('flushes pending debounced change on blur', async () => {
-        await withFakeTimers(async () => {
-            let currentValue = 'start';
-            let changeHandler: null | ((..._args: any[]) => void) = null;
-            let blurHandler: null | ((..._args: any[]) => void) = null;
+        vi.useFakeTimers();
 
-            (globalThis as any).window = (globalThis as any).window ?? {};
-            (globalThis as any).document = (globalThis as any).document ?? {};
+        let currentValue = 'start';
+        let changeHandler: null | ((..._args: any[]) => void) = null;
+        let blurHandler: null | ((..._args: any[]) => void) = null;
 
-            (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
-                if (typeof onOk === 'function') onOk();
-            };
-            (globalThis as any).window.monaco = {
-                editor: {
-                    createModel: () => ({
-                        getValue: () => currentValue,
-                        setValue: () => {},
-                        dispose: () => {},
-                    }),
-                    create: () => ({
-                        onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
-                            changeHandler = handler;
-                            return { dispose: () => {} };
-                        },
-                        onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
-                            blurHandler = handler;
-                            return { dispose: () => {} };
-                        },
-                        updateOptions: () => {},
-                        dispose: () => {},
-                    }),
-                },
-            };
+        (globalThis as any).window = (globalThis as any).window ?? {};
+        (globalThis as any).document = (globalThis as any).document ?? {};
 
-            const onChange = vi.fn();
+        (globalThis as any).window.require = (deps: any, onOk?: any, _onErr?: any) => {
+            if (typeof onOk === 'function') onOk();
+        };
+        (globalThis as any).window.monaco = {
+            editor: {
+                createModel: () => ({
+                    getValue: () => currentValue,
+                    setValue: () => {},
+                    dispose: () => {},
+                }),
+                create: () => ({
+                    onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
+                        changeHandler = handler;
+                        return { dispose: () => {} };
+                    },
+                    onDidBlurEditorText: (handler: (..._args: any[]) => void) => {
+                        blurHandler = handler;
+                        return { dispose: () => {} };
+                    },
+                    updateOptions: () => {},
+                    dispose: () => {},
+                }),
+            },
+        };
 
-            await renderScreen(React.createElement(MonacoEditorSurface, {
-                        resetKey: '1',
-                        value: currentValue,
-                        language: 'markdown',
-                        onChange,
-                        changeDebounceMs: 50,
-                    }));
+        const onChange = vi.fn();
 
-            const triggerChange = assertCallable(changeHandler, 'change handler');
-            const triggerBlur = assertCallable(blurHandler, 'blur handler');
+        await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: currentValue,
+                    language: 'markdown',
+                    onChange,
+                    changeDebounceMs: 50,
+                }));
 
-            currentValue = 'blur-me';
-            triggerChange({});
+        const triggerChange = assertCallable(changeHandler, 'change handler');
+        const triggerBlur = assertCallable(blurHandler, 'blur handler');
 
-            expect(onChange).toHaveBeenCalledTimes(0);
+        currentValue = 'blur-me';
+        triggerChange({});
 
-            await act(async () => {
-                triggerBlur({});
-                await Promise.resolve();
-            });
+        expect(onChange).toHaveBeenCalledTimes(0);
 
-            expect(onChange).toHaveBeenCalledTimes(1);
-            expect(onChange).toHaveBeenLastCalledWith('blur-me');
+        await act(async () => {
+            triggerBlur({});
         });
+        await flushHookEffects();
+
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange).toHaveBeenLastCalledWith('blur-me');
     });
 
     it('exposes a stable imperative handle for flush/getValue', async () => {

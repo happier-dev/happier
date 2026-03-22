@@ -112,9 +112,9 @@ describe('AppearanceSettingsScreen (focused groups after redistribution)', () =>
         const { default: AppearanceSettingsScreen } = await import('@/app/(app)/settings/appearance');
         const screen = await renderScreen(React.createElement(AppearanceSettingsScreen));
 
-        const items = screen.root.findAllByType('Item' as any);
+        const items = screen.findAllByType('Item' as any);
         const titles = items.map((i) => i.props.title);
-        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const dropdownTitles = dropdowns.map((node: any) => node.props?.itemTrigger?.title).filter(Boolean);
 
         // Core appearance settings that remain

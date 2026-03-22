@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPaneLazyLoader } from './SessionPaneLazyLoader';
-import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createDeferred, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -61,7 +61,6 @@ describe('SessionPaneLazyLoader', () => {
 
         await act(async () => {
             deferred.resolve(LoadedPane);
-            await Promise.resolve();
         });
 
         expect(screen.findByType(LoadedPane)).toBeTruthy();
@@ -86,10 +85,7 @@ describe('SessionPaneLazyLoader', () => {
         expect(screen.getTextContent()).toContain('common.retry');
 
         const retryButton = screen.findByType('Pressable');
-        await act(async () => {
-            retryButton.props.onPress();
-            await Promise.resolve();
-        });
+        await pressTestInstanceAsync(retryButton, 'session-pane-loader retry button');
 
         expect(load).toHaveBeenCalledTimes(2);
         expect(screen.findByType(LoadedPane)).toBeTruthy();

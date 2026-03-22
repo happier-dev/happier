@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -122,13 +122,6 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
     },
 }));
 
-function textContent(node: ReactTestInstance): string {
-    const c = node.props?.children;
-    if (typeof c === 'string') return c;
-    if (Array.isArray(c)) return c.map((x) => (typeof x === 'string' ? x : '')).join('');
-    return '';
-}
-
 describe('RestoreScanComputerQrView (feature disabled)', () => {
     it('renders a fallback UX instead of the scanner', async () => {
         vi.resetModules();
@@ -136,28 +129,11 @@ describe('RestoreScanComputerQrView (feature disabled)', () => {
 
         const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
 
-        let tree: ReactTestRenderer | null = null;
-        act(() => {
-            tree = create(<RestoreScanComputerQrView />);
-        });
+        const screen = await renderScreen(<RestoreScanComputerQrView />);
 
-        try {
-            expect(scannerRendered).toBe(false);
-
-            const texts = tree!.root.findAll((node: ReactTestInstance) => (node.type as unknown) === 'Text');
-            const joined = texts.map(textContent).join('\n');
-            expect(joined).toContain('connect.scanComputerQrUnavailableBody');
-
-            const buttons = tree!.root.findAll((node: ReactTestInstance) => (node.type as unknown) === 'RoundButton');
-            const testIds = buttons
-                .map((node: ReactTestInstance) => String(node.props?.testID ?? ''))
-                .filter(Boolean);
-            expect(testIds).toContain('restore-open-manual');
-            expect(testIds).toContain('restore-show-qr-instead');
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(scannerRendered).toBe(false);
+        expect(screen.getTextContent()).toContain('connect.scanComputerQrUnavailableBody');
+        expect(screen.findByTestId('restore-open-manual')).not.toBeNull();
+        expect(screen.findByTestId('restore-show-qr-instead')).not.toBeNull();
     });
 });

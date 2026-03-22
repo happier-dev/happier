@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
@@ -244,10 +243,8 @@ describe('Session message route hydration', () => {
     expect(syncLoadOlderMessagesSpy).toHaveBeenCalledWith('session-1');
     expect(routerBackSpy).not.toHaveBeenCalled();
 
-    await act(async () => {
-      loadOlderDeferred!.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
-      await loadOlderDeferred!.promise;
-    });
+    loadOlderDeferred!.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
+    await flushHookEffects();
 
     expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1');
   });

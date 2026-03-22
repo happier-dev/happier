@@ -375,10 +375,7 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getVisibility(updateSurface!)).toBe('hidden');
         expect(getVisibility(historySurface!)).toBe('hidden');
 
-        const updateTab = screen.findByTestId('session-rightpanel-git-subtab:update');
-        await act(async () => {
-            updateTab?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:update');
 
         expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('update');
         expect(getOpacity(commitSurface!)).toBe(0);
@@ -388,10 +385,7 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getVisibility(updateSurface!)).toBe('visible');
         expect(getVisibility(historySurface!)).toBe('hidden');
 
-        const historyTab = screen.findByTestId('session-rightpanel-git-subtab:history');
-        await act(async () => {
-            historyTab?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:history');
 
         expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('history');
         expect(getOpacity(commitSurface!)).toBe(0);
@@ -426,10 +420,7 @@ describe('SessionRightPanel git sub-tabs', () => {
         const initialCalls = useChangedFilesDataSpy.mock.calls.length;
         expect(initialCalls).toBeGreaterThan(0);
 
-        const historyTab = screen.findByTestId('session-rightpanel-git-subtab:history');
-        await act(async () => {
-            historyTab?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:history');
 
         // Switching away should not thrash changed-files computations.
         expect(useChangedFilesDataSpy.mock.calls.length).toBeLessThanOrEqual(initialCalls + 1);

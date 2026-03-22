@@ -301,6 +301,10 @@ describe('SessionView (control switch timeout)', () => {
     return chatListProps;
   }
 
+  async function flushControlSwitchTimeout() {
+    await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+  }
+
   beforeEach(() => {
     (globalThis as { __DEV__?: boolean }).__DEV__ = false;
     resetSession();
@@ -331,7 +335,7 @@ describe('SessionView (control switch timeout)', () => {
 
     expect(getChatListProps().controlSwitchTo).toBe('remote');
 
-    await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_000 });
+    await flushControlSwitchTimeout();
 
     expect(getChatListProps().controlSwitchTo).toBeNull();
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
@@ -375,7 +379,7 @@ describe('SessionView (control switch timeout)', () => {
       chatList.onRequestSwitchToRemote();
     });
 
-    await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_000 });
+    await flushControlSwitchTimeout();
 
     const rejectPendingSwitch = rejectSwitch;
     if (rejectPendingSwitch === undefined) {

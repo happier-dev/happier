@@ -1,8 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 type SearchParams = { id?: string; jumpSeq?: string };
@@ -59,19 +58,16 @@ async function renderSessionScreenTree() {
     routerMock.state.params = searchParams;
     const Screen = (await import('@/app/(app)/session/[id]')).default;
 
-    let tree: renderer.ReactTestRenderer | null = null;
-    tree = (await renderScreen(React.createElement(Screen))).tree;
-    await act(async () => {
-        await Promise.resolve();
-    });
+    const screen = await renderScreen(React.createElement(Screen));
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
-    return tree!;
+    return screen;
 }
 
 async function renderSessionScreen() {
-    const tree = await renderSessionScreenTree();
-    const sessionView = tree.root.findByType('SessionView');
-    return { tree, sessionView };
+    const screen = await renderSessionScreenTree();
+    const sessionView = screen.findByType('SessionView' as any);
+    return { screen, sessionView };
 }
 
 describe('session/[id] param parsing', () => {
@@ -134,12 +130,12 @@ describe('session/[id] param parsing', () => {
     expect(sessionView.props.id).toBe('session-123');
   });
 
-  it('renders an invalid-link fallback when session id is missing', async () => {
+    it('renders an invalid-link fallback when session id is missing', async () => {
         vi.resetModules();
         searchParams = {};
-        const tree = await renderSessionScreenTree();
+        const screen = await renderSessionScreenTree();
         expect(ensureSessionVisibleSpy).not.toHaveBeenCalled();
-        expect(tree.root.findAllByType('SessionView')).toHaveLength(0);
-        expect(tree.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
+        expect(screen.findAllByType('SessionView' as any)).toHaveLength(0);
+        expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
   });
 });
