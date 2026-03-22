@@ -779,7 +779,7 @@ describe('SessionView (direct sessions)', () => {
     const initialRefreshCallCount = syncRefreshSessionMessagesSpy.mock.calls.length;
 
     await act(async () => {
-      await vi.advanceTimersToNextTimerAsync();
+      await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 250 });
     });
     expect(machineDirectSessionStatusGetSpy.mock.calls.length).toBeGreaterThanOrEqual(initialStatusCallCount + 1);
     expect(syncRefreshSessionMessagesSpy.mock.calls.length).toBeGreaterThanOrEqual(initialRefreshCallCount + 1);
@@ -793,7 +793,7 @@ describe('SessionView (direct sessions)', () => {
     showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
     const screen = await renderSessionView();
 
-    const agentInput = screen.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('continue this session');
     });
@@ -822,7 +822,7 @@ describe('SessionView (direct sessions)', () => {
     showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null, forceStop: false });
     const screen = await renderSessionView();
 
-    let agentInput = screen.findByType('AgentInput' as any);
+    let agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('draft stays here');
     });
@@ -835,7 +835,7 @@ describe('SessionView (direct sessions)', () => {
     expect(machineDirectSessionTakeoverPersistSpy).not.toHaveBeenCalled();
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
-    agentInput = screen.findByType('AgentInput' as any);
+    agentInput = findAgentInput(screen);
     expect(agentInput.props.value).toBe('draft stays here');
 
     await act(async () => {
@@ -849,7 +849,7 @@ describe('SessionView (direct sessions)', () => {
     );
     const screen = await renderSessionView();
 
-    let agentInput = screen.findByType('AgentInput' as any);
+    let agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('clear me immediately');
     });
@@ -858,7 +858,7 @@ describe('SessionView (direct sessions)', () => {
       await agentInput.props.onSend();
     });
 
-    agentInput = screen.findByType('AgentInput' as any);
+    agentInput = findAgentInput(screen);
     expect(agentInput.props.value).toBe('');
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
@@ -881,7 +881,7 @@ describe('SessionView (direct sessions)', () => {
     });
     const screen = await renderSessionView();
 
-    const agentInput = screen.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('persist this');
     });
@@ -917,7 +917,7 @@ describe('SessionView (direct sessions)', () => {
     });
     const screen = await renderSessionView();
 
-    const agentInput = screen.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('continue the voice conversation');
     });
@@ -958,7 +958,7 @@ describe('SessionView (direct sessions)', () => {
     });
     const screen = await renderSessionView();
 
-    const agentInput = screen.findByType('AgentInput' as any);
+    const agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('continue the voice conversation');
     });

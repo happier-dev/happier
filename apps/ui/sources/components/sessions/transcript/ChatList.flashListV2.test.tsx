@@ -1,4 +1,3 @@
-import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import {
     flashListChatListHarnessState,
     createFlashListChatListWebElement,
@@ -25,12 +24,6 @@ let renderedFlatListCount = 0;
 let flashListRefHandle: any = null;
 const mountedTrees: ReactTestRenderer[] = [];
 
-type FlashListFlushOptions = {
-    turns?: number;
-    frames?: number;
-    advanceTimersMs?: number;
-};
-
 function getCapturedFlashListProps(): any {
     const props = flashListChatListHarnessState.flashListProps ?? capturedFlashListProps;
     expect(props).toBeTruthy();
@@ -48,6 +41,12 @@ async function renderTrackedFlashListChatList(element: React.ReactElement) {
 function expectScreenHasTestId(screen: { findByTestId: (testID: string) => unknown }, testID: string): void {
     expect(screen.findByTestId(testID)).toBeTruthy();
 }
+
+type FlashListFlushOptions = {
+    turns?: number;
+    frames?: number;
+    advanceTimersMs?: number;
+};
 
 async function primeFlashListMetrics(
     layoutHeight: number,
@@ -75,15 +74,6 @@ async function scrollFlashListTo(contentOffsetY: number, options: FlashListFlush
             advanceTimersMs: options.advanceTimersMs,
         },
     );
-}
-
-async function flushFlashListEffects(options: FlashListFlushOptions = {}): Promise<void> {
-    await flushHookEffects({
-        cycles: 1,
-        turns: options.turns ?? 1,
-        frames: options.frames,
-        advanceTimersMs: options.advanceTimersMs,
-    });
 }
 
 let sessionMessagesState: { messages: any[]; isLoaded: boolean } = { messages: [], isLoaded: true };
@@ -434,7 +424,7 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
 
         const { ChatList } = await import('./ChatList');
-        await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
         getCapturedFlashListProps();
         expect(loadOlderMessagesMock).not.toHaveBeenCalled();
@@ -465,7 +455,7 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
 
         const { ChatList } = await import('./ChatList');
-        await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
         getCapturedFlashListProps();
 
@@ -497,7 +487,7 @@ describe('ChatList (FlashList v2)', () => {
         syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
 
         const { ChatList } = await import('./ChatList');
-        await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
         await act(async () => {
             await primeFlashListMetrics(600, 1200, { turns: 2, frames: 2 });
@@ -539,14 +529,13 @@ describe('ChatList (FlashList v2)', () => {
             async () => {
                 const { ChatList } = await import('./ChatList');
                 const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-
                 expect(capturedFlashListProps).toBeTruthy();
 
                 await act(async () => {
                     capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 100 } } });
                     capturedFlashListProps.onContentSizeChange?.(0, 100);
                     scrollEl.scrollHeight = 1600;
-                    await flushFlashListEffects({ turns: 3 });
+                await screen.settle({ turns: 3 });
                 });
 
                 expect(loadOlderMessagesMock).not.toHaveBeenCalled();
@@ -596,8 +585,7 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
                 getCapturedFlashListProps();
 
                 await primeFlashListMetrics(600, 1200);
@@ -656,8 +644,7 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
                 getCapturedFlashListProps();
 
                 await primeFlashListMetrics(600, 1200);
@@ -719,7 +706,7 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
                 getCapturedFlashListProps();
 
@@ -790,7 +777,7 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
 
                 getCapturedFlashListProps();
 
@@ -811,7 +798,7 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.scrollHeight = 1400;
                 await act(async () => {
                     resolveLoadOlder?.({ loaded: 5, hasMore: true, status: 'loaded' });
-                    await flushFlashListEffects({ turns: 3 });
+                await screen.settle({ turns: 3 });
                 });
 
                 expect(scrollEl.scrollTop).toBe(260);
@@ -862,7 +849,7 @@ describe('ChatList (FlashList v2)', () => {
         await withRenderedFlashListChatListWebScroller(
             scrollEl,
             <ChatList session={{ ...sessionState }} />,
-            async () => {
+            async (screen) => {
                 await primeFlashListMetrics(600, 1200);
 
                 await scrollFlashListTo(600);
@@ -876,8 +863,8 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
                 await act(async () => {
                     resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                    await flushFlashListEffects({ turns: 3 });
                 });
+                await screen.settle({ turns: 3 });
 
                 expect(scrollEl.scrollTop).toBe(4100);
 
@@ -951,7 +938,7 @@ describe('ChatList (FlashList v2)', () => {
         await withRenderedFlashListChatListWebScroller(
             scrollEl,
             <ChatList session={{ ...sessionState }} />,
-            async () => {
+            async (screen) => {
                 await primeFlashListMetrics(600, 1200);
 
                 await scrollFlashListTo(600);
@@ -965,8 +952,8 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
                 await act(async () => {
                     resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                    await flushFlashListEffects({ turns: 4 });
                 });
+                await screen.settle({ turns: 4 });
 
                 expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
                     index: 0,
@@ -1035,7 +1022,7 @@ describe('ChatList (FlashList v2)', () => {
         await withRenderedFlashListChatListWebScroller(
             scrollEl,
             <ChatList session={{ ...sessionState }} />,
-            async () => {
+            async (screen) => {
                 await act(async () => {
                     await primeFlashListMetrics(600, 1200);
                 });
@@ -1055,8 +1042,8 @@ describe('ChatList (FlashList v2)', () => {
                 scrollEl.setQuerySelectorAll('[data-testid]', []);
                 await act(async () => {
                     resolveLoadOlder?.({ loaded: 50, hasMore: true, status: 'loaded' });
-                    await flushFlashListEffects({ turns: 4 });
                 });
+                await screen.settle({ turns: 4 });
 
                 expect(flashListRefHandle.scrollToIndex).toHaveBeenCalledWith({
                     index: 0,
@@ -1191,8 +1178,8 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 expect((scrollEl as any).scrollTop).toBeGreaterThan(0);
                 expect(scrollEl.scrollTo).not.toHaveBeenCalled();
@@ -1217,8 +1204,8 @@ describe('ChatList (FlashList v2)', () => {
             null,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
             },
@@ -1250,8 +1237,8 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 const delays = setTimeoutSpy.mock.calls
                     .map((call) => call[1])
@@ -1300,8 +1287,8 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 // Initial stabilization pins to bottom.
                 expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
@@ -1313,7 +1300,7 @@ describe('ChatList (FlashList v2)', () => {
                 });
 
                 // Even though stabilization retries are scheduled, we must not fight the user's scroll.
-                await flushFlashListEffects({ turns: 1, advanceTimersMs: 1500 });
+                await screen.settle({ turns: 1, advanceTimersMs: 1500 });
 
                 expect(scrollEl.scrollTop).toBe(900);
             },
@@ -1357,8 +1344,8 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 // The initial mount pin puts us at the bottom.
                 expect(scrollEl.scrollTop).toBeGreaterThanOrEqual(maxScrollTop);
@@ -1420,8 +1407,8 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 expect(getCapturedFlashListProps()).not.toBeNull();
                 flashListRefHandle.scrollToOffset.mockClear();
@@ -1476,8 +1463,8 @@ describe('ChatList (FlashList v2)', () => {
             scrollEl,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 flashListRefHandle.scrollToOffset.mockClear();
 
@@ -1526,8 +1513,8 @@ describe('ChatList (FlashList v2)', () => {
             wrongScroller,
             async () => {
                 const { ChatList } = await import('./ChatList');
-                await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
-                await flushFlashListEffects({ turns: 2 });
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle({ turns: 2 });
 
                 // If DOM pinning accidentally targets the first `[data-testid="transcript-chat-list"]` in the
                 // document, it would pin the wrong scroller. We must always pin the current session's list.

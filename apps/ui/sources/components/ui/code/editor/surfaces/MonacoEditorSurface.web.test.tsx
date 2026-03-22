@@ -330,7 +330,7 @@ describe('MonacoEditorSurface (web)', () => {
                     readOnly: false,
                 }),
             );
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(updateOptionsSpy).toHaveBeenCalledWith(expect.objectContaining({ readOnly: false }));
@@ -394,7 +394,7 @@ describe('MonacoEditorSurface (web)', () => {
                     readOnly: false,
                 }),
             );
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(createEditorWithLatestOptionsSpy).not.toHaveBeenCalled();
@@ -402,7 +402,7 @@ describe('MonacoEditorSurface (web)', () => {
         await act(async () => {
             if (!resolveEditorMain) throw new Error('expected editor main loader callback');
             resolveEditorMain();
-            await Promise.resolve();
+            await flushHookEffects();
         });
 
         expect(createEditorWithLatestOptionsSpy).toHaveBeenCalledWith(

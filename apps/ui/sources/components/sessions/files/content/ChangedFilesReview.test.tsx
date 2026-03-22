@@ -1054,7 +1054,7 @@ describe('ChangedFilesReview', () => {
     }
 
     async function flushReviewEffects(cycles = 1) {
-        await flushHookEffects({ cycles });
+        await flushHookEffects({ cycles, frames: 1 });
     }
 
     it('limits auto-expanded diffs when large and viewability config is enabled', async () => {
