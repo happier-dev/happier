@@ -24,11 +24,13 @@ import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
-import { archiveSession, fetchSessionByIdCompat } from '@/sessionControl/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
+import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import psList from 'ps-list';
 import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
@@ -73,6 +75,7 @@ export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession: (sessionId: string) => Promise<boolean>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
+  loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   requestShutdown: () => void;
   memory?: MemoryWorkerHandle;
   machineTransferChannel?: Readonly<{
@@ -123,11 +126,7 @@ async function cleanupForkChildBestEffort(stopSession: (sessionId: string) => Pr
 }
 
 async function archiveSessionBestEffort(token: string, sessionId: string): Promise<void> {
-  try {
-    await archiveSession({ token, sessionId });
-  } catch {
-    // Best-effort only.
-  }
+  await archiveSessionByIdBestEffort({ token, sessionId });
 }
 
 async function toCanonicalPath(path: string): Promise<string | null> {
@@ -175,7 +174,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
       machineId,
       approvedNewDirectoryCreation,
       backendTarget,
-      token,
       environmentVariables,
       profileId,
       terminal,
@@ -275,7 +273,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
       backendTarget: normalizedBackendTarget,
       approvedNewDirectoryCreation,
       profileId,
-      hasToken: !!token,
       terminal,
       permissionMode: normalizedPermissionMode,
       permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
@@ -300,7 +297,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
       initialPrompt: normalizedInitialPrompt,
       machineId,
       backendTarget: normalizedBackendTarget,
-      token,
       environmentVariables: normalizedEnvironmentVariables,
       profileId,
       terminal,
@@ -431,6 +427,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       }
       return (await stopSession(sessionId)) ? 'stopped' : 'failed';
     },
+    ...(handlers.loadLocalSessionMetadata ? { loadLocalSessionMetadata: handlers.loadLocalSessionMetadata } : {}),
     ...(handlers.machineTransferChannel ? { machineTransferChannel: handlers.machineTransferChannel } : {}),
     ...(handlers.directPeerTransfer ? { directPeerTransfer: handlers.directPeerTransfer } : {}),
   });

@@ -26,7 +26,7 @@ import { validateDirectMachineSource } from '@/api/directSessions/security/valid
 import { findTrustedDirectSessionOwner } from '@/api/directSessions/takeover/findTrustedDirectSessionOwner';
 import { loadLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import { resolveDirectTakeoverSpawnOptions } from '@/api/directSessions/takeover/resolveDirectTakeoverSpawnOptions';
-import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';

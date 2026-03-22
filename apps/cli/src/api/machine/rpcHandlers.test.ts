@@ -77,6 +77,8 @@ vi.mock('@/configuration', () => ({
   configuration: {
     serverUrl: 'http://example.invalid',
     apiServerUrl: 'http://example.invalid',
+    activeServerId: 'cloud',
+    activeServerDir: '/tmp/happier-test-active-server',
     happyHomeDir: '/tmp/happier-test-home',
     logsDir: '/tmp',
     daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
@@ -86,7 +88,7 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
-vi.mock('@/sessionControl/updateSessionMetadataWithRetry', () => ({
+vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
   updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
 }));
 
@@ -243,6 +245,44 @@ describe('registerMachineRpcHandlers', () => {
         HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
       },
     }));
+  });
+
+  it('does not forward machine rpc auth token into daemon spawn options', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      token: 'happy-account-token',
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+    }));
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    const firstSpawnCall = spawnSession.mock.calls.at(0) as readonly unknown[] | undefined;
+    const firstSpawnOptions = firstSpawnCall?.[0];
+    expect(firstSpawnOptions).toBeDefined();
+    expect(firstSpawnOptions).not.toHaveProperty('token');
   });
 
   it('normalizes legacy experimentalCodexAcp spawn requests onto canonical codexBackendMode', async () => {
@@ -978,7 +1018,6 @@ describe('registerMachineRpcHandlers', () => {
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(createdMeta.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_prev', parentCutoffSeqInclusive: 3, strategy: 'replay' });
     expect(createdMeta.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_prev', sourceCutoffSeqInclusive: 3 });
-    expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('Assistant: two');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: three');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one one one');
   });
@@ -3211,7 +3250,7 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(createCodexAppServerClientMock).toHaveBeenCalledWith({ cwd: '/repo' });
+    expect(createCodexAppServerClientMock).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/repo' }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },

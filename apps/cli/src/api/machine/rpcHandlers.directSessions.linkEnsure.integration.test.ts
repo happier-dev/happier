@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { z } from 'zod';
 
-import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import type { Credentials } from '@/persistence';
 
 const { mockIo, readCredentialsMock } = vi.hoisted(() => ({
@@ -30,10 +30,13 @@ vi.mock('@/persistence', async (importOriginal) => {
 });
 
 describe('daemon.directSessions.link.ensure (integration)', () => {
-  const originalServerUrl = process.env.HAPPIER_SERVER_URL;
-  const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
-  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
-  const originalClaudeConfigDir = process.env.HAPPIER_CLAUDE_CONFIG_DIR;
+  const envKeys = [
+    'HAPPIER_SERVER_URL',
+    'HAPPIER_WEBAPP_URL',
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_CLAUDE_CONFIG_DIR',
+  ] as const;
+  let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
 
@@ -43,7 +46,8 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   beforeEach(async () => {
     sessionsByTag.clear();
     sessionsById.clear();
-    happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-directSessions-linkEnsure-'));
+    envScope = createEnvKeyScope(envKeys);
+    happyHomeDir = await createTempDir('happier-directSessions-linkEnsure-');
 
     const machineKeySeed = new Uint8Array(32).fill(7);
     readCredentialsMock.mockResolvedValue({
@@ -148,49 +152,30 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
     reloadConfiguration();
 
     mockIo.mockReset();
-    mockIo.mockImplementation(() => {
-      const handlers = new Map<string, Array<(...args: any[]) => void>>();
-      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        list.push(cb);
-        handlers.set(event, list);
-      });
-      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
-        const list = handlers.get(event) ?? [];
-        handlers.set(event, list.filter((value) => value !== cb));
-      });
-      const connect = vi.fn(() => {
-        const list = handlers.get('connect') ?? [];
-        for (const cb of list) cb();
-      });
-      const emit = vi.fn(async (event: string, ...args: any[]) => {
-        if (event !== 'update-metadata') return;
-        const [data, callback] = args;
-        const sessionId = String(data?.sid ?? '');
-        const expectedVersion = Number(data?.expectedVersion ?? NaN);
-        const nextMetadata = String(data?.metadata ?? '');
-        const session = sessionsById.get(sessionId);
-        if (!session || !Number.isFinite(expectedVersion) || typeof callback !== 'function') {
-          return;
-        }
+    bindApiSessionSocketMock(
+      mockIo,
+      createApiSessionSocketStub({
+        emit: async (event, args) => {
+          if (event !== 'update-metadata') return;
+          const [data, callback] = args;
+          const sessionId = String((data as { sid?: unknown })?.sid ?? '');
+          const expectedVersion = Number((data as { expectedVersion?: unknown })?.expectedVersion ?? Number.NaN);
+          const nextMetadata = String((data as { metadata?: unknown })?.metadata ?? '');
+          const session = sessionsById.get(sessionId);
+          if (!session || !Number.isFinite(expectedVersion) || typeof callback !== 'function') {
+            return;
+          }
 
-        session.metadata = nextMetadata;
-        session.metadataVersion = Math.max(Number(session.metadataVersion ?? 0), expectedVersion) + 1;
-        callback({
-          result: 'success',
-          version: session.metadataVersion,
-          metadata: session.metadata,
-        });
-      });
-      return {
-        on,
-        off,
-        connect,
-        emit,
-        disconnect: vi.fn(),
-        close: vi.fn(),
-      };
-    });
+          session.metadata = nextMetadata;
+          session.metadataVersion = Math.max(Number(session.metadataVersion ?? 0), expectedVersion) + 1;
+          callback({
+            result: 'success',
+            version: session.metadataVersion,
+            metadata: session.metadata,
+          });
+        },
+      }),
+    );
   });
 
   afterEach(async () => {
@@ -201,17 +186,11 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
     }
     server = null;
     if (happyHomeDir) {
-      await rm(happyHomeDir, { recursive: true, force: true });
+      await removeTempDir(happyHomeDir);
     }
 
-    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
-    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
-    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
-    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
-    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
-    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
-    if (originalClaudeConfigDir === undefined) delete process.env.HAPPIER_CLAUDE_CONFIG_DIR;
-    else process.env.HAPPIER_CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();

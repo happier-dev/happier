@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 const readCredentialsMock = vi.fn();
@@ -26,8 +27,8 @@ vi.mock('@/persistence', () => ({
   readCredentials: (...args: unknown[]) => readCredentialsMock(...args),
 }));
 
-vi.mock('@/sessionControl/sessionsHttp', async () => {
-  const actual = await vi.importActual<typeof import('@/sessionControl/sessionsHttp')>('@/sessionControl/sessionsHttp');
+vi.mock('@/session/transport/http/sessionsHttp', async () => {
+  const actual = await vi.importActual<typeof import('@/session/transport/http/sessionsHttp')>('@/session/transport/http/sessionsHttp');
   return {
     ...actual,
     fetchSessionById: (...args: unknown[]) => fetchSessionByIdMock(...args),
@@ -35,7 +36,7 @@ vi.mock('@/sessionControl/sessionsHttp', async () => {
   };
 });
 
-vi.mock('@/sessionControl/updateSessionMetadataWithRetry', () => ({
+vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
   updateSessionMetadataWithRetry: (...args: unknown[]) => updateSessionMetadataWithRetryMock(...args),
 }));
 
@@ -734,30 +735,14 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     const nowUpdatedAtMs = Date.now();
     const nowUpdatedAtSeconds = nowUpdatedAtMs / 1000;
     await mkdir(codexHome, { recursive: true });
-    const fakeAppServerPath = join(root, 'fake-codex-app-server.mjs');
-    await writeFile(
-      fakeAppServerPath,
-      [
-        '#!/usr/bin/env node',
-        'import readline from "node:readline";',
-        'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
-        'for await (const line of rl) {',
-        '  if (!line.trim()) continue;',
-        '  const msg = JSON.parse(line);',
-        '  if (msg.method === "initialize") {',
-        '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake-codex-app-server", version: "0.0.0" } } }) + "\\n");',
-        '    continue;',
-        '  }',
-        '  if (msg.method === "initialized") continue;',
-        '  if (msg.method === "thread/list") {',
-        `    process.stdout.write(JSON.stringify({ id: msg.id, result: { data: [{ id: "remote_456", updatedAt: ${JSON.stringify(nowUpdatedAtSeconds)}, cwd: "/tmp/from-app-server" }], nextCursor: null } }) + "\\n");`,
-        '    continue;',
-        '  }',
-        '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
-        '}',
-      ].join('\n'),
-      { encoding: 'utf8', mode: 0o755 },
-    );
+    const fakeAppServerPath = await writeFakeCodexAppServerThreadListScript({
+      dir: root,
+      nonArchivedThreads: [{
+        id: 'remote_456',
+        updatedAt: nowUpdatedAtSeconds,
+        cwd: '/tmp/from-app-server',
+      }],
+    });
     vi.stubEnv('CODEX_HOME', codexHome);
     vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', fakeAppServerPath);
 
