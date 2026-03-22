@@ -7,6 +7,7 @@ import {
 } from './resolveAppSessionTransferRoute.js';
 
 export const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
+export const SERVER_ROUTED_TRANSFER_DISABLED_ERROR = 'Server-routed transfer is disabled on the selected server';
 export const SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR = 'File exceeds the server-routed transfer size limit';
 
 export type AppSessionTransferAvailabilityResult =
@@ -36,6 +37,14 @@ export function resolveAppSessionTransferAvailability(input: Readonly<{
             kind: 'unavailable',
             reasonCode: route.reasonCode,
             errorMessage: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+        };
+    }
+
+    if (route.reasonCode === 'transfer_disabled') {
+        return {
+            kind: 'unavailable',
+            reasonCode: route.reasonCode,
+            errorMessage: SERVER_ROUTED_TRANSFER_DISABLED_ERROR,
         };
     }
 

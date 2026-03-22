@@ -54,7 +54,7 @@ export function createMachineTransferRouteCache(params: Readonly<{
         return {
             serverId: params.serverId,
             targetMachineId: input.remoteMachineId,
-            routeKind: 'direct_peer' as const,
+            routeKind: 'machine_rpc_direct' as const,
         };
     }
 

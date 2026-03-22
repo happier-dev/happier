@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { VoiceAssistantActionSchema } from './voiceActions.js';
 import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
+import {
+  ExecutionRunListRequestSchema as ExecutionRunListRequestSchemaBase,
+  ExecutionRunStatusSchema as ExecutionRunStatusSchemaBase,
+} from './executionRunListRequest.js';
 import { HappierReplayStrategySchema } from './sessionContinueWithReplay.js';
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
 
@@ -36,15 +40,10 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'permission_denied',
 ]);
 export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
-
-export const ExecutionRunStatusSchema = z.enum([
-  'running',
-  'succeeded',
-  'failed',
-  'cancelled',
-  'timeout',
-]);
+export const ExecutionRunStatusSchema = ExecutionRunStatusSchemaBase;
 export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
+export const ExecutionRunListRequestSchema = ExecutionRunListRequestSchemaBase;
+export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
 export const ExecutionRunErrorSchema = z.object({
   code: z.string().min(1),
@@ -194,9 +193,6 @@ export const ExecutionRunStartResponseSchema = z.object({
   sidechainId: z.string().min(1),
 }).passthrough();
 export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;
-
-export const ExecutionRunListRequestSchema = z.object({}).passthrough();
-export type ExecutionRunListRequest = z.infer<typeof ExecutionRunListRequestSchema>;
 
 export const ExecutionRunListResponseSchema = z.object({
   runs: z.array(ExecutionRunPublicStateSchema),

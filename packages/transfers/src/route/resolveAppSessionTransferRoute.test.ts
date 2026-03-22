@@ -32,7 +32,7 @@ describe('resolveAppSessionTransferRoute', () => {
             serverFeatures: null,
         })).toEqual({
             kind: 'selected',
-            route: 'direct_peer',
+            route: 'machine_rpc_direct',
         });
     });
 
@@ -76,7 +76,29 @@ describe('resolveAppSessionTransferRoute', () => {
             sessionRpcTransferSizeBytes: 5,
         })).toEqual({
             kind: 'unavailable',
-            reasonCode: 'server_routed_transfer_too_large',
+            reasonCode: 'transfer_too_large',
+        });
+    });
+
+    it('fails closed when machine rpc would bypass the selected transfer size policy', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            serverFeatures: createServerFeatures({
+                capabilities: {
+                    machines: {
+                        transfer: {
+                            serverRouted: {
+                                maxBytes: 4,
+                            },
+                        },
+                    },
+                },
+            }),
+            sessionRpcTransferSizeBytes: 5,
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_too_large',
         });
     });
 
@@ -89,6 +111,52 @@ describe('resolveAppSessionTransferRoute', () => {
         })).toEqual({
             kind: 'selected',
             route: 'server_routed_stream',
+        });
+    });
+
+    it('fails closed when server-routed transfer is explicitly disabled by server features', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: false,
+            sessionRpcAvailable: true,
+            serverFeatures: createServerFeatures({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            serverRouted: {
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_disabled',
+        });
+    });
+
+    it('fails closed when machine rpc would bypass disabled transfer policy', () => {
+        expect(resolveAppSessionTransferRoute({
+            machineTargetAvailable: true,
+            sessionRpcAvailable: true,
+            serverFeatures: createServerFeatures({
+                features: {
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: false,
+                            serverRouted: {
+                                enabled: true,
+                            },
+                        },
+                    },
+                },
+            }),
+        })).toEqual({
+            kind: 'unavailable',
+            reasonCode: 'transfer_disabled',
         });
     });
 });

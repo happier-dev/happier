@@ -67,4 +67,31 @@ describe('createMachineTransferRouteCache', () => {
             failureReason: 'machine_rpc_direct_unavailable',
         }));
     });
+
+    it('keeps machine-rpc-direct cache entries distinct from direct-peer endpoint cache entries', () => {
+        const cache = createMachineTransferRouteCache({
+            serverId: 'server-1',
+            now,
+            positiveTtlMs: 30_000,
+            negativeTtlMs: 5_000,
+        });
+
+        cache.recordMachineRpcDirectRouteUnavailable(
+            {
+                remoteMachineId: 'machine-target',
+            },
+            'machine_rpc_direct_unavailable',
+        );
+
+        expect(cache.readDirectPeerRoute({
+            remoteMachineId: 'machine-target',
+            endpointCandidates: [
+                {
+                    kind: 'http',
+                    url: 'http://127.0.0.1:46001/machine-transfers/direct/a?token=1',
+                    expiresAt: 10_000,
+                },
+            ],
+        })).toEqual({ status: 'unknown' });
+    });
 });

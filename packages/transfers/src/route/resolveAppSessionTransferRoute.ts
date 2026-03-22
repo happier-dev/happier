@@ -5,11 +5,12 @@ import {
     resolveServerRoutedTransferMaxBytesFromFeatures,
 } from '../policy/serverRoutedTransferPolicy.js';
 
-export type AppSessionTransferRoute = 'direct_peer' | 'server_routed_stream';
+export type AppSessionTransferRoute = 'machine_rpc_direct' | 'server_routed_stream';
 
 export type AppSessionTransferUnavailableReasonCode =
     | 'inactive_session_rpc_unavailable'
-    | 'server_routed_transfer_too_large';
+    | 'transfer_disabled'
+    | 'transfer_too_large';
 
 export type AppSessionTransferRouteResult =
     | Readonly<{
@@ -31,10 +32,31 @@ type ResolveAppSessionTransferRouteInput = Readonly<{
 export function resolveAppSessionTransferRoute(
     input: ResolveAppSessionTransferRouteInput,
 ): AppSessionTransferRouteResult {
+    const transferEnabled = input.serverFeatures
+        ? readServerEnabledBit(input.serverFeatures, 'machines.transfer')
+        : null;
+    if (transferEnabled === false) {
+        return {
+            kind: 'unavailable',
+            reasonCode: 'transfer_disabled',
+        };
+    }
+
+    const maxBytes = resolveServerRoutedTransferMaxBytesFromFeatures(input.serverFeatures);
+    if (
+        typeof input.sessionRpcTransferSizeBytes === 'number'
+        && isServerRoutedTransferOverSizeLimit(input.sessionRpcTransferSizeBytes, maxBytes)
+    ) {
+        return {
+            kind: 'unavailable',
+            reasonCode: 'transfer_too_large',
+        };
+    }
+
     if (input.machineTargetAvailable) {
         return {
             kind: 'selected',
-            route: 'direct_peer',
+            route: 'machine_rpc_direct',
         };
     }
 
@@ -46,23 +68,12 @@ export function resolveAppSessionTransferRoute(
     }
 
     const serverRoutedEnabled = input.serverFeatures
-        ? readServerEnabledBit(input.serverFeatures, 'machines.transfer.serverRouted') === true
-        : false;
-    if (!serverRoutedEnabled) {
-        return {
-            kind: 'selected',
-            route: 'server_routed_stream',
-        };
-    }
-
-    const maxBytes = resolveServerRoutedTransferMaxBytesFromFeatures(input.serverFeatures);
-    if (
-        typeof input.sessionRpcTransferSizeBytes === 'number'
-        && isServerRoutedTransferOverSizeLimit(input.sessionRpcTransferSizeBytes, maxBytes)
-    ) {
+        ? readServerEnabledBit(input.serverFeatures, 'machines.transfer.serverRouted')
+        : null;
+    if (serverRoutedEnabled === false) {
         return {
             kind: 'unavailable',
-            reasonCode: 'server_routed_transfer_too_large',
+            reasonCode: 'transfer_disabled',
         };
     }
 
