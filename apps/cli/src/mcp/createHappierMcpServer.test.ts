@@ -133,4 +133,59 @@ describe('createHappierMcpServer', () => {
       message: 'RPC method not available',
     });
   });
+
+  it('forwards prompt_registry.install through the shared action executor deps', async () => {
+    const captured: { deps?: any } = {};
+
+    vi.doMock('@happier-dev/protocol', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
+      return {
+        ...actual,
+        createActionExecutor: (deps: any) => {
+          captured.deps = deps;
+          return {} as any;
+        },
+      };
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+
+    const invokeLocal = vi.fn(async (_method: string, params: unknown) => ({
+      ok: true,
+      digest: 'sha256:deadbeef',
+      request: params,
+    }));
+    createHappierMcpServer({
+      sessionId: 'sess_mcp_prompt_registry_1',
+      rpcHandlerManager: { invokeLocal },
+      sendClaudeSessionMessage: () => {},
+      updateMetadata: () => {},
+    } as any);
+
+    expect(captured.deps).toBeDefined();
+    const res = await captured.deps.promptRegistryInstall({
+      machineId: 'machine_1',
+      sourceId: 'source_1',
+      itemId: 'item_1',
+      configuredSources: [],
+      installTarget: {
+        assetTypeId: 'codex.prompts',
+        scope: 'user',
+        targetName: 'example-skill',
+        installMode: 'copy',
+      },
+    });
+    expect(invokeLocal).toHaveBeenCalledWith('daemon.promptRegistry.install', {
+      sourceId: 'source_1',
+      itemId: 'item_1',
+      configuredSources: [],
+      installTarget: {
+        assetTypeId: 'codex.prompts',
+        scope: 'user',
+        targetName: 'example-skill',
+        installMode: 'copy',
+      },
+    });
+    expect(res).toMatchObject({ ok: true, digest: 'sha256:deadbeef' });
+  });
 });

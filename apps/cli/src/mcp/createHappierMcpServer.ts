@@ -12,7 +12,14 @@ import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { createCliActionInventoryDeps } from '@/session/actions/createCliActionDeps';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
 import { createSessionTitleMetadataUpdater } from '@/session/services/setSessionTitle';
-import { createActionExecutor, getActionSpec, isActionSpecSurfacedOn, type ActionExecutorDeps } from '@happier-dev/protocol';
+import {
+  PromptRegistryInstallRequestV1Schema,
+  PromptRegistryInstallResponseV1Schema,
+  createActionExecutor,
+  getActionSpec,
+  isActionSpecSurfacedOn,
+  type ActionExecutorDeps,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
 
@@ -75,6 +82,21 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     },
     daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
       await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
+
+    promptRegistryInstall: async (args) => {
+      if (!args.installTarget) {
+        return { ok: false as const, errorCode: 'invalid_request' as const, error: 'installTarget is required' };
+      }
+
+      const request = PromptRegistryInstallRequestV1Schema.parse({
+        sourceId: args.sourceId,
+        itemId: args.itemId,
+        configuredSources: args.configuredSources ?? [],
+        installTarget: args.installTarget,
+      });
+      const res = await sessionScopedRpc(RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL, request);
+      return PromptRegistryInstallResponseV1Schema.parse(res);
+    },
 
     // Not exposed as MCP tools today; satisfy executor deps to keep a single shared implementation.
     sessionOpen: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' }),
