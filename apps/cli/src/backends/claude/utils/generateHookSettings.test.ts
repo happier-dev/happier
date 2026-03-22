@@ -1,16 +1,19 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 
 import { cleanupHookSettingsFile, generateHookSettingsFile } from './generateHookSettings';
 
 describe('generateHookSettingsFile', () => {
   const createdFiles: string[] = [];
   const createdDirs: string[] = [];
-  const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
-  const originalManagedNode = process.env.HAPPIER_MANAGED_NODE_BIN;
+  const envKeys = ['CLAUDE_CONFIG_DIR', 'HAPPIER_MANAGED_NODE_BIN', 'HAPPIER_HOME_DIR'] as const;
+  let envScope = createEnvKeyScope(envKeys);
 
   afterEach(() => {
     for (const filePath of createdFiles.splice(0, createdFiles.length)) {
@@ -19,10 +22,8 @@ describe('generateHookSettingsFile', () => {
     for (const dirPath of createdDirs.splice(0, createdDirs.length)) {
       rmSync(dirPath, { recursive: true, force: true });
     }
-    if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
-    if (originalManagedNode === undefined) delete process.env.HAPPIER_MANAGED_NODE_BIN;
-    else process.env.HAPPIER_MANAGED_NODE_BIN = originalManagedNode;
+    envScope.restore();
+    envScope = createEnvKeyScope(envKeys);
   });
 
   it('creates SessionStart hook settings by default', () => {
@@ -53,10 +54,12 @@ describe('generateHookSettingsFile', () => {
   it('uses the managed node override for hook forwarders when configured', () => {
     const overrideDir = mkdtempSync(join(tmpdir(), 'happier-hook-settings-managed-node-'));
     createdDirs.push(overrideDir);
-    const overridePath = join(overrideDir, process.platform === 'win32' ? 'managed-node.cmd' : 'managed-node');
-    writeFileSync(overridePath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', 'utf8');
-    if (process.platform !== 'win32') chmodSync(overridePath, 0o755);
-    process.env.HAPPIER_MANAGED_NODE_BIN = overridePath;
+    const overridePath = writeExecutableShimSync({
+      dir: overrideDir,
+      fileName: process.platform === 'win32' ? 'managed-node.cmd' : 'managed-node',
+      contents: process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n',
+    });
+    envScope.patch({ HAPPIER_MANAGED_NODE_BIN: overridePath });
 
     const filePath = generateHookSettingsFile(43126);
     createdFiles.push(filePath);
@@ -67,10 +70,9 @@ describe('generateHookSettingsFile', () => {
   });
 
   it('fails closed when no JavaScript runtime is available for hook forwarders', async () => {
-    const previousHappyHomeDir = process.env.HAPPIER_HOME_DIR;
     const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-hook-settings-no-runtime-'));
     createdDirs.push(happyHomeDir);
-    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    envScope.patch({ HAPPIER_HOME_DIR: happyHomeDir });
 
     vi.resetModules();
     vi.doMock('@/runtime/js/resolveJavaScriptRuntimeExecutable', () => ({
@@ -91,15 +93,13 @@ describe('generateHookSettingsFile', () => {
       vi.doUnmock('@/runtime/js/resolveJavaScriptRuntimeExecutable');
       vi.doUnmock('@/utils/runtime');
       vi.resetModules();
-      if (typeof previousHappyHomeDir === 'string') process.env.HAPPIER_HOME_DIR = previousHappyHomeDir;
-      else delete process.env.HAPPIER_HOME_DIR;
     }
   });
 
   it('does not read or copy arbitrary keys from Claude settings.json', () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-claude-settings-'));
     createdDirs.push(dir);
-    process.env.CLAUDE_CONFIG_DIR = dir;
+    envScope.patch({ CLAUDE_CONFIG_DIR: dir });
 
     writeFileSync(join(dir, 'settings.json'), JSON.stringify({
       includeCoAuthoredBy: true,

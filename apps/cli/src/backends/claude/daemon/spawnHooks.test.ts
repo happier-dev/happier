@@ -1,51 +1,47 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { chmod, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
-const ORIGINAL_ENV = {
-  PATH: process.env.PATH,
-  HAPPIER_CLAUDE_PATH: process.env.HAPPIER_CLAUDE_PATH,
-  HOME: process.env.HOME,
-  HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-};
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createExecutableShim } from '@/testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
+const envKeys = ['PATH', 'HAPPIER_CLAUDE_PATH', 'HOME', 'HAPPIER_HOME_DIR', 'CLAUDE_CONFIG_DIR', 'HAPPIER_CLAUDE_CONFIG_DIR'] as const;
 const tempDirs = new Set<string>();
+let envScope = createEnvKeyScope(envKeys);
 
 async function createFakeBin(name: string): Promise<{ dir: string; binPath: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-claude-spawnhooks-'));
-  tempDirs.add(dir);
   const isWindows = process.platform === 'win32';
-  const binPath = join(dir, isWindows ? `${name}.cmd` : name);
-  await writeFile(binPath, isWindows ? ['@echo off', 'echo ok', ''].join('\r\n') : '#!/bin/sh\necho ok\n', 'utf8');
-  if (!isWindows) await chmod(binPath, 0o755);
+  const binPath = await createExecutableShim({
+    dirPrefix: 'happier-claude-spawnhooks-',
+    fileName: isWindows ? `${name}.cmd` : name,
+    contents: isWindows ? ['@echo off', 'echo ok', ''].join('\r\n') : '#!/bin/sh\necho ok\n',
+  });
+  const dir = dirname(binPath);
+  tempDirs.add(dir);
   return { dir, binPath };
 }
 
 afterEach(async () => {
-  if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
-  else process.env.PATH = ORIGINAL_ENV.PATH;
-  if (ORIGINAL_ENV.HAPPIER_CLAUDE_PATH === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
-  else process.env.HAPPIER_CLAUDE_PATH = ORIGINAL_ENV.HAPPIER_CLAUDE_PATH;
-  if (ORIGINAL_ENV.HOME === undefined) delete process.env.HOME;
-  else process.env.HOME = ORIGINAL_ENV.HOME;
-  if (ORIGINAL_ENV.HAPPIER_HOME_DIR === undefined) delete process.env.HAPPIER_HOME_DIR;
-  else process.env.HAPPIER_HOME_DIR = ORIGINAL_ENV.HAPPIER_HOME_DIR;
+  envScope.restore();
+  envScope = createEnvKeyScope(envKeys);
   vi.resetModules();
   for (const dir of tempDirs) {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   }
   tempDirs.clear();
 });
 
 describe('claudeDaemonSpawnHooks.validateSpawn', () => {
   it('rejects spawn when claude is not resolvable', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-spawnhooks-no-cli-home-'));
+    const homeDir = await createTempDir('happier-claude-spawnhooks-no-cli-home-');
     tempDirs.add(homeDir);
-    process.env.PATH = '';
-    process.env.HOME = homeDir;
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    delete process.env.HAPPIER_CLAUDE_PATH;
+    envScope.patch({
+      PATH: '',
+      HOME: homeDir,
+      HAPPIER_HOME_DIR: homeDir,
+      HAPPIER_CLAUDE_PATH: undefined,
+    });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await claudeDaemonSpawnHooks.validateSpawn!({});
@@ -57,9 +53,8 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
   });
 
   it('allows spawn when claude is on PATH', async () => {
-    delete process.env.HAPPIER_CLAUDE_PATH;
     const { dir } = await createFakeBin('claude');
-    process.env.PATH = dir;
+    envScope.patch({ HAPPIER_CLAUDE_PATH: undefined, PATH: dir });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await claudeDaemonSpawnHooks.validateSpawn!({});
@@ -67,9 +62,8 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
   });
 
   it('allows spawn when HAPPIER_CLAUDE_PATH points to an executable', async () => {
-    process.env.PATH = '';
     const { binPath } = await createFakeBin('claude-custom');
-    process.env.HAPPIER_CLAUDE_PATH = binPath;
+    envScope.patch({ PATH: '', HAPPIER_CLAUDE_PATH: binPath });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await claudeDaemonSpawnHooks.validateSpawn!({});
@@ -77,13 +71,13 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
   });
 
   it('allows spawn when HAPPIER_CLAUDE_PATH points to a JavaScript entrypoint file', async () => {
-    process.env.PATH = '';
-    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-spawnhooks-js-'));
+    envScope.patch({ PATH: '' });
+    const dir = await createTempDir('happier-claude-spawnhooks-js-');
     tempDirs.add(dir);
     const entryPath = join(dir, 'claude.js');
     await writeFile(entryPath, 'import "./entry.cjs";\n', 'utf8');
     if (process.platform !== 'win32') await chmod(entryPath, 0o644);
-    process.env.HAPPIER_CLAUDE_PATH = entryPath;
+    envScope.patch({ HAPPIER_CLAUDE_PATH: entryPath });
 
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await claudeDaemonSpawnHooks.validateSpawn!({});
@@ -91,46 +85,36 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
   });
 });
 
-describe('claudeDaemonSpawnHooks.buildAuthEnv', () => {
-  it('maps setup-token strings to CLAUDE_CODE_SETUP_TOKEN', async () => {
+describe('claudeDaemonSpawnHooks', () => {
+  it('does not expose legacy generic token auth plumbing', async () => {
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await claudeDaemonSpawnHooks.buildAuthEnv!({ token: 'sk-ant-oat01-123' });
-    expect(res.env).toMatchObject({ CLAUDE_CODE_SETUP_TOKEN: 'sk-ant-oat01-123' });
-    expect(res.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
-  });
-
-  it('maps non-setup-token strings to CLAUDE_CODE_OAUTH_TOKEN', async () => {
-    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-    const res = await claudeDaemonSpawnHooks.buildAuthEnv!({ token: 'oauth-access' });
-    expect(res.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-access' });
-    expect(res.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
+    expect('buildAuthEnv' in claudeDaemonSpawnHooks).toBe(false);
   });
 });
 
 describe('claudeDaemonSpawnHooks.buildExtraEnvForChild', () => {
-  it('publishes CLAUDE_CONFIG_DIR from the daemon HOME fallback when no override is set', async () => {
-    const previousHome = process.env.HOME;
-    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    const previousHappierClaudeConfigDir = process.env.HAPPIER_CLAUDE_CONFIG_DIR;
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-claude-spawnhooks-home-'));
+  it('does not force CLAUDE_CONFIG_DIR when no override is set', async () => {
+    const homeDir = await createTempDir('happier-claude-spawnhooks-home-');
     tempDirs.add(homeDir);
+    envScope.patch({
+      HOME: homeDir,
+      CLAUDE_CONFIG_DIR: undefined,
+      HAPPIER_CLAUDE_CONFIG_DIR: undefined,
+    });
 
-    process.env.HOME = homeDir;
-    delete process.env.CLAUDE_CONFIG_DIR;
-    delete process.env.HAPPIER_CLAUDE_CONFIG_DIR;
+    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
+    expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({});
+  });
 
-    try {
-      const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
-      expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({
-        CLAUDE_CONFIG_DIR: join(homeDir, '.claude'),
-      });
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-      else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
-      if (previousHappierClaudeConfigDir === undefined) delete process.env.HAPPIER_CLAUDE_CONFIG_DIR;
-      else process.env.HAPPIER_CLAUDE_CONFIG_DIR = previousHappierClaudeConfigDir;
-    }
+  it('publishes an explicit CLAUDE_CONFIG_DIR override when set', async () => {
+    envScope.patch({
+      CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+      HAPPIER_CLAUDE_CONFIG_DIR: undefined,
+    });
+
+    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
+    expect(claudeDaemonSpawnHooks.buildExtraEnvForChild?.({} as any)).toEqual({
+      CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+    });
   });
 });
