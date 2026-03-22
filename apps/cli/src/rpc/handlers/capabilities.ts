@@ -39,10 +39,15 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
 }> {
     const parsedBackendTarget = BackendTargetRefSchema.safeParse((params ?? {}).backendTarget);
     const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
+    const codexBackendModeOverrideRaw = (params ?? {}).codexBackendModeOverride;
+    const codexBackendModeOverride =
+        typeof codexBackendModeOverrideRaw === 'string' && ['mcp', 'acp', 'appServer'].includes(codexBackendModeOverrideRaw)
+            ? codexBackendModeOverrideRaw
+            : null;
 
     const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || params?.agentId === 'codex';
     if (!shouldLoadAccountSettings) {
-        return { backendTarget, credentials: null, accountSettings: null };
+      return { backendTarget, credentials: null, accountSettings: null };
     }
 
     const credentials = await readCredentials().catch(() => null);
@@ -56,10 +61,18 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
         refresh: 'force',
     }).catch(() => null);
 
+    const accountSettings = accountSettingsContext?.settings ?? null;
+    const effectiveAccountSettings = params?.agentId === 'codex' && codexBackendModeOverride
+      ? {
+          ...(accountSettings ?? {}),
+          codexBackendMode: codexBackendModeOverride,
+        }
+      : accountSettings;
+
     return {
-        backendTarget,
-        credentials,
-        accountSettings: accountSettingsContext?.settings ?? null,
+      backendTarget,
+      credentials,
+      accountSettings: effectiveAccountSettings,
     };
 }
 

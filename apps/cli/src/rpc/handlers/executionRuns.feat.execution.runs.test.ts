@@ -20,7 +20,7 @@ vi.mock('@/persistence', () => ({
   readCredentials: vi.fn(),
 }));
 
-vi.mock('@/sessionControl/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById: vi.fn(),
 }));
 
@@ -50,7 +50,7 @@ const registerExecutionRunHandlers: typeof registerExecutionRunHandlersBase = (r
 
 beforeEach(async () => {
   const { readCredentials } = await import('@/persistence');
-  const { fetchSessionById } = await import('@/sessionControl/sessionsHttp');
+  const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
   const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
   const { runReplaySummaryForDialog } = await import('@/session/replay/summary/runReplaySummaryForDialog');
   vi.mocked(readCredentials).mockReset();
@@ -457,6 +457,65 @@ describe('executionRuns session RPC handlers', () => {
 
     expect(terminalStatus).not.toBeNull();
     expect(updates.some((run) => run.runId === started.runId && run.status === terminalStatus)).toBe(true);
+  });
+
+  it('applies execution.run.list filters on the canonical handler path', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: (opts) =>
+            opts.backendId === 'claude'
+              ? createDelayedBackend('running later', 50_000)
+              : createStaticBackend(JSON.stringify({ findings: [], summary: 'done' })),
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const running = await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    const succeeded = await client.call<ExecutionRunStartResponse, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {
+      status: 'running',
+      backendId: 'claude',
+      limit: 1,
+    });
+
+    expect(listed.runs).toEqual([
+      expect.objectContaining({
+        runId: running.runId,
+        status: 'running',
+      }),
+    ]);
+    expect(listed.runs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: succeeded.runId,
+        }),
+      ]),
+    );
   });
 
   it('returns structured review meta when includeStructured is true and supports review actions', async () => {
@@ -1163,7 +1222,7 @@ describe('executionRuns session RPC handlers', () => {
 
   it('hydrates cached voice replay summaries on the daemon before the first streamed turn', async () => {
     const { readCredentials } = await import('@/persistence');
-    const { fetchSessionById } = await import('@/sessionControl/sessionsHttp');
+    const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
     const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
     vi.mocked(readCredentials).mockResolvedValue({
       token: 'token_1',
@@ -1265,7 +1324,7 @@ describe('executionRuns session RPC handlers', () => {
 
   it('falls back to on-demand replay summaries for voice runs when no cached synopsis exists', async () => {
     const { readCredentials } = await import('@/persistence');
-    const { fetchSessionById } = await import('@/sessionControl/sessionsHttp');
+    const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
     const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
     const { runReplaySummaryForDialog } = await import('@/session/replay/summary/runReplaySummaryForDialog');
     vi.mocked(readCredentials).mockResolvedValue({
@@ -1364,7 +1423,7 @@ describe('executionRuns session RPC handlers', () => {
 
   it('defers replay seed delivery to the first turn when voice prewarm uses a READY handshake', async () => {
     const { readCredentials } = await import('@/persistence');
-    const { fetchSessionById } = await import('@/sessionControl/sessionsHttp');
+    const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
     const { fetchEncryptedTranscriptMessages } = await import('@/session/replay/fetchEncryptedTranscriptMessages');
     vi.mocked(readCredentials).mockResolvedValue({
       token: 'token_1',

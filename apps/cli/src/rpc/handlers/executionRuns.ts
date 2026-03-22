@@ -29,6 +29,7 @@ import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { applyExecutionRunListRequest } from '@/session/services/applyExecutionRunListRequest';
 import { preflightCodeRabbitReviewScope } from '@/agent/reviews/engines/coderabbit/preflightCodeRabbitReviewScope';
 import { readCodeRabbitReviewConfigFromEnv } from '@/agent/reviews/engines/coderabbit/readCodeRabbitReviewConfig';
 import { readCredentials } from '@/persistence';
@@ -297,7 +298,7 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunListRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
-    return { runs: manager.listPublic() };
+    return { runs: applyExecutionRunListRequest(manager.listPublic(), parsed.data) };
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_GET, async (raw: unknown) => {
