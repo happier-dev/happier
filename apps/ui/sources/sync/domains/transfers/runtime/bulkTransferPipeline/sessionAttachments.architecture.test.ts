@@ -9,6 +9,10 @@ const FORBIDDEN_SESSION_ATTACHMENT_TRANSFER_TOKENS = [
     'daemon.sessionAttachments.upload.',
 ] as const;
 
+const REQUIRED_SESSION_ATTACHMENT_TRANSFER_TOKENS = [
+    'bulkTransferPipeline/daemonSessionAttachments',
+] as const;
+
 describe('bulkTransferPipeline (architecture)', () => {
     it('keeps attachment feature code free of transfer plumbing outside the pipeline', async () => {
         const uploadSessionAttachmentPath = new URL(
@@ -20,6 +24,10 @@ describe('bulkTransferPipeline (architecture)', () => {
 
         for (const token of FORBIDDEN_SESSION_ATTACHMENT_TRANSFER_TOKENS) {
             expect(uploadSessionAttachmentSource).not.toContain(token);
+        }
+
+        for (const token of REQUIRED_SESSION_ATTACHMENT_TRANSFER_TOKENS) {
+            expect(uploadSessionAttachmentSource).toContain(token);
         }
     });
 });

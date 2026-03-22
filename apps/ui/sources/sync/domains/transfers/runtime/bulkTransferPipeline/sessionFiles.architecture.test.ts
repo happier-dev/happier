@@ -8,6 +8,10 @@ const FORBIDDEN_SESSION_FILE_TRANSFER_TOKENS = [
     'mergeTransferChunks',
 ] as const;
 
+const REQUIRED_SESSION_FILE_TRANSFER_TOKENS = [
+    'bulkTransferPipeline/daemonSessionFiles',
+] as const;
+
 describe('bulkTransferPipeline (architecture)', () => {
     it('keeps session file feature code free of transfer plumbing outside the pipeline', async () => {
         const useWorkspaceFileTransfersPath = new URL(
@@ -27,6 +31,11 @@ describe('bulkTransferPipeline (architecture)', () => {
         for (const token of FORBIDDEN_SESSION_FILE_TRANSFER_TOKENS) {
             expect(useWorkspaceFileTransfersSource).not.toContain(token);
             expect(fileReadWriteSource).not.toContain(token);
+        }
+
+        for (const token of REQUIRED_SESSION_FILE_TRANSFER_TOKENS) {
+            expect(useWorkspaceFileTransfersSource).toContain(token);
+            expect(fileReadWriteSource).toContain(token);
         }
     });
 });

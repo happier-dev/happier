@@ -1,8 +1,11 @@
+import { getCachedReadyServerFeatures, getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { resolveAppSessionTransferAvailability } from '@happier-dev/transfers';
 import {
     canUseSessionRpc,
     readMachineTargetForSession,
@@ -22,6 +25,21 @@ export type SessionMachineRpcFailure = Readonly<{
     error: string;
     errorCode?: string;
 }>;
+
+const GUARDED_MACHINE_RPC_METHOD_PREFIXES = [
+    'daemon.sessionFiles.',
+    'daemon.sessionAttachments.',
+] as const;
+
+const GUARDED_MACHINE_RPC_METHODS = new Set<string>([
+    RPC_METHODS.CREATE_DIRECTORY,
+    RPC_METHODS.LIST_DIRECTORY,
+    RPC_METHODS.GET_DIRECTORY_TREE,
+    RPC_METHODS.STAT_FILE,
+    RPC_METHODS.RENAME_PATH,
+    RPC_METHODS.DELETE_PATH,
+    RPC_METHODS.WRITE_FILE,
+]);
 
 type SessionMachineRpcMachineRoute = Readonly<{
     kind: 'machine_rpc_direct';
@@ -71,6 +89,34 @@ type SessionMachineRpcCaller<TFailure extends SessionMachineRpcFailure> = Readon
         params: SessionMachineRpcCallParams<TRequest>,
     ) => Promise<TResponse>;
 }>;
+
+function shouldGuardMachineRpcDirectWithTransferPolicy(machineMethod: string): boolean {
+    if (GUARDED_MACHINE_RPC_METHODS.has(machineMethod)) return true;
+    return GUARDED_MACHINE_RPC_METHOD_PREFIXES.some((prefix) => machineMethod.startsWith(prefix));
+}
+
+async function resolveTransferPolicyAllowsMachineRpcDirect(sessionId: string): Promise<boolean> {
+    const serverId = resolvePreferredServerIdForSessionId(sessionId);
+    const cachedFeatures = getCachedReadyServerFeatures({ serverId });
+    const serverFeatures = cachedFeatures ?? await getReadyServerFeatures({
+        timeoutMs: 500,
+        serverId,
+    });
+
+    // Preserve legacy behavior when server features aren't available yet; we can only enforce
+    // the policy when we have a snapshot.
+    if (!serverFeatures) return true;
+
+    const availability = resolveAppSessionTransferAvailability({
+        machineTargetAvailable: true,
+        sessionRpcAvailable: canUseSessionRpc(sessionId),
+        serverFeatures,
+        // Only enforce "transfer disabled" gating here; size checks are owned by the bulk transfer pipeline.
+        sessionRpcTransferSizeBytes: null,
+    });
+
+    return availability.kind === 'selected' && availability.route === 'machine_rpc_direct';
+}
 
 function readSessionMachineRpcErrorMessage(error: unknown): string {
     if (error instanceof Error && typeof error.message === 'string' && error.message.length > 0) {
@@ -169,22 +215,32 @@ export function createSessionMachineRpcFallbackCaller<TFailure extends SessionMa
         ): Promise<TResponse> => {
             try {
                 if (lockedRoute?.kind === 'machine_rpc_direct') {
-                    try {
-                        const response = await callMachineRoute<TResponse, TRequest>(lockedRoute, callParams);
-                        params.onDirectRouteViable?.(lockedRoute.machineTarget);
-                        return response;
-                    } catch (error) {
-                        if (!shouldFallbackToSessionRpc(params.sessionId, error)) {
-                            return errorResponse(error) as unknown as TResponse;
+                    const lockedMachineRoute = lockedRoute;
+                    if (shouldGuardMachineRpcDirectWithTransferPolicy(callParams.machineMethod)) {
+                        const allowed = await resolveTransferPolicyAllowsMachineRpcDirect(params.sessionId);
+                        if (!allowed) {
+                            lockedRoute = null;
                         }
-                        params.onDirectRouteUnavailable?.({
-                            machineTarget: lockedRoute.machineTarget,
-                            error,
-                        });
-                        if (params.fallbackOnLockedDirectRouteFailure !== true) {
-                            return errorResponse(error) as unknown as TResponse;
+                    }
+
+                    if (lockedRoute?.kind === 'machine_rpc_direct') {
+                        try {
+                            const response = await callMachineRoute<TResponse, TRequest>(lockedMachineRoute, callParams);
+                            params.onDirectRouteViable?.(lockedMachineRoute.machineTarget);
+                            return response;
+                        } catch (error) {
+                            if (!shouldFallbackToSessionRpc(params.sessionId, error)) {
+                                return errorResponse(error) as unknown as TResponse;
+                            }
+                            params.onDirectRouteUnavailable?.({
+                                machineTarget: lockedMachineRoute.machineTarget,
+                                error,
+                            });
+                            if (params.fallbackOnLockedDirectRouteFailure !== true) {
+                                return errorResponse(error) as unknown as TResponse;
+                            }
+                            lockedRoute = null;
                         }
-                        lockedRoute = null;
                     }
                 }
 
@@ -198,6 +254,25 @@ export function createSessionMachineRpcFallbackCaller<TFailure extends SessionMa
 
                 const machineTarget = readMachineTargetForSession(params.sessionId);
                 if (machineTarget && (params.shouldAttemptDirectRoute?.(machineTarget) ?? true)) {
+                    if (shouldGuardMachineRpcDirectWithTransferPolicy(callParams.machineMethod)) {
+                        const allowed = await resolveTransferPolicyAllowsMachineRpcDirect(params.sessionId);
+                        if (!allowed) {
+                            const fallbackRoute = await params.resolveFallbackRoute();
+                            if (fallbackRoute.kind === 'unavailable') {
+                                return fallbackRoute.response as unknown as TResponse;
+                            }
+
+                            if (params.reuseResolvedRoute === true) {
+                                lockedRoute = fallbackRoute.route;
+                            }
+                            return await sessionRouteCaller<TResponse, TRequest>({
+                                sessionId: params.sessionId,
+                                route: fallbackRoute.route,
+                                callParams,
+                            });
+                        }
+                    }
+
                     try {
                         const response = await callMachineRoute<TResponse, TRequest>({
                             kind: 'machine_rpc_direct',
