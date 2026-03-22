@@ -1,6 +1,10 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,11 +19,12 @@ let sessionActive = true;
 let machineRpcTargetAvailable = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+                                            }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -40,37 +45,15 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}), mono: () => ({}) },
@@ -87,15 +70,18 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedSpy }) },
-    useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }),
-    useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }),
-    useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }],
-    useMachine: () => ({ id: 'm1' }),
-    useSessionRepositoryTreeExpandedPaths: () => [],
-    useSessionProjectScmSnapshot: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedSpy }) } as any,
+        useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }) as any,
+        useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
+        useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
+        useMachine: () => ({ id: 'm1' }) as any,
+        useSessionRepositoryTreeExpandedPaths: () => [],
+        useSessionProjectScmSnapshot: () => null,
+    });
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
@@ -132,7 +118,7 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
         React.useEffect(() => {
             mountCount.current += 1;
         }, []);
-        return React.createElement('RepositoryTreeList');
+        return React.createElement('View', { testID: 'repository-tree-list' });
     },
 }));
 
@@ -144,12 +130,17 @@ vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: (...args: any[]) => promptSpy(...args),
-        alert: (...args: any[]) => alertSpy(...args),
-    },
+vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
+    ChangedFilesReview: () => React.createElement('ChangedFilesReview'),
 }));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalModuleMock = createModalModuleMock();
+    modalModuleMock.spies.prompt.mockImplementation((...args: any[]) => promptSpy(...args));
+    modalModuleMock.spies.alert.mockImplementation((...args: any[]) => alertSpy(...args));
+    return modalModuleMock.module;
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: (...args: any[]) => writeFileSpy(...args),
@@ -165,6 +156,10 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
 }));
 
 describe('SessionRepositoryTreeBrowserView (create actions)', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         sessionActive = true;
         machineRpcTargetAvailable = true;
@@ -178,80 +173,56 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
         safePathSpy.mockImplementation((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder' || value === 'src/uploads');
     });
 
-    it('keeps create actions enabled when the session is inactive but the machine target is available', async () => {
+    async function renderRepositoryTreeBrowserView(
+        overrides: Partial<React.ComponentProps<typeof import('./SessionRepositoryTreeBrowserView').SessionRepositoryTreeBrowserView>> = {},
+    ) {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        return renderScreen(
+            <SessionRepositoryTreeBrowserView
+                sessionId="s1"
+                onOpenFile={vi.fn()}
+                {...overrides}
+            />,
+        );
+    }
+
+    it('keeps create actions enabled when the session is inactive but the machine target is available', async () => {
         sessionActive = false;
         machineRpcTargetAvailable = true;
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={vi.fn()}
-                />
-            );
-        });
+        const screen = await renderRepositoryTreeBrowserView();
 
-        const createFileButton = tree!.root.findByProps({ testID: 'repository-tree-create-file' });
-        const uploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        const createFileButton = screen.findByTestId('repository-tree-create-file');
+        const uploadMenu = screen.findByType('DropdownMenu' as any);
         expect(uploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-files')?.disabled).toBe(false);
-        expect(createFileButton.props.disabled).toBe(false);
+        expect(createFileButton?.props.disabled).toBe(false);
     });
 
     it('disables create actions when no machine RPC target is available', async () => {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         machineRpcTargetAvailable = false;
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={vi.fn()}
-                />
-            );
-        });
+        const screen = await renderRepositoryTreeBrowserView();
 
-        const createFileButton = tree!.root.findByProps({ testID: 'repository-tree-create-file' });
-        const uploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        const createFileButton = screen.findByTestId('repository-tree-create-file');
+        const uploadMenu = screen.findByType('DropdownMenu' as any);
         expect(uploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-files')?.disabled).toBe(true);
-        expect(createFileButton.props.disabled).toBe(true);
+        expect(createFileButton?.props.disabled).toBe(true);
     });
 
     it('renders stable web upload input testIDs for UI e2e', async () => {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        const screen = await renderRepositoryTreeBrowserView();
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={vi.fn()}
-                />
-            );
-        });
-
-        expect(tree!.root.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' })).toHaveLength(1);
-        expect(tree!.root.findAllByProps({ 'data-testid': 'repository-tree-upload-input-folder' })).toHaveLength(1);
+        expect(screen.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' })).toHaveLength(1);
+        expect(screen.findAllByProps({ 'data-testid': 'repository-tree-upload-input-folder' })).toHaveLength(1);
     });
 
     it('uses the selected upload destination for toolbar-triggered web uploads', async () => {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         promptSpy.mockResolvedValueOnce('src/uploads');
         startUploadsSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={vi.fn()}
-                />
-            );
-        });
+        const screen = await renderRepositoryTreeBrowserView();
 
-        const uploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        const uploadMenu = screen.findByType('DropdownMenu' as any);
         await act(async () => {
             await uploadMenu.props.onSelect('repository-tree-upload-destination-select');
         });
@@ -265,11 +236,11 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
             }),
         );
 
-        const rerenderedUploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        const rerenderedUploadMenu = screen.findByType('DropdownMenu' as any);
         expect(rerenderedUploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-destination-select'))
             .toMatchObject({ subtitle: 'src/uploads' });
 
-        const [fileInput] = tree!.root.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' });
+        const [fileInput] = screen.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' });
         const file = { name: 'upload-source.txt' };
 
         await act(async () => {
@@ -294,7 +265,6 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
     });
 
     it('creates a file and opens it pinned', async () => {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         mountCount.current = 0;
         promptSpy.mockResolvedValueOnce('src/new-file.ts');
         writeFileSpy.mockClear();
@@ -303,24 +273,17 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
         const onOpenFile = vi.fn();
         const onOpenFilePinned = vi.fn();
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={onOpenFile}
-                    onOpenFilePinned={onOpenFilePinned}
-                />
-            );
+        const screen = await renderRepositoryTreeBrowserView({
+            onOpenFile,
+            onOpenFilePinned,
         });
 
         expect(mountCount.current).toBe(1);
 
-        const createFile = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-create-file');
-        expect(createFile.length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('repository-tree-create-file').length).toBeGreaterThan(0);
 
         await act(async () => {
-            createFile[0]!.props.onPress();
+            screen.pressByTestId('repository-tree-create-file');
         });
 
         expect(writeFileSpy).toHaveBeenCalledWith('s1', 'src/new-file.ts', '', null);
@@ -329,24 +292,13 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
     });
 
     it('shows an error when create file path is invalid', async () => {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         promptSpy.mockResolvedValueOnce('../bad');
         alertSpy.mockClear();
         writeFileSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer;
+        const screen = await renderRepositoryTreeBrowserView();
         await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={vi.fn()}
-                />
-            );
-        });
-
-        const createFile = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-create-file');
-        await act(async () => {
-            createFile[0]!.props.onPress();
+            screen.pressByTestId('repository-tree-create-file');
         });
 
         expect(writeFileSpy).toHaveBeenCalledTimes(0);
@@ -354,26 +306,15 @@ describe('SessionRepositoryTreeBrowserView (create actions)', () => {
     });
 
     it('creates a directory', async () => {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         promptSpy.mockResolvedValueOnce('src/new-folder');
         createDirectorySpy.mockClear();
         alertSpy.mockClear();
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionRepositoryTreeBrowserView
-                    sessionId="s1"
-                    onOpenFile={vi.fn()}
-                />
-            );
-        });
-
-        const createFolder = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-create-folder');
-        expect(createFolder.length).toBeGreaterThan(0);
+        const screen = await renderRepositoryTreeBrowserView();
+        expect(screen.findAllByTestId('repository-tree-create-folder').length).toBeGreaterThan(0);
 
         await act(async () => {
-            createFolder[0]!.props.onPress();
+            screen.pressByTestId('repository-tree-create-folder');
         });
 
         expect(createDirectorySpy).toHaveBeenCalledWith('s1', 'src/new-folder');

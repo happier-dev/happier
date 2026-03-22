@@ -3,12 +3,21 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useScmTreeBadgeIndex } from './useScmTreeBadgeIndex';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'web',
+                                            },
+                                        }
+    );
+});
 
 function makeSnapshot() {
     return {
@@ -71,17 +80,15 @@ describe('useScmTreeBadgeIndex', () => {
         const snapshot = makeSnapshot();
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Harness snapshot={snapshot} />);
-        });
+        tree = (await renderScreen(<Harness snapshot={snapshot} />)).tree;
 
-        expect(tree.root.findByType('Text').props.value).toBe('none');
+        expect(tree.findByType('Text').props.value).toBe('none');
 
         await act(async () => {
             vi.runAllTimers();
         });
 
-        expect(tree.root.findByType('Text').props.value).toBe('M:2:1');
+        expect(tree.findByType('Text').props.value).toBe('M:2:1');
 
         vi.useRealTimers();
     });

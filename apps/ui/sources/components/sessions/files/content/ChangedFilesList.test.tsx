@@ -1,13 +1,22 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { select: (value: any) => value?.default ?? null },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            View: 'View',
+                                            Platform: {
+                                                select: (value: any) => value?.default ?? null,
+                                            },
+                                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -36,8 +45,9 @@ vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => {
         if (key === 'files.repositoryChangedFiles') return `Repository changed files (${String(params?.count ?? '')})`;
         if (key === 'files.latestTurnChanges') return `Latest turn changes (${String(params?.count ?? '')})`;
         if (key === 'files.latestTurnDescription') return 'Provider-backed changes from the most recent completed turn.';
@@ -49,8 +59,8 @@ vi.mock('@/text', () => ({
             return 'Reliability limited: multiple sessions are active for this repository';
         }
         return key;
-    },
-}));
+    } });
+});
 
 describe('ChangedFilesList', () => {
     const file = {
@@ -74,10 +84,7 @@ describe('ChangedFilesList', () => {
 
     it('renders repository view heading and rows', async () => {
         const { ChangedFilesList } = await import('./ChangedFilesList');
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ChangedFilesList
+        const screen = await renderScreen(<ChangedFilesList
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="repository"
                     attributionReliability="high"
@@ -87,23 +94,11 @@ describe('ChangedFilesList', () => {
                     suppressedInferredCount={0}
                     onFilePress={vi.fn()}
                     rowDensity="compact"
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
         // Directory-like SCM entries should be ignored (they cannot be opened / diffed).
-        expect(textContent).toContain('Repository changed files (1)');
-        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(screen.getTextContent()).toContain('Repository changed files (1)');
+        const rows = screen.findAllByType('ScmChangeRow' as any);
         expect(rows).toHaveLength(1);
         expect(rows[0].props.density).toBe('compact');
     });
@@ -111,10 +106,7 @@ describe('ChangedFilesList', () => {
     it('supports injecting per-file actions for commit/stage flows', async () => {
         const { ChangedFilesList } = await import('./ChangedFilesList');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ChangedFilesList
+        const screen = await renderScreen(<ChangedFilesList
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="repository"
                     attributionReliability="high"
@@ -124,29 +116,21 @@ describe('ChangedFilesList', () => {
                     suppressedInferredCount={0}
                     onFilePress={vi.fn()}
                     renderFileActions={(f) => React.createElement('Action', { path: f.fullPath })}
-                />
-            );
-        });
+                />);
 
-        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        const rows = screen.findAllByType('ScmChangeRow' as any);
         expect(rows).toHaveLength(1);
 
         const right = rows[0]!.props.leadingElement;
-        let rightTree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            rightTree = renderer.create(right);
-        });
-        expect(rightTree!.root.findAllByType('Action' as any)).toHaveLength(1);
+        const rightScreen = await renderScreen(right);
+        expect(rightScreen.findAllByType('Action' as any)).toHaveLength(1);
     });
 
     it('supports opening a pinned details tab via onFilePressPinned', async () => {
         const { ChangedFilesList } = await import('./ChangedFilesList');
         const onFilePressPinned = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ChangedFilesList
+        const screen = await renderScreen(<ChangedFilesList
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="repository"
                     attributionReliability="high"
@@ -156,11 +140,9 @@ describe('ChangedFilesList', () => {
                     suppressedInferredCount={0}
                     onFilePress={vi.fn()}
                     onFilePressPinned={onFilePressPinned}
-                />
-            );
-        });
+                />);
 
-        const row = tree!.root.findByType('ScmChangeRow' as any);
+        const row = screen.findByType('ScmChangeRow' as any);
         expect(typeof row.props.onPressPinned).toBe('function');
 
         act(() => {
@@ -173,10 +155,7 @@ describe('ChangedFilesList', () => {
 
     it('renders session reliability warning when attribution is limited', async () => {
         const { ChangedFilesList } = await import('./ChangedFilesList');
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ChangedFilesList
+        const screen = await renderScreen(<ChangedFilesList
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="session"
                     attributionReliability="limited"
@@ -185,15 +164,9 @@ describe('ChangedFilesList', () => {
                     repositoryOnlyFiles={[file as any]}
                     suppressedInferredCount={1}
                     onFilePress={vi.fn()}
-                />
-            );
-        });
+                />);
 
-        const textNodes = tree!.root.findAllByType('Text' as any);
-        const messageExists = textNodes.some((node) =>
-            String(node.props.children).includes('Reliability limited: multiple sessions are active for this repository')
-        );
-        expect(messageExists).toBe(true);
+        expect(screen.getTextContent()).toContain('Reliability limited: multiple sessions are active for this repository');
     });
 
     it('renders latest-turn copy and rows when turn view is selected', async () => {
@@ -203,10 +176,7 @@ describe('ChangedFilesList', () => {
             fileName: 'b.ts',
             fullPath: 'src/b.ts',
         } as const;
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ChangedFilesList
+        const screen = await renderScreen(<ChangedFilesList
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="turn"
                     attributionReliability="high"
@@ -217,26 +187,15 @@ describe('ChangedFilesList', () => {
                     repositoryOnlyFiles={[]}
                     suppressedInferredCount={0}
                     onFilePress={vi.fn()}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-        });
+        const textContent = screen.getTextContent();
         expect(textContent).toContain('Latest turn changes (1)');
         expect(textContent).toContain('Provider-backed changes from the most recent completed turn.');
         expect(textContent).not.toContain('Other repository changes (1)');
         expect(textContent).not.toContain('Reliability limited: multiple sessions are active for this repository');
 
-        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        const rows = screen.findAllByType('ScmChangeRow' as any);
         expect(rows).toHaveLength(1);
     });
 
@@ -252,10 +211,7 @@ describe('ChangedFilesList', () => {
             fullPath: 'src/repo-only.ts',
             fileName: 'repo-only.ts',
         } as const;
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <ChangedFilesList
+        const screen = await renderScreen(<ChangedFilesList
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="session"
                     attributionReliability="high"
@@ -264,24 +220,13 @@ describe('ChangedFilesList', () => {
                     repositoryOnlyFiles={[repositoryOnlyFile as any]}
                     suppressedInferredCount={0}
                     onFilePress={vi.fn()}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
+        const textContent = screen.getTextContent();
         expect(textContent).toContain('Session-attributed changes (1)');
         expect(textContent).not.toContain('Other repository changes (1)');
 
-        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        const rows = screen.findAllByType('ScmChangeRow' as any);
         expect(rows).toHaveLength(1);
         expect(rows[0]?.props.file?.fullPath).toBe('src/session.ts');
     });

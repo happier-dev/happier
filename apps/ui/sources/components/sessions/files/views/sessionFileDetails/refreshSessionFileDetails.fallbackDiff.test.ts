@@ -22,9 +22,10 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
     resolveSessionPathState: () => ({ status: 'ready', sessionPath: '/repo', homeDir: null }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/scm/utils/filePresentation', () => ({
     getImageMimeTypeFromPath: () => null,

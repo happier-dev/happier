@@ -1,26 +1,33 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
-        TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
-            const header = ListHeaderComponent
-                ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
-                : null;
-            const items = (data ?? []).map((item: any, index: number) => {
-                const key = keyExtractor ? keyExtractor(item, index) : String(item?.fullPath ?? index);
-                return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
-            });
-            return React.createElement('FlatList', null, header, ...items);
-        },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                            Platform: {
+                                                OS: 'web',
+                                            },
+                                            TurboModuleRegistry: {
+                                                get: () => ({}),
+                                            },
+                                            FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+                                                    const header = ListHeaderComponent
+                                                        ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
+                                                        : null;
+                                                    const items = (data ?? []).map((item: any, index: number) => {
+                                                        const key = keyExtractor ? keyExtractor(item, index) : String(item?.fullPath ?? index);
+                                                        return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+                                                    });
+                                                    return React.createElement('FlatList', null, header, ...items);
+                                                },
+                                        }
+    );
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -52,19 +59,15 @@ describe('SearchResultsList', () => {
         const { SearchResultsList } = await import('./SearchResultsList');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SearchResultsList
+        tree = (await renderScreen(<SearchResultsList
                     theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
                     isSearching={false}
                     searchQuery=""
                     searchResults={[]}
                     onFilePress={vi.fn()}
-                />
-            );
-        });
+                />)).tree;
 
-        const rootView = tree!.root.findByType('View' as any);
+        const rootView = tree!.findByType('View' as any);
         const children = React.Children.toArray(rootView.props.children ?? []);
         const hasPrimitiveChild = children.some((c) => typeof c === 'string' || typeof c === 'number');
         expect(hasPrimitiveChild).toBe(false);
@@ -83,20 +86,16 @@ describe('SearchResultsList', () => {
         } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SearchResultsList
+        tree = (await renderScreen(<SearchResultsList
                     theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
                     isSearching={false}
                     searchQuery="AG"
                     searchResults={[file]}
                     onFilePress={onFilePress}
                     onFilePressPinned={onFilePressPinned}
-                />
-            );
-        });
+                />)).tree;
 
-        const item = tree!.root.findByType('Item' as any);
+        const item = tree!.findByType('Item' as any);
         expect(typeof item.props.onDoublePress).toBe('function');
 
         act(() => {
@@ -119,19 +118,15 @@ describe('SearchResultsList', () => {
         } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SearchResultsList
+        tree = (await renderScreen(<SearchResultsList
                     theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
                     isSearching={false}
                     searchQuery="a"
                     searchResults={[file]}
                     onFilePress={vi.fn()}
-                />
-            );
-        });
+                />)).tree;
 
-        const item = tree!.root.findByType('Item' as any);
+        const item = tree!.findByType('Item' as any);
         expect(item.props.title).toBe('src/');
         expect(item.props.rightElement?.type).toBe('Text');
         expect(String(item.props.rightElement?.props?.children)).toBe('a.ts');

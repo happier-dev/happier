@@ -1,17 +1,26 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { pressTestInstance, renderScreen } from '@/dev/testkit';
+
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { select: (value: any) => value?.default ?? null },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Text: 'Text',
+                                    Pressable: 'Pressable',
+                                    ActivityIndicator: 'ActivityIndicator',
+                                    Platform: {
+                                        select: (value: any) => value?.default ?? null,
+                                    },
+                                }
+    );
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -28,8 +37,9 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, params?: any) => {
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string, params?: any) => {
         if (key === 'files.sourceControlOperations.title') return 'Source control';
         if (key === 'files.sourceControlOperations.actorThisSession') return 'this session';
         if (key === 'files.sourceControlOperations.actorSession') return `session ${params?.sessionIdPrefix ?? ''}`;
@@ -58,18 +68,15 @@ vi.mock('@/text', () => ({
         if (key === 'files.sourceControlOperationsLog.thisSession') return 'this session';
         if (key === 'files.sourceControlOperationsLog.emptyThisSession') return 'No recent operations for this session.';
         return key;
-    },
-}));
+    } });
+});
 
 describe('SourceControlOperationsPanel', () => {
     it('shows selected commit scope count and clear action', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
         const onClearCommitSelection = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -98,28 +105,15 @@ describe('SourceControlOperationsPanel', () => {
                     operationLog={[]}
                     commitSelectionCount={2}
                     onClearCommitSelection={onClearCommitSelection}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!.root.findAllByType('Text' as any).map((node) => {
-            const value = node.props.children;
-            if (Array.isArray(value)) {
-                return value.join('');
-            }
-            return String(value);
-        });
-        expect(textContent.some((text) => text.includes('files selected for the next commit'))).toBe(true);
+        expect(screen.getTextContent()).toContain('files selected for the next commit');
 
-        const clearButton = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Clear')
-            );
+        const clearButton = screen.findByProps({ onPress: onClearCommitSelection });
         expect(clearButton).toBeTruthy();
 
         act(() => {
-            clearButton!.props.onPress();
+            pressTestInstance(clearButton, 'clear commit selection action');
         });
         expect(onClearCommitSelection).toHaveBeenCalledTimes(1);
     });
@@ -127,10 +121,7 @@ describe('SourceControlOperationsPanel', () => {
     it('hides remote actions when remote capabilities are not available', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: false, writeRemotePull: false, writeRemotePush: false }}
@@ -158,23 +149,18 @@ describe('SourceControlOperationsPanel', () => {
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
                     commitSelectionCount={0}
-                />
-            );
-        });
+                />);
 
-        const texts = tree!.root.findAllByType('Text' as any).map((node) => String(node.props.children ?? ''));
-        expect(texts.some((value) => value === 'Fetch')).toBe(false);
-        expect(texts.some((value) => value === 'Pull')).toBe(false);
-        expect(texts.some((value) => value === 'Push')).toBe(false);
+        const textContent = screen.getTextContent();
+        expect(textContent).not.toContain('Fetch');
+        expect(textContent).not.toContain('Pull');
+        expect(textContent).not.toContain('Push');
     });
 
     it('shows which session currently owns the in-flight operation lock', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -206,23 +192,12 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
+        const textContent = screen.getTextContent();
 
-        expect(textContent.some((text) => text.includes('Running: push'))).toBe(true);
-        expect(textContent.some((text) => text.includes('session sessio'))).toBe(true);
+        expect(textContent).toContain('Running: push');
+        expect(textContent).toContain('session sessio');
     });
 
     it('renders operation buttons and invokes callbacks', async () => {
@@ -232,10 +207,7 @@ describe('SourceControlOperationsPanel', () => {
         const onPush = vi.fn();
         const onCreateCommit = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -262,18 +234,23 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const pressables = tree!.root.findAllByType('Pressable' as any);
-        expect(pressables.length).toBeGreaterThanOrEqual(4);
+        const commitButton = screen.findByProps({ onPress: onCreateCommit });
+        const fetchButton = screen.findByProps({ onPress: onFetch });
+        const pullButton = screen.findByProps({ onPress: onPull });
+        const pushButton = screen.findByProps({ onPress: onPush });
+
+        expect(commitButton).toBeTruthy();
+        expect(fetchButton).toBeTruthy();
+        expect(pullButton).toBeTruthy();
+        expect(pushButton).toBeTruthy();
 
         act(() => {
-            pressables[0]!.props.onPress();
-            pressables[1]!.props.onPress();
-            pressables[2]!.props.onPress();
-            pressables[3]!.props.onPress();
+            commitButton!.props.onPress();
+            fetchButton!.props.onPress();
+            pullButton!.props.onPress();
+            pushButton!.props.onPress();
         });
 
         expect(onCreateCommit).toHaveBeenCalledTimes(1);
@@ -291,10 +268,7 @@ describe('SourceControlOperationsPanel', () => {
         const onCommitMessageDraftChange = vi.fn();
         const onCommitFromMessage = vi.fn();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -324,23 +298,12 @@ describe('SourceControlOperationsPanel', () => {
                     commitMessageDraft="feat: inline"
                     onCommitMessageDraftChange={onCommitMessageDraftChange}
                     onCommitFromMessage={onCommitFromMessage}
-                />
-            );
-        });
+                />);
 
-        const input = tree!.root.findByType('TextInput' as any);
-        expect(input.props.value).toBe('feat: inline');
+        const input = screen.findByTestId('scm-commit-message');
+        expect(input?.props.value).toBe('feat: inline');
 
-        const commitButton = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Commit staged')
-            );
-        expect(commitButton).toBeTruthy();
-
-        act(() => {
-            commitButton!.props.onPress();
-        });
+        screen.pressByTestId('scm-commit-submit');
 
         expect(onCommitFromMessage).toHaveBeenCalledTimes(1);
         expect(onCommitFromMessage).toHaveBeenCalledWith('feat: inline');
@@ -350,10 +313,7 @@ describe('SourceControlOperationsPanel', () => {
     it('hides the commit action chip when hideCommitAction is enabled', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     hideCommitAction
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
@@ -381,25 +341,15 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const commitChip = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Commit staged')
-            );
-        expect(commitChip).toBeFalsy();
+        expect(screen.getTextContent()).not.toContain('Commit staged');
     });
 
     it('hides write action buttons when capabilities are missing', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Unknown"
                     commitActionLabel="Commit"
                     capabilities={null}
@@ -426,20 +376,18 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        expect(tree!.root.findAllByType('Pressable' as any).length).toBe(0);
+        const textContent = screen.getTextContent();
+        expect(textContent).not.toContain('Fetch');
+        expect(textContent).not.toContain('Pull');
+        expect(textContent).not.toContain('Push');
     });
 
     it('renders conflict messaging that does not imply include/exclude actions are disabled', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -466,31 +414,15 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-
-        expect(textContent.some((text) => text.includes('Commit, pull, and push are blocked until conflicts are resolved.'))).toBe(true);
+        expect(screen.getTextContent()).toContain('Commit, pull, and push are blocked until conflicts are resolved.');
     });
 
     it('renders disabled operation hints when preflight blocks actions', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -517,43 +449,22 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+        />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-        const hasCommitHint = textContent.some((text) =>
-            text.includes('Commit blocked: Stage at least one file before committing.')
-        );
-        const hasPullHint = textContent.some((text) =>
-            text.includes('Pull blocked: Remote operations are unavailable while HEAD is detached.')
-        );
-        const hasPushHint = textContent.some((text) =>
-            text.includes('Push blocked: Pull remote changes before pushing local commits.')
-        );
-
-        expect(hasCommitHint).toBe(true);
-        expect(hasPullHint).toBe(true);
-        expect(hasPushHint).toBe(true);
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('Commit blocked');
+        expect(textContent).toContain('Stage at least one file before committing.');
+        expect(textContent).toContain('Pull blocked');
+        expect(textContent).toContain('Remote operations are unavailable while HEAD is detached.');
+        expect(textContent).toContain('Push blocked');
+        expect(textContent).toContain('Pull remote changes before pushing local commits.');
     });
 
     it('labels operation log entries with current vs other session origin', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
         const now = Date.now();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -595,32 +506,17 @@ describe('SourceControlOperationsPanel', () => {
                             timestamp: now,
                         },
                     ]}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-
-        expect(textContent.some((text) => text.includes('this session'))).toBe(true);
-        expect(textContent.some((text) => text.includes('session sessio'))).toBe(true);
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('this session');
+        expect(textContent).toContain('session sessio');
     });
 
     it('shows a lock warning when another session owns the in-flight git operation', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -652,31 +548,15 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-
-        expect(textContent.some((text) => text.includes('locked by'))).toBe(true);
+        expect(screen.getTextContent()).toContain('locked by');
     });
 
     it('shows a global lock hint when another session has a git operation in flight', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -708,36 +588,16 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-
-        expect(
-            textContent.some((text) =>
-                text.includes('Operations are temporarily locked because another session is running a source control command.')
-            )
-        ).toBe(true);
+        expect(screen.getTextContent()).toContain('Operations are temporarily locked because another session is running a source control command.');
     });
 
     it('allows filtering operation log to this session only', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
         const now = Date.now();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -779,59 +639,27 @@ describe('SourceControlOperationsPanel', () => {
                             timestamp: now,
                         },
                     ]}
-                />
-            );
-        });
+                />);
 
-        const beforeFilter = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-        expect(beforeFilter.some((text) => text.includes('this session'))).toBe(true);
-        expect(beforeFilter.some((text) => text.includes('session sessio'))).toBe(true);
+        expect(screen.getTextContent()).toContain('this session');
+        expect(screen.getTextContent()).toContain('session sessio');
 
-            const pressables = tree!.root.findAllByType('Pressable' as any);
-            const thisSessionFilter = pressables.find((node) => {
-                const children = node.props.children;
-                if (!children || typeof children !== 'object') return false;
-                const label = (children as any).props?.children;
-                return typeof label === 'string' && label.toLowerCase() === 'this session';
-            });
-            expect(thisSessionFilter).toBeTruthy();
+        const thisSessionFilter = screen.findByProps({ children: 'this session' }).parent;
+        expect(thisSessionFilter).toBeTruthy();
 
         act(() => {
-            thisSessionFilter!.props.onPress();
+            pressTestInstance(thisSessionFilter, 'this session filter');
         });
 
-        const afterFilter = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-
-        expect(afterFilter.some((text) => text.includes('this session'))).toBe(true);
-        expect(afterFilter.some((text) => text.includes('session sessio'))).toBe(false);
+        expect(screen.getTextContent()).toContain('this session');
+        expect(screen.getTextContent()).not.toContain('session sessio');
     });
 
     it('shows an empty-state message when this-session filter has no entries', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
         const now = Date.now();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -866,44 +694,22 @@ describe('SourceControlOperationsPanel', () => {
                             timestamp: now,
                         },
                     ]}
-                />
-            );
-        });
+                />);
 
-            const pressables = tree!.root.findAllByType('Pressable' as any);
-            const thisSessionFilter = pressables.find((node) => {
-                const children = node.props.children;
-                if (!children || typeof children !== 'object') return false;
-                const label = (children as any).props?.children;
-                return typeof label === 'string' && label.toLowerCase() === 'this session';
-            });
-            expect(thisSessionFilter).toBeTruthy();
+        const thisSessionFilter = screen.findByProps({ children: 'this session' }).parent;
+        expect(thisSessionFilter).toBeTruthy();
         act(() => {
-            thisSessionFilter!.props.onPress();
+            pressTestInstance(thisSessionFilter, 'this session filter');
         });
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) {
-                    return value.join('');
-                }
-                return String(value);
-            });
-
-        expect(textContent.some((text) => text.includes('No recent operations for this session.'))).toBe(true);
+        expect(screen.getTextContent()).toContain('No recent operations for this session.');
     });
 
     it('renders recent git operations newest-first', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
         const now = Date.now();
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Git"
                     commitActionLabel="Commit staged"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -945,31 +751,16 @@ describe('SourceControlOperationsPanel', () => {
                             timestamp: now,
                         },
                     ]}
-                />
-            );
-        });
+                />);
 
-        const operationTitles = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) return value.join('');
-                return String(value);
-            })
-            .filter((text) => text.includes('· this session'));
-
-        expect(operationTitles[0]).toContain('push');
-        expect(operationTitles[1]).toContain('fetch');
+        const textContent = screen.getTextContent();
+        expect(textContent.indexOf('push · this session')).toBeLessThan(textContent.indexOf('fetch · this session'));
     });
 
     it('renders source control heading and backend badge', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlOperationsPanel
+        const screen = await renderScreen(<SourceControlOperationsPanel
                     backendLabel="Sapling"
                     commitActionLabel="Commit changes"
                     capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
@@ -996,20 +787,10 @@ describe('SourceControlOperationsPanel', () => {
                     onLoadMoreHistory={vi.fn()}
                     onOpenCommit={vi.fn()}
                     operationLog={[]}
-                />
-            );
-        });
+                />);
 
-        const textContent = tree!
-            .root
-            .findAllByType('Text' as any)
-            .map((node) => {
-                const value = node.props.children;
-                if (Array.isArray(value)) return value.join('');
-                return String(value);
-            });
-
-        expect(textContent.some((text) => text.includes('Source control'))).toBe(true);
-        expect(textContent.some((text) => text.includes('SAPLING'))).toBe(true);
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('Source control');
+        expect(textContent).toContain('SAPLING');
     });
 });

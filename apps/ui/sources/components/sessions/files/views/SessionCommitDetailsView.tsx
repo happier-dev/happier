@@ -319,7 +319,10 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                     <Text style={{ color: theme.colors.text, fontSize: 16, ...Typography.default('semiBold') }}>
                         {t('files.commitDetails.diffUnavailableTitle')}
                     </Text>
-                    <Text style={{ marginTop: 6, color: theme.colors.textDestructive, ...Typography.default('semiBold') }}>
+                    <Text
+                        testID="scm-commit-details-error-message"
+                        style={{ marginTop: 6, color: theme.colors.textDestructive, ...Typography.default('semiBold') }}
+                    >
                         {error}
                     </Text>
                     <Text style={{ marginTop: 10, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
@@ -327,6 +330,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                     </Text>
                     <Pressable
                         onPress={onBack}
+                        testID="scm-commit-details-back"
                         style={{
                             marginTop: 14,
                             alignSelf: 'flex-start',

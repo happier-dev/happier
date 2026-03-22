@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { renderScreen } from '@/dev/testkit';
+
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -8,10 +10,17 @@ import renderer, { act } from 'react-test-renderer';
 const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
 const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Platform: { select: (value: any) => value?.default ?? null },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    View: 'View',
+                                    Platform: {
+                                        select: (value: any) => value?.default ?? null,
+                                    },
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -31,9 +40,10 @@ vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
     usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 describe('SourceControlBranchSummary', () => {
     beforeEach(() => {
@@ -53,9 +63,7 @@ describe('SourceControlBranchSummary', () => {
         const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SourceControlBranchSummary
+        tree = (await renderScreen(<SourceControlBranchSummary
                     variant="rail"
                     sessionId="s1"
                     scmWriteEnabled={false}
@@ -88,11 +96,9 @@ describe('SourceControlBranchSummary', () => {
                         totalIncluded: 0,
                         totalPending: 0,
                     }}
-                />
-            );
-        });
+                />)).tree;
 
-        const branchMenus = tree!.root.findAllByType('SourceControlBranchMenu' as any);
+        const branchMenus = tree!.findAllByType('SourceControlBranchMenu' as any);
         expect(branchMenus).toHaveLength(1);
         expect(branchMenus[0]!.props.writeEnabled).toBe(false);
     });
@@ -101,9 +107,7 @@ describe('SourceControlBranchSummary', () => {
         const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlBranchSummary
+        tree = (await renderScreen(<SourceControlBranchSummary
                     theme={{
                         colors: {
                             divider: '#000',
@@ -120,11 +124,9 @@ describe('SourceControlBranchSummary', () => {
                         totalIncluded: 2,
                         totalPending: 3,
                     }}
-                />
-            );
-        });
+                />)).tree;
 
-        const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
+        const texts = tree!.findAllByType('Text' as any).map((node) => node.props.children);
         expect(texts).toContain('main');
         expect(texts).toContain('files.branchSummary.staged');
         expect(texts).toContain('files.branchSummary.unstaged');
@@ -134,9 +136,7 @@ describe('SourceControlBranchSummary', () => {
         const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlBranchSummary
+        tree = (await renderScreen(<SourceControlBranchSummary
                     theme={{
                         colors: {
                             divider: '#000',
@@ -156,9 +156,7 @@ describe('SourceControlBranchSummary', () => {
                         totalIncluded: 0,
                         totalPending: 1,
                     }}
-                />
-            );
-        });
+                />)).tree;
 
         const textContent = tree!
             .root
@@ -180,9 +178,7 @@ describe('SourceControlBranchSummary', () => {
         const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(
-                <SourceControlBranchSummary
+        tree = (await renderScreen(<SourceControlBranchSummary
                     theme={{
                         colors: {
                             divider: '#000',
@@ -200,11 +196,9 @@ describe('SourceControlBranchSummary', () => {
                         totalIncluded: 0,
                         totalPending: 1,
                     }}
-                />
-            );
-        });
+                />)).tree;
 
-        const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
+        const texts = tree!.findAllByType('Text' as any).map((node) => node.props.children);
         expect(texts).toContain('files.branchSummary.included');
         expect(texts).toContain('files.branchSummary.pending');
         expect(texts).not.toContain('files.branchSummary.staged');

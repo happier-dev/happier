@@ -1,48 +1,47 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import type { Project } from '@/sync/runtime/orchestration/projectManager';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const changedFilesDataSpy = vi.fn();
 const derivedSessionChangeSetSpy = vi.fn();
+const repositoryProject: Project = {
+    id: 'p1',
+    key: { machineId: 'machine-1', path: '/workspace' },
+    sessionIds: ['s1'],
+    createdAt: 1,
+    updatedAt: 1,
+};
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
-    return {
-        ...stub,
-        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    };
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                    Platform: {
+                                                        OS: 'web',
+                                                        select: (value: any) => value?.default ?? null,
+                                                    },
+                                                }
+    );
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                textLink: '#08f',
-                input: { background: '#fff', placeholder: '#666' },
-                success: '#0a0',
-                warning: '#fa0',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) => value,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -51,17 +50,20 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useProjectForSession: () => ({ id: 'p1' }),
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    useProjectForSession: () => repositoryProject,
     useProjectSessions: () => ['s1'],
     useSessionProjectScmTouchedPaths: () => ['session-changes-qa-root.txt'],
     useSessionProjectScmOperationLog: () => [],
     useSetting: (key: string) => {
-        if (key === 'scmReviewMaxFiles') return 25;
-        if (key === 'scmReviewMaxChangedLines') return 2000;
-        return null;
-    },
-}));
+            if (key === 'scmReviewMaxFiles') return 25;
+            if (key === 'scmReviewMaxChangedLines') return 2000;
+            return null;
+        },
+});
+});
 
 vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
     useChangedFilesData: (input: unknown) => changedFilesDataSpy(input),
@@ -107,28 +109,24 @@ describe('RepositoryTreeChangedFilesPane', () => {
 
         const { RepositoryTreeChangedFilesPane } = await import('./RepositoryTreeChangedFilesPane');
 
-        act(() => {
-            tree = renderer.create(
-                <RepositoryTreeChangedFilesPane
+        tree = (await renderScreen(<RepositoryTreeChangedFilesPane
                     sessionId="s1"
                     scmSnapshot={null}
                     searchQuery=""
                     onSearchQueryChange={vi.fn()}
                     onShowAllRepositoryFiles={onShowAllRepositoryFiles}
                     onOpenFile={vi.fn()}
-                />,
-            );
-        });
+                />)).tree;
 
-        const getPressables = () => tree!.root.findAll((node: any) => typeof node.props?.onPress === 'function');
+        const getPressables = () => tree!.findAll((node: any) => typeof node.props?.onPress === 'function');
         const labels = getPressables().map((node: any) => node.findAllByType('TextInput' as any).length === 0
             ? node.findAll((child: any) => typeof child.props?.children === 'string').map((child: any) => child.props.children).join(' ')
             : '');
 
         expect(labels.some((label: string) => label.includes('files.toolbar.turnView'))).toBe(true);
         expect(labels.some((label: string) => label.includes('files.toolbar.sessionView'))).toBe(true);
-        expect(tree!.root.findAllByType('ChangedFilesList' as any)).toHaveLength(1);
-        expect(tree!.root.findAllByType('ChangedFilesReview' as any)).toHaveLength(0);
+        expect(tree!.findAllByType('ChangedFilesList' as any)).toHaveLength(1);
+        expect(tree!.findAllByType('ChangedFilesReview' as any)).toHaveLength(0);
 
         const reviewToggle = getPressables().find((node: any) =>
             node.findAll((child: any) => child.props?.children === 'files.toolbar.review').length > 0,
@@ -139,7 +137,7 @@ describe('RepositoryTreeChangedFilesPane', () => {
             reviewToggle!.props.onPress();
         });
 
-        expect(tree!.root.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
+        expect(tree!.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
 
         const allRepositoryFilesToggle = getPressables().find((node: any) =>
             node.findAll((child: any) => child.props?.children === 'files.toolbar.allRepositoryFiles').length > 0,

@@ -1,8 +1,27 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function toTestIdSafeValue(value: string) {
+    return String(value ?? '').trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+const theme = {
+    colors: {
+        surface: '#111',
+        surfaceHigh: '#222',
+        divider: '#333',
+        textSecondary: '#aaa',
+    },
+    dark: false,
+} as const;
 
 const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, req: any) => ({
     success: true,
@@ -10,9 +29,32 @@ const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, req: any) =>
     error: null,
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string, _vars?: any) => key,
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                        View: 'View',
+                                        Image: 'Image',
+                                        Pressable: 'Pressable',
+                                        FlatList: 'FlatList',
+                                        ScrollView: 'ScrollView',
+                                        ActivityIndicator: 'ActivityIndicator',
+                                        TextInput: 'TextInput',
+                                        Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+                                        useWindowDimensions: () => ({ width: 1200, height: 800 }),
+                                        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+                                    }
+    );
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Octicons: 'Octicons',
 }));
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 vi.mock('@/constants/Typography', () => ({
     Typography: {
@@ -21,10 +63,14 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return {
+        ...createTextModuleMock(),
+        Text: 'Text',
+        TextInput: 'TextInput',
+    };
+});
 
 vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
@@ -56,165 +102,218 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
                 maxLines: 10_000,
                 maxLineLength: 10_000,
             }),
-            []
+            [],
         ),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
-    sessionReadFile: vi.fn(async () => ({ success: false, content: '', error: 'nope' })),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
+            sessionReadFile: vi.fn(async () => ({ success: false as const, content: '', error: 'nope' })),
+        },
+    });
+});
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'wrapLinesInDiffs') return true;
-        if (key === 'showLineNumbers') return true;
-        if (key === 'filesDiffInlineVirtualizationLineThreshold') return undefined;
-        if (key === 'filesDiffInlineVirtualizationByteThreshold') return undefined;
-        return undefined;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'wrapLinesInDiffs') return true;
+            if (key === 'showLineNumbers') return true;
+            if (key === 'filesDiffInlineVirtualizationLineThreshold') return undefined;
+            if (key === 'filesDiffInlineVirtualizationByteThreshold') return undefined;
+            return undefined;
+        },
+    });
+});
+
+vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
+    scmUiBackendRegistry: {
+        getPluginForSnapshot: () => ({
+            diffModeConfig: () => ({
+                defaultMode: 'pending',
+                availableModes: ['pending'],
+                labels: { pending: 'Pending' },
+            }),
+            errorNormalizer: (err: any) => (err instanceof Error ? err.message : String(err)),
+        }),
     },
 }));
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: React.forwardRef((props: any, _ref: any) => {
-        const data = Array.isArray(props.data) ? props.data : [];
-
-        React.useEffect(() => {
-            if (typeof props.onViewableItemsChanged !== 'function') return;
-            // Mark only the first file row as viewable. This allows the hook to compute
-            // a stable requestedPaths set, and the review should auto-collapse diffs outside
-            // of that set when tooLarge is true.
-            const firstFileIndex = data.findIndex((row: any) => row?.kind === 'file');
-            const secondFileIndex =
-                firstFileIndex >= 0
-                    ? data.findIndex((row: any, idx: number) => idx > firstFileIndex && row?.kind === 'file')
-                    : -1;
-            props.onViewableItemsChanged({
-                viewableItems:
-                    firstFileIndex >= 0
-                        ? [
-                            { index: firstFileIndex },
-                            ...(secondFileIndex >= 0 ? [{ index: secondFileIndex }] : []),
-                        ]
-                        : [],
-            });
-        }, [data, props.onViewableItemsChanged]);
-
-        const header =
-            props.ListHeaderComponent
-                ? (typeof props.ListHeaderComponent === 'function'
-                    ? props.ListHeaderComponent()
-                    : props.ListHeaderComponent)
-                : null;
-
-        return React.createElement(
-            'FlashList',
-            props,
-            header,
-            data.map((item: any, index: number) => {
-                const key =
-                    typeof props.keyExtractor === 'function'
-                        ? props.keyExtractor(item, index)
-                        : (item?.key ?? String(index));
-                const child = typeof props.renderItem === 'function' ? props.renderItem({ item, index }) : null;
-                return React.createElement('FlashListItem', { key }, child);
-            }),
-        );
+vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewPrefetch', () => ({
+    useChangedFilesReviewPrefetch: () => ({
+        onViewableItemsChanged: undefined,
+        prefetchEnabled: false,
+        requestedPaths: undefined,
     }),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Image: 'Image',
-    Pressable: 'Pressable',
-    FlatList: 'FlatList',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    TextInput: 'TextInput',
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-        currentState: 'active',
-    },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewDiffLoading', () => ({
+    useChangedFilesReviewDiffLoading: () => ({
+        diffStateSource: {
+            getDiffState: (_path: string) => ({ status: 'loaded', diff: 'diff --git a/x b/x\n', error: null }),
+            subscribe: () => () => {},
+            reset: () => {},
+            prune: () => {},
+            setDiffState: () => {},
+            updateDiffState: () => {},
+        },
+    }),
 }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
+vi.mock('@/components/sessions/files/content/review/useScmDiffExpandedKeys', () => ({
+    useScmDiffExpandedKeys: (input: any) => ({
+        collapsedKeys: new Set<string>(),
+        toggleCollapsed: vi.fn(),
+        expandedKeys: new Set<string>(Array.isArray(input.allKeys) ? input.allKeys : []),
+    }),
 }));
 
-describe('ChangedFilesReview (tooLarge behavior)', () => {
-    it('keeps diff rows expanded by default even when tooLarge', async () => {
-        sessionScmDiffFileSpy.mockClear();
+vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewFocusPath', () => ({
+    useChangedFilesReviewFocusPath: () => null,
+}));
 
-        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+vi.mock('@/components/sessions/files/content/review/useInitialScrollRestore', () => ({
+    useInitialScrollRestore: () => undefined,
+}));
 
-        const theme = {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                textSecondary: '#aaa',
-            },
-            dark: false,
-        } as any;
+vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewDiffBlockRenderer', () => ({
+    useChangedFilesReviewDiffBlockRenderer: () => (path: string) =>
+        React.createElement('View', { testID: `scm-review-diff-${toTestIdSafeValue(path)}` }),
+}));
 
-        const snapshot = {
-            projectKey: 'p',
-            fetchedAt: Date.now(),
-            repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readDiffFile: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 3,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 3,
-                pendingRemoved: 0,
-            },
-        } as any;
+vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
+    DiffFilesListView: React.forwardRef((props: any, _ref: any) => {
+        const data = Array.isArray(props.files) ? props.files : [];
+        const header = props.ListHeaderComponent
+            ? (typeof props.ListHeaderComponent === 'function' ? props.ListHeaderComponent() : props.ListHeaderComponent)
+            : null;
 
-        const fileA = { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
-        const fileB = { fileName: 'b.ts', filePath: 'src', fullPath: 'src/b.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
-        const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <ChangedFilesReview
-                    theme={theme}
-                    sessionId="session-1"
-                    snapshot={snapshot}
-                    changedFilesViewMode="repository"
-                    attributionReliability="high"
-                    allRepositoryChangedFiles={[fileA, fileB, fileC]}
-                    sessionAttributedFiles={[]}
-                    repositoryOnlyFiles={[]}
-                    suppressedInferredCount={0}
-                    maxFiles={1}
-                    maxChangedLines={2000}
-                    onFilePress={vi.fn()}
-                />
-            );
+        const rows = data.map((file: any, index: number) => {
+            const expanded = props.expandedKeys?.has?.(file.key) === true;
+            const row = props.renderFileRow
+                ? props.renderFileRow({
+                    file,
+                    index,
+                    expanded,
+                    focused: false,
+                    onToggleExpanded: () => props.onToggleExpanded?.(file.key),
+                })
+                : React.createElement('ScmChangeRow', { file, index, expanded, focused: false });
+            const inline = props.canRenderInlineDiffs && expanded && props.renderInlineUnifiedDiff
+                ? props.renderInlineUnifiedDiff({
+                    file,
+                    virtualized: false,
+                    maxVirtualizedHeight: 0,
+                    wrapLines: props.wrapLines,
+                    showLineNumbers: props.showLineNumbers,
+                    showPrefix: props.showPrefix,
+                })
+                : null;
+            return React.createElement(React.Fragment, { key: file.key }, row, inline);
         });
 
-        const diffBlocks = tree.root.findAll((node: any) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('scm-review-diff-'));
-        const diffTestIds = diffBlocks.map((node: any) => node.props.testID);
+        return React.createElement('FlashList', props, header, ...rows);
+    }),
+}));
 
-        // Virtualization now limits render cost, so tooLarge must not auto-collapse rows.
-        // All rows remain expanded by default unless the user explicitly collapses them.
+vi.mock('@/scm/statusSync/projectState', () => ({
+    buildSnapshotSignature: () => 'snapshot-sig',
+}));
+
+vi.mock('@/scm/diffCache/scmDiffCacheSingleton', () => ({
+    scmDiffCache: null,
+}));
+
+vi.mock('@/components/sessions/files/changedFiles/ChangedFilesSectionHeader', () => ({
+    ChangedFilesSectionHeader: (props: any) => React.createElement('ChangedFilesSectionHeader', props, props.children),
+}));
+
+vi.mock('@/components/sessions/files/content/review/ChangedFilesReviewDiffAreaSelector', () => ({
+    ChangedFilesReviewDiffAreaSelector: () => React.createElement('ChangedFilesReviewDiffAreaSelector'),
+}));
+
+vi.mock('@/scm/review/useScmReviewViewabilityConfig', () => ({
+    useScmReviewViewabilityConfig: () => ({
+        enabled: false,
+        aheadCount: 0,
+        behindCount: 0,
+        debounceMs: 0,
+    }),
+}));
+
+vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({
+    resolveWebScrollableElement: () => null,
+}));
+
+async function renderChangedFilesReview() {
+    const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+    const snapshot = {
+        projectKey: 'p',
+        fetchedAt: Date.now(),
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+        capabilities: { readDiffFile: true },
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+        stashCount: 0,
+        hasConflicts: false,
+        entries: [],
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 3,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 3,
+            pendingRemoved: 0,
+        },
+    } as any;
+
+    const fileA = { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
+    const fileB = { fileName: 'b.ts', filePath: 'src', fullPath: 'src/b.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
+    const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
+
+    const screen = await renderScreen(
+        <ChangedFilesReview
+            theme={theme}
+            sessionId="session-1"
+            snapshot={snapshot}
+            changedFilesViewMode="repository"
+            attributionReliability="high"
+            allRepositoryChangedFiles={[fileA, fileB, fileC]}
+            sessionAttributedFiles={[]}
+            repositoryOnlyFiles={[]}
+            suppressedInferredCount={0}
+            maxFiles={1}
+            maxChangedLines={2000}
+            onFilePress={vi.fn()}
+        />,
+    );
+    await flushHookEffects({ cycles: 2 });
+    return screen;
+}
+
+describe('ChangedFilesReview (tooLarge behavior)', () => {
+    beforeEach(() => {
+        sessionScmDiffFileSpy.mockClear();
+    });
+
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    it('keeps diff rows expanded by default even when tooLarge', async () => {
+        const screen = await renderChangedFilesReview();
+
+        const diffTestIds = screen.findAll((node) =>
+            typeof node.props?.testID === 'string' && node.props.testID.startsWith('scm-review-diff-'),
+        ).map((node) => node.props.testID);
+
         expect(diffTestIds).toContain('scm-review-diff-src_a.ts');
         expect(diffTestIds).toContain('scm-review-diff-src_b.ts');
         expect(diffTestIds).toContain('scm-review-diff-src_c.ts');
-
-        await act(async () => {
-            tree.unmount();
-        });
     });
 });

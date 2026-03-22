@@ -1,9 +1,12 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { useSessionFileEditorState } from './useSessionFileEditorState';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,23 +18,34 @@ const sessionWriteFileSpy = vi.hoisted(() =>
 const showDaemonUnavailableAlertSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                                    Platform: {
+                                                        OS: 'web',
+                                                    },
+                                                }
+    );
+});
 
 vi.mock('@/sync/ops', () => ({
     sessionWriteFile: (...args: Parameters<SessionWriteFileFn>) => sessionWriteFileSpy(...args),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: (...args: any[]) => modalAlertSpy(...args),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            alert: (...args: any[]) => modalAlertSpy(...args),
+        },
+    }).module;
+});
 
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
     showDaemonUnavailableAlert: (params: any) => showDaemonUnavailableAlertSpy(params),
@@ -87,9 +101,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
             return null;
         };
 
-	        await act(async () => {
-	            renderer.create(<Harness />);
-	        });
+	        await renderScreen(<Harness />);
 
 	        expect(getState().editorSurfaceEnabled).toBe(true);
 
@@ -107,7 +119,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
 
         for (let i = 0; i < 10; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
             if (showDaemonUnavailableAlertSpy.mock.calls.length > 0) break;
         }
@@ -162,9 +174,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
             return null;
         };
 
-	        await act(async () => {
-	            renderer.create(<Harness />);
-	        });
+	        await renderScreen(<Harness />);
 
 	        await act(async () => {
 	            getState().startEditingFile();
@@ -177,7 +187,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
 
         for (let i = 0; i < 10; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
             if (showDaemonUnavailableAlertSpy.mock.calls.length > 0) break;
         }

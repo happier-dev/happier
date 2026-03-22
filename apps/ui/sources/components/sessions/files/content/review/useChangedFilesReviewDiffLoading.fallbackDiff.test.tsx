@@ -1,8 +1,11 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useChangedFilesReviewDiffLoading } from './useChangedFilesReviewDiffLoading';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,9 +21,10 @@ vi.mock('@/sync/ops', () => ({
     sessionReadFile: (...args: any[]) => sessionReadFileSpy(...args),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/scm/utils/filePresentation', () => ({
     isBinaryContent: () => false,
@@ -63,13 +67,11 @@ describe('useChangedFilesReviewDiffLoading (fallback diff)', () => {
             return React.createElement('Probe');
         }
 
-        await act(async () => {
-            renderer.create(React.createElement(Probe));
-        });
+        await renderScreen(React.createElement(Probe));
 
         for (let i = 0; i < 30; i++) {
             await act(async () => {
-                await Promise.resolve();
+                await flushHookEffects({ cycles: 1, turns: 1 });
             });
             const current = diffStateSource?.getDiffState?.('src/new.txt');
             if (typeof current?.diff === 'string' && current.diff.includes('diff --git')) break;

@@ -2,11 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
-import {
-    flushHookEffects,
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
+import { flushHookEffects, pressTestInstance, renderScreen, standardCleanup } from '@/dev/testkit';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,9 +11,6 @@ import {
 const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, _req: any) => ({ success: true, diff: 'diff', error: null }));
 const flashListScrollToIndexSpy: any = vi.fn();
 const deferOnWebSpy: any = vi.fn((cb: any) => cb());
-
-const resolveInlineDiffVirtualizationSpy = vi.hoisted(() => vi.fn());
-const diffFilesListViewSpy = vi.hoisted(() => vi.fn());
 
 function areStringSetsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>) {
     if (left.size !== right.size) return false;
@@ -36,33 +30,20 @@ let scmReviewPrefetchAheadCountNativeSetting: number | undefined = undefined;
 let scmReviewPrefetchBehindCountNativeSetting: number | undefined = undefined;
 let scmReviewPrefetchDebounceMsSetting: number | undefined = undefined;
 let scmReviewPrefetchConcurrencySetting: number | undefined = undefined;
-let flashListViewableIndicesOverride: number[] | null = null;
+const flashListScrollableNode = {
+    scrollTop: 0,
+    style: {
+        setProperty: vi.fn(),
+    },
+};
 
 function buildUnifiedDiff(path: string) {
     return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
 }
 
-function toTestIdSafeValue(value: string) {
-    return String(value ?? '').trim().replace(/[^a-zA-Z0-9._-]/g, '_');
-}
-
-function changedFilesReviewListTestId() {
-    return 'changed-files-review-list';
-}
-
-function changedFilesReviewRowTestId() {
-    return 'changed-files-review-row';
-}
-
 vi.mock('@/components/ui/code/diff/resolveInlineDiffVirtualization', async (importOriginal) => {
     const mod = await importOriginal<typeof import('@/components/ui/code/diff/resolveInlineDiffVirtualization')>();
-    return {
-        ...mod,
-        resolveInlineDiffVirtualization: (...args: any[]) => {
-            resolveInlineDiffVirtualizationSpy(...args);
-            return (mod as any).resolveInlineDiffVirtualization(...args);
-        },
-    };
+    return mod;
 });
 
 vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () => ({
@@ -76,7 +57,6 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
     DiffFilesListView: React.forwardRef((props: any, ref: any) => {
         const [flashListCrashed, setFlashListCrashed] = React.useState(false);
-        diffFilesListViewSpy(props);
 
         React.useEffect(() => {
             if (typeof globalThis.window === 'undefined' || typeof globalThis.window.addEventListener !== 'function') return;
@@ -88,7 +68,7 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             };
             globalThis.window.addEventListener('error', onError);
             return () => {
-                globalThis.window.removeEventListener?.('error', onError);
+                globalThis.window?.removeEventListener?.('error', onError);
             };
         }, []);
 
@@ -108,11 +88,8 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
 
         React.useEffect(() => {
             if (typeof props.onViewableItemsChanged !== 'function') return;
-            const indices = Array.isArray(flashListViewableIndicesOverride)
-                ? flashListViewableIndicesOverride
-                : data.map((_item: any, index: number) => index);
             props.onViewableItemsChanged({
-                viewableItems: indices.map((index: number) => ({ index })),
+                viewableItems: data.map((_item: any, index: number) => ({ index })),
             });
         }, [data, props.onViewableItemsChanged]);
 
@@ -122,14 +99,7 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             const onToggleExpanded = () => props.onToggleExpanded?.(file.key);
             const row = props.renderFileRow
                 ? props.renderFileRow({ file, index, expanded, focused, onToggleExpanded })
-                : React.createElement('ScmChangeRow', {
-                    file,
-                    index,
-                    expanded,
-                    focused,
-                    onToggleExpanded,
-                    testID: changedFilesReviewRowTestId(),
-                });
+                : React.createElement('ScmChangeRow', { file, index, expanded, focused, onToggleExpanded });
             const inline = props.canRenderInlineDiffs && expanded && props.renderInlineUnifiedDiff
                 ? props.renderInlineUnifiedDiff({
                     file,
@@ -172,16 +142,13 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
         React.useImperativeHandle(ref, () => ({
             scrollToIndex: flashListScrollToIndexSpy,
             // Some callers may attempt to read the underlying scroll node on web.
-            getScrollableNode: () => null,
+            getScrollableNode: () => flashListScrollableNode,
         }));
         const data = Array.isArray(props.data) ? props.data : [];
         React.useEffect(() => {
         if (typeof props.onViewableItemsChanged !== 'function') return;
-            const indices = Array.isArray(flashListViewableIndicesOverride)
-                ? flashListViewableIndicesOverride
-                : data.map((_item: any, index: number) => index);
             props.onViewableItemsChanged({
-                viewableItems: indices.map((index: number) => ({ index })),
+                viewableItems: data.map((_item: any, index: number) => ({ index })),
             });
         }, [data, props.onViewableItemsChanged]);
 
@@ -200,10 +167,7 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
 
         return React.createElement(
             'FlashList',
-            {
-                ...props,
-                testID: props.testID ?? changedFilesReviewListTestId(),
-            },
+            props,
             header,
             data.map((item: any, index: number) => {
                 const key =
@@ -651,65 +615,6 @@ vi.mock('@/components/sessions/files/content/review/useScmDiffExpandedKeys', () 
     },
 }));
 
-vi.mock('@/components/sessions/files/content/review/useInitialScrollRestore', () => ({
-    useInitialScrollRestore: (input: any) => {
-        const maxAttempts = typeof input.maxAttempts === 'number' && Number.isFinite(input.maxAttempts) ? input.maxAttempts : 12;
-        const hasScheduledRef = React.useRef(false);
-        const cancelledRef = React.useRef(false);
-        const scheduledHandleRef = React.useRef<number | null>(null);
-
-        React.useEffect(() => {
-            if (Platform.OS !== 'web') return;
-            if (hasScheduledRef.current) return;
-            const initial = input.initialScrollTop;
-            if (typeof initial !== 'number' || !Number.isFinite(initial) || initial <= 0) return;
-            hasScheduledRef.current = true;
-            cancelledRef.current = false;
-
-            const schedule: (cb: FrameRequestCallback) => number =
-                typeof (globalThis as any).requestAnimationFrame === 'function'
-                    ? (globalThis as any).requestAnimationFrame.bind(globalThis)
-                    : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
-            const cancelScheduled = () => {
-                const handle = scheduledHandleRef.current;
-                if (handle == null) return;
-                if (typeof (globalThis as any).cancelAnimationFrame === 'function') {
-                    (globalThis as any).cancelAnimationFrame(handle);
-                } else {
-                    globalThis.clearTimeout(handle);
-                }
-                scheduledHandleRef.current = null;
-            };
-
-            const attemptApply = (attempt: number) => {
-                if (cancelledRef.current) return;
-                if (attempt >= maxAttempts) return;
-                if ((input.latestScrollTopRef.current ?? 0) > 0) {
-                    cancelledRef.current = true;
-                    return;
-                }
-                const ok = input.applyInitialScrollTop(initial);
-                if (ok) return;
-                cancelScheduled();
-                scheduledHandleRef.current = schedule(() => {
-                    scheduledHandleRef.current = null;
-                    attemptApply(attempt + 1);
-                });
-            };
-
-            cancelScheduled();
-            scheduledHandleRef.current = schedule(() => {
-                scheduledHandleRef.current = null;
-                attemptApply(0);
-            });
-            return () => {
-                cancelledRef.current = true;
-                cancelScheduled();
-            };
-        }, [input.applyInitialScrollTop, input.initialScrollTop, input.latestScrollTopRef, maxAttempts]);
-    },
-}));
-
 vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewDiffBlockRenderer', () => ({
     useChangedFilesReviewDiffBlockRenderer: (input: any) => {
         const DiffBlock = ({ path }: { path: string }) => {
@@ -781,7 +686,7 @@ vi.mock('@/components/sessions/files/content/review/ChangedFilesReviewDiffAreaSe
         props,
         ...(Array.isArray(props.availableModes) ? props.availableModes.map((mode: string) => React.createElement(
             'Pressable',
-            { key: mode, onPress: () => props.onChange(mode) },
+            { key: mode, testID: `scm-review-diff-area-${mode}`, onPress: () => props.onChange(mode) },
             React.createElement('Text', null, props.labels?.[mode] ?? mode),
         )) : []),
     ),
@@ -803,11 +708,7 @@ vi.mock('@/scm/review/useScmReviewViewabilityConfig', () => ({
 }));
 
 vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({
-    resolveWebScrollableElement: () => null,
-}));
-
-vi.mock('@/utils/ui/toTestIdSafeValue', () => ({
-    toTestIdSafeValue: (value: string) => String(value ?? '').trim().replace(/[^a-zA-Z0-9._-]/g, '_'),
+    resolveWebScrollableElement: (rootCandidate: any) => rootCandidate,
 }));
 
 vi.mock('@/components/sessions/files/content/review/scmEntryDelta', () => ({
@@ -900,8 +801,12 @@ vi.mock('react-native', async () => {
                                         ActivityIndicator: 'ActivityIndicator',
                                         TextInput: 'TextInput',
                                         Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+                                        AppState: {
+                                            addEventListener: () => ({ remove: () => {} }),
+                                            currentState: 'active',
+                                        },
                                         useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                                        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+                                        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
                                     }
     );
 });
@@ -939,10 +844,16 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-vi.mock('@/sync/ops', () => ({
-    sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
-    sessionReadFile: vi.fn(async () => ({ success: false, content: '', error: 'nope' })),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
+            sessionReadFile: vi.fn(async () => ({ success: false as const, content: '', error: 'nope' })),
+        },
+    });
+});
 
 vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
     CodeLinesView: (props: any) => React.createElement('CodeLinesView', props),
@@ -971,8 +882,6 @@ describe('ChangedFilesReview', () => {
         flashListScrollToIndexSpy.mockReset();
         deferOnWebSpy.mockReset();
         deferOnWebSpy.mockImplementation((cb: any) => cb());
-        resolveInlineDiffVirtualizationSpy.mockReset();
-        diffFilesListViewSpy.mockReset();
         wrapLinesInDiffsSetting = true;
         showLineNumbersSetting = true;
         inlineVirtualizationLineThresholdSetting = undefined;
@@ -983,10 +892,10 @@ describe('ChangedFilesReview', () => {
         scmReviewPrefetchAheadCountNativeSetting = undefined;
         scmReviewPrefetchBehindCountNativeSetting = undefined;
         scmReviewPrefetchDebounceMsSetting = undefined;
-        flashListViewableIndicesOverride = null;
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         standardCleanup();
     });
 
@@ -1029,9 +938,9 @@ describe('ChangedFilesReview', () => {
     const fileB = { fileName: 'b.ts', filePath: 'src', fullPath: 'src/b.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
 
-    async function renderChangedFilesReview(overrides: Record<string, unknown> = {}) {
+    async function buildChangedFilesReviewElement(overrides: Record<string, unknown> = {}) {
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
-        return renderScreen(
+        return (
             <ChangedFilesReview
                 theme={theme}
                 sessionId="session-1"
@@ -1039,8 +948,6 @@ describe('ChangedFilesReview', () => {
                 changedFilesViewMode="repository"
                 attributionReliability="high"
                 allRepositoryChangedFiles={[fileA]}
-                turnAttributedFiles={[]}
-                turnRepositoryOnlyFiles={[]}
                 sessionAttributedFiles={[]}
                 repositoryOnlyFiles={[]}
                 suppressedInferredCount={0}
@@ -1048,165 +955,166 @@ describe('ChangedFilesReview', () => {
                 maxChangedLines={2000}
                 onFilePress={vi.fn()}
                 {...overrides}
-            />,
+            />
         );
     }
 
-    async function flushReviewEffects(cycles = 1) {
+    async function renderChangedFilesReview(overrides: Record<string, unknown> = {}) {
+        return renderScreen(await buildChangedFilesReviewElement(overrides));
+    }
+
+    async function flushReviewEffects(cycles = 3) {
         await flushHookEffects({ cycles });
     }
 
-    it('limits auto-expanded diffs when large and viewability config is enabled', async () => {
-        // Enable viewability windowing.
-        scmReviewPrefetchAheadCountWebSetting = 3;
-        scmReviewPrefetchBehindCountWebSetting = 2;
-        scmReviewPrefetchDebounceMsSetting = 0;
-        flashListViewableIndicesOverride = [0];
+    it('enables virtualization for large diffs above the byte threshold when review comments are disabled', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = 50_000;
+        inlineVirtualizationByteThresholdSetting = 100;
 
-        const files = Array.from({ length: 10 }, (_unused, index) => ({
-            fileName: `file-${index}.ts`,
-            filePath: 'src',
-            fullPath: `src/file-${index}.ts`,
-            status: 'modified',
-            isIncluded: false,
-            linesAdded: 1,
-            linesRemoved: 0,
-        })) as any[];
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff --git a/${req.path} b/${req.path}\n--- a/${req.path}\n+++ b/${req.path}\n@@\n+${'a'.repeat(2_000)}\n`,
+            error: null,
+        }));
 
-        diffFilesListViewSpy.mockClear();
+        const screen = await renderChangedFilesReview();
+        await flushReviewEffects();
 
-        await renderChangedFilesReview({
-            allRepositoryChangedFiles: files,
-            maxFiles: 1,
-        });
-
-        await flushReviewEffects(3);
-
-        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
-        expect(lastProps).toBeTruthy();
-
-        // Initial window expands `ahead+behind+1` files only.
-        expect(lastProps.expandedKeys.size).toBe(6);
-        expect(lastProps.expandedKeys.has('src/file-0.ts')).toBe(true);
-        expect(lastProps.expandedKeys.has('src/file-5.ts')).toBe(true);
-        expect(lastProps.expandedKeys.has('src/file-6.ts')).toBe(false);
-        expect(lastProps.expandedKeys.has('src/file-9.ts')).toBe(false);
-
-        // Reset per-test overrides.
-        scmReviewPrefetchAheadCountWebSetting = undefined;
-        scmReviewPrefetchBehindCountWebSetting = undefined;
-        scmReviewPrefetchDebounceMsSetting = undefined;
-        flashListViewableIndicesOverride = null;
-    });
-    const directoryLike = { fileName: 'src/some-dir/', filePath: 'src/some-dir/', fullPath: 'src/some-dir/', status: 'added', isIncluded: false, linesAdded: 1, linesRemoved: 0 } as any;
-
-    it('renders the review list via DiffFilesListView', async () => {
-        diffFilesListViewSpy.mockClear();
-        await renderChangedFilesReview();
-
-        expect(diffFilesListViewSpy).toHaveBeenCalled();
+        const views = screen.findAllByType('CodeLinesView' as any);
+        expect(views.length).toBeGreaterThan(0);
+        for (const view of views) {
+            expect(view.props.virtualized).toBe(true);
+        }
     });
 
-    it('keeps turn review scoped to latest-turn files', async () => {
-        diffFilesListViewSpy.mockClear();
-        await renderChangedFilesReview({
-            changedFilesViewMode: 'turn',
-            allRepositoryChangedFiles: [fileA, fileB],
-            turnAttributedFiles: [{ file: fileA, confidence: 'high' }],
-            turnRepositoryOnlyFiles: [fileB],
-        });
-
-        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
-        expect(lastProps).toBeTruthy();
-        expect(lastProps.files).toEqual([
-            expect.objectContaining({
-                key: 'src/a.ts',
-                filePath: 'src/a.ts',
-            }),
-        ]);
-    });
-
-    it('keeps session review scoped to session-attributed files', async () => {
-        diffFilesListViewSpy.mockClear();
-        await renderChangedFilesReview({
-            changedFilesViewMode: 'session',
-            allRepositoryChangedFiles: [fileA, fileB],
-            sessionAttributedFiles: [{ file: fileA, confidence: 'high' }],
-            repositoryOnlyFiles: [fileB],
-        });
-
-        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
-        expect(lastProps).toBeTruthy();
-        expect(lastProps.files).toEqual([
-            expect.objectContaining({
-                key: 'src/a.ts',
-                filePath: 'src/a.ts',
-            }),
-        ]);
-    });
-
-    it('loads diffs for all files when within thresholds', async () => {
+    it('keeps loaded diffs visible while refreshing due to snapshot churn', async () => {
         wrapLinesInDiffsSetting = true;
         showLineNumbersSetting = true;
         inlineVirtualizationLineThresholdSetting = undefined;
         inlineVirtualizationByteThresholdSetting = undefined;
         sessionScmDiffFileSpy.mockClear();
-        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
-            success: true,
-            diff: `diff:${req.path}:${req.area}`,
-            error: null,
+        let pendingRefreshResolve: ((value: any) => void) | null = null;
+        sessionScmDiffFileSpy
+            .mockImplementationOnce(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: buildUnifiedDiff(req.path),
+                error: null,
+            }))
+            // Second call simulates a slow refresh so we can assert there is no "loading" flicker.
+            .mockImplementationOnce((_sessionId: string, _req: any) => new Promise((resolve) => {
+                pendingRefreshResolve = resolve;
+            }));
+
+        const screen = await renderChangedFilesReview({
+            diffAutoRefreshIntervalMs: 0,
+        });
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('CodeLinesView' as any).length).toBeGreaterThan(0);
+        expect(screen.findAllByType('ActivityIndicator' as any).length).toBe(0);
+
+        await screen.update(await buildChangedFilesReviewElement({
+            snapshot: { ...snapshot, fetchedAt: snapshot.fetchedAt + 1 },
+            allRepositoryChangedFiles: [{ ...fileA }],
+            diffAutoRefreshIntervalMs: 0,
         }));
+        await flushReviewEffects();
+
+        // Effect starts a refresh but keeps previous diff visible (no loading spinner).
+        expect(screen.findAllByType('CodeLinesView' as any).length).toBeGreaterThan(0);
+        expect(screen.findAllByType('ActivityIndicator' as any).length).toBe(0);
+
+        await act(async () => {
+            pendingRefreshResolve?.({ success: true, diff: buildUnifiedDiff('src/a.ts'), error: null });
+        });
+        await flushReviewEffects();
+        expect(screen.findAllByType('ActivityIndicator' as any).length).toBe(0);
+        expect(screen.findAllByType('CodeLinesView' as any).length).toBeGreaterThan(0);
+    });
+
+    it('does not re-fetch diffs again when within the refresh interval', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-01T00:00:00.000Z').getTime());
+
+        try {
+            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: `diff:${req.path}:${req.area}`,
+                error: null,
+            }));
+
+            const screen = await renderChangedFilesReview({
+                diffAutoRefreshIntervalMs: 60_000,
+            });
+            await flushReviewEffects();
+
+            expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
+
+            await screen.update(await buildChangedFilesReviewElement({
+                snapshot: { ...snapshot, fetchedAt: snapshot.fetchedAt + 1 },
+                allRepositoryChangedFiles: [{ ...fileA }],
+                diffAutoRefreshIntervalMs: 60_000,
+            }));
+            await flushReviewEffects();
+
+            expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('re-fetches diffs when the refresh token changes even within the refresh interval', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-01T00:00:00.000Z').getTime());
+
+        try {
+            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: `diff:${req.path}:${req.area}`,
+                error: null,
+            }));
+
+            const screen = await renderChangedFilesReview({
+                diffAutoRefreshIntervalMs: 60_000,
+                diffRefreshToken: 0,
+            });
+            await flushReviewEffects();
+
+            expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
+
+            await screen.update(await buildChangedFilesReviewElement({
+                snapshot: { ...snapshot, fetchedAt: snapshot.fetchedAt + 1 },
+                allRepositoryChangedFiles: [{ ...fileA }],
+                diffAutoRefreshIntervalMs: 60_000,
+                diffRefreshToken: 1,
+            }));
+            await flushReviewEffects();
+
+            expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(2);
+            expect(screen.findAllByType('ActivityIndicator' as any).length).toBe(0);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('falls back to single-file loading when thresholds are exceeded', async () => {
+        sessionScmDiffFileSpy.mockClear();
 
         await renderChangedFilesReview({
             allRepositoryChangedFiles: [fileA, fileB],
+            maxFiles: 1,
         });
+        await flushReviewEffects();
 
-        for (let i = 0; i < 20; i++) {
-            await flushReviewEffects();
-            if (sessionScmDiffFileSpy.mock.calls.length >= 2) break;
-        }
-
-        expect(sessionScmDiffFileSpy.mock.calls.length).toBe(2);
+        expect(sessionScmDiffFileSpy.mock.calls.length).toBe(1);
         const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
-        expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
+        expect(calledPaths).toEqual(['src/a.ts']);
     });
 
-    it('keeps FlashList renderItem stable while diffs load', async () => {
-        wrapLinesInDiffsSetting = true;
-        showLineNumbersSetting = true;
-        sessionScmDiffFileSpy.mockClear();
-        let resolveDiff: null | ((value: any) => void) = null;
-        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => {
-            return await new Promise((resolve) => {
-                resolveDiff = () => resolve({
-                    success: true,
-                    diff: buildUnifiedDiff(req.path),
-                    error: null,
-                });
-            });
-        });
-
-        const screen = await renderChangedFilesReview({
-            sessionId: 's1',
-            onFilePress: () => {},
-        });
-
-        await flushReviewEffects();
-
-        const listBefore = screen.findByType('FlashList' as any);
-        const renderItemBefore = listBefore.props.renderItem;
-
-        await act(async () => {
-            expect(resolveDiff).not.toBeNull();
-            resolveDiff?.(null);
-        });
-        await flushReviewEffects();
-
-        const listAfter = screen.findByType('FlashList' as any);
-        expect(listAfter.props.renderItem).toBe(renderItemBefore);
-    });
-
-    it('filters directory-like SCM entries from review rows', async () => {
+    it('filters collapsed paths when a file disappears', async () => {
         sessionScmDiffFileSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
             success: true,
@@ -1215,121 +1123,320 @@ describe('ChangedFilesReview', () => {
         }));
 
         const screen = await renderChangedFilesReview({
-            allRepositoryChangedFiles: [fileA, directoryLike],
+            allRepositoryChangedFiles: [fileA, fileB],
         });
+        await flushReviewEffects();
 
-        for (let i = 0; i < 10; i++) {
-            await flushReviewEffects();
-        }
+        expect(screen.findAllByType('CodeLinesView' as any)).toHaveLength(2);
 
-        const rows = screen.findAllByType('ScmChangeRow' as any);
-        expect(rows).toHaveLength(1);
+        const [firstRow] = screen.findAllByType('ScmChangeRow' as any);
+        act(() => {
+            pressTestInstance(firstRow);
+        });
+        await flushReviewEffects();
+        expect(screen.findAllByType('CodeLinesView' as any)).toHaveLength(1);
 
-        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call?.[1]?.path);
-        expect(calledPaths).toEqual(['src/a.ts']);
+        // Update the list so the previously selected file is no longer present.
+        await screen.update(await buildChangedFilesReviewElement({
+            allRepositoryChangedFiles: [fileC],
+        }));
+        await flushReviewEffects();
+
+        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
+        expect(calledPaths).toContain('src/c.ts');
     });
 
-    it('highlights a focused path when provided', async () => {
-        wrapLinesInDiffsSetting = true;
-        showLineNumbersSetting = true;
-        inlineVirtualizationLineThresholdSetting = undefined;
-        inlineVirtualizationByteThresholdSetting = undefined;
+    it('toggles diff visibility when pressing a file row in stacked review mode', async () => {
         sessionScmDiffFileSpy.mockClear();
-        flashListScrollToIndexSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
+        const screen = await renderChangedFilesReview({
+            allRepositoryChangedFiles: [fileA, fileB],
+        });
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('CodeLinesView' as any)).toHaveLength(2);
+
+        const [firstRow] = screen.findAllByType('ScmChangeRow' as any);
+        act(() => {
+            pressTestInstance(firstRow);
+        });
+        await flushReviewEffects();
+        expect(screen.findAllByType('CodeLinesView' as any)).toHaveLength(1);
+
+        act(() => {
+            pressTestInstance(firstRow);
+        });
+        await flushReviewEffects();
+        expect(screen.findAllByType('CodeLinesView' as any)).toHaveLength(2);
+    });
+
+    it('uses a localized fallback when diff loading fails without an error string', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async () => ({
+            success: false,
+            diff: null,
+            error: null,
+        }));
+
+        const screen = await renderChangedFilesReview();
+        await flushReviewEffects();
+
+        const texts = screen.findAllByType('Text' as any);
+        expect(texts.some((n) => String(n.props?.children) === 'files.reviewDiffRequestFailed')).toBe(true);
+    });
+
+    it('supports injecting per-file actions for commit/stage flows', async () => {
+        sessionScmDiffFileSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
             success: true,
             diff: `diff:${req.path}:${req.area}`,
             error: null,
         }));
 
-        const screen = await renderChangedFilesReview({
-            allRepositoryChangedFiles: [fileA, fileB],
-            focusPath: 'src/b.ts',
-        });
+        const renderFileActions = vi.fn((_file: any) => React.createElement('Action'));
 
+        await renderChangedFilesReview({
+            allRepositoryChangedFiles: [fileA, fileB],
+            renderFileActions: renderFileActions as any,
+        });
         await flushReviewEffects();
 
-        const rows = screen.findAllByType('ScmChangeRow' as any);
-        const bRow = rows.find((n) => n.props?.file?.fullPath === 'src/b.ts');
-        expect(bRow).toBeTruthy();
-        expect(bRow!.props.highlighted).toBe(true);
+        const calledPaths = new Set(renderFileActions.mock.calls.map((call) => call[0]?.fullPath));
+        expect(Array.from(calledPaths).sort()).toEqual(['src/a.ts', 'src/b.ts']);
     });
 
-    it('wires onFilePressPinned to ScmChangeRow.onPressPinned', async () => {
-        const onFilePressPinned = vi.fn();
-        const screen = await renderChangedFilesReview({ onFilePressPinned });
-
-        const row = screen.findByType('ScmChangeRow' as any);
-        expect(typeof row.props.onPressPinned).toBe('function');
-
-        act(() => {
-            row.props.onPressPinned();
-        });
-
-        expect(onFilePressPinned).toHaveBeenCalledTimes(1);
-        expect(onFilePressPinned).toHaveBeenCalledWith(fileA);
-    });
-
-        it('disables virtualization for diff blocks when review comments are enabled', async () => {
-        wrapLinesInDiffsSetting = true;
-        showLineNumbersSetting = true;
-        inlineVirtualizationLineThresholdSetting = undefined;
-        inlineVirtualizationByteThresholdSetting = undefined;
-            resolveInlineDiffVirtualizationSpy.mockClear();
-            sessionScmDiffFileSpy.mockClear();
-            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
-                success: true,
-                diff: buildUnifiedDiff(req.path),
-                error: null,
-            }));
+    it('opens a file via the per-row open-file button', async () => {
+        deferOnWebSpy.mockClear();
+        const onFilePress = vi.fn();
 
         const screen = await renderChangedFilesReview({
-            reviewCommentsEnabled: true,
-            reviewCommentDrafts: [],
+            onFilePress,
+        });
+        await flushReviewEffects();
+
+        const row = screen.findByType('ScmChangeRow' as any);
+        const trailing = row.props.trailingElement;
+        expect(trailing).toBeTruthy();
+
+        const trailingScreen = await renderScreen(trailing);
+        await flushReviewEffects();
+
+        const button = trailingScreen.findByProps({ testID: 'scm-change-open-file-src_a.ts' });
+        act(() => {
+            const eventWithThrowingNativeEvent = {
+                stopPropagation: vi.fn(),
+                preventDefault: vi.fn(),
+                get nativeEvent() {
+                    throw new Error('nativeEvent getter should not be required');
+                },
+            };
+            if (typeof button.props.onPress === 'function') {
+                button.props.onPress(eventWithThrowingNativeEvent);
+            } else if (typeof button.props.onClick === 'function') {
+                button.props.onClick(eventWithThrowingNativeEvent);
+            }
         });
 
-        for (let i = 0; i < 20; i++) {
-            await flushReviewEffects();
-            const views = screen.findAllByType('DiffReviewCommentsViewer' as any);
-            if (views.length > 0) break;
-        }
-
-        const views = screen.findAllByType('DiffReviewCommentsViewer' as any);
-        expect(views.length).toBeGreaterThan(0);
-        expect(resolveInlineDiffVirtualizationSpy).toHaveBeenCalledTimes(0);
+        expect(onFilePress).toHaveBeenCalledTimes(1);
+        expect(onFilePress.mock.calls[0]?.[0]?.fullPath).toBe('src/a.ts');
+        expect(deferOnWebSpy).toHaveBeenCalledTimes(1);
     });
 
-        it('does not force virtualization for small diffs when review comments are disabled', async () => {
-        wrapLinesInDiffsSetting = true;
-        showLineNumbersSetting = true;
-        inlineVirtualizationLineThresholdSetting = undefined;
-            inlineVirtualizationByteThresholdSetting = undefined;
-            sessionScmDiffFileSpy.mockClear();
-            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
-                success: true,
-                diff: buildUnifiedDiff(req.path),
-                error: null,
-            }));
+    it('filters out files that have no delta in the selected diff area', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
 
-        const screen = await renderChangedFilesReview();
+        const indexSnapshot = {
+            ...snapshot,
+            capabilities: { readDiffFile: true, writeInclude: true, writeExclude: true },
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 0,
+                pendingFiles: 1,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 1,
+            },
+        } as any;
 
-        for (let i = 0; i < 20; i++) {
-            await flushReviewEffects();
-            const views = screen.findAllByType('CodeLinesView' as any);
-            if (views.length > 0) break;
-        }
+        const screen = await renderChangedFilesReview({
+            snapshot: indexSnapshot,
+        });
+        await flushReviewEffects();
 
-        const views = screen.findAllByType('CodeLinesView' as any);
-        expect(views.length).toBeGreaterThan(0);
-        for (const view of views) {
-            expect(view.props.virtualized).toBe(false);
-        }
+        // Sanity: pending mode shows the file.
+        expect(screen.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+
+        // Switch to Included; this should hide the file entirely (no included delta).
+        act(() => {
+            screen.pressByTestId('scm-review-diff-area-included');
+        });
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('ScmChangeRow' as any)).toHaveLength(0);
+
+        const emptyTexts = screen.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            return String(((node as any).children ?? []).join('')) === 'files.noChanges';
+        });
+        expect(emptyTexts.length).toBeGreaterThan(0);
     });
 
-    it('enables virtualization for large diffs above the byte threshold when review comments are disabled', async () => {
-        wrapLinesInDiffsSetting = true;
-        showLineNumbersSetting = true;
-        inlineVirtualizationLineThresholdSetting = 50_000;
-        inlineVirtualizationByteThresholdSetting = 100;
+    it('defaults to Included when only included changes exist', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const includedSnapshot = {
+            ...snapshot,
+            capabilities: {
+                ...snapshot.capabilities,
+                writeInclude: true,
+                writeExclude: true,
+            },
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 1,
+                pendingFiles: 0,
+                includedAdded: 1,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        } as any;
+
+        const includedFile = { ...fileA, isIncluded: true } as any;
+
+        const screen = await renderChangedFilesReview({
+            snapshot: includedSnapshot,
+            allRepositoryChangedFiles: [includedFile],
+        });
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+    });
+
+    it('auto-switches diff area when the snapshot transitions to included-only (without user selection)', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const pendingSnapshot = {
+            ...snapshot,
+            capabilities: {
+                ...snapshot.capabilities,
+                writeInclude: true,
+                writeExclude: true,
+            },
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 0,
+                pendingFiles: 1,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 0,
+            },
+        } as any;
+        const pendingFile = { ...fileA, isIncluded: false } as any;
+
+        const includedSnapshot = {
+            ...snapshot,
+            capabilities: {
+                ...snapshot.capabilities,
+                writeInclude: true,
+                writeExclude: true,
+            },
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 1,
+                pendingFiles: 0,
+                includedAdded: 1,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        } as any;
+        const includedFile = { ...fileA, isIncluded: true } as any;
+
+        const screen = await renderChangedFilesReview({
+            snapshot: pendingSnapshot,
+            allRepositoryChangedFiles: [pendingFile],
+        });
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+
+        await screen.update(await buildChangedFilesReviewElement({
+            snapshot: includedSnapshot,
+            allRepositoryChangedFiles: [includedFile],
+        }));
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+    });
+
+    it('falls back to FlatList on web when FlashList throws "not enough layouts"', async () => {
+        sessionScmDiffFileSpy.mockClear();
+
+        const globalWindowContainer = globalThis as unknown as { window?: unknown };
+        const prevWindow = globalWindowContainer.window;
+        const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+        try {
+            globalWindowContainer.window = {
+                addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+                    const arr = listeners.get(type) ?? [];
+                    arr.push(fn);
+                    listeners.set(type, arr);
+                },
+                removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+                    const arr = listeners.get(type) ?? [];
+                    listeners.set(type, arr.filter((f) => f !== fn));
+                },
+            };
+
+            const screen = await renderChangedFilesReview({
+                allRepositoryChangedFiles: [fileA, fileB],
+            });
+            await flushReviewEffects();
+
+            expect(screen.findAllByType('FlashList' as any)).toHaveLength(1);
+            expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
+
+            const errorMessage = 'index out of bounds, not enough layouts';
+            const handler = (listeners.get('error') ?? [])[0];
+            const fakeEvent = {
+                message: errorMessage,
+                error: new Error(errorMessage),
+                preventDefault: vi.fn(),
+                stopImmediatePropagation: vi.fn(),
+            } as unknown as ErrorEvent;
+
+            await act(async () => {
+                (handler as EventListener)(fakeEvent);
+            });
+            await flushReviewEffects();
+
+            expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
+            expect(screen.findAllByType('FlashList' as any)).toHaveLength(0);
+        } finally {
+            globalWindowContainer.window = prevWindow;
+        }
     });
 });

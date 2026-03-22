@@ -1,20 +1,24 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { REPOSITORY_TREE_AUTO_EXPAND_DELAY_MS } from '@/components/sessions/files/repositoryTree/repositoryTreeDragAndDropConfig';
+import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { renderScreen } from '@/dev/testkit';
+
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setExpandedPathsSpy = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+    storage: createStorageStoreMock({
             setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy,
         }),
-    },
-}));
+});
+});
 
 describe('useRepositoryTreeWebDropState', () => {
     beforeEach(() => {
@@ -39,9 +43,7 @@ describe('useRepositoryTreeWebDropState', () => {
             return null;
         }
 
-        await act(async () => {
-            renderer.create(<Test />);
-        });
+        await renderScreen(<Test />);
 
         act(() => {
             api!.onDropTargetChange({
