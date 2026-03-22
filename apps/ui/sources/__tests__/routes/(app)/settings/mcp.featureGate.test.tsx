@@ -56,7 +56,7 @@ describe('MCP settings route (feature gate)', () => {
 
         expect(tree.toJSON()).not.toBeNull();
         expect(useFeatureEnabledMock).toHaveBeenCalled();
-        const screen = tree.root.findByType('McpServersSettingsScreen' as any);
+        const screen = tree.findByType('McpServersSettingsScreen' as any);
         expect(screen).toBeTruthy();
     });
 });

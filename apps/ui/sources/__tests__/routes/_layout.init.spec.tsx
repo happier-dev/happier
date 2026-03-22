@@ -217,7 +217,7 @@ vi.mock('@/components/web/FaviconPermissionIndicator', () => {
     };
 });
 
-vi.mock('@/components/CommandPalette/CommandPaletteProvider', () => {
+vi.mock('@/components/appShell/commandPalette/CommandPaletteProvider', () => {
     const React = require('react');
     return {
         CommandPaletteProvider: ({ children }: { children: React.ReactNode }) => React.createElement('CommandPaletteProvider', null, children),

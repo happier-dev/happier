@@ -33,7 +33,7 @@ import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
-import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
+import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
 import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
 // import * as SystemUI from 'expo-system-ui';
