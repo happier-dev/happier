@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createBufferTransferPayloadSource, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+import {
+  createFileTransferPayloadSource,
+  resolveTransferPayloadManifestHash,
+  type TransferPayloadSource,
+} from '@/machines/transfer/transferPayloadSource';
 import type { MachineTransferChannel } from '@/machines/transfer/serverRoutedTransport';
 import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
@@ -11,8 +15,8 @@ import { createWorkspaceReplicationBlobPackPayloadSource } from '@/workspaces/re
 import type { WorkspaceReplicationSourceOffer } from '@/workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
 import { planWorkspaceReplicationMissingBlobs } from '@/workspaces/replication/transport/planWorkspaceReplicationMissingBlobs';
 import { receiveWorkspaceReplicationBlobPack } from '@/workspaces/replication/transport/receiveWorkspaceReplicationBlobPack';
+import { writeWorkspaceReplicationSourceOfferToFile } from '@/workspaces/replication/transport/workspaceReplicationSourceOfferFileFormat';
 import type { WorkspaceReplicationTransfers } from '@/workspaces/replication/transport/workspaceReplicationTransfers';
-import { workspaceReplicationSourceOfferCodec } from '@/workspaces/replication/transport/workspaceReplicationSourceOfferCodec';
 
 import {
   buildSessionHandoffWorkspaceReplicationSourceOffer,
@@ -126,7 +130,32 @@ export async function createSessionHandoffWorkspaceReplicationSourceOfferPayload
   metadata: SessionHandoffWorkspaceReplicationMetadata;
 }>): Promise<TransferPayloadSource> {
   const sourceOffer = await buildSessionHandoffWorkspaceReplicationSourceOffer(input);
-  return createBufferTransferPayloadSource(workspaceReplicationSourceOfferCodec.encode(sourceOffer));
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'happier-session-handoff-workspace-offer-'));
+  const filePath = join(temporaryDirectory, 'workspace-replication-source-offer.txt');
+
+  try {
+    const { sizeBytes } = await writeWorkspaceReplicationSourceOfferToFile({
+      offer: sourceOffer,
+      filePath,
+    });
+    const manifestHash = await resolveTransferPayloadManifestHash({
+      kind: 'file',
+      filePath,
+      sizeBytes,
+    });
+
+    return createFileTransferPayloadSource({
+      filePath,
+      sizeBytes,
+      manifestHash,
+      dispose: async () => {
+        await rm(temporaryDirectory, { recursive: true, force: true });
+      },
+    });
+  } catch (error) {
+    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function receiveServerRoutedSessionHandoffWorkspaceReplication(input: Readonly<{

@@ -51,33 +51,50 @@ describe('workspaceReplicationTransfers', () => {
     });
   });
 
-  it('requests source offers through the typed payload transport codecs', async () => {
-    const requestTypedDirectPeerTransferPayload = vi.fn(async () => ({
-      offerId: 'offer_direct_peer',
-      relationshipId: 'relationship_123',
-      directionId: 'direction_123',
-      sourceFingerprint: 'sha256:manifest_123',
-      manifest: {
-        entries: [],
-        fingerprint: 'sha256:manifest_123',
-      },
-      blobIndex: [],
+  it('requests source offers through file-backed transfer APIs and decodes them from the on-disk format', async () => {
+    const requestDirectPeerTransferToFile = vi.fn(async ({ destinationPath }: { destinationPath: string }) => ({
+      destinationPath,
+      manifestHash: 'sha256:offer_direct_peer',
+      sizeBytes: 12,
     }));
-    const requestTypedServerRoutedTransferPayload = vi.fn(async () => ({
-      offerId: 'offer_server_routed',
-      relationshipId: 'relationship_456',
-      directionId: 'direction_456',
-      sourceFingerprint: 'sha256:manifest_456',
-      manifest: {
-        entries: [],
-        fingerprint: 'sha256:manifest_456',
-      },
-      blobIndex: [],
+    const requestServerRoutedTransferToFile = vi.fn(async ({ destinationPath }: { destinationPath: string }) => ({
+      destinationPath,
+      manifestHash: 'sha256:offer_server_routed',
+      sizeBytes: 34,
     }));
+    const readWorkspaceReplicationSourceOfferFromFile = vi.fn(async ({ transferId }: { transferId: string }) => {
+      return transferId === 'offer_transfer_direct'
+        ? {
+            offerId: 'offer_direct_peer',
+            relationshipId: 'relationship_123',
+            directionId: 'direction_123',
+            sourceFingerprint: 'sha256:manifest_123',
+            manifest: {
+              entries: [],
+              fingerprint: 'sha256:manifest_123',
+            },
+            blobIndex: [],
+          }
+        : {
+            offerId: 'offer_server_routed',
+            relationshipId: 'relationship_456',
+            directionId: 'direction_456',
+            sourceFingerprint: 'sha256:manifest_456',
+            manifest: {
+              entries: [],
+              fingerprint: 'sha256:manifest_456',
+            },
+            blobIndex: [],
+          };
+    });
+    const resolveLegacyWholeBufferMaxBytes = vi.fn(() => 999);
+
     const { createWorkspaceReplicationTransfers } = await import('./workspaceReplicationTransfers');
     const transfers = createWorkspaceReplicationTransfers({
-      requestTypedDirectPeerTransferPayload,
-      requestTypedServerRoutedTransferPayload,
+      requestDirectPeerTransferToFile,
+      requestServerRoutedTransferToFile,
+      readWorkspaceReplicationSourceOfferFromFile,
+      resolveLegacyWholeBufferMaxBytes,
     });
 
     await expect(transfers.requestDirectPeerSourceOffer({
@@ -94,10 +111,16 @@ describe('workspaceReplicationTransfers', () => {
       },
       blobIndex: [],
     });
-    expect(requestTypedDirectPeerTransferPayload).toHaveBeenCalledWith({
+    expect(requestDirectPeerTransferToFile).toHaveBeenCalledWith({
       transferId: 'offer_transfer_direct',
       endpointCandidates: [],
-      codec: expect.any(Object),
+      destinationPath: expect.any(String),
+    });
+    expect(readWorkspaceReplicationSourceOfferFromFile).toHaveBeenCalledWith({
+      transferId: 'offer_transfer_direct',
+      filePath: expect.any(String),
+      sizeBytes: 12,
+      legacyWholeBufferMaxBytes: 999,
     });
 
     await expect(transfers.requestServerRoutedSourceOffer({
@@ -118,14 +141,20 @@ describe('workspaceReplicationTransfers', () => {
       },
       blobIndex: [],
     });
-    expect(requestTypedServerRoutedTransferPayload).toHaveBeenCalledWith({
+    expect(requestServerRoutedTransferToFile).toHaveBeenCalledWith({
       transferId: 'offer_transfer_server',
       sourceMachineId: 'machine_source',
       machineTransferChannel: {
         onEnvelope: expect.any(Function),
         sendEnvelope: expect.any(Function),
       },
-      codec: expect.any(Object),
+      destinationPath: expect.any(String),
+    });
+    expect(readWorkspaceReplicationSourceOfferFromFile).toHaveBeenCalledWith({
+      transferId: 'offer_transfer_server',
+      filePath: expect.any(String),
+      sizeBytes: 34,
+      legacyWholeBufferMaxBytes: 999,
     });
   });
 

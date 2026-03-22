@@ -1,19 +1,22 @@
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   requestDirectPeerTransferToFile,
-  requestTypedDirectPeerTransferPayload,
 } from '@/machines/transfer/directPeerTransport';
+import { resolveInMemoryTransferMaxBytes } from '@/machines/transfer/inMemoryTransferSizeLimit';
 import type { TransferPayloadFileResult } from '@/machines/transfer/transferPayloadFileSink';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import {
   requestServerRoutedTransferToFile,
-  requestTypedServerRoutedTransferPayload,
   type MachineTransferChannel,
 } from '@/machines/transfer/serverRoutedTransport';
 
 import type { WorkspaceReplicationSourceOffer } from './createWorkspaceReplicationSourceOffer';
-import { workspaceReplicationSourceOfferCodec } from './workspaceReplicationSourceOfferCodec';
+import { readWorkspaceReplicationSourceOfferFromFile } from './workspaceReplicationSourceOfferFileFormat';
 
 type WorkspaceReplicationDirectPeerSourceOfferHandle = Readonly<{
   publishTransfer: (input: Readonly<{
@@ -30,10 +33,10 @@ type WorkspaceReplicationDirectPeerBlobPackHandle = Readonly<{
 }>;
 
 type WorkspaceReplicationTransfersDependencies = Readonly<{
-  requestTypedDirectPeerTransferPayload: typeof requestTypedDirectPeerTransferPayload<WorkspaceReplicationSourceOffer>;
-  requestTypedServerRoutedTransferPayload: typeof requestTypedServerRoutedTransferPayload<WorkspaceReplicationSourceOffer>;
   requestDirectPeerTransferToFile: typeof requestDirectPeerTransferToFile;
   requestServerRoutedTransferToFile: typeof requestServerRoutedTransferToFile;
+  readWorkspaceReplicationSourceOfferFromFile: typeof readWorkspaceReplicationSourceOfferFromFile;
+  resolveLegacyWholeBufferMaxBytes: () => number;
 }>;
 
 export type WorkspaceReplicationTransfers = Readonly<{
@@ -72,14 +75,18 @@ export type WorkspaceReplicationTransfers = Readonly<{
 export function createWorkspaceReplicationTransfers(
   dependencies: Partial<WorkspaceReplicationTransfersDependencies> = {},
 ): WorkspaceReplicationTransfers {
-  const requestDirectPeerSourceOfferPayload =
-    dependencies.requestTypedDirectPeerTransferPayload ?? requestTypedDirectPeerTransferPayload;
-  const requestServerRoutedSourceOfferPayload =
-    dependencies.requestTypedServerRoutedTransferPayload ?? requestTypedServerRoutedTransferPayload;
+  const requestDirectPeerTransferToFileImpl =
+    dependencies.requestDirectPeerTransferToFile ?? requestDirectPeerTransferToFile;
+  const requestServerRoutedTransferToFileImpl =
+    dependencies.requestServerRoutedTransferToFile ?? requestServerRoutedTransferToFile;
   const requestDirectPeerBlobPackToFile =
     dependencies.requestDirectPeerTransferToFile ?? requestDirectPeerTransferToFile;
   const requestServerRoutedBlobPackToFile =
     dependencies.requestServerRoutedTransferToFile ?? requestServerRoutedTransferToFile;
+  const readSourceOfferFromFileImpl =
+    dependencies.readWorkspaceReplicationSourceOfferFromFile ?? readWorkspaceReplicationSourceOfferFromFile;
+  const resolveLegacyWholeBufferMaxBytes =
+    dependencies.resolveLegacyWholeBufferMaxBytes ?? (() => resolveInMemoryTransferMaxBytes());
 
   return {
     publishDirectPeerSourceOffer: (input) =>
@@ -88,17 +95,21 @@ export function createWorkspaceReplicationTransfers(
         payload: input.sourceOffer,
       }) ?? [],
     requestDirectPeerSourceOffer: async (input) =>
-      await requestDirectPeerSourceOfferPayload({
+      await requestSourceOfferViaDirectPeer({
         transferId: input.transferId,
         endpointCandidates: input.endpointCandidates,
-        codec: workspaceReplicationSourceOfferCodec,
+        requestDirectPeerTransferToFile: requestDirectPeerTransferToFileImpl,
+        readSourceOfferFromFile: readSourceOfferFromFileImpl,
+        legacyWholeBufferMaxBytes: resolveLegacyWholeBufferMaxBytes(),
       }),
     requestServerRoutedSourceOffer: async (input) =>
-      await requestServerRoutedSourceOfferPayload({
+      await requestSourceOfferViaServerRouted({
         transferId: input.transferId,
         sourceMachineId: input.sourceMachineId,
         machineTransferChannel: input.machineTransferChannel,
-        codec: workspaceReplicationSourceOfferCodec,
+        requestServerRoutedTransferToFile: requestServerRoutedTransferToFileImpl,
+        readSourceOfferFromFile: readSourceOfferFromFileImpl,
+        legacyWholeBufferMaxBytes: resolveLegacyWholeBufferMaxBytes(),
       }),
     publishDirectPeerBlobPack: (input) =>
       input.directPeerTransfer?.publishTransfer({
@@ -119,4 +130,60 @@ export function createWorkspaceReplicationTransfers(
         destinationPath: input.destinationPath,
       }),
   };
+}
+
+async function requestSourceOfferViaDirectPeer(input: Readonly<{
+  transferId: string;
+  endpointCandidates: readonly TransferEndpointCandidate[];
+  requestDirectPeerTransferToFile: typeof requestDirectPeerTransferToFile;
+  readSourceOfferFromFile: typeof readWorkspaceReplicationSourceOfferFromFile;
+  legacyWholeBufferMaxBytes: number;
+}>): Promise<WorkspaceReplicationSourceOffer> {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'happier-workspace-replication-source-offer-'));
+  const destinationPath = join(temporaryDirectory, 'source-offer.txt');
+
+  try {
+    const received = await input.requestDirectPeerTransferToFile({
+      transferId: input.transferId,
+      endpointCandidates: input.endpointCandidates,
+      destinationPath,
+    });
+    return await input.readSourceOfferFromFile({
+      transferId: input.transferId,
+      filePath: received.destinationPath,
+      sizeBytes: received.sizeBytes,
+      legacyWholeBufferMaxBytes: input.legacyWholeBufferMaxBytes,
+    });
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function requestSourceOfferViaServerRouted(input: Readonly<{
+  transferId: string;
+  sourceMachineId: string;
+  machineTransferChannel: MachineTransferChannel;
+  requestServerRoutedTransferToFile: typeof requestServerRoutedTransferToFile;
+  readSourceOfferFromFile: typeof readWorkspaceReplicationSourceOfferFromFile;
+  legacyWholeBufferMaxBytes: number;
+}>): Promise<WorkspaceReplicationSourceOffer> {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'happier-workspace-replication-source-offer-'));
+  const destinationPath = join(temporaryDirectory, 'source-offer.txt');
+
+  try {
+    const received = await input.requestServerRoutedTransferToFile({
+      transferId: input.transferId,
+      sourceMachineId: input.sourceMachineId,
+      machineTransferChannel: input.machineTransferChannel,
+      destinationPath,
+    });
+    return await input.readSourceOfferFromFile({
+      transferId: input.transferId,
+      filePath: received.destinationPath,
+      sizeBytes: received.sizeBytes,
+      legacyWholeBufferMaxBytes: input.legacyWholeBufferMaxBytes,
+    });
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
