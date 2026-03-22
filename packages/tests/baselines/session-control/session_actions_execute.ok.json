@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_actions_execute",
+  "data": {
+    "sessionId": "sess_baseline_actions_execute_1",
+    "actionId": "review.start",
+    "result": {
+      "started": true
+    }
+  }
+}

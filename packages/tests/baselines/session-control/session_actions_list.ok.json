@@ -29,7 +29,7 @@
           "voice_tool": true,
           "voice_action_block": true,
           "mcp": true,
-          "session_control_cli": true
+          "cli": true
         },
         "inputHints": {
           "title": "Start a code review",

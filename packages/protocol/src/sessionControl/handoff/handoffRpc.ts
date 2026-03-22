@@ -4,7 +4,11 @@ export {
   SessionHandoffCommitRequestSchema,
   SessionHandoffCommitResponseSchema,
   SessionHandoffPrepareTargetRequestSchema,
+  SessionHandoffPrepareTargetResultGetRequestSchema,
+  SessionHandoffPrepareTargetResultGetResponseSchema,
   SessionHandoffPrepareTargetResponseSchema,
+  SessionHandoffProgressCheckpointSchema,
+  SessionHandoffProgressWarningCodeSchema,
   SessionHandoffStartRequestSchema,
   SessionHandoffStartResponseSchema,
   SessionHandoffStatusGetRequestSchema,
@@ -14,6 +18,8 @@ export {
   type SessionHandoffCommitRequest,
   type SessionHandoffCommitResponse,
   type SessionHandoffPrepareTargetRequest,
+  type SessionHandoffPrepareTargetResultGetRequest,
+  type SessionHandoffPrepareTargetResultGetResponse,
   type SessionHandoffPrepareTargetResponse,
   type SessionHandoffProviderBundle,
   type SessionHandoffResumePlan,
@@ -34,7 +40,11 @@ export {
   type SessionHandoffWorkspaceTransferPathSafetyReasonCode,
 } from './workspaceTransferSourcePathSafety.js';
 
-export type { SessionHandoffStatus } from './handoffStatus.js';
+export type {
+  SessionHandoffProgressCheckpoint,
+  SessionHandoffProgressWarningCode,
+  SessionHandoffStatus,
+} from './handoffStatus.js';
 export {
   SessionHandoffCodexAffinitySchema,
   SessionHandoffCodexBackendModeSchema,

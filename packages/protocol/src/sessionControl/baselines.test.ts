@@ -19,6 +19,7 @@ const schemasByKind: Record<string, EnvelopeSchema> = {
   session_list: (protocol as any).SessionListEnvelopeSchema,
   session_actions_list: (protocol as any).SessionActionsListEnvelopeSchema,
   session_actions_describe: (protocol as any).SessionActionsDescribeEnvelopeSchema,
+  session_actions_execute: (protocol as any).SessionActionsExecuteEnvelopeSchema,
   session_status: (protocol as any).SessionStatusEnvelopeSchema,
   session_create: (protocol as any).SessionCreateEnvelopeSchema,
   session_send: (protocol as any).SessionSendEnvelopeSchema,

@@ -19,7 +19,7 @@ export function resolveEffectiveSessionRuntimeControlSurface(
     return resolveAgentRuntimeControlSurfaceForSession({
         agentId: params.agentId,
         metadata: params.metadata ?? null,
-        accountSettings: params.accountSettings ?? null,
+        accountSettings: null,
     }) ?? resolveAgentRuntimeControlSurface(params.agentId, null);
 }
 

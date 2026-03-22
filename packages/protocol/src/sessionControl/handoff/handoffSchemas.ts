@@ -11,7 +11,12 @@ import {
   SessionHandoffTransportStrategySchema,
   SessionHandoffWorkspaceTransferStrategySchema,
 } from './handoffTypes.js';
-import { SessionHandoffStatusSchema } from './handoffStatus.js';
+import {
+  SessionHandoffProgressCheckpointSchema,
+  SessionHandoffProgressWarningCodeSchema,
+  SessionHandoffStatusSchema,
+  SessionHandoffWorkspacePreflightSummarySchema,
+} from './handoffStatus.js';
 import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema } from './transferStream.js';
 
 export const SessionHandoffWorkspaceTransferSchema = z
@@ -31,7 +36,7 @@ export const SessionHandoffTransferredWorkspaceArtifactsSchema = z
     blobs: z.array(z.object({
       digest: z.string().min(1),
       contentBase64: z.string(),
-    }).strict()),
+    }).strict()).optional(),
     sourceControllerMetadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
@@ -193,20 +198,6 @@ export type SessionHandoffProviderBundle =
   | CodexSessionHandoffBundle
   | OpenCodeSessionHandoffBundle;
 
-function stripLegacyWorkspaceManifestHash(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  if (candidate.workspaceManifestHash === undefined) {
-    return value;
-  }
-
-  const { workspaceManifestHash: _legacyWorkspaceManifestHash, ...canonicalPayload } = candidate;
-  return canonicalPayload;
-}
-
 function stripLegacyTransferredPayloadFields(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
@@ -246,24 +237,28 @@ export const SessionHandoffStartRequestSchema = z
   .strict();
 export type SessionHandoffStartRequest = z.infer<typeof SessionHandoffStartRequestSchema>;
 
-export const SessionHandoffPrepareTargetRequestSchema = z.preprocess(
-  (value) => stripLegacyTransferredPayloadFields(stripLegacyWorkspaceManifestHash(value)),
-  z
-    .object({
-      handoffId: z.string().min(1),
-      sourceMachineId: z.string().min(1),
-      targetMachineId: z.string().min(1),
-      negotiatedTransportStrategy: SessionHandoffTransportStrategySchema,
-      allowServerRoutedFallback: z.boolean().optional(),
-      sourceSessionStorageMode: SessionHandoffStorageModeSchema,
-      targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
-      targetPath: z.string().min(1),
-      endpointCandidates: z.array(TransferEndpointCandidateSchema).default([]),
-      workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
-    })
-    .strict(),
-);
+export const SessionHandoffPrepareTargetRequestSchema = z
+  .object({
+    handoffId: z.string().min(1),
+    sourceMachineId: z.string().min(1),
+    targetMachineId: z.string().min(1),
+    negotiatedTransportStrategy: SessionHandoffTransportStrategySchema,
+    allowServerRoutedFallback: z.boolean().optional(),
+    sourceSessionStorageMode: SessionHandoffStorageModeSchema,
+    targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
+    targetPath: z.string().min(1),
+    endpointCandidates: z.array(TransferEndpointCandidateSchema).default([]),
+    workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
+  })
+  .strict();
 export type SessionHandoffPrepareTargetRequest = z.infer<typeof SessionHandoffPrepareTargetRequestSchema>;
+
+export const SessionHandoffPrepareTargetResultGetRequestSchema = z
+  .object({
+    handoffId: z.string().min(1),
+  })
+  .strict();
+export type SessionHandoffPrepareTargetResultGetRequest = z.infer<typeof SessionHandoffPrepareTargetResultGetRequestSchema>;
 
 export const SessionHandoffCommitRequestSchema = z
   .object({
@@ -298,13 +293,25 @@ export const SessionHandoffPrepareTargetResponseSchema = z
   .object({
     handoffId: z.string().min(1),
     status: SessionHandoffStatusSchema,
+    remoteSessionId: z.string().min(1).optional(),
+    directSource: DirectSessionsSourceSchema.optional(),
+    agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+    resume: SessionHandoffResumePlanSchema.optional(),
+  })
+  .strict();
+export type SessionHandoffPrepareTargetResponse = z.infer<typeof SessionHandoffPrepareTargetResponseSchema>;
+
+export const SessionHandoffPrepareTargetResultGetResponseSchema = z
+  .object({
+    handoffId: z.string().min(1),
+    status: SessionHandoffStatusSchema,
     remoteSessionId: z.string().min(1),
     directSource: DirectSessionsSourceSchema,
     agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema,
   })
   .strict();
-export type SessionHandoffPrepareTargetResponse = z.infer<typeof SessionHandoffPrepareTargetResponseSchema>;
+export type SessionHandoffPrepareTargetResultGetResponse = z.infer<typeof SessionHandoffPrepareTargetResultGetResponseSchema>;
 
 export const SessionHandoffCommitResponseSchema = z
   .object({
@@ -330,7 +337,10 @@ export const SessionHandoffStatusGetRequestSchema = z
 export type SessionHandoffStatusGetRequest = z.infer<typeof SessionHandoffStatusGetRequestSchema>;
 
 export {
+  SessionHandoffProgressCheckpointSchema,
+  SessionHandoffProgressWarningCodeSchema,
   SessionHandoffStatusSchema,
+  SessionHandoffWorkspacePreflightSummarySchema,
   TransferChunkEnvelopeSchema,
   TransferEndpointCandidateSchema,
 };

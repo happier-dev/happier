@@ -114,12 +114,12 @@ export function canRegisterSessionScopedRpcMethod(params: Readonly<{
     return params.method.slice(0, lastColon) === binding.sessionId;
 }
 
-export function canPublishFromSessionScopedSocket(params: Readonly<{
+export async function canPublishFromSessionScopedSocket(params: Readonly<{
     socket: Socket;
     connection: ClientConnection;
     sessionId: string;
     requireMachineBinding?: boolean;
-}>): boolean {
+}>): Promise<boolean> {
     if (params.connection.connectionType !== "session-scoped") {
         return false;
     }
@@ -128,8 +128,28 @@ export function canPublishFromSessionScopedSocket(params: Readonly<{
     if (!binding || binding.sessionId !== params.sessionId) {
         return false;
     }
-    if (params.requireMachineBinding === true && binding.proof !== "machine-access-key") {
-        return false;
+    if (params.requireMachineBinding === true) {
+        if (binding.proof !== "machine-access-key") {
+            return false;
+        }
+        const machineId = binding.machineId;
+        if (!machineId) {
+            return false;
+        }
+
+        const accessKey = await db.accessKey.findUnique({
+            where: {
+                accountId_machineId_sessionId: {
+                    accountId: params.connection.userId,
+                    machineId,
+                    sessionId: binding.sessionId,
+                },
+            },
+            select: { machineId: true },
+        });
+        if (!accessKey) {
+            return false;
+        }
     }
     return true;
 }

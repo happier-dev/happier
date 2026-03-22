@@ -589,6 +589,15 @@ export const SessionActionsDescribeResultSchema = z
   .passthrough();
 export type SessionActionsDescribeResult = z.infer<typeof SessionActionsDescribeResultSchema>;
 
+export const SessionActionsExecuteResultSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    actionId: z.string().min(1),
+    result: z.unknown(),
+  })
+  .passthrough();
+export type SessionActionsExecuteResult = z.infer<typeof SessionActionsExecuteResultSchema>;
+
 export const SessionActionsListEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
   kind: z.literal('session_actions_list'),
   data: SessionActionsListResultSchema,
@@ -597,4 +606,9 @@ export const SessionActionsListEnvelopeSchema = SessionControlEnvelopeSuccessSch
 export const SessionActionsDescribeEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
   kind: z.literal('session_actions_describe'),
   data: SessionActionsDescribeResultSchema,
+});
+
+export const SessionActionsExecuteEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_actions_execute'),
+  data: SessionActionsExecuteResultSchema,
 });

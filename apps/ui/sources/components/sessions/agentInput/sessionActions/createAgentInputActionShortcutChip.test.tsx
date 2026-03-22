@@ -5,10 +5,15 @@ import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 
 import { createAgentInputActionShortcutChip } from './createAgentInputActionShortcutChip';
 
-vi.mock('react-native', () => ({
-    Pressable: 'Pressable',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Pressable: 'Pressable',
+                                    View: 'View',
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

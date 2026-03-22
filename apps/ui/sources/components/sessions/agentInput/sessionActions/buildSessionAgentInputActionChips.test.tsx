@@ -10,10 +10,15 @@ const actionIdsState = vi.hoisted(() => ({
     value: [] as string[],
 }));
 
-vi.mock('react-native', () => ({
-    Pressable: 'Pressable',
-    View: 'View',
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                    Pressable: 'Pressable',
+                                    View: 'View',
+                                }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -27,13 +32,16 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     storage: {
         getState: () => ({
             createSessionActionDraft: createSessionActionDraftMock,
         }),
     },
-}));
+});
+});
 
 vi.mock('@/components/sessions/agentInput/sessionActions/listAgentInputActionChipActionIds', () => ({
     listAgentInputActionChipActionIds: () => actionIdsState.value,

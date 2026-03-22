@@ -1,98 +1,50 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
-const settingsState: Record<string, any> = {
-    sessionsRightPaneDefaultOpen: false,
-    uiMultiPanePanelsEnabled: false,
-};
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    AppState: {
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
+const shared = vi.hoisted(() => ({
+    routerPushSpy: vi.fn(),
+    settingsState: {
+        sessionsRightPaneDefaultOpen: false,
+        uiMultiPanePanelsEnabled: false,
+    } as Record<string, unknown>,
 }));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                accent: {
-                    blue: '#00f',
-                    orange: '#f90',
-                    indigo: '#6366f1',
-                },
-                surface: '#fff',
-                text: '#111',
-                textSecondary: '#666',
-                success: '#0a0',
-                divider: '#ddd',
-                input: {
-                    background: '#f3f3f3',
-                    text: '#111',
-                    placeholder: '#999',
-                },
-                groupped: {
-                    sectionTitle: '#444',
-                    background: '#f7f7f7',
-                },
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({
-                    colors: {
-                        accent: {
-                            blue: '#00f',
-                            orange: '#f90',
-                            indigo: '#6366f1',
-                        },
-                        surface: '#fff',
-                        text: '#111',
-                        textSecondary: '#666',
-                        success: '#0a0',
-                        divider: '#ddd',
-                        input: {
-                            background: '#f3f3f3',
-                            text: '#111',
-                            placeholder: '#999',
-                        },
-                        groupped: {
-                            sectionTitle: '#444',
-                            background: '#f7f7f7',
-                        },
-                    },
-                }, {})
-                : input,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        router: {
+            push: shared.routerPushSpy,
+            back: vi.fn(),
+            replace: vi.fn(),
+            setParams: vi.fn(),
+        },
+    }).module;
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
+    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -109,18 +61,7 @@ vi.mock('@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker'
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) =>
-        React.createElement(
-            'DropdownMenu',
-            props,
-            props.itemTrigger
-                ? React.createElement('Item', {
-                    title: props.itemTrigger.title,
-                    onPress: () => props.onOpenChange?.(!props.open),
-                    disabled: props.itemTrigger?.itemProps?.disabled,
-                })
-                : null,
-        ),
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -134,54 +75,31 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => [
-        key in settingsState ? settingsState[key] : null,
-        (next: any) => {
-            settingsState[key] = next;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSettingMutable: ((key: string) => [
+                key in shared.settingsState ? shared.settingsState[key] : null,
+                (next: unknown) => {
+                    shared.settingsState[key] = next;
+                },
+            ]) as any,
+            useLocalSettingMutable: ((key: string) => [
+                key in shared.settingsState ? shared.settingsState[key] : null,
+                (next: unknown) => {
+                    shared.settingsState[key] = next;
+                },
+            ]) as any,
         },
-    ],
-    useLocalSettingMutable: (key: string) => [
-        key in settingsState ? settingsState[key] : null,
-        (next: any) => {
-            settingsState[key] = next;
-        },
-    ],
-    useSetting: (key: string) => {
-        if (key === 'recentMachinePaths') return [];
-        return null;
-    },
-}));
-
-vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => [],
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    getAgentCore: () => ({ displayNameKey: 'agent.name' }),
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeLabelForAgentType: () => 'default',
-    getPermissionModeOptionsForAgentType: () => [],
-}));
-
-vi.mock('./sessionI18n', () => ({
-    getPermissionApplyTimingSubtitleKey: () => 'x',
-}));
+    });
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
@@ -192,21 +110,18 @@ vi.mock('@/utils/platform/responsive', () => ({
 }));
 
 afterEach(() => {
-    routerPushSpy.mockClear();
+    standardCleanup();
+    shared.routerPushSpy.mockClear();
 });
 
 describe('Session settings (Actions entry)', () => {
     it('does not include an Actions entry', async () => {
         const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
-        });
+        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
 
-        const items = tree.root.findAllByType('Item' as any);
-        const actionsItem = items.find((item: any) => item?.props?.title === 'common.actions');
-        expect(actionsItem).toBeFalsy();
+        expect(titles).not.toContain('common.actions');
     });
 });
