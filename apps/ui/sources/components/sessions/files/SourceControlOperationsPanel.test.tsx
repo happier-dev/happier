@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { pressTestInstance, renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, pressTestInstance, renderScreen } from '@/dev/testkit';
 
 
 // Required for React 18+ act() semantics with react-test-renderer.
@@ -109,7 +109,7 @@ describe('SourceControlOperationsPanel', () => {
 
         expect(screen.getTextContent()).toContain('files selected for the next commit');
 
-        const clearButton = screen.findByProps({ onPress: onClearCommitSelection });
+        const clearButton = findTestInstanceByTypeWithProps(screen.tree, 'Pressable', { onPress: onClearCommitSelection });
         expect(clearButton).toBeTruthy();
 
         act(() => {
@@ -236,10 +236,10 @@ describe('SourceControlOperationsPanel', () => {
                     operationLog={[]}
                 />);
 
-        const commitButton = screen.findByProps({ onPress: onCreateCommit });
-        const fetchButton = screen.findByProps({ onPress: onFetch });
-        const pullButton = screen.findByProps({ onPress: onPull });
-        const pushButton = screen.findByProps({ onPress: onPush });
+        const commitButton = findTestInstanceByTypeWithProps(screen.tree, 'Pressable', { onPress: onCreateCommit });
+        const fetchButton = findTestInstanceByTypeWithProps(screen.tree, 'Pressable', { onPress: onFetch });
+        const pullButton = findTestInstanceByTypeWithProps(screen.tree, 'Pressable', { onPress: onPull });
+        const pushButton = findTestInstanceByTypeWithProps(screen.tree, 'Pressable', { onPress: onPush });
 
         expect(commitButton).toBeTruthy();
         expect(fetchButton).toBeTruthy();
@@ -247,10 +247,10 @@ describe('SourceControlOperationsPanel', () => {
         expect(pushButton).toBeTruthy();
 
         act(() => {
-            commitButton!.props.onPress();
-            fetchButton!.props.onPress();
-            pullButton!.props.onPress();
-            pushButton!.props.onPress();
+            pressTestInstance(commitButton, 'create commit action');
+            pressTestInstance(fetchButton, 'fetch action');
+            pressTestInstance(pullButton, 'pull action');
+            pressTestInstance(pushButton, 'push action');
         });
 
         expect(onCreateCommit).toHaveBeenCalledTimes(1);

@@ -49,7 +49,11 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
+    ItemGroup: (props: any) =>
+        React.createElement('ItemGroup', {
+            ...props,
+            testID: props.testID ?? `settings.acpCatalog.itemGroup.${props.title ?? 'untitled'}`,
+        }, props.children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -147,8 +151,6 @@ describe('AcpCatalogSettingsScreen', () => {
         const addBackendRow = screen.findRow('settings.acpCatalog.addBackend');
         const addPresetRow = screen.findRow('settings.acpCatalog.addPreset');
         const emptyBackendsRow = screen.findRow('settings.acpCatalog.backends.empty');
-        const groups = screen.root.findAllByType('ItemGroup' as any);
-        const untitledGroups = groups.filter((group) => group.props.title === undefined);
 
         expect(builtInKiroRow).toBeTruthy();
         expect(builtInCustomAcpRow).toBeNull();
@@ -157,7 +159,7 @@ describe('AcpCatalogSettingsScreen', () => {
         expect(addBackendRow).toBeTruthy();
         expect(addPresetRow).toBeNull();
         expect(emptyBackendsRow).toBeNull();
-        expect(untitledGroups).toHaveLength(1);
+        expect(screen.findAllByTestId('settings.acpCatalog.itemGroup.untitled')).toHaveLength(1);
 
         screen.pressRow('settings.acpCatalog.addBackend');
         screen.pressRow('settings.acpCatalog.backend.custom-kiro');
@@ -184,14 +186,12 @@ describe('AcpCatalogSettingsScreen', () => {
         const addBackendRow = screen.findRow('settings.acpCatalog.addBackend');
         const emptyBackendsRow = screen.findRow('settings.acpCatalog.backends.empty');
         const backendRows = screen.listRows('settings.acpCatalog.backend.');
-        const groups = screen.root.findAllByType('ItemGroup' as any);
-        const customBackendsGroup = groups.find((group) => group.props.title === 'settings.acpCatalogBackends') ?? null;
-        const untitledGroups = groups.filter((group) => group.props.title === undefined);
+        const customBackendsGroup = screen.findByTestId('settings.acpCatalog.itemGroup.settings.acpCatalogBackends');
 
         expect(addBackendRow).toBeTruthy();
         expect(emptyBackendsRow).toBeNull();
         expect(backendRows).toHaveLength(0);
         expect(customBackendsGroup).toBeTruthy();
-        expect(untitledGroups).toHaveLength(0);
+        expect(screen.findAllByTestId('settings.acpCatalog.itemGroup.untitled')).toHaveLength(0);
     });
 });

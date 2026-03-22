@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
 import type { ResumeSessionResult } from '@/sync/ops/sessions';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -429,7 +430,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
     }
 
     function findAgentInput(screen: Awaited<ReturnType<typeof renderSessionView>>) {
-        return screen.findByType('AgentInput' as any) as any;
+        return findTestInstanceByTypeWithProps(screen.tree, 'AgentInput' as any, {}) as any;
     }
 
     beforeEach(() => {
@@ -536,7 +537,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(modalAlertSpy).not.toHaveBeenCalled();
 
         await act(async () => {
-            await screen.findByTestId('session-pendingQueue-resumeFailed-retry')?.props.onPress();
+            await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
         });
 
         expect(resumeSessionSpy).toHaveBeenCalledTimes(2);
@@ -568,7 +569,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         modalAlertSpy.mockClear();
 
         await act(async () => {
-            await screen.findByTestId('session-pendingQueue-resumeFailed-retry')?.props.onPress();
+            await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
         });
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'Daemon RPC is not available');

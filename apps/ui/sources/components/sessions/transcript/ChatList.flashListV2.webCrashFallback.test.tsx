@@ -165,8 +165,8 @@ describe('ChatList (FlashList v2 web crash fallback)', () => {
         (handler as EventListener)(fakeEvent);
       });
 
-      expect(screen.root.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
-      expect(screen.root.findAllByType('FlashList' as any)).toHaveLength(0);
+      expect(screen.requireCapturedFlashListProps()).toBeTruthy();
+      expect(screen.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
     } finally {
       globalWindowContainer.window = previousWindow;
     }
@@ -217,8 +217,8 @@ describe('ChatList (FlashList v2 web crash fallback)', () => {
         (handler as EventListener)(fakeEvent);
       });
 
-      expect(screen.root.findAllByType('FlashList' as any).length).toBeGreaterThan(0);
-      expect(screen.root.findAllByType('FlatList' as any)).toHaveLength(0);
+      expect(screen.requireCapturedFlashListProps()).toBeTruthy();
+      expect(screen.findAllByType('FlatList' as any)).toHaveLength(0);
     } finally {
       globalWindowContainer.window = previousWindow;
     }

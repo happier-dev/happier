@@ -1,5 +1,6 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -22,10 +23,10 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                    Platform: {
-                                        OS: 'web',
-                                    },
-                                }
+            Platform: {
+                OS: 'web',
+            },
+        }
     );
 });
 
@@ -94,14 +95,7 @@ vi.mock('@/modal', async () => {
 
 const sessionItemModulePromise = import('./SessionItem');
 
-function findRowPressable(tree: renderer.ReactTestRenderer) {
-    const pressables = tree.root.findAllByType('Pressable');
-    const row = pressables.find((p) => !p.props.accessibilityLabel);
-    if (!row) throw new Error('Row Pressable not found');
-    return row;
-}
-
-function triggerHoverEnter(node: renderer.ReactTestInstance) {
+function triggerHoverEnter(node: ReactTestInstance) {
     node.props.onMouseEnter?.();
     node.props.onHoverIn?.();
     node.props.onPointerEnter?.();
@@ -147,7 +141,7 @@ describe('SessionItem reorder handle', () => {
         );
 
         // On web, actions are only rendered on hover. Trigger hover first.
-        const row = findRowPressable(screen.tree);
+        const row = screen.findByTestId('session-list-item-sess_1');
         await act(async () => {
             triggerHoverEnter(row);
         });
@@ -155,11 +149,9 @@ describe('SessionItem reorder handle', () => {
         const handles = screen.findAllByTestId('session-item-reorder-handle');
         expect(handles).toHaveLength(1);
 
-        // Verify the handle is wrapped in a GestureDetector
-        const gestureDetectors = screen.root.findAllByType('GestureDetector');
-        expect(gestureDetectors.length).toBeGreaterThanOrEqual(1);
-        const handleDetector = gestureDetectors.find((g: any) => g.props.gesture === mockGesture);
-        expect(handleDetector).toBeTruthy();
+        const handle = handles[0];
+        expect(handle.parent?.type).toBe('GestureDetector');
+        expect(handle.parent?.props.gesture).toBe(mockGesture);
     });
 
     it('renders the reorder handle without hover when isBeingDragged is true', async () => {
@@ -235,7 +227,7 @@ describe('SessionItem reorder handle', () => {
             />,
         );
 
-        const row = findRowPressable(screen.tree);
+        const row = screen.findByTestId('session-list-item-sess_2');
         await act(async () => {
             triggerHoverEnter(row);
         });

@@ -160,7 +160,7 @@ vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
 }));
 
 vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: (props: any) => React.createElement('UpdateTab', props),
+    SessionRightPanelGitUpdateTab: (props: any) => React.createElement('UpdateTab', { ...props, testID: 'session-right-panel-git-update-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitHistoryTab', () => ({
@@ -217,10 +217,10 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
     it('shows publish when upstream is required and hides blocked pull/push actions', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
-        const updateTab = tree.root.findByType('UpdateTab' as any);
+        const updateTab = screen.findByTestId('session-right-panel-git-update-tab');
+        expect(updateTab).toBeTruthy();
         const actions = (updateTab.props as any).actions as Array<{ key: string }>;
         expect(actions.map((a) => a.key)).toEqual(['fetch', 'publish']);
         expect((updateTab.props as any).hint).toBeNull();
@@ -239,18 +239,16 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
 
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(0);
+        expect(screen.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(0);
     });
 
     it('keeps the git tabs visible without a workspace rail', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
+        const screen = await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
 
-        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(1);
+        expect(screen.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(1);
     });
 });

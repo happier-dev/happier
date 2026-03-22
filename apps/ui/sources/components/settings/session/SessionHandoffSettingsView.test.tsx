@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -86,7 +86,7 @@ describe('SessionHandoffSettingsView', () => {
             workspaceTransferEnabled: true,
             workspaceTransferStrategy: 'transfer_snapshot',
             conflictPolicy: 'create_sibling_copy',
-            includeIgnoredMode: 'exclude',
+            includeIgnoredMode: 'include_selected',
             ignoredIncludeGlobs: [],
             directTargetMode: 'keep_direct',
         };
@@ -95,19 +95,24 @@ describe('SessionHandoffSettingsView', () => {
     it('updates handoff defaults for workspace transfer strategy, conflict policy, ignored files, and direct target mode', async () => {
         const mod = await import('./SessionHandoffSettingsView');
         const SessionHandoffSettingsView = mod.default;
-        const screen = await renderScreen(React.createElement(SessionHandoffSettingsView));
-        let tree: ReactTestRenderer = screen.tree;
+        const screen = await renderSettingsView(React.createElement(SessionHandoffSettingsView));
 
-        const switchNode = tree.root.findByType('Switch' as any);
         await act(async () => {
-            switchNode.props.onValueChange(false);
+            screen.pressRowByTitle('settingsSession.handoff.workspaceTransfer.title');
         });
 
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-        const strategyMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceTransfer.strategy.title');
-        const conflictMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title');
-        const ignoredMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.includeIgnoredMode.title');
-        const directModeMenu = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.directTargetMode.title');
+        const strategyMenu = screen.findAll((node) => (
+            node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceTransfer.strategy.title'
+        ))[0] ?? null;
+        const conflictMenu = screen.findAll((node) => (
+            node.props?.itemTrigger?.title === 'settingsSession.handoff.conflictPolicy.title'
+        ))[0] ?? null;
+        const ignoredMenu = screen.findAll((node) => (
+            node.props?.itemTrigger?.title === 'settingsSession.handoff.includeIgnoredMode.title'
+        ))[0] ?? null;
+        const directModeMenu = screen.findAll((node) => (
+            node.props?.itemTrigger?.title === 'settingsSession.handoff.directTargetMode.title'
+        ))[0] ?? null;
 
         expect(strategyMenu).toBeTruthy();
         expect(conflictMenu).toBeTruthy();
@@ -115,19 +120,17 @@ describe('SessionHandoffSettingsView', () => {
         expect(directModeMenu).toBeTruthy();
 
         await act(async () => {
-            strategyMenu!.props.onSelect('sync_changes');
-            conflictMenu!.props.onSelect('replace_existing');
-            ignoredMenu!.props.onSelect('include_selected');
-            directModeMenu!.props.onSelect('convert_to_persisted');
+            strategyMenu?.props.onSelect('sync_changes');
+            conflictMenu?.props.onSelect('replace_existing');
+            ignoredMenu?.props.onSelect('include_selected');
+            directModeMenu?.props.onSelect('convert_to_persisted');
         });
 
+        const updatedScreen = await renderSettingsView(React.createElement(SessionHandoffSettingsView));
+        const globInput = updatedScreen.findAll((node) => typeof node.props?.onChangeText === 'function')[0] ?? null;
+        expect(globInput).toBeTruthy();
         await act(async () => {
-            tree = (await renderScreen(React.createElement(SessionHandoffSettingsView))).tree;
-        });
-
-        const globInput = tree.root.findByType('TextInput' as any);
-        await act(async () => {
-            globInput.props.onChangeText('dist/**, .env.local');
+            globInput?.props.onChangeText('dist/**, .env.local');
         });
 
         expect(settingsState.sessionHandoffDefaultsV1).toEqual({

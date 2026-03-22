@@ -1,7 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -430,11 +430,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(renderedTree).toBeDefined();
             if (!renderedTree) throw new Error('SessionView test renderer did not mount');
 
-            const agentInputCandidates = renderedTree.root.findAll(
-                (node) => typeof node.props?.onSend === 'function' && typeof node.props?.onAttachmentsAdded === 'function',
-            );
-            expect(agentInputCandidates.length).toBeGreaterThan(0);
-            const agentInput = agentInputCandidates[0]!;
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
 
             expect(agentInput.props.attachments).toEqual(expect.arrayContaining([
                 expect.objectContaining({
@@ -445,7 +441,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             ]));
 
             await act(async () => {
-                agentInput.props.onSend();
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
 
             expect(pendingFireAndForget.length).toBe(1);
@@ -507,21 +503,15 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(renderedTree).toBeDefined();
             if (!renderedTree) throw new Error('SessionView test renderer did not mount');
 
-            const agentInputCandidates = renderedTree.root.findAll(
-                (node) => typeof node.props?.onSend === 'function' && typeof node.props?.onAttachmentsAdded === 'function',
-            );
-            expect(agentInputCandidates.length).toBeGreaterThan(0);
-            const agentInput = agentInputCandidates[0]!;
-            expect(typeof agentInput.props.onAttachmentsAdded).toBe('function');
-
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             await act(async () => {
-                agentInput.props.onAttachmentsAdded([
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
                     { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
-                ]);
+                ], 'AgentInput');
             });
 
             await act(async () => {
-                agentInput.props.onSend();
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
 
             expect(pendingFireAndForget.length).toBe(1);

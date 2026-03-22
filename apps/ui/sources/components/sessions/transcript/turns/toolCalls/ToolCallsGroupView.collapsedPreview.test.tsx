@@ -196,7 +196,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             setExpanded: vi.fn(),
         });
 
-        const previewRows = screen.root.findAllByType('ToolTimelineRow');
+        const previewRows = screen.findAllByType('ToolTimelineRow');
         expect(previewRows.length).toBeGreaterThan(0);
         expect(previewRows.every((node) => node.props.messageId === undefined)).toBe(true);
 
@@ -215,7 +215,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             );
         });
 
-        const expandedRows = screen.root.findAllByType('ToolTimelineRow');
+        const expandedRows = screen.findAllByType('ToolTimelineRow');
         expect(expandedRows.length).toBe(toolMessages.length);
         expect(expandedRows.every((node) => node.props.messageId === undefined)).toBe(true);
     });
@@ -242,7 +242,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             setExpanded: vi.fn(),
         });
 
-        const rows = screen.root.findAllByType('ToolTimelineRow');
+        const rows = screen.findAllByType('ToolTimelineRow');
         expect(rows).toHaveLength(2);
         expect(rows.map((node) => node.props.messageId)).toEqual(['server:server-msg-1', 'server:server-msg-2']);
     });

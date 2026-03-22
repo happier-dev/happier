@@ -111,13 +111,11 @@ describe('SourceControlSettingsView', () => {
         filesDiffPresentationStyleValue = 'split';
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
         const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
-        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
-        expect(titles).toContain('settingsSourceControl.commitStrategy.options.atomic.title');
-        expect(titles).toContain('settingsSourceControl.commitStrategy.options.gitStaging.title');
-        expect(titles).toContain('settingsSourceControl.gitRoutingPreference.options.git.title');
-        expect(titles).toContain('settingsSourceControl.remoteConfirmation.options.always.title');
 
         expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.atomic.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.gitRoutingPreference.options.git.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.options.always.title')).toBeTruthy();
         screen.pressRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title');
         expect(setScmCommitStrategy).toHaveBeenCalledWith('git_staging');
     });
@@ -138,12 +136,11 @@ describe('SourceControlSettingsView', () => {
     it('only renders backend-supported default diff modes', async () => {
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
         const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
-        const titles = screen.root.findAllByType('Item' as any).map((item) => item.props.title);
-        expect(titles).toContain('settingsSourceControl.backends.defaultDiffItemTitle:Git:settingsSourceControl.diffMode.included');
-        expect(titles).toContain('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.pending');
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Git:settingsSourceControl.diffMode.included')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.pending')).toBeTruthy();
         // When no snapshot/capabilities are available yet, Sapling conservatively only advertises "pending".
-        expect(titles).not.toContain('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.combined');
-        expect(titles).not.toContain('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.included');
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.combined')).toBeNull();
+        expect(screen.findRowByTitle('settingsSourceControl.backends.defaultDiffItemTitle:Sapling:settingsSourceControl.diffMode.included')).toBeNull();
     });
 
     it('allows updating diff syntax highlighting mode', async () => {
@@ -206,8 +203,9 @@ describe('SourceControlSettingsView', () => {
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
         const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
-        const inputs = screen.root.findAllByType('TextInput' as any);
-        const instructions = inputs.find((n: any) => n.props.placeholder === 'settingsSourceControl.commitMessageGenerator.instructionsPlaceholder');
+        const instructions = screen.findByProps({
+            placeholder: 'settingsSourceControl.commitMessageGenerator.instructionsPlaceholder',
+        });
         expect(instructions).toBeTruthy();
 
         await act(async () => {

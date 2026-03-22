@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { act, ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
@@ -173,33 +173,27 @@ describe('NewSessionEngineOptionDetail', () => {
 
     it('publishes the selected mode synchronously so a following model click preserves it', async () => {
         let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
-        let tree: ReactTestRenderer | undefined;
+        const screen = await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => {
+                latestSelection = selection;
+            }}
+        />);
 
-        tree = (await renderScreen(<NewSessionEngineOptionDetail
-                    backendTarget={backendTarget}
-                    selectedMachineId="machine-1"
-                    capabilityServerId="server-1"
-                    cwd="/repo"
-                    selectedModelId="default"
-                    selectedSessionModeId="default"
-                    selectedConfigOverrides={{}}
-                    onSelectionChange={(selection) => {
-                        latestSelection = selection;
-                    }}
-                />)).tree;
+        await screen.pressByTestIdAsync('agent-input-session-mode-option:review');
+        expect(latestSelection?.sessionModeId).toBe('review');
 
-        act(() => {
-            tree!.pressByTestId('agent-input-session-mode-option:review');
-            expect(latestSelection?.sessionModeId).toBe('review');
-        });
-
-        act(() => {
-            tree!.pressByTestId('model-picker-overlay-option:preset-fast');
-            expect(latestSelection).toEqual({
-                modelId: 'preset-fast',
-                sessionModeId: 'review',
-                configOverrides: {},
-            });
+        await screen.pressByTestIdAsync('model-picker-overlay-option:preset-fast');
+        expect(latestSelection).toEqual({
+            modelId: 'preset-fast',
+            sessionModeId: 'review',
+            configOverrides: {},
         });
     });
 
@@ -215,14 +209,14 @@ describe('NewSessionEngineOptionDetail', () => {
         };
 
         await renderScreen(<NewSessionEngineOptionDetail
-                    backendTarget={backendTarget}
-                    selectedMachineId="machine-1"
-                    capabilityServerId="server-1"
-                    cwd="/repo"
-                    selectedModelId="model-1"
-                    selectedSessionModeId="default"
-                    selectedConfigOverrides={{}}
-                />);
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="model-1"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
 
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.options).toHaveLength(12);
@@ -237,14 +231,14 @@ describe('NewSessionEngineOptionDetail', () => {
         };
 
         await renderScreen(<NewSessionEngineOptionDetail
-                    backendTarget={backendTarget}
-                    selectedMachineId="machine-1"
-                    capabilityServerId="server-1"
-                    cwd="/repo"
-                    selectedModelId="default"
-                    selectedSessionModeId="default"
-                    selectedConfigOverrides={{}}
-                />);
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
 
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.options).toEqual([]);
@@ -260,14 +254,14 @@ describe('NewSessionEngineOptionDetail', () => {
         };
 
         await renderScreen(<NewSessionEngineOptionDetail
-                    backendTarget={backendTarget}
-                    selectedMachineId="machine-1"
-                    capabilityServerId="server-1"
-                    cwd="/repo"
-                    selectedModelId="default"
-                    selectedSessionModeId="default"
-                    selectedConfigOverrides={{}}
-                />);
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
 
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.canEnterCustomModel).toBe(true);
@@ -322,28 +316,26 @@ describe('NewSessionEngineOptionDetail', () => {
         ];
 
         let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
-        let tree: ReactTestRenderer;
+        const screen = await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => {
+                latestSelection = selection;
+            }}
+        />);
 
-        tree = (await renderScreen(<NewSessionEngineOptionDetail
-                    backendTarget={backendTarget}
-                    selectedMachineId="machine-1"
-                    capabilityServerId="server-1"
-                    cwd="/repo"
-                    selectedModelId="default"
-                    selectedSessionModeId="default"
-                    selectedConfigOverrides={{}}
-                    onSelectionChange={(selection) => {
-                        latestSelection = selection;
-                    }}
-                />)).tree;
+        expect(screen.findByTestId('agent-input-config-option:thinking')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-config-option-summary:thinking')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-config-option-summary:thinking')?.props.children).toContain(
+            'agentInput.acp.currentValue',
+        );
 
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-config-option:thinking' })).not.toThrow();
-        expect(() => tree!.root.findByProps({ testID: 'agent-input-config-option-summary:thinking' })).not.toThrow();
-        expect(tree!.root.findAllByProps({ children: 'agentInput.acp.currentValue' }).length).toBeGreaterThan(0);
-
-        act(() => {
-            tree!.pressByTestId('agent-input-config-option-option:thinking:high');
-        });
+        await screen.pressByTestIdAsync('agent-input-config-option-option:thinking:high');
 
         expect(latestSelection).toEqual({
             modelId: 'default',

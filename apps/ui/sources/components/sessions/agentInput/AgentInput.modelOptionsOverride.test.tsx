@@ -1,8 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import type { ReactTestInstance } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
@@ -26,34 +25,16 @@ const storageSettings: Settings = {
 };
 
 function findIconNode(
-    tree: Awaited<ReturnType<typeof renderScreen>>['tree'] | ReactTestInstance,
+    tree: Awaited<ReturnType<typeof renderScreen>>['tree'] | { root: any },
     type: 'Ionicons' | 'Octicons',
     name: string,
-): ReactTestInstance | undefined {
+): any {
     const root = 'root' in tree ? tree.root : tree;
-    return root.findAll((node: ReactTestInstance) => (
+    return root.findAll((node: any) => (
         typeof node.type === 'string' &&
         String(node.type) === type &&
         (node.props as any)?.name === name
     ))[0];
-}
-
-function collectTextContent(node: ReactTestInstance | string | number | null | undefined): string {
-    if (node == null) return '';
-    if (typeof node === 'string' || typeof node === 'number') {
-        return String(node);
-    }
-
-    return node.children
-        .map((child) => collectTextContent(child as ReactTestInstance | string | number | null | undefined))
-        .join('');
-}
-
-function findPressableByText(
-    scope: Pick<Awaited<ReturnType<typeof renderScreen>>['tree'] | ReactTestInstance, 'findAllByType'>,
-    text: string,
-): ReactTestInstance | undefined {
-    return scope.findAllByType('Pressable').find((node) => collectTextContent(node).includes(text));
 }
 
 vi.mock('react-native', async () => {
@@ -1128,12 +1109,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
             expect(lastModelPickerOverlayProps).toBeNull();
 
-            const engineAction = findPressableByText(screen.tree, 'agents.codex');
+            const engineAction = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'agents.codex');
             expect(engineAction).toBeTruthy();
 
-            await act(async () => {
-                engineAction!.props.onPress();
-            });
+            await pressTestInstanceAsync(engineAction, 'agents.codex pressable');
 
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
             expect(screen.findByTestId('agent-input-chip-picker-popover')).toBeTruthy();
@@ -1184,12 +1163,10 @@ describe('AgentInput (modelOptionsOverride)', () => {
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeTruthy();
             expect(screen.getTextContent()).not.toContain('agentInput.mode.sectionTitle');
 
-            const modeAction = findPressableByText(screen.tree, 'Build');
+            const modeAction = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Build');
             expect(modeAction).toBeTruthy();
 
-            await act(async () => {
-                modeAction!.props.onPress();
-            });
+            await pressTestInstanceAsync(modeAction, 'Build pressable');
 
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
             expect(screen.findByTestId('agent-input-simple-options-popover')).toBeNull();
@@ -1379,11 +1356,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
         const refresh = screen.findByTestId('agent-input-config-options-refresh');
         expect(refresh).toBeTruthy();
-        if (!refresh) {
-            throw new Error('Expected ACP config refresh action');
-        }
-        expect(typeof refresh.props.onPress).toBe('function');
-        await screen.pressByTestIdAsync('agent-input-config-options-refresh');
+        await pressTestInstanceAsync(refresh, 'agent-input-config-options-refresh');
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });

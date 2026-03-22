@@ -174,15 +174,15 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('./SessionRightPanelGitCommitTabContent', () => ({
-    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab'),
+    SessionRightPanelGitCommitTabContent: () => React.createElement('CommitTab', { testID: 'session-right-panel-git-commit-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitUpdateTab', () => ({
-    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab'),
+    SessionRightPanelGitUpdateTab: () => React.createElement('UpdateTab', { testID: 'session-right-panel-git-update-tab' }),
 }));
 
 vi.mock('./SessionRightPanelGitHistoryTab', () => ({
-    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
+    SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab', { testID: 'session-right-panel-git-history-tab' }),
 }));
 
 describe('SessionRightPanelGitView (keep mounted sub-tabs)', () => {
@@ -192,8 +192,8 @@ describe('SessionRightPanelGitView (keep mounted sub-tabs)', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />)).tree;
 
-        expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(1);
-        expect(tree.root.findAllByType('HistoryTab' as any)).toHaveLength(1);
+        expect(tree.findAllByTestId('session-right-panel-git-commit-tab')).toHaveLength(1);
+        expect(tree.findAllByTestId('session-right-panel-git-update-tab')).toHaveLength(1);
+        expect(tree.findAllByTestId('session-right-panel-git-history-tab')).toHaveLength(1);
     }, SLOW_TEST_TIMEOUT_MS);
 });

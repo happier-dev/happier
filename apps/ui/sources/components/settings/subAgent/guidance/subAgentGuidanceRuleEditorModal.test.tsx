@@ -1,7 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -123,23 +123,18 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
 
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
+        const screen = await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'create',
                     entry: { id: 'guidance_1', description: '', enabled: true },
                     onResolve,
                     onClose,
-                }))).tree;
-
-        const buttons = tree!.root.findAllByType('RoundButton' as any);
-        const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
+                }));
+        const saveButton = findTestInstanceByTypeWithProps(screen.tree, 'RoundButton', { title: 'common.save' });
 
         expect(saveButton).toBeTruthy();
-        expect(saveButton!.props.disabled).toBe(true);
+        expect(saveButton?.props.disabled).toBe(true);
 
-        await act(async () => {
-            saveButton!.props.onPress?.();
-        });
+        await pressTestInstanceAsync(saveButton, 'common.save');
 
         expect(onResolve).not.toHaveBeenCalled();
     });
@@ -150,8 +145,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
 
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
+        const screen = await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'create',
                     entry: {
                         id: 'guidance_2',
@@ -161,17 +155,13 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                     },
                     onResolve,
                     onClose,
-                }))).tree;
-
-        const buttons = tree!.root.findAllByType('RoundButton' as any);
-        const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
+                }));
+        const saveButton = findTestInstanceByTypeWithProps(screen.tree, 'RoundButton', { title: 'common.save' });
 
         expect(saveButton).toBeTruthy();
-        expect(saveButton!.props.disabled).toBe(false);
+        expect(saveButton?.props.disabled).toBe(false);
 
-        await act(async () => {
-            saveButton!.props.onPress?.();
-        });
+        await pressTestInstanceAsync(saveButton, 'common.save');
 
         expect(onResolve).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -192,8 +182,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         const { useNewSessionPreflightModelsState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState');
         const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
+        const screen = await renderScreen(React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'edit',
                     entry: {
                         id: 'guidance_3',
@@ -203,9 +192,9 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                     },
                     onResolve,
                     onClose,
-                }))).tree;
+                }));
 
-        const dropdowns = tree!.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
         expect(dropdowns).toHaveLength(3);
         expect(dropdowns[0]!.props.selectedId).toBe('acpBackend:custom-preset');
         expect(dropdowns[1]!.props.selectedId).toBe('');
@@ -216,13 +205,10 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
             }),
         );
 
-        const buttons = tree!.root.findAllByType('RoundButton' as any);
-        const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
+        const saveButton = findTestInstanceByTypeWithProps(screen.tree, 'RoundButton', { title: 'common.save' });
         expect(saveButton).toBeTruthy();
 
-        await act(async () => {
-            saveButton!.props.onPress?.();
-        });
+        await pressTestInstanceAsync(saveButton, 'common.save');
 
         expect(onResolve).toHaveBeenCalledWith(
             expect.objectContaining({

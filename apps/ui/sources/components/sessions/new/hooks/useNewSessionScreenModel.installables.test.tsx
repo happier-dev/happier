@@ -711,12 +711,11 @@ describe('useNewSessionScreenModel (installables)', () => {
         const opencodeDetailContent = opencodeOption?.renderDetailContent?.() ?? opencodeOption?.detailContent ?? null;
         expect(opencodeDetailContent).toBeTruthy();
 
-        let detailTree: renderer.ReactTestRenderer;
-        detailTree = (await renderScreen(<>{opencodeDetailContent}</>)).tree;
+        const detailScreen = await renderScreen(<>{opencodeDetailContent}</>);
 
-        const previewItems = detailTree!.root.findAll((node) => node.props?.testID === 'model-picker-overlay-option:opencode-fast');
+        const previewItems = detailScreen.findAllByTestId('model-picker-overlay-option:opencode-fast');
         expect(previewItems).toHaveLength(1);
-        const previewTexts = detailTree!.root.findAll((node) => typeof node.props?.children === 'string')
+        const previewTexts = detailScreen.findAll((node) => typeof node.props?.children === 'string')
             .map((node) => node.props.children);
         expect(previewTexts).toContain('OpenCode Fast');
         expect(previewTexts).toContain('Lower latency coding model.');
@@ -1534,16 +1533,15 @@ describe('useNewSessionScreenModel (installables)', () => {
             selectedOptionId: 'console',
         }));
 
-        let chipTree: renderer.ReactTestRenderer | null = null;
-        chipTree = (await renderScreen(windowsChip.render({
+        const chipScreen = await renderScreen(windowsChip.render({
                 chipStyle: () => null,
                 iconColor: '#000',
                 showLabel: true,
                 textStyle: {},
                 countTextStyle: {},
                 popoverAnchorRef: { current: null },
-            }))).tree;
-        expect(JSON.stringify(chipTree!.toJSON())).toContain('windowsRemoteSessionLaunchMode.shortConsole');
+            }));
+        expect(chipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortConsole');
 
         await invokeHookAction(() => windowsChip.collapsedOptionsPopover?.onSelect('hidden'));
 
@@ -1556,15 +1554,15 @@ describe('useNewSessionScreenModel (installables)', () => {
             selectedOptionId: 'hidden',
         }));
 
-        chipTree = (await renderScreen(updatedChip.render({
+        const updatedChipScreen = await renderScreen(updatedChip.render({
                 chipStyle: () => null,
                 iconColor: '#000',
                 showLabel: true,
                 textStyle: {},
                 countTextStyle: {},
                 popoverAnchorRef: { current: null },
-            }))).tree;
-        expect(JSON.stringify(chipTree!.toJSON())).toContain('windowsRemoteSessionLaunchMode.shortHidden');
+            }));
+        expect(updatedChipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortHidden');
     });
 
 });
