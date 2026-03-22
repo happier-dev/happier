@@ -1,84 +1,35 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setSessionListDensity = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            TextInput: 'TextInput',
+                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', () => createExpoRouterMock().module);
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                accent: {
-                    blue: '#00f',
-                    orange: '#f90',
-                    indigo: '#6366f1',
-                },
-                surface: '#fff',
-                text: '#111',
-                textSecondary: '#666',
-                success: '#0a0',
-                divider: '#ddd',
-                input: {
-                    background: '#f3f3f3',
-                    text: '#111',
-                    placeholder: '#999',
-                },
-                groupped: {
-                    sectionTitle: '#444',
-                    background: '#f7f7f7',
-                },
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({
-                    colors: {
-                        accent: {
-                            blue: '#00f',
-                            orange: '#f90',
-                            indigo: '#6366f1',
-                        },
-                        surface: '#fff',
-                        text: '#111',
-                        textSecondary: '#666',
-                        success: '#0a0',
-                        divider: '#ddd',
-                        input: {
-                            background: '#f3f3f3',
-                            text: '#111',
-                            placeholder: '#999',
-                        },
-                        groupped: {
-                            sectionTitle: '#444',
-                            background: '#f7f7f7',
-                        },
-                    },
-                }, {})
-                : input,
-    },
-}));
+vi.mock('react-native-unistyles', async () => await createUnistylesMock());
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -127,48 +78,43 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', () => createTextModuleMock());
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', () => createModalModuleMock().module);
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => {
-        if (key === 'sessionTagsEnabled') return [true, vi.fn()];
-        if (key === 'sessionListDensity') return ['cozy', setSessionListDensity];
-        if (key === 'hideInactiveSessions') return [false, vi.fn()];
-        if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
-        if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
-        if (key === 'agentInputActionBarLayout') return ['auto', vi.fn()];
-        if (key === 'agentInputChipDensity') return ['auto', vi.fn()];
-        if (key === 'alwaysShowContextSize') return [false, vi.fn()];
-        if (key === 'sessionUseTmux') return [false, vi.fn()];
-        if (key === 'sessionTmuxSessionName') return ['happy', vi.fn()];
-        if (key === 'sessionTmuxIsolated') return [true, vi.fn()];
-        if (key === 'sessionTmuxTmpDir') return [null, vi.fn()];
-        if (key === 'sessionMessageSendMode') return ['agent_queue', vi.fn()];
-        if (key === 'sessionBusySteerSendPolicy') return ['steer_immediately', vi.fn()];
-        if (key === 'agentInputEnterToSend') return [true, vi.fn()];
-        if (key === 'agentInputHistoryScope') return ['perSession', vi.fn()];
-        if (key === 'terminalConnectLegacySecretExportEnabled') return [false, vi.fn()];
-        if (key === 'sessionReplayEnabled') return [false, vi.fn()];
-        if (key === 'sessionReplayStrategy') return ['recent_messages', vi.fn()];
-        if (key === 'sessionReplayRecentMessagesCount') return [250, vi.fn()];
-        if (key === 'sessionReplayMaxSeedChars') return [120000, vi.fn()];
-        if (key === 'sessionReplaySummaryRunnerV1') return [null, vi.fn()];
-        return [null, vi.fn()];
-    },
-    useLocalSettingMutable: (key: string) => {
-        if (key === 'sessionsRightPaneDefaultOpen') return [false, vi.fn()];
-        if (key === 'uiMultiPanePanelsEnabled') return [true, vi.fn()];
-        return [null, vi.fn()];
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createStorageModuleMock({
+    importOriginal,
+    overrides: {
+        useSettingMutable: ((key: string) => {
+            if (key === 'sessionTagsEnabled') return [true, vi.fn()];
+            if (key === 'sessionListDensity') return ['cozy', setSessionListDensity];
+            if (key === 'hideInactiveSessions') return [false, vi.fn()];
+            if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
+            if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
+            if (key === 'agentInputActionBarLayout') return ['auto', vi.fn()];
+            if (key === 'agentInputChipDensity') return ['auto', vi.fn()];
+            if (key === 'alwaysShowContextSize') return [false, vi.fn()];
+            if (key === 'sessionUseTmux') return [false, vi.fn()];
+            if (key === 'sessionTmuxSessionName') return ['happy', vi.fn()];
+            if (key === 'sessionTmuxIsolated') return [true, vi.fn()];
+            if (key === 'sessionTmuxTmpDir') return [null, vi.fn()];
+            if (key === 'sessionMessageSendMode') return ['agent_queue', vi.fn()];
+            if (key === 'sessionBusySteerSendPolicy') return ['steer_immediately', vi.fn()];
+            if (key === 'agentInputEnterToSend') return [true, vi.fn()];
+            if (key === 'agentInputHistoryScope') return ['perSession', vi.fn()];
+            if (key === 'terminalConnectLegacySecretExportEnabled') return [false, vi.fn()];
+            if (key === 'sessionReplayEnabled') return [false, vi.fn()];
+            if (key === 'sessionReplayStrategy') return ['recent_messages', vi.fn()];
+            if (key === 'sessionReplayRecentMessagesCount') return [250, vi.fn()];
+            if (key === 'sessionReplayMaxSeedChars') return [120000, vi.fn()];
+            if (key === 'sessionReplaySummaryRunnerV1') return [null, vi.fn()];
+            return [null, vi.fn()];
+        }) as any,
+        useLocalSettingMutable: ((key: string) => {
+            if (key === 'sessionsRightPaneDefaultOpen') return [false, vi.fn()];
+            if (key === 'uiMultiPanePanelsEnabled') return [true, vi.fn()];
+            return [null, vi.fn()];
+        }) as any,
     },
 }));
 
@@ -189,12 +135,8 @@ describe('Session settings session list density', () => {
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
-        });
-
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const screen = await renderScreen(React.createElement(SessionSettingsScreen));
+        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
         const densityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.sessionListDensity.title');
         expect(densityDropdown).toBeTruthy();
         expect(densityDropdown?.props?.selectedId).toBe('cozy');

@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,9 +17,13 @@ const useLocalSearchParamsMock = vi.hoisted(() => vi.fn(() => ({
 
 const promptRegistryItemDetailsScreenMock = vi.hoisted(() => vi.fn());
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: useLocalSearchParamsMock,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const expoRouterMock = createExpoRouterMock({
+        params: () => useLocalSearchParamsMock(),
+    });
+    return expoRouterMock.module;
+});
 
 vi.mock('@/components/settings/prompts/registries/PromptRegistryItemDetailsScreen', () => ({
     PromptRegistryItemDetailsScreen: (props: unknown) => {
@@ -26,16 +32,17 @@ vi.mock('@/components/settings/prompts/registries/PromptRegistryItemDetailsScree
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSettingMutable: () => [{ v: 1, sources: [] }, vi.fn()],
-}));
+});
+});
 
 describe('PromptRegistryItemDetailsRoute', () => {
     it('forwards workspacePath params to the details screen', async () => {
         const Route = (await import('@/app/(app)/settings/prompts/registries/item')).default;
-        await act(async () => {
-            renderer.create(<Route />);
-        });
+        await renderScreen(<Route />);
 
         expect(promptRegistryItemDetailsScreenMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',

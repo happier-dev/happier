@@ -1,91 +1,48 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const settingsState: Record<string, any> = {
+type SessionSettingsState = Pick<Settings, 'sessionsRightPaneDefaultOpen' | 'uiMultiPanePanelsEnabled'>;
+
+const settingsState: Partial<SessionSettingsState> = {
     sessionsRightPaneDefaultOpen: false,
     uiMultiPanePanelsEnabled: false,
 };
+const localSettingsState: LocalSettings = { ...localSettingsDefaults };
 let executionRunsEnabled = false;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    AppState: {
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-}));
+function isSessionSettingsKey(key: keyof Settings): key is keyof SessionSettingsState {
+    return key === 'sessionsRightPaneDefaultOpen' || key === 'uiMultiPanePanelsEnabled';
+}
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                        View: 'View',
+                        TextInput: 'TextInput',
+                    }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                accent: {
-                    blue: '#00f',
-                    orange: '#f90',
-                    indigo: '#6366f1',
-                },
-                surface: '#fff',
-                text: '#111',
-                textSecondary: '#666',
-                success: '#0a0',
-                divider: '#ddd',
-                input: {
-                    background: '#f3f3f3',
-                    text: '#111',
-                    placeholder: '#999',
-                },
-                groupped: {
-                    sectionTitle: '#444',
-                    background: '#f7f7f7',
-                },
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (input: any) =>
-            typeof input === 'function'
-                ? input({
-                    colors: {
-                        accent: {
-                            blue: '#00f',
-                            orange: '#f90',
-                            indigo: '#6366f1',
-                        },
-                        surface: '#fff',
-                        text: '#111',
-                        textSecondary: '#666',
-                        success: '#0a0',
-                        divider: '#ddd',
-                        input: {
-                            background: '#f3f3f3',
-                            text: '#111',
-                            placeholder: '#999',
-                        },
-                        groupped: {
-                            sectionTitle: '#444',
-                            background: '#f7f7f7',
-                        },
-                    },
-                }, {})
-                : input,
-    },
-}));
+vi.mock('react-native-unistyles', async () => await createUnistylesMock());
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-}));
+vi.mock('expo-router', () => createExpoRouterMock().module);
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -134,34 +91,34 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', () => createTextModuleMock());
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(),
-        prompt: vi.fn(),
-    },
-}));
+vi.mock('@/modal', () => createModalModuleMock().module);
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => [
-        key in settingsState ? settingsState[key] : null,
-        (next: any) => {
-            settingsState[key] = next;
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createStorageModuleMock({
+    importOriginal,
+    overrides: {
+        useSettingMutable: <K extends keyof Settings>(key: K) => [
+            (isSessionSettingsKey(key) ? settingsState[key] : settingsDefaults[key]) as Settings[K],
+            (next: Settings[K]) => {
+                if (isSessionSettingsKey(key)) {
+                    settingsState[key] = next;
+                }
+            },
+        ] as const,
+        useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
+            localSettingsState[key],
+            (next: LocalSettings[K]) => {
+                localSettingsState[key] = next;
+            },
+        ] as const,
+        useSetting: <K extends keyof Settings>(key: K) => {
+            if (key === 'recentMachinePaths') return [];
+            if (isSessionSettingsKey(key)) {
+                return settingsState[key] as Settings[K];
+            }
+            return settingsDefaults[key];
         },
-    ],
-    useLocalSettingMutable: (key: string) => [
-        key in settingsState ? settingsState[key] : null,
-        (next: any) => {
-            settingsState[key] = next;
-        },
-    ],
-    useSetting: (key: string) => {
-        if (key === 'recentMachinePaths') return [];
-        return null;
     },
 }));
 
@@ -169,7 +126,8 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => [],
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     AGENT_IDS: ['codex'],
     getAgentCore: () => ({ displayNameKey: 'agent.name' }),
 }));
@@ -197,14 +155,9 @@ describe('Session settings (Sub-agent gate)', () => {
         const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
-        });
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        const items = tree.root.findAllByType('Item' as any);
-        const subAgentItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.rules.groupTitle');
-        expect(subAgentItem).toBeFalsy();
+        expect(screen.findRowByTitle('subAgentGuidance.settings.rules.groupTitle')).toBeNull();
     });
 
     it('does not render the Subagents shortcut when execution runs are enabled', async () => {
@@ -212,13 +165,8 @@ describe('Session settings (Sub-agent gate)', () => {
         const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
-        });
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
-        const items = tree.root.findAllByType('Item' as any);
-        const subAgentItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.rules.groupTitle');
-        expect(subAgentItem).toBeFalsy();
+        expect(screen.findRowByTitle('subAgentGuidance.settings.rules.groupTitle')).toBeNull();
     });
 });

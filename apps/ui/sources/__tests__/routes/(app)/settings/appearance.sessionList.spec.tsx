@@ -1,50 +1,46 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({
-        push: vi.fn(),
-        back: vi.fn(),
-        navigate: vi.fn(),
-        replace: vi.fn(),
-    }),
-}));
+vi.mock('expo-router', () => createExpoRouterMock().module);
 
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
 vi.mock('@/theme', () => ({ darkTheme: { colors: { groupped: { background: '#000' } } }, lightTheme: { colors: { groupped: { background: '#fff' } } } }));
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-    View: 'View',
-    Appearance: { getColorScheme: () => 'light' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            Appearance: { getColorScheme: () => 'light' },
+                        }
+    );
+});
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                accent: { blue: '#00f', orange: '#f90', indigo: '#6366f1' },
-                status: { connecting: '#09f' },
-            },
+vi.mock('react-native-unistyles', async () => await createUnistylesMock({
+    theme: {
+        colors: {
+            accent: { blue: '#00f', orange: '#f90', indigo: '#6366f1' },
+            status: { connecting: '#09f' },
+            shadow: { color: '#000' },
+            surface: '#fff',
+            text: '#111',
+            divider: '#ddd',
         },
-    }),
-    UnistylesRuntime: {
-        setAdaptiveThemes: vi.fn(),
-        setTheme: vi.fn(),
-        setRootViewBackgroundColor: vi.fn(),
     },
 }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    ...createTextModuleMock(),
     getLanguageNativeName: () => 'English',
     SUPPORTED_LANGUAGES: { en: { name: 'English' } },
 }));
@@ -82,9 +78,12 @@ function createNoopMutable<T>(value: T): MutableHookResult<T> {
 const useSettingMutableMock = vi.fn();
 const useLocalSettingMutableMock = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: (key: string) => useSettingMutableMock(key),
-    useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createStorageModuleMock({
+    importOriginal,
+    overrides: {
+        useSettingMutable: (key: string) => useSettingMutableMock(key),
+        useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
+    },
 }));
 
 describe('AppearanceSettingsScreen (focused groups after redistribution)', () => {
@@ -111,15 +110,11 @@ describe('AppearanceSettingsScreen (focused groups after redistribution)', () =>
 
     it('renders core appearance settings after redistribution', async () => {
         const { default: AppearanceSettingsScreen } = await import('@/app/(app)/settings/appearance');
+        const screen = await renderScreen(React.createElement(AppearanceSettingsScreen));
 
-        let tree: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(AppearanceSettingsScreen));
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
+        const items = screen.root.findAllByType('Item' as any);
         const titles = items.map((i) => i.props.title);
-        const dropdowns = tree!.root.findAllByType('DropdownMenu' as any);
+        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
         const dropdownTitles = dropdowns.map((node: any) => node.props?.itemTrigger?.title).filter(Boolean);
 
         // Core appearance settings that remain

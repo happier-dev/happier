@@ -1,6 +1,10 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest, isUsernameRequest } from './account.testHelpers';
@@ -8,10 +12,29 @@ import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest, isUser
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+const { routerMockRef, modalMockRef } = vi.hoisted(() => ({
+    routerMockRef: { current: null as any },
+    modalMockRef: { current: null as any },
 }));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock();
+    routerMockRef.current = routerMock;
+    return routerMock.module;
+});
+
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMockRef.current = modalMock;
+    return modalMock.module;
+});
 
 vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
@@ -67,6 +90,12 @@ describe('Settings → Account (username)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        routerMockRef.current?.spies.push.mockReset();
+        routerMockRef.current?.spies.back.mockReset();
+        routerMockRef.current?.spies.replace.mockReset();
+        routerMockRef.current?.spies.setParams.mockReset();
+        modalMockRef.current = null;
+        standardCleanup();
     });
 
     it('shows a Username item and saves it when friendsAllowUsername is enabled', async () => {
@@ -90,44 +119,21 @@ describe('Settings → Account (username)', () => {
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { Modal } = await import('@/modal');
-        const promptSpy = vi.spyOn(Modal, 'prompt').mockResolvedValue('alice');
+        await import('@/modal');
+        modalMockRef.current.spies.prompt.mockResolvedValue('alice');
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderSettingsView(<AccountScreen />);
+        expect(screen.findRowByTitle('profile.username')).toBeTruthy();
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
-            let items: renderer.ReactTestInstance[] = [];
-            for (let attempt = 0; attempt < 5; attempt += 1) {
-                await act(async () => {});
-                items =
-                    tree?.root.findAll(
-                        (node) => node.props?.title === 'Username' && typeof node.props?.onPress === 'function',
-                    ) ?? [];
-                if (items.length > 0) break;
-            }
-            expect(items.length).toBeGreaterThan(0);
-            const firstItem = items[0];
-            if (!firstItem || typeof firstItem.props?.onPress !== 'function') {
-                throw new Error('Expected Username row onPress handler');
-            }
+        await act(async () => {
+            await screen.pressRowByTitle('profile.username');
+        });
 
-            await act(async () => {
-                await firstItem.props.onPress();
-            });
-
-            expect(promptSpy).toHaveBeenCalled();
-            expect(fetchMock).toHaveBeenCalledWith(
-                expect.stringContaining('/v1/account/username'),
-                expect.objectContaining({ method: 'POST' }),
-            );
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(modalMockRef.current.spies.prompt).toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledWith(
+            expect.stringContaining('/v1/account/username'),
+            expect.objectContaining({ method: 'POST' }),
+        );
     }, 40_000);
 });

@@ -1,36 +1,34 @@
 import React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const speakDeviceTextSpy = vi.fn();
-const modalAlertSpy = vi.fn();
 const setVoiceSpy = vi.fn();
-const rendererCreate = renderer.create.bind(renderer);
-let activeTree: ReactTestRenderer | null = null;
-
-vi.spyOn(renderer, 'create').mockImplementation(((...args: Parameters<typeof rendererCreate>) => {
-    const tree = rendererCreate(...args);
-    activeTree = tree;
-    return tree;
-}) as typeof renderer.create);
+const { modalMockRef } = vi.hoisted(() => ({
+    modalMockRef: { current: null as any },
+}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: vi.fn(),
-        confirm: vi.fn(),
-        alert: (...args: any[]) => modalAlertSpy(...args),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMockRef.current = modalMock;
+    return modalMock.module;
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: React.forwardRef((props: any, ref: any) => React.createElement('ItemList', { ...props, ref }, props.children)),
@@ -72,7 +70,9 @@ vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
     useVoiceSettingsMutable: () => [voiceSetting, (next: any) => setVoiceSpy(next)],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: (key: string) => {
         if (key === 'voice') return voiceSetting;
         if (key === 'backendEnabledById') return {};
@@ -81,7 +81,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         throw new Error(`unexpected useSetting(${key})`);
     },
     useSettings: () => ({}),
-}));
+});
+});
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],
@@ -137,17 +138,14 @@ describe('VoiceSettingsScreen (device TTS)', () => {
     beforeEach(() => {
         speakDeviceTextSpy.mockClear();
         speakDeviceTextSpy.mockResolvedValue(undefined);
-        modalAlertSpy.mockClear();
         setVoiceSpy.mockClear();
+        modalMockRef.current?.spies.alert.mockClear();
+        modalMockRef.current?.spies.confirm.mockClear();
+        modalMockRef.current?.spies.prompt.mockClear();
     });
 
     afterEach(() => {
-        if (activeTree) {
-            act(() => {
-                activeTree?.unmount();
-            });
-            activeTree = null;
-        }
+        standardCleanup();
     });
 
     it('uses device TTS for Test TTS when enabled (does not require TTS Base URL)', async () => {
@@ -167,27 +165,16 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             },
         };
 
+        await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        expect(tree).toBeTruthy();
-
-        const testItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(testItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
         await act(async () => {
-            testItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.testTts');
         });
-        await act(async () => {});
 
-        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
+        expect(modalMockRef.current.spies.alert).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
         expect(speakDeviceTextSpy).toHaveBeenCalledWith('settingsVoice.local.testTtsSample');
     });
 
@@ -209,25 +196,16 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             },
         };
 
+        await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const testItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(testItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
         await act(async () => {
-            testItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.testTts');
         });
-        await act(async () => {});
 
-        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
+        expect(modalMockRef.current.spies.alert).not.toHaveBeenCalledWith('common.error', 'settingsVoice.local.testTtsMissingBaseUrl');
         expect(speakDeviceTextSpy).toHaveBeenCalledWith('settingsVoice.local.testTtsSample');
     });
 
@@ -248,25 +226,15 @@ describe('VoiceSettingsScreen (device TTS)', () => {
                 },
             },
         };
+        await import('@/modal');
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        expect(tree).toBeTruthy();
-        const testItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(testItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
         await act(async () => {
-            await testItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.testTts');
         });
-        await act(async () => {});
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'formatted error');
+        expect(modalMockRef.current.spies.alert).toHaveBeenCalledWith('common.error', 'formatted error');
     });
 });

@@ -9,15 +9,21 @@ import {
     getRequestUrl,
     isFeaturesRequest,
 } from './account.testHelpers';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
 
 const routerPushMock = vi.hoisted(() => vi.fn());
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushMock, back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: routerPushMock, back: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -83,9 +89,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            tree = (await renderScreen(<AccountScreen />)).tree;
             await act(async () => {});
 
             const encryptionItems =
@@ -150,9 +154,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            tree = (await renderScreen(<AccountScreen />)).tree;
             await act(async () => {});
 
             const encryptionItems =
@@ -225,9 +227,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            tree = (await renderScreen(<AccountScreen />)).tree;
             await act(async () => {});
 
             const encryptionItems =
@@ -310,9 +310,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            tree = (await renderScreen(<AccountScreen />)).tree;
             await act(async () => {});
 
             const encryptionItems =
@@ -381,9 +379,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+            tree = (await renderScreen(<AccountScreen />)).tree;
             await act(async () => {});
 
             const encryptionItems =

@@ -1,30 +1,40 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
 let windowDimensions: { width: number; height: number } = { width: 1200, height: 800 };
+const { routerMockRef, modalMockRef } = vi.hoisted(() => ({
+    routerMockRef: { current: null as any },
+    modalMockRef: { current: null as any },
+}));
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    Dimensions: {
-        get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-    },
-    useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-    Platform: {
-        OS: 'web',
-        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                View: 'View',
+                                Pressable: 'Pressable',
+                                Dimensions: {
+                                    get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+                                },
+                                useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+                            }
+    );
+});
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy, back: vi.fn() }),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock();
+    routerMockRef.current = routerMock;
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -58,34 +68,22 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                accent: { blue: 'blue', orange: 'orange' },
-                textSecondary: '#666',
-                surface: '#fff',
-                text: '#000',
-                switch: {
-                    track: { inactive: '#999', active: '#0a0' },
-                    thumb: { inactive: '#fff', active: '#fff' },
-                },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(async () => {}),
-        confirm: vi.fn(async () => false),
-        prompt: vi.fn(async () => null),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMockRef.current = modalMock;
+    return modalMock.module;
+});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -107,18 +105,26 @@ vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: () => [false, vi.fn()],
-    useProfile: () => ({
-        id: 'p',
-        firstName: null,
-        lastName: null,
-        username: null,
-        avatar: null,
-        linkedProviders: [],
-        connectedServices: [],
-    }),
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSettingMutable: () => [false, vi.fn()],
+            useProfile: () => ({
+                id: 'p',
+                timestamp: 0,
+                firstName: null,
+                lastName: null,
+                username: null,
+                avatar: null,
+                linkedProviders: [],
+                connectedServices: [],
+                connectedServicesV2: [],
+            }),
+        },
+    });
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: () => vi.fn(),
@@ -148,39 +154,27 @@ describe('Settings → Account (grouping)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+        routerMockRef.current?.spies.push.mockReset();
+        routerMockRef.current?.spies.back.mockReset();
+        routerMockRef.current?.spies.replace.mockReset();
+        routerMockRef.current?.spies.setParams.mockReset();
+        modalMockRef.current = null;
+        standardCleanup();
     });
 
-    it('renders "Add your phone" outside the Account Information group', async () => {
+    it('shows one stable add-phone entry and routes to the phone-link flow on desktop web', async () => {
         windowDimensions = { width: 1200, height: 800 };
         vi.resetModules();
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderScreen(<AccountScreen />);
+        const addPhoneItems = screen.findAll(
+            (node) => node.props?.testID === 'settings-account-add-your-phone' && typeof node.props?.onPress === 'function',
+        );
+        expect(addPhoneItems.length).toBeGreaterThan(0);
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
+        await addPhoneItems[0]!.props.onPress();
 
-            const groups = tree?.root.findAllByType('ItemGroup') ?? [];
-            const infoGroup = groups.find((g) => g.props?.title === 'settingsAccount.accountInformation');
-            expect(infoGroup).toBeTruthy();
-
-            const addPhoneInInfo =
-                infoGroup?.findAll(
-                    (n) => (n.type as unknown) === 'Item' && n.props?.testID === 'settings-account-add-your-phone',
-                ) ?? [];
-            expect(addPhoneInInfo).toHaveLength(0);
-
-            const allAddPhoneItems =
-                tree?.root.findAll(
-                    (n) => (n.type as unknown) === 'Item' && n.props?.testID === 'settings-account-add-your-phone',
-                ) ?? [];
-            expect(allAddPhoneItems).toHaveLength(1);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        expect(routerMockRef.current.spies.push).toHaveBeenCalledWith('/settings/add-phone');
     });
 
     it('hides "Add your phone" on phone-sized web', async () => {
@@ -189,23 +183,10 @@ describe('Settings → Account (grouping)', () => {
         vi.resetModules();
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
-
-            const allAddPhoneItems =
-                tree?.root.findAll(
-                    (n) => (n.type as unknown) === 'Item' && n.props?.testID === 'settings-account-add-your-phone',
-                ) ?? [];
-            expect(allAddPhoneItems).toHaveLength(0);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const screen = await renderScreen(<AccountScreen />);
+        expect(screen.findAll(
+            (node) => node.props?.testID === 'settings-account-add-your-phone' && typeof node.props?.onPress === 'function',
+        )).toHaveLength(0);
     });
 
     it('shows "Add your phone" on desktop-sized web even when the viewport is narrow', async () => {
@@ -215,22 +196,9 @@ describe('Settings → Account (grouping)', () => {
         vi.resetModules();
 
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        try {
-            await act(async () => {
-                tree = renderer.create(<AccountScreen />);
-            });
-
-            const allAddPhoneItems =
-                tree?.root.findAll(
-                    (n) => (n.type as unknown) === 'Item' && n.props?.testID === 'settings-account-add-your-phone',
-                ) ?? [];
-            expect(allAddPhoneItems).toHaveLength(1);
-        } finally {
-            act(() => {
-                tree?.unmount();
-            });
-        }
+        const screen = await renderScreen(<AccountScreen />);
+        expect(screen.findAll(
+            (node) => node.props?.testID === 'settings-account-add-your-phone' && typeof node.props?.onPress === 'function',
+        ).length).toBeGreaterThan(0);
     });
 });

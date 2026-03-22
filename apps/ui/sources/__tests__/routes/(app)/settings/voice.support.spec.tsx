@@ -1,6 +1,10 @@
 import React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    renderSettingsView,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,34 +13,33 @@ const setVoice = vi.fn();
 const decryptSecretValue = vi.fn<(value: unknown) => string | null>(() => null);
 const resetGlobalVoiceAgentPersistenceSpy = vi.fn(async () => {});
 const canAgentResumeSpy = vi.fn<(agentId: string | null | undefined) => boolean>(() => true);
-const rendererCreate = renderer.create.bind(renderer);
-let activeTree: ReactTestRenderer | null = null;
-
-vi.spyOn(renderer, 'create').mockImplementation(((...args: Parameters<typeof rendererCreate>) => {
-    const tree = rendererCreate(...args);
-    activeTree = tree;
-    return tree;
-}) as typeof renderer.create);
-
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
+const { modalMockRef } = vi.hoisted(() => ({
+    modalMockRef: { current: null as any },
 }));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: { push: vi.fn() },
+    });
+    return routerMock.module;
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        prompt: vi.fn(),
-        confirm: vi.fn(),
-        alert: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    const modalMock = createModalModuleMock();
+    modalMockRef.current = modalMock;
+    return modalMock.module;
+});
 
 vi.mock('@/voice/agent/resetGlobalVoiceAgentPersistence', () => ({
     resetGlobalVoiceAgentPersistence: () => resetGlobalVoiceAgentPersistenceSpy(),
@@ -226,10 +229,13 @@ vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
     useVoiceSettingsMutable: () => [voiceState, (next: any) => setVoice(next)],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
     useSetting: () => null,
     useSettings: () => ({}),
-}));
+});
+});
 
 beforeEach(() => {
     setVoice.mockClear();
@@ -253,33 +259,29 @@ beforeEach(() => {
     voiceState.privacy.recentMessagesCount = 3;
 });
 
+function findDropdownByItemTriggerTitle(
+    screen: { findAll: (predicate: (node: any) => boolean) => any[] },
+    title: string,
+) {
+    return screen.findAll((node) => node.type === 'DropdownMenu' && node.props?.itemTrigger?.title === title)[0] ?? null;
+}
+
 afterEach(() => {
-    if (activeTree) {
-        act(() => {
-            activeTree?.unmount();
-        });
-        activeTree = null;
-    }
+    modalMockRef.current?.spies.alert.mockClear();
+    modalMockRef.current?.spies.confirm.mockClear();
+    modalMockRef.current?.spies.prompt.mockClear();
+    standardCleanup();
 });
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
     it('hides Happier Voice option and coerces mode to off', async () => {
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-
-        await act(async () => {});
-
-        const items = tree.root.findAllByType('Item' as any);
-        const titles = items.map((i: any) => i.props.title);
-
-        expect(titles).toContain('settingsVoice.mode.off');
-        expect(titles).toContain('settingsVoice.mode.local');
-        expect(titles).toContain('settingsVoice.mode.byo');
-        expect(titles).not.toContain('settingsVoice.mode.happier');
+        expect(screen.findRowByTitle('settingsVoice.mode.off')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.mode.local')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.mode.byo')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.mode.happier')).toBeNull();
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'off' }));
     });
 });
@@ -290,22 +292,10 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.local_conversation.conversationMode = 'direct_session';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const items = tree.root.findAllByType('Item' as any);
-        const titles = items.map((i: any) => i.props.title);
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
-        const dropdownTriggerTitles = dropdowns
-            .map((d: any) => d.props?.itemTrigger?.title)
-            .filter((t: any) => typeof t === 'string');
-
-        expect([...titles, ...dropdownTriggerTitles]).toContain('settingsVoice.local.ttsProvider');
-        expect(titles).toContain('settingsVoice.local.autoSpeak');
+        expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.ttsProvider')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsVoice.local.autoSpeak')).toBeTruthy();
     });
 
     it('uses screen-level popover boundaries for dropdowns', async () => {
@@ -313,14 +303,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         expect(dropdowns.length).toBeGreaterThan(0);
 
         const boundaryRef = dropdowns[0]!.props.popoverBoundaryRef;
@@ -335,121 +319,75 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
     it('does not show navigation chevrons for voice mode selection rows', async () => {
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const items = tree.root.findAllByType('Item' as any);
-        const modeItems = items.filter((i: any) => [
-            'settingsVoice.mode.off',
-            'settingsVoice.mode.byo',
-            'settingsVoice.mode.local',
-        ].includes(i.props.title));
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const modeItems = [
+            screen.findRowByTitle('settingsVoice.mode.off'),
+            screen.findRowByTitle('settingsVoice.mode.byo'),
+            screen.findRowByTitle('settingsVoice.mode.local'),
+        ].filter(Boolean);
 
         expect(modeItems.length).toBeGreaterThan(0);
-        for (const item of modeItems) {
+        for (const item of modeItems as any[]) {
             expect(item.props.showChevron).toBe(false);
         }
     });
 
     it('does not render ineffective privacy toggles (file paths/tool args) as interactive settings', async () => {
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const items = tree.root.findAllByType('Item' as any);
-        const titles = items.map((i: any) => i.props.title);
-
-        expect(titles).not.toContain('settingsVoice.privacy.shareFilePaths');
-        expect(titles).not.toContain('settingsVoice.privacy.shareToolArgs');
+        expect(screen.findRowByTitle('settingsVoice.privacy.shareFilePaths')).toBeNull();
+        expect(screen.findRowByTitle('settingsVoice.privacy.shareToolArgs')).toBeNull();
     });
 
     it('does not use confirm modals for local conversation mode selection', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         // Enable local conversation so the section renders.
         voiceState.providerId = 'local_conversation';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const conversationModeItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.conversationMode')
-            .find((n) => typeof n.props?.onPress === 'function');
-
-        expect(conversationModeItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.conversationMode')).toBeTruthy();
 
         await act(async () => {
-            conversationModeItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.conversationMode');
         });
-        await act(async () => {});
 
-        expect((Modal as any).confirm).not.toHaveBeenCalled();
+        expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
 
     it('does not use confirm modals for local voice agent backend selection', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const backendItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.mediatorBackend')
-            .find((n) => typeof n.props?.onPress === 'function');
-
-        expect(backendItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.mediatorBackend')).toBeTruthy();
 
         await act(async () => {
-            backendItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.mediatorBackend');
         });
-        await act(async () => {});
 
-        expect((Modal as any).confirm).not.toHaveBeenCalled();
+        expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
 
     it('does not use confirm modals for other local conversation enum settings', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
         const pressByTitle = async (title: string) => {
-            const node = tree.root
-                .findAll((n) => n.props?.title === title)
-                .find((n) => typeof n.props?.onPress === 'function');
-            expect(node).toBeTruthy();
+            expect(screen.findRowByTitle(title)).toBeTruthy();
             await act(async () => {
-                node!.props.onPress?.();
+                await screen.pressRowByTitle(title);
             });
-            await act(async () => {});
         };
 
         await pressByTitle('settingsVoice.local.mediatorAgentSource');
@@ -458,7 +396,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await pressByTitle('settingsVoice.local.mediatorCommitModelSource');
         await pressByTitle('settingsVoice.local.mediatorVerbosity');
 
-        expect((Modal as any).confirm).not.toHaveBeenCalled();
+        expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
 
     it('disables provider resume when the selected fixed agent does not support vendor resume', async () => {
@@ -470,14 +408,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const dropdowns = screen.root.findAllByType('DropdownMenu' as any);
         const resumabilityDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'provider_resume'));
         expect(resumabilityDropdown).toBeTruthy();
 
@@ -492,22 +424,12 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.local_conversation.agent.commitIsolation = false;
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-            const commitIsolationItem = tree.root
-                .findAll((n) => n.props?.title === 'settingsVoice.local.conversation.commitIsolation.title')
-                .find((n) => typeof n.props?.onPress === 'function');
-        expect(commitIsolationItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.conversation.commitIsolation.title')).toBeTruthy();
 
         await act(async () => {
-            commitIsolationItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.conversation.commitIsolation.title');
         });
-        await act(async () => {});
 
         expect(setVoice).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -523,63 +445,42 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('can reset persistent local voice agent state and bumps the transcript epoch', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
         voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
         resetGlobalVoiceAgentPersistenceSpy.mockClear();
-        (Modal as any).confirm.mockResolvedValueOnce(true);
+        modalMockRef.current.spies.confirm.mockResolvedValueOnce(true);
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-            const resetItem = tree.root
-                .findAll((n) => n.props?.title === 'settingsVoice.local.conversation.resetVoiceAgent.title')
-                .find((n) => typeof n.props?.onPress === 'function');
-        expect(resetItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.conversation.resetVoiceAgent.title')).toBeTruthy();
 
         await act(async () => {
-            resetItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.conversation.resetVoiceAgent.title');
         });
-        await act(async () => {});
 
         expect(resetGlobalVoiceAgentPersistenceSpy).toHaveBeenCalledTimes(1);
         expect(setVoice).not.toHaveBeenCalled();
-        (Modal as any).confirm.mockClear();
     });
 
     it('clamps voice agent idle TTL to 6 hours', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
 
-        (Modal as any).prompt.mockResolvedValueOnce('999999');
+        modalMockRef.current.spies.prompt.mockResolvedValueOnce('999999');
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const idleTtlItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.mediatorIdleTtl')
-            .find((n) => typeof n.props?.onPress === 'function');
-        expect(idleTtlItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.mediatorIdleTtl')).toBeTruthy();
 
         await act(async () => {
-            idleTtlItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.mediatorIdleTtl');
         });
-        await act(async () => {});
 
         expect(setVoice).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -590,62 +491,39 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
                 }),
             }),
         );
-        (Modal as any).prompt.mockClear();
     });
 
     it('does not use confirm modals for local TTS format selection', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         voiceState.providerId = 'local_direct';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const formatItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.local.ttsFormat')
-            .find((n) => typeof n.props?.onPress === 'function');
-
-        expect(formatItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.local.ttsFormat')).toBeTruthy();
 
         await act(async () => {
-            formatItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.local.ttsFormat');
         });
-        await act(async () => {});
 
-        expect((Modal as any).confirm).not.toHaveBeenCalled();
+        expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
 
     it('does not use prompt modals for voice assistant language selection', async () => {
-        const { Modal } = await import('@/modal');
+        await import('@/modal');
 
         voiceState.providerId = 'off';
         voiceState.assistantLanguage = null;
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const languageItem = tree.root
-            .findAll((n) => n.props?.title === 'settingsVoice.preferredLanguage')
-            .find((n) => typeof n.props?.onPress === 'function');
-
-        expect(languageItem).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        expect(screen.findRowByTitle('settingsVoice.preferredLanguage')).toBeTruthy();
 
         await act(async () => {
-            languageItem!.props.onPress?.();
+            await screen.pressRowByTitle('settingsVoice.preferredLanguage');
         });
-        await act(async () => {});
 
-        expect((Modal as any).prompt).not.toHaveBeenCalled();
+        expect(modalMockRef.current.spies.prompt).not.toHaveBeenCalled();
     });
 
     it('wires ElevenLabs voice dropdown selection into settings (BYO)', async () => {
@@ -654,14 +532,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         decryptSecretValue.mockReturnValue('xi-test');
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         const voiceDropdown = dropdowns.find((d: any) => d.props?.search === true && d.props?.searchPlaceholder === 'settingsVoice.byo.voiceSearchPlaceholder');
         expect(voiceDropdown).toBeTruthy();
 
@@ -683,14 +555,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
 
         const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-
-        let tree!: ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(React.createElement(VoiceSettingsScreen));
-        });
-        await act(async () => {});
-
-        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         const boostDropdown = dropdowns.find((d: any) => {
             const items = d.props?.items;
             if (!Array.isArray(items)) return false;

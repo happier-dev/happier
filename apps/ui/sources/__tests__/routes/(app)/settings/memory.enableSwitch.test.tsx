@@ -1,28 +1,34 @@
 import * as React from 'react';
-import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const machineRpcSpy = vi.fn();
 const featureEnabledState: Record<string, boolean> = { 'memory.search': true };
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    Platform: {
-        OS: 'web',
-        select: (options: any) => (options && 'default' in options ? options.default : undefined),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            View: 'View',
+                            TextInput: 'TextInput',
+                        }
+    );
+});
+
+vi.mock('react-native-unistyles', async () => await createUnistylesMock());
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', () => createTextModuleMock());
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
@@ -53,21 +59,25 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => ([
-        {
-            id: 'm1',
-            seq: 0,
-            createdAt: 0,
-            updatedAt: 0,
-            active: true,
-            activeAt: 0,
-            metadata: { displayName: 'Machine 1' },
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        },
-    ]),
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createStorageModuleMock({
+    importOriginal,
+    overrides: {
+        // Boundary fixture: only the machine fields exercised by this screen matter here.
+        useAllMachines: (() => ([
+            {
+                id: 'm1',
+                seq: 0,
+                createdAt: 0,
+                updatedAt: 0,
+                active: true,
+                activeAt: 0,
+                metadata: { displayName: 'Machine 1' },
+                metadataVersion: 0,
+                daemonState: null,
+                daemonStateVersion: 0,
+            },
+        ])) as any,
+    },
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -110,12 +120,7 @@ describe('Memory settings (enable switch)', () => {
         const mod = await import('@/app/(app)/settings/memory');
         const Screen = mod.default;
 
-        await act(async () => {
-            renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
+        await renderScreen(React.createElement(Screen));
 
         expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
             method: 'daemon.memory.status',
@@ -131,12 +136,9 @@ describe('Memory settings (enable switch)', () => {
         const mod = await import('@/app/(app)/settings/memory');
         const Screen = mod.default;
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        const screen = await renderScreen(React.createElement(Screen));
 
-        const switches = tree.root.findAllByType('Switch' as any);
+        const switches = screen.root.findAllByType('Switch' as any);
         expect(switches).toHaveLength(0);
         expect(machineRpcSpy).not.toHaveBeenCalled();
     });
@@ -170,17 +172,9 @@ describe('Memory settings (enable switch)', () => {
         const mod = await import('@/app/(app)/settings/memory');
         const Screen = mod.default;
 
-        let tree!: ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
+        const screen = await renderScreen(React.createElement(Screen));
 
-        // Flush the initial fetchSettings effect.
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const switches = tree.root.findAllByType('Switch' as any);
+        const switches = screen.root.findAllByType('Switch' as any);
         const enabledSwitch = switches.find((node: any) => node?.props?.testID == null);
         expect(enabledSwitch).toBeTruthy();
         await act(async () => {

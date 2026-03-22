@@ -1,10 +1,15 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import {
+    flushHookEffects,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -77,49 +82,49 @@ let activeServerSnapshot: ActiveServerSnapshot = {
 };
 let activeServerSubscriber: ((snapshot: ActiveServerSnapshot) => void) | null = null;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    TextInput: 'TextInput',
-    Easing: {
-        bezier: () => 'bezier',
-        linear: 'linear',
-    },
-    Platform: {
-        OS: 'ios',
-        select: (v: any) => (v && typeof v === 'object' ? (v.ios ?? v.default) : v),
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                                View: 'View',
+                                TextInput: 'TextInput',
+                                Easing: {
+                                    bezier: () => 'bezier',
+                                    linear: 'linear',
+                                },
+                                Platform: {
+                                    OS: 'ios',
+                                    select: (value: any) => (value && typeof value === 'object' ? (value.ios ?? value.default) : value),
+                                },
+                            }
+    );
+});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#999',
-                textDestructive: '#f00',
-                success: '#34C759',
-                input: { placeholder: '#999' },
-                divider: '#e0e0e0',
-                surfaceHigh: '#f5f5f5',
-                status: { connecting: '#007AFF' },
-                accent: { blue: '#007AFF' },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (v: any) => v,
-    },
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ providerId: mockProviderId }),
-    useRouter: () => ({ push: routerPushSpy }),
-    Redirect: (props: any) => React.createElement('Redirect', props),
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+        router: {
+            push: (value) => routerPushSpy(value),
+            back: () => undefined,
+            replace: () => undefined,
+            setParams: vi.fn(),
+        },
+    });
+    return {
+        ...routerMock.module,
+        useLocalSearchParams: () => ({ providerId: mockProviderId }),
+        Redirect: (props: any) => React.createElement('Redirect', props),
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -176,34 +181,55 @@ vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettings: () => settingsState,
-    useAllMachines: () => machinesState,
-    useMachineListByServerId: () => machineListByServerIdState,
-    useMachineListStatusByServerId: () => machineListStatusByServerIdState,
-    useLocalSetting: (key: string) => {
-        if (key === 'bottomPaneHeightPx') return 320;
-        if (key === 'bottomPaneHeightBasisPx') return 900;
-        return undefined;
-    },
-    useLocalSettingMutable: (key: string) => {
-        if (key === 'bottomPaneHeightPx') return [320, vi.fn()] as const;
-        if (key === 'bottomPaneHeightBasisPx') return [900, vi.fn()] as const;
-        if (key === 'contextSelectionsV1') return [settingsState.contextSelectionsV1, (next: any) => { settingsState.contextSelectionsV1 = next; }] as const;
-        return [undefined, vi.fn()] as const;
-    },
-    useSettingMutable: (key: string) => {
-        if (key === 'contextSelectionsV1') return [settingsState.contextSelectionsV1, (next: any) => { settingsState.contextSelectionsV1 = next; }] as const;
-        return [undefined, vi.fn()] as const;
-    },
-    useSetting: (key: string) => {
-        if (key === 'serverSelectionGroups') return {};
-        if (key === 'serverSelectionActiveTargetKind') return 'server';
-        if (key === 'serverSelectionActiveTargetId') return 'server1';
-        return undefined;
-    },
-    useMachine: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            // Test boundary fixture: this route reads a small subset of the storage contract.
+            useSettings: (() => settingsState) as any,
+            useAllMachines: (() => machinesState) as any,
+            useMachineListByServerId: (() => machineListByServerIdState) as any,
+            useMachineListStatusByServerId: (() => machineListStatusByServerIdState) as any,
+            useLocalSetting: ((key: string) => {
+                if (key === 'bottomPaneHeightPx') return 320;
+                if (key === 'bottomPaneHeightBasisPx') return 900;
+                return undefined;
+            }) as any,
+            useLocalSettingMutable: ((key: string) => {
+                if (key === 'bottomPaneHeightPx') return [320, vi.fn()] as const;
+                if (key === 'bottomPaneHeightBasisPx') return [900, vi.fn()] as const;
+                if (key === 'contextSelectionsV1') {
+                    return [
+                        settingsState.contextSelectionsV1,
+                        (next: any) => {
+                            settingsState.contextSelectionsV1 = next;
+                        },
+                    ] as const;
+                }
+                return [undefined, vi.fn()] as const;
+            }) as any,
+            useSettingMutable: ((key: string) => {
+                if (key === 'contextSelectionsV1') {
+                    return [
+                        settingsState.contextSelectionsV1,
+                        (next: any) => {
+                            settingsState.contextSelectionsV1 = next;
+                        },
+                    ] as const;
+                }
+                return [undefined, vi.fn()] as const;
+            }) as any,
+            useSetting: (key: string) => {
+                if (key === 'serverSelectionGroups') return {};
+                if (key === 'serverSelectionActiveTargetKind') return 'server';
+                if (key === 'serverSelectionActiveTargetId') return 'server1';
+                return undefined;
+            },
+            useMachine: () => null,
+        },
+    });
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
@@ -290,9 +316,10 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
     }),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
     getPermissionModeLabelForAgentType: () => 'Ask',
@@ -334,22 +361,6 @@ vi.mock('@/components/ui/layout/BadgeGrid', () => ({
     BadgeGrid: (props: any) => React.createElement('BadgeGrid', props),
 }));
 
-vi.mock('@/components/settings/providers/authentication/ProviderAuthenticationCard', () => ({
-    ProviderAuthenticationCard: (props: any) => {
-        const state = props.state;
-        if (!state) return null;
-        const authStatus = state.authStatus;
-        if (!authStatus) return null;
-        return React.createElement('ItemGroup', { title: 'settingsProviders.authentication.title' },
-            authStatus.state === 'logged_in'
-                ? React.createElement('Item', { title: 'settingsProviders.authentication.accountTitle', subtitle: authStatus.accountLabel })
-                : state.canLaunchLogin
-                    ? React.createElement('Item', { title: 'settingsProviders.authentication.logInTitle', onPress: props.onLaunchLogin })
-                    : null,
-        );
-    },
-}));
-
 vi.mock('@/components/settings/providers/authentication/ProviderAuthenticationTerminalPane', () => ({
     ProviderAuthenticationTerminalPane: (props: any) => React.createElement('ProviderAuthenticationTerminalPane', props),
 }));
@@ -384,7 +395,16 @@ vi.mock('@/components/settings/providers/authentication/useProviderAuthenticatio
     },
 }));
 
+async function renderProviderSettingsScreen() {
+    const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
+    return renderScreen(React.createElement(Screen));
+}
+
 describe('ProviderSettingsScreen', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
     beforeEach(() => {
         mockProviderId = 'codex';
         shouldThrowOnAppPaneScope = false;
@@ -454,17 +474,8 @@ describe('ProviderSettingsScreen', () => {
     });
 
     it('surfaces provider CLI install via capability installer item', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const installer = tree!.root.findByType('ProviderCliInstallItem' as any);
+        const screen = await renderProviderSettingsScreen();
+        const installer = screen.findByType('ProviderCliInstallItem' as any);
         expect(installer.props.machineId).toBe('m1');
         expect(installer.props.serverId).toBe('server1');
         expect(installer.props.capabilityId).toBe('cli.codex');
@@ -474,17 +485,8 @@ describe('ProviderSettingsScreen', () => {
     });
 
     it('renders a machine-only context bar scoped to the active server machines', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const contextBar = tree!.root.findByType('ContextBar' as any);
+        const screen = await renderProviderSettingsScreen();
+        const contextBar = screen.findByType('ContextBar' as any);
         expect(contextBar.props.mode).toBe('machine_only');
         expect(contextBar.props.machine.selectedId).toBe('m1');
         expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m1', 'm2']);
@@ -503,17 +505,8 @@ describe('ProviderSettingsScreen', () => {
             ],
         };
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const contextBar = tree!.root.findByType('ContextBar' as any);
+        const screen = await renderProviderSettingsScreen();
+        const contextBar = screen.findByType('ContextBar' as any);
         expect(contextBar.props.machine.selectedId).toBe('m1');
         expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m1', 'm2']);
 
@@ -527,20 +520,12 @@ describe('ProviderSettingsScreen', () => {
     });
 
     it('uses the context bar machine selection for CLI detection and installability', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const contextBar = tree!.root.findByType('ContextBar' as any);
+        const screen = await renderProviderSettingsScreen();
+        const contextBar = screen.findByType('ContextBar' as any);
         await act(async () => {
             contextBar.props.machine.onSelect('m2');
         });
+        await flushHookEffects();
 
         expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m2', expect.objectContaining({
             serverId: 'server1',
@@ -556,31 +541,14 @@ describe('ProviderSettingsScreen', () => {
         cliDetectionState.available = { codex: true };
         cliDetectionState.resolutionSource = { codex: 'managed' };
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const installer = tree!.root.findByType('ProviderCliInstallItem' as any);
+        const screen = await renderProviderSettingsScreen();
+        const installer = screen.findByType('ProviderCliInstallItem' as any);
         expect(installer.props.installed).toBe(true);
         expect(installer.props.managedInstalled).toBe(true);
     });
 
     it('updates the selected machine when the active server changes', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
+        const screen = await renderProviderSettingsScreen();
 
         expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
             autoDetect: true,
@@ -601,8 +569,9 @@ describe('ProviderSettingsScreen', () => {
             };
             activeServerSubscriber?.(activeServerSnapshot);
         });
+        await flushHookEffects();
 
-        const contextBar = tree!.root.findByType('ContextBar' as any);
+        const contextBar = screen.findByType('ContextBar' as any);
         expect(contextBar.props.machine.selectedId).toBe('m3');
         expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m3']);
 
@@ -617,23 +586,11 @@ describe('ProviderSettingsScreen', () => {
             serverId: 'server2',
         }));
 
-        await act(async () => {
-            tree?.unmount();
-        });
     });
 
     it('includes a permissions section to set the default permission mode for this backend', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
+        const screen = await renderProviderSettingsScreen();
+        const items = screen.findAllByType('Item' as any);
         const permissionItem = items.find((item: any) => item?.props?.title === 'settingsSession.permissions.defaultPermissionModeTitle');
         expect(permissionItem).toBeTruthy();
     });
@@ -652,19 +609,9 @@ describe('ProviderSettingsScreen', () => {
         };
         cliDetectionState.timestamp = 123;
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const groups = tree!.root.findAllByType('ItemGroup' as any);
-        const authenticationGroup = groups.find((item: any) => item?.props?.title === 'settingsProviders.authentication.title');
-        expect(authenticationGroup).toBeTruthy();
+        const screen = await renderProviderSettingsScreen();
+        expect(screen.findByTestId('settings-provider-auth-status')).toBeTruthy();
+        expect(screen.findByTestId('settings-provider-auth-account')).toBeTruthy();
     });
 
     it('renders a login action when local auth is supported but logged out', async () => {
@@ -679,19 +626,8 @@ describe('ProviderSettingsScreen', () => {
         };
         cliDetectionState.timestamp = 123;
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const items = tree!.root.findAllByType('Item' as any);
-        const loginAction = items.find((item: any) => item?.props?.title === 'settingsProviders.authentication.logInTitle');
-        expect(loginAction).toBeTruthy();
+        const screen = await renderProviderSettingsScreen();
+        expect(screen.findByTestId('settings-provider-auth-login')).toBeTruthy();
     });
 
     it('uses the shared pane scope host for the provider auth terminal', async () => {
@@ -706,41 +642,32 @@ describe('ProviderSettingsScreen', () => {
         };
         cliDetectionState.timestamp = 123;
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const hostBefore = tree!.root.findByType('AppPaneScopeHost' as any);
+        const screen = await renderProviderSettingsScreen();
+        const hostBefore = screen.findByType('AppPaneScopeHost' as any);
         expect(hostBefore.props.bottomPane).toBeNull();
         expect(hostBefore.props.scopeId).toBe('settings:provider:codex');
 
-        const loginAction = tree!.root.findAllByType('Item' as any).find((item: any) => item?.props?.title === 'settingsProviders.authentication.logInTitle');
+        const loginAction = screen.findByTestId('settings-provider-auth-login');
         expect(loginAction).toBeTruthy();
 
         await act(async () => {
             loginAction!.props.onPress();
         });
+        await flushHookEffects();
 
         expect(paneApi.openBottom).toHaveBeenCalledWith({ tabId: 'provider-auth-terminal' });
 
-        paneApi.scopeState = {
-            bottom: {
-                isOpen: true,
-                activeTabId: 'provider-auth-terminal',
-            },
-        };
-
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            paneApi.scopeState = {
+                bottom: {
+                    isOpen: true,
+                    activeTabId: 'provider-auth-terminal',
+                },
+            };
         });
+        const rerenderedScreen = await renderProviderSettingsScreen();
 
-        const hostAfter = tree!.root.findByType('AppPaneScopeHost' as any);
+        const hostAfter = rerenderedScreen.findByType('AppPaneScopeHost' as any);
         expect(hostAfter.props.bottomPane).toBeTruthy();
         expect(hostAfter.props.bottomPane.props.providerId).toBe('codex');
     });
@@ -763,22 +690,14 @@ describe('ProviderSettingsScreen', () => {
             },
         };
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const host = tree!.root.findByType('AppPaneScopeHost' as any);
+        const screen = await renderProviderSettingsScreen();
+        const host = screen.findByType('AppPaneScopeHost' as any);
         expect(host.props.bottomPane).toBeTruthy();
 
         await act(async () => {
             host.props.bottomPane.props.onRequestClose();
         });
+        await flushHookEffects();
 
         expect(paneApi.closeBottom).toHaveBeenCalledTimes(1);
         expect(cliDetectionState.refresh).toHaveBeenCalledWith({
@@ -805,22 +724,14 @@ describe('ProviderSettingsScreen', () => {
             },
         };
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const host = tree!.root.findByType('AppPaneScopeHost' as any);
+        const screen = await renderProviderSettingsScreen();
+        const host = screen.findByType('AppPaneScopeHost' as any);
         expect(host.props.bottomPane).toBeTruthy();
 
         await act(async () => {
             host.props.bottomPane.props.onTerminalExit();
         });
+        await flushHookEffects();
 
         expect(paneApi.closeBottom).toHaveBeenCalledTimes(1);
         expect(cliDetectionState.refresh).toHaveBeenCalledWith({
@@ -830,17 +741,8 @@ describe('ProviderSettingsScreen', () => {
     });
 
     it('renders and updates the backend CLI source preference when a managed install exists', async () => {
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const sourceMenu = tree!.root
+        const screen = await renderProviderSettingsScreen();
+        const sourceMenu = screen.root
             .findAllByType('DropdownMenu' as any)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsProviders.cliSourcePreference.title');
         expect(sourceMenu).toBeTruthy();
@@ -849,6 +751,7 @@ describe('ProviderSettingsScreen', () => {
         await act(async () => {
             sourceMenu!.props.onSelect('managed-first');
         });
+        await flushHookEffects();
 
         expect(applySettingsMock).toHaveBeenCalledWith({
             backendCliSourcePreferenceById: {
@@ -860,17 +763,8 @@ describe('ProviderSettingsScreen', () => {
     it('reflects configured runtime-kind capability overrides in the badges', async () => {
         mockProviderId = 'codex';
         (settingsState as any).codexBackendMode = 'mcp';
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const badgeGrid = tree!.root.findByType('BadgeGrid' as any);
+        const screen = await renderProviderSettingsScreen();
+        const badgeGrid = screen.findByType('BadgeGrid' as any);
         const localControlItem = badgeGrid.props.items.find((item: any) => item.id === 'localControl');
         expect(localControlItem).toMatchObject({
             status: 'negative',
@@ -882,17 +776,8 @@ describe('ProviderSettingsScreen', () => {
 
     it('redirects the custom ACP provider route back to the providers index', async () => {
         mockProviderId = 'customAcp';
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const redirect = tree!.root.findByType('Redirect' as any);
+        const screen = await renderProviderSettingsScreen();
+        const redirect = screen.findByType('Redirect' as any);
         expect(redirect.props.href).toBe('/(app)/settings/providers');
     });
 
@@ -927,23 +812,15 @@ describe('ProviderSettingsScreen', () => {
             buildOutgoingMessageMetaExtras: () => ({}),
         });
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        let textInputs = tree!.root.findAllByType('TextInput' as any);
+        const screen = await renderProviderSettingsScreen();
+        let textInputs = screen.findAllByType('TextInput' as any);
         expect(textInputs).toHaveLength(1);
         expect(textInputs[0]?.props.value).toBe('http://127.0.0.1:4096/');
 
         await act(async () => {
             textInputs[0]?.props.onChangeText('http://127.0.0.1:5000/');
         });
+        await flushHookEffects();
 
         expect(applySettingsMock).toHaveBeenCalledWith({
             opencodeServerBaseUrlByServerIdV1: {
@@ -960,8 +837,9 @@ describe('ProviderSettingsScreen', () => {
             };
             activeServerSubscriber?.(activeServerSnapshot);
         });
+        await flushHookEffects();
 
-        textInputs = tree!.root.findAllByType('TextInput' as any);
+        textInputs = screen.findAllByType('TextInput' as any);
         expect(textInputs[0]?.props.value).toBe('http://127.0.0.1:4097/');
     });
 
@@ -989,17 +867,8 @@ describe('ProviderSettingsScreen', () => {
             buildOutgoingMessageMetaExtras: () => ({}),
         });
 
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const textInputs = tree!.root.findAllByType('TextInput' as any);
+        const screen = await renderProviderSettingsScreen();
+        const textInputs = screen.findAllByType('TextInput' as any);
         expect(textInputs).toHaveLength(1);
         expect(textInputs[0]?.props.placeholder).toBe('common.default');
     });
@@ -1007,17 +876,8 @@ describe('ProviderSettingsScreen', () => {
     it('renders the not found screen without requiring pane context', async () => {
         mockProviderId = 'unknown';
         shouldThrowOnAppPaneScope = true;
-        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const groups = tree!.root.findAllByType('ItemGroup' as any);
+        const screen = await renderProviderSettingsScreen();
+        const groups = screen.findAllByType('ItemGroup' as any);
         expect(groups.length).toBeGreaterThan(0);
     });
 });

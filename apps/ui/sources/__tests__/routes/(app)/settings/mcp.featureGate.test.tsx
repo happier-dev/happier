@@ -1,6 +1,8 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,15 +16,15 @@ vi.mock('@/components/settings/mcpServers/McpServersSettingsScreen', () => ({
     McpServersSettingsScreen: () => React.createElement('McpServersSettingsScreen'),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 
-vi.mock('expo-router', () => ({
-    Stack: {
-        Screen: (props: any) => React.createElement('StackScreen', props),
-    },
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 
 describe('MCP settings route (feature gate)', () => {
     beforeEach(() => {
@@ -37,9 +39,7 @@ describe('MCP settings route (feature gate)', () => {
         const McpRoute = mod.default;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(McpRoute));
-        });
+        tree = (await renderScreen(React.createElement(McpRoute))).tree;
 
         expect(tree.toJSON()).toBeNull();
         expect(useFeatureEnabledMock).toHaveBeenCalled();
@@ -52,9 +52,7 @@ describe('MCP settings route (feature gate)', () => {
         const McpRoute = mod.default;
 
         let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(McpRoute));
-        });
+        tree = (await renderScreen(React.createElement(McpRoute))).tree;
 
         expect(tree.toJSON()).not.toBeNull();
         expect(useFeatureEnabledMock).toHaveBeenCalled();
