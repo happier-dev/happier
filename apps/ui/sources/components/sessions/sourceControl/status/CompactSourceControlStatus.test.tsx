@@ -1,5 +1,4 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -8,11 +7,11 @@ import { renderScreen } from '@/dev/testkit';
 
 let snapshotMock: any = null;
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSessionProjectScmSnapshot: () => snapshotMock,
-});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useSessionProjectScmSnapshot: () => snapshotMock,
+    });
 });
 
 vi.mock('react-native', async () => {
@@ -45,15 +44,15 @@ describe('CompactSourceControlStatus', () => {
         snapshotMock = null;
     });
 
-      it('renders compact file count when there are non-line changes', async () => {
-          snapshotMock = {
-              repo: { isRepo: true, rootPath: '/repo' },
-              branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
-              entries: [{}, {}, {}],
-              totals: {
-                  includedFiles: 0,
-                  pendingFiles: 0,
-                  untrackedFiles: 3,
+    it('renders compact file count when there are non-line changes', async () => {
+        snapshotMock = {
+            repo: { isRepo: true, rootPath: '/repo' },
+            branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+            entries: [{}, {}, {}],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 3,
                 includedAdded: 0,
                 includedRemoved: 0,
                 pendingAdded: 0,
@@ -61,9 +60,8 @@ describe('CompactSourceControlStatus', () => {
             },
         };
         const { CompactSourceControlStatus } = await import('./CompactSourceControlStatus');
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<CompactSourceControlStatus sessionId="session-1" />)).tree;
-        const labels = tree!.root.findAllByType('Text' as any).map((node) => String(node.props.children));
+        const screen = await renderScreen(<CompactSourceControlStatus sessionId="session-1" />);
+        const labels = screen.getTextContent();
         expect(labels).toContain('3');
     });
 });

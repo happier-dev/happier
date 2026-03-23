@@ -1,7 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstance, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,13 +51,10 @@ describe('ScmCommitSelectionSummaryRow', () => {
       },
     };
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<ScmCommitSelectionSummaryRow theme={theme} count={3} onClear={onClear} density="compact" />)).tree;
-    const pressable = tree.root.findByType('Pressable' as any);
-
-    await act(async () => {
-      pressable.props.onPress();
-    });
+    const screen = await renderScreen(
+      <ScmCommitSelectionSummaryRow theme={theme} count={3} onClear={onClear} density="compact" />,
+    );
+    pressTestInstance(screen.findByType('Pressable' as any), 'files.clearSelection');
 
     expect(onClear).toHaveBeenCalled();
   });

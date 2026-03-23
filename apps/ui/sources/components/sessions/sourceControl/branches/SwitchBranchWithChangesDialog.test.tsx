@@ -1,51 +1,19 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installSourceControlBranchMenuCommonModuleMocks,
+    resetSourceControlBranchMenuCommonModuleMockState,
+    sourceControlBranchMenuModuleState,
+} from './sourceControlBranchMenuTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const modalShowMock = vi.hoisted(() => vi.fn());
+installSourceControlBranchMenuCommonModuleMocks();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Pressable: 'Pressable',
-                    Platform: {
-                        OS: 'web',
-                        select: (value: any) => value?.default ?? null,
-                    },
-                }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
-}));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            show: modalShowMock,
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, vars?: any) => (vars ? `${key}:${JSON.stringify(vars)}` : key) });
+beforeEach(() => {
+    resetSourceControlBranchMenuCommonModuleMockState();
 });
 
 describe('SwitchBranchWithChangesDialog', () => {
@@ -101,11 +69,15 @@ describe('SwitchBranchWithChangesDialog', () => {
         const { showSwitchBranchWithChangesDialog } = await import('./SwitchBranchWithChangesDialog');
 
         // Capture the modal component so we can render it and trigger presses.
-        let modalComponent: any = null;
-        let modalProps: any = null;
-        modalShowMock.mockImplementation((config: any) => {
-            modalComponent = config.component;
-            modalProps = config.props;
+        let modalComponent: React.ComponentType<Record<string, unknown>> | null = null;
+        let modalProps: Record<string, unknown> | null = null;
+        sourceControlBranchMenuModuleState.modalShowSpy.mockImplementation((config) => {
+            const modalConfig = config as {
+                component: React.ComponentType<Record<string, unknown>>;
+                props: Record<string, unknown>;
+            };
+            modalComponent = modalConfig.component;
+            modalProps = modalConfig.props;
             return 'modal-id';
         });
 
@@ -114,10 +86,22 @@ describe('SwitchBranchWithChangesDialog', () => {
             targetBranch: 'feature/test',
         });
 
-        expect(modalShowMock).toHaveBeenCalledTimes(1);
+        expect(sourceControlBranchMenuModuleState.modalShowSpy).toHaveBeenCalledTimes(1);
         expect(modalComponent).not.toBeNull();
 
-        const screen = await renderScreen(React.createElement(modalComponent, { ...modalProps, onClose: () => {} }));
+        if (!modalComponent || !modalProps) {
+            throw new Error('Expected SwitchBranchWithChangesDialog modal component and props to be captured');
+        }
+
+        const CapturedModal: React.ComponentType<Record<string, unknown>> = modalComponent;
+        const capturedProps: Record<string, unknown> = modalProps;
+
+        const screenProps: Record<string, unknown> = {
+            ...capturedProps,
+            onClose: () => {},
+        };
+
+        const screen = await renderScreen(React.createElement(CapturedModal, screenProps));
 
         await screen.pressByTestIdAsync('switch-branch-bring-changes');
 

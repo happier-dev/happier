@@ -1,7 +1,6 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -51,25 +50,21 @@ describe('ScmCommitSelectionToggleButton', () => {
 
     const { ScmCommitSelectionToggleButton } = await import('./ScmCommitSelectionToggleButton');
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<ScmCommitSelectionToggleButton
-	          sessionId="s1"
-	          sessionPath="/tmp/repo"
-	          snapshot={null}
-	          scmWriteEnabled={true}
-	          commitStrategy={'atomic' as any}
-	          file={{ fullPath: 'src/api.ts' } as any}
-	          selectedForCommit={false}
-	          surface="files"
-	          onAfterToggle={afterSpy}
-	        />)).tree;
+    const screen = await renderScreen(
+        <ScmCommitSelectionToggleButton
+            sessionId="s1"
+            sessionPath="/tmp/repo"
+            snapshot={null}
+            scmWriteEnabled={true}
+            commitStrategy={'atomic' as any}
+            file={{ fullPath: 'src/api.ts' } as any}
+            selectedForCommit={false}
+            surface="files"
+            onAfterToggle={afterSpy}
+        />,
+    );
 
-    const button = tree.root.findByType('Pressable' as any);
-    await act(async () => {
-      button.props.onPress({ stopPropagation: vi.fn() });
-    });
-
-    await act(async () => {});
+    await pressTestInstanceAsync(screen.findByType('Pressable' as any), 'commit selection toggle');
 
     expect(applySpy).toHaveBeenCalledWith(
       expect.objectContaining({

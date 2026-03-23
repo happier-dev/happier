@@ -60,11 +60,14 @@ describe('ScmChangesSelectionHeaderRow', () => {
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Selected 2')).toBeTruthy();
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'Total 5')).toBeTruthy();
 
-        const pressables = screen.findAllByType('Pressable' as any);
-        expect(pressables).toHaveLength(2);
+        const selectAllButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'All');
+        const selectNoneButton = findTestInstanceByTypeContainingText(screen, 'Pressable', 'Clear');
 
-        pressTestInstance(pressables[0], 'files.selectAll');
-        pressTestInstance(pressables[1], 'files.selectNone');
+        expect(selectAllButton).toBeTruthy();
+        expect(selectNoneButton).toBeTruthy();
+
+        pressTestInstance(selectAllButton!, 'files.selectAll');
+        pressTestInstance(selectNoneButton!, 'files.selectNone');
 
         expect(onSelectAll).toHaveBeenCalledTimes(1);
         expect(onSelectNone).toHaveBeenCalledTimes(1);

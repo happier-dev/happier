@@ -2,23 +2,23 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let snapshotMock: any = null;
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    storage: {
-        getState: () => ({
-            settings: {
-                preferredLanguage: 'en',
-            },
-        }),
-    },
-    useSessionProjectScmSnapshot: () => snapshotMock,
-});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    return createPartialStorageModuleMock(importOriginal, {
+        storage: {
+            getState: () => ({
+                settings: {
+                    preferredLanguage: 'en',
+                },
+            }),
+        },
+        useSessionProjectScmSnapshot: () => snapshotMock,
+    });
 });
 
 vi.mock('react-native', async () => {
@@ -28,16 +28,7 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                button: { secondary: { tint: '#999' } },
-                gitAddedText: '#0f0',
-                gitRemovedText: '#f00',
-                shadow: { color: '#000', opacity: 0.1 },
-            },
-        },
-    });
+    return createUnistylesMock();
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -50,12 +41,14 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string, values?: Record<string, unknown>) => {
-        if (key === 'files.sourceControlStatus.changedFilesLabel') {
-            return `${String(values?.count ?? '')} files`;
-        }
-        return key;
-    } });
+    return createTextModuleMock({
+        translate: (key: string, values?: Record<string, unknown>) => {
+            if (key === 'files.sourceControlStatus.changedFilesLabel') {
+                return `${String(values?.count ?? '')} files`;
+            }
+            return key;
+        },
+    });
 });
 
 describe('SourceControlStatusBadge', () => {
@@ -91,15 +84,15 @@ describe('SourceControlStatusBadge', () => {
         expect(labels).toContain('-12');
     });
 
-      it('shows changed file count when there are changes without line deltas', async () => {
-          snapshotMock = {
-              repo: { isRepo: true, rootPath: '/repo' },
-              branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
-              entries: [{}, {}],
-              totals: {
-                  includedFiles: 0,
-                  pendingFiles: 0,
-                  untrackedFiles: 2,
+    it('shows changed file count when there are changes without line deltas', async () => {
+        snapshotMock = {
+            repo: { isRepo: true, rootPath: '/repo' },
+            branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+            entries: [{}, {}],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 2,
                 includedAdded: 0,
                 includedRemoved: 0,
                 pendingAdded: 0,
