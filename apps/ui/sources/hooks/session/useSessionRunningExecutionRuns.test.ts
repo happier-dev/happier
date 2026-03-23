@@ -1,6 +1,7 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 const sessionExecutionRunListSpy = vi.fn();
 
@@ -12,44 +13,6 @@ import { resolveRunningExecutionRunsFromListResult, useSessionRunningExecutionRu
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-async function flushAsync(): Promise<void> {
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(0);
-}
-
-async function renderHarness(params: Readonly<{ sessionId: string; enabled: boolean }>): Promise<{
-    getRuns: () => readonly any[];
-    rerender: (next: Readonly<{ sessionId: string; enabled: boolean }>) => Promise<void>;
-    unmount: () => void;
-}> {
-    let currentRuns: readonly any[] = [];
-
-    function Harness(props: Readonly<{ sessionId: string; enabled: boolean }>) {
-        currentRuns = useSessionRunningExecutionRuns({ sessionId: props.sessionId, enabled: props.enabled });
-        return null;
-    }
-
-    let root: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-        root = renderer.create(React.createElement(Harness, params));
-        await flushAsync();
-    });
-
-    return {
-        getRuns: () => currentRuns,
-        rerender: async (next) => {
-            await act(async () => {
-                root!.update(React.createElement(Harness, next));
-                await flushAsync();
-            });
-        },
-        unmount: () => {
-            if (!root) return;
-            act(() => root!.unmount());
-        },
-    };
-}
 
 describe('resolveRunningExecutionRunsFromListResult', () => {
     it('returns only execution runs with status=running', () => {
@@ -80,6 +43,7 @@ describe('useSessionRunningExecutionRuns', () => {
     });
 
     afterEach(() => {
+        standardCleanup();
         vi.useRealTimers();
     });
 
@@ -89,60 +53,63 @@ describe('useSessionRunningExecutionRuns', () => {
             .mockResolvedValueOnce({ runs: [] })
             .mockResolvedValueOnce({ runs: [] });
 
-        const harness = await renderHarness({ sessionId: 's1', enabled: true });
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
 
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
-        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
+        expect(hook.getCurrent().map((r: any) => r.runId)).toEqual(['run_1']);
 
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(5_000);
-            await flushAsync();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 5_000 });
 
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(2);
-        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
+        expect(hook.getCurrent().map((r: any) => r.runId)).toEqual(['run_1']);
 
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(1_000);
-            await flushAsync();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 1_000 });
 
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(3);
-        expect(harness.getRuns()).toEqual([]);
+        expect(hook.getCurrent()).toEqual([]);
 
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(60_000);
-            await flushAsync();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 60_000 });
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(3);
-        harness.unmount();
     });
 
     it('does not poll repeatedly when there are no running runs', async () => {
         sessionExecutionRunListSpy.mockResolvedValueOnce({ runs: [] });
 
-        const harness = await renderHarness({ sessionId: 's1', enabled: true });
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
-        expect(harness.getRuns()).toEqual([]);
+        expect(hook.getCurrent()).toEqual([]);
 
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(60_000);
-            await flushAsync();
-        });
+        await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 60_000 });
 
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
-        harness.unmount();
     });
 
     it('clears running runs when disabled', async () => {
         sessionExecutionRunListSpy.mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] });
 
-        const harness = await renderHarness({ sessionId: 's1', enabled: true });
-        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
+        expect(hook.getCurrent().map((r: any) => r.runId)).toEqual(['run_1']);
 
-        await harness.rerender({ sessionId: 's1', enabled: false });
-        expect(harness.getRuns()).toEqual([]);
-        harness.unmount();
+        await hook.rerender({ sessionId: 's1', enabled: false });
+        expect(hook.getCurrent()).toEqual([]);
     });
 
     it('rechecks for running runs when execution-run activity is observed', async () => {
@@ -150,18 +117,22 @@ describe('useSessionRunningExecutionRuns', () => {
             .mockResolvedValueOnce({ runs: [] })
             .mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] });
 
-        const harness = await renderHarness({ sessionId: 's1', enabled: true });
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
-        expect(harness.getRuns()).toEqual([]);
+        expect(hook.getCurrent()).toEqual([]);
 
-        await act(async () => {
-            notifyExecutionRunActivity('s1');
-            await flushAsync();
-        });
+        notifyExecutionRunActivity('s1');
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(2);
-        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
-        harness.unmount();
+        expect(hook.getCurrent().map((r: any) => r.runId)).toEqual(['run_1']);
+        hook.unmount();
     });
 
     it('rechecks after activity arrives during an in-flight poll', async () => {
@@ -169,29 +140,30 @@ describe('useSessionRunningExecutionRuns', () => {
         sessionExecutionRunListSpy
             .mockImplementationOnce(
                 () =>
-                    new Promise((resolve) => {
+                    new Promise<{ runs: readonly any[] }>((resolve) => {
                         resolveFirstPoll = resolve;
                     }),
             )
             .mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] });
 
-        const harness = await renderHarness({ sessionId: 's1', enabled: true });
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
 
-        await act(async () => {
-            notifyExecutionRunActivity('s1');
-            await flushAsync();
-        });
+        notifyExecutionRunActivity('s1');
+        await flushHookEffects({ cycles: 1, turns: 1 });
 
-        await act(async () => {
-            resolveFirstPoll?.({ runs: [] });
-            await flushAsync();
-            await flushAsync();
-        });
+        expect(resolveFirstPoll).not.toBeNull();
+        resolveFirstPoll!({ runs: [] });
+        await flushHookEffects({ cycles: 1, turns: 2 });
 
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(2);
-        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
-        harness.unmount();
+        expect(hook.getCurrent().map((r: any) => r.runId)).toEqual(['run_1']);
     });
 
     it('clears running runs state immediately when sessionId changes', async () => {
@@ -204,16 +176,19 @@ describe('useSessionRunningExecutionRuns', () => {
                     }),
             );
 
-        const harness = await renderHarness({ sessionId: 's1', enabled: true });
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) =>
+                useSessionRunningExecutionRuns({ sessionId, enabled }),
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
-        expect(harness.getRuns().map((r: any) => r.runId)).toEqual(['run_1']);
+        expect(hook.getCurrent().map((r: any) => r.runId)).toEqual(['run_1']);
 
-        await act(async () => {
-            await harness.rerender({ sessionId: 's2', enabled: true });
-        });
+        await hook.rerender({ sessionId: 's2', enabled: true });
 
         // The old runs should be cleared immediately (synchronously) before the new poll completes
-        expect(harness.getRuns()).toEqual([]);
-        harness.unmount();
+        expect(hook.getCurrent()).toEqual([]);
     });
 });

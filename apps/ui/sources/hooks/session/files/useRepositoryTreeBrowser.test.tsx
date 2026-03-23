@@ -67,9 +67,10 @@ describe('useRepositoryTreeBrowser', () => {
                     { name: 'README.md', type: 'file' },
                 ],
             });
-            await Promise.resolve();
         });
-        expect(api.nodes.map((n: any) => n.path)).toEqual(['src', 'README.md']);
+        await vi.waitFor(() => {
+            expect(api.nodes.map((n: any) => n.path)).toEqual(['src', 'README.md']);
+        });
     });
 
     it('persists expanded directories via provided callbacks and collapses all', async () => {
@@ -116,14 +117,9 @@ describe('useRepositoryTreeBrowser', () => {
             await api.toggleDirectory('src');
         });
 
-        // Child loading happens in an effect; flush until the child node appears.
-        // Avoid relying on timers here because other tests can leak fake timers.
-        for (let i = 0; i < 10; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (api.nodes.some((n: any) => n.path === 'src/a.ts')) break;
-        }
+        await vi.waitFor(() => {
+            expect(api.nodes.some((n: any) => n.path === 'src/a.ts')).toBe(true);
+        });
 
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: 'src' });
         expect(api.nodes.map((n: any) => n.path)).toEqual(['src', 'src/a.ts', 'README.md']);
@@ -210,20 +206,16 @@ describe('useRepositoryTreeBrowser', () => {
         resolveStaleSession({ ok: true, entries: [{ name: 'a.ts', type: 'file' }] });
         resolveSession1Src = null;
 
-        // Flush microtasks.
-        for (let i = 0; i < 5; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-        }
-
         // Now expand src in session-2. This must fetch session-2 entries, not reuse stale session-1 results.
         await act(async () => {
             await apiRef.current.toggleDirectory('src');
         });
 
+        await vi.waitFor(() => {
+            expect(apiRef.current.nodes.some((n: any) => n.path === 'src/b.ts')).toBe(true);
+        });
+
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-2', directoryPath: 'src' });
-        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/b.ts')).toBe(true);
         expect(apiRef.current.nodes.some((n: any) => n.path === 'src/a.ts')).toBe(false);
     });
 
@@ -271,12 +263,9 @@ describe('useRepositoryTreeBrowser', () => {
             await apiRef.current.toggleDirectory('src');
         });
 
-        for (let i = 0; i < 10; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')) break;
-        }
+        await vi.waitFor(() => {
+            expect(apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')).toBe(true);
+        });
 
         expect(apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')).toBe(true);
 
@@ -287,12 +276,9 @@ describe('useRepositoryTreeBrowser', () => {
             setReloadToken!(1);
         });
 
-        for (let i = 0; i < 10; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (apiRef.current.nodes.some((n: any) => n.path === 'src/new.ts')) break;
-        }
+        await vi.waitFor(() => {
+            expect(apiRef.current.nodes.some((n: any) => n.path === 'src/new.ts')).toBe(true);
+        });
 
         expect(listRepositoryDirectoryEntriesSpy.mock.calls).toContainEqual([{ sessionId: 'session-1', directoryPath: '' }]);
         expect(listRepositoryDirectoryEntriesSpy.mock.calls).toContainEqual([{ sessionId: 'session-1', directoryPath: 'src' }]);

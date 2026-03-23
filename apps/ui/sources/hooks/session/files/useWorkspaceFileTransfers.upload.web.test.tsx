@@ -2,17 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
 
 const uploadDaemonSessionFileFromReaderMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'web',
-        },
-    });
-});
+installSessionFilesHookCommonModuleMocks();
 
 vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles', () => ({
     uploadDaemonSessionFileFromReader: (...args: unknown[]) => uploadDaemonSessionFileFromReaderMock(...args),

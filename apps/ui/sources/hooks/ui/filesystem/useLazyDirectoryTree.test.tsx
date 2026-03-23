@@ -7,6 +7,12 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useLazyDirectoryTree', () => {
+    async function waitForNodePaths(api: { nodes: Array<{ path: string }> }, expectedPaths: readonly string[]) {
+        await vi.waitFor(() => {
+            expect(api.nodes.map((node) => node.path)).toEqual(expectedPaths);
+        });
+    }
+
     it('hydrates cached root entries and loads children lazily on expand', async () => {
         const getCachedEntries = vi.fn((directoryPath: string) => {
             if (directoryPath === '') {
@@ -54,16 +60,10 @@ describe('useLazyDirectoryTree', () => {
             await api.toggleDirectory('src');
         });
 
-        for (let i = 0; i < 5; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (api.nodes.some((node: any) => node.path === 'src/index.ts')) break;
-        }
+        await waitForNodePaths(api, ['src', 'src/index.ts']);
 
         expect(loadDirectoryEntries).toHaveBeenCalledWith('');
         expect(loadDirectoryEntries).toHaveBeenCalledWith('src');
-        expect(api.nodes.map((node: any) => node.path)).toEqual(['src', 'src/index.ts']);
     });
 
     it('preserves absolute root directory paths so machine root rows can expand', async () => {
@@ -114,15 +114,9 @@ describe('useLazyDirectoryTree', () => {
             await api.toggleDirectory('/');
         });
 
-        for (let i = 0; i < 5; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (api.nodes.some((node: any) => node.path === '/Users')) break;
-        }
+        await waitForNodePaths(api, ['/', '/Users']);
 
         expect(loadDirectoryEntries).toHaveBeenCalledWith('/');
-        expect(api.nodes.map((node: any) => node.path)).toEqual(['/', '/Users']);
     });
 
     it('renders nested absolute child directories after expanding them', async () => {
@@ -174,26 +168,15 @@ describe('useLazyDirectoryTree', () => {
             await api.toggleDirectory('/');
         });
 
-        for (let i = 0; i < 5; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (api.nodes.some((node: any) => node.path === '/Users')) break;
-        }
+        await waitForNodePaths(api, ['/', '/Users']);
 
         await act(async () => {
             await api.toggleDirectory('/Users');
         });
 
-        for (let i = 0; i < 5; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (api.nodes.some((node: any) => node.path === '/Users/leeroy')) break;
-        }
+        await waitForNodePaths(api, ['/', '/Users', '/Users/leeroy']);
 
         expect(loadDirectoryEntries).toHaveBeenCalledWith('/Users');
-        expect(api.nodes.map((node: any) => node.path)).toEqual(['/', '/Users', '/Users/leeroy']);
     });
 
     it('adds an informational node when a directory result is truncated', async () => {
@@ -240,17 +223,13 @@ describe('useLazyDirectoryTree', () => {
             await api.toggleDirectory('/');
         });
 
-        for (let i = 0; i < 5; i += 1) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (api.nodes.some((node: any) => node.type === 'info')) break;
-        }
+        await vi.waitFor(() => {
+            expect(api.nodes.map((node: any) => ({ type: node.type, path: node.path, count: node.entryCount }))).toEqual([
+                { type: 'directory', path: '/', count: undefined },
+                { type: 'directory', path: '/Users', count: undefined },
+                { type: 'info', path: '/#truncated', count: 1 },
+            ]);
+        });
 
-        expect(api.nodes.map((node: any) => ({ type: node.type, path: node.path, count: node.entryCount }))).toEqual([
-            { type: 'directory', path: '/', count: undefined },
-            { type: 'directory', path: '/Users', count: undefined },
-            { type: 'info', path: '/#truncated', count: 1 },
-        ]);
     });
 });

@@ -33,17 +33,17 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-            Platform: {
-                get OS() {
-                    return screenState.platformOS;
-                },
-                select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
-            },
-            Dimensions: {
-                get: () => ({ width: screenState.windowDimensions.width, height: screenState.windowDimensions.height, scale: 2, fontScale: 1 }),
-            },
-            useWindowDimensions: () => ({ width: screenState.windowDimensions.width, height: screenState.windowDimensions.height, scale: 2, fontScale: 1 }),
-        }
+                    Platform: {
+                        get OS() {
+                            return screenState.platformOS;
+                        },
+                        select: (options: any) => options?.[screenState.platformOS] ?? options?.default ?? options?.ios ?? options?.android,
+                    },
+                    Dimensions: {
+                        get: () => ({ width: screenState.windowDimensions.width, height: screenState.windowDimensions.height, scale: 2, fontScale: 1 }),
+                    },
+                    useWindowDimensions: () => ({ width: screenState.windowDimensions.width, height: screenState.windowDimensions.height, scale: 2, fontScale: 1 }),
+                }
     );
 });
 

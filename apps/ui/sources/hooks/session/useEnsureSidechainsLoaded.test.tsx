@@ -34,15 +34,18 @@ function Harness(props: Parameters<typeof useEnsureSidechainsLoaded>[0]) {
 
 describe('useEnsureSidechainsLoaded', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     ensureSidechainMessagesLoadedSpy.mockReset();
     delete process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_RETRY_MS;
     delete process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  async function waitForRetryCycle() {
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 30);
+      });
+    });
+  }
 
   it('does not re-request the same sidechain when callers pass a new array instance', async () => {
     let tree: renderer.ReactTestRenderer | null = null;
@@ -61,6 +64,7 @@ describe('useEnsureSidechainsLoaded', () => {
   });
 
   it('retries the same sidechain automatically after a transient not_ready result', async () => {
+    process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_RETRY_MS = '10';
     ensureSidechainMessagesLoadedSpy
       .mockResolvedValueOnce('not_ready')
       .mockResolvedValueOnce('loaded');
@@ -69,10 +73,7 @@ describe('useEnsureSidechainsLoaded', () => {
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
-      await vi.runOnlyPendingTimersAsync();
-      await Promise.resolve();
-    });
+    await waitForRetryCycle();
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(2);
   });
@@ -86,15 +87,9 @@ describe('useEnsureSidechainsLoaded', () => {
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
-      await vi.runOnlyPendingTimersAsync();
-      await Promise.resolve();
-    });
+    await waitForRetryCycle();
 
-    await act(async () => {
-      await vi.runOnlyPendingTimersAsync();
-      await Promise.resolve();
-    });
+    await waitForRetryCycle();
 
     expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(3);
   });

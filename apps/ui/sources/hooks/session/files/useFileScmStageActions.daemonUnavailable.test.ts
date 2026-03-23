@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,20 +16,18 @@ const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: 
   return { started: true, message: '' };
 }));
 
-vi.mock('@/modal', async () => {
+installSessionFilesHookCommonModuleMocks({
+  modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
-        spies: {
-            alert: modalAlert,
-            confirm: vi.fn(async () => true),
-            prompt: vi.fn(async () => null),
-        },
+      spies: {
+        alert: modalAlert,
+        confirm: vi.fn(async () => true),
+        prompt: vi.fn(async () => null),
+      },
     }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+  },
+  storage: async (importOriginal) => importOriginal(),
 });
 
 vi.mock('@/sync/ops', () => ({
