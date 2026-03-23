@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,18 +20,10 @@ let mockedSettings: Record<string, any> = {
     bottomPaneHeightBasisPx: 900,
 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    Platform: {
-                        OS: 'web',
-                        select: (value: Record<string, unknown>) => value.web ?? value.default,
-                    },
-                    View: 'View',
-                    useWindowDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
-                }
-    );
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
+    getLocalSetting: (key: string) =>
+        Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null,
 });
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
@@ -43,16 +36,6 @@ vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-        return Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null;
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
-});
-});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({

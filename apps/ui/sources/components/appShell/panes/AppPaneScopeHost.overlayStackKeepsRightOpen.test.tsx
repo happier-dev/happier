@@ -2,25 +2,12 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dispatchSpy = vi.fn();
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Platform: {
-                        OS: 'web',
-                        select: (value: Record<string, unknown>) => value.web ?? value.default,
-                    },
-                    useWindowDimensions: () => ({ width: 600, height: 800 }),
-                }
-    );
-});
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: () => React.createElement('MultiPaneHostStub'),
@@ -30,10 +17,9 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: 600, height: 800 }),
+    getLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
         if (key === 'editorFocusModeEnabled') return false;
         if (key === 'rightPaneWidthPx') return 360;
@@ -44,8 +30,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
         if (key === 'bottomPaneHeightBasisPx') return 900;
         return null;
     },
-    useLocalSettingMutable: () => [null, vi.fn()],
-});
 });
 
 vi.mock('./AppPaneProvider', () => ({

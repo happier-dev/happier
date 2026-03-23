@@ -2,24 +2,26 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastMultiPaneLayout: any = null;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Platform: {
-                        OS: 'web',
-                        select: (value: Record<string, unknown>) => value.web ?? value.default,
-                    },
-                    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-                }
-    );
+installAppPaneScopeHostCommonModuleMocks({
+    getDimensions: () => ({ width: 1200, height: 800 }),
+    getLocalSetting: (key: string) => {
+        if (key === 'uiMultiPanePanelsEnabled') return undefined;
+        if (key === 'editorFocusModeEnabled') return false;
+        if (key === 'rightPaneWidthPx') return 360;
+        if (key === 'rightPaneWidthBasisPx') return 1200;
+        if (key === 'detailsPaneWidthPx') return 420;
+        if (key === 'detailsPaneWidthBasisPx') return 1200;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
+        return null;
+    },
 });
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
@@ -32,24 +34,6 @@ vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-        if (key === 'uiMultiPanePanelsEnabled') return undefined;
-        if (key === 'editorFocusModeEnabled') return false;
-        if (key === 'rightPaneWidthPx') return 360;
-        if (key === 'rightPaneWidthBasisPx') return 1200;
-        if (key === 'detailsPaneWidthPx') return 420;
-        if (key === 'detailsPaneWidthBasisPx') return 1200;
-        if (key === 'bottomPaneHeightPx') return 320;
-        if (key === 'bottomPaneHeightBasisPx') return 900;
-        return null;
-    },
-    useLocalSettingMutable: () => [null, vi.fn()],
-});
-});
 
 vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
