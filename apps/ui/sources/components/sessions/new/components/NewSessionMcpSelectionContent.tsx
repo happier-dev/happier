@@ -1,15 +1,16 @@
 import React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type {
     DaemonMcpServersPreviewResponse,
     ManagedMcpPreviewEntryV1,
+    McpServerCatalogEntryV1,
     SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
 
-import { type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import {
     resolveAuthBadgeLabel,
     resolveDetectedAvailabilityLabel,
@@ -26,6 +27,8 @@ import { ItemListStatic } from '@/components/ui/lists/ItemList';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { useSetting } from '@/sync/domains/state/storage';
+import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 
 type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
@@ -48,25 +51,32 @@ export type NewSessionMcpSelectionContentProps = Readonly<{
 type GroupActionButtonProps = Readonly<{
     testID: string;
     icon: React.ComponentProps<typeof Ionicons>['name'];
+    loading?: boolean;
     onPress: () => void;
 }>;
 
 function GroupActionButton(props: GroupActionButtonProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const isLoading = props.loading === true;
 
     return (
         <Pressable
             testID={props.testID}
-            onPress={props.onPress}
+            onPress={isLoading ? undefined : props.onPress}
+            disabled={isLoading}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={({ pressed }) => [
                 styles.groupActionButton,
                 pressed ? styles.groupActionButtonPressed : null,
             ]}
         >
-            {normalizeNodeForView(
-                <Ionicons name={props.icon} size={18} color={theme.colors.textSecondary} />,
+            {isLoading ? (
+                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            ) : (
+                normalizeNodeForView(
+                    <Ionicons name={props.icon} size={18} color={theme.colors.textSecondary} />,
+                )
             )}
         </Pressable>
     );
@@ -154,6 +164,24 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
             && props.preview.detected.length === 0
         );
 
+    const mcpServersSettingsRaw = useSetting('mcpServersSettingsV1');
+    const mcpServersSettings = React.useMemo(
+        () => normalizeMcpServersSettingsV1(mcpServersSettingsRaw),
+        [mcpServersSettingsRaw],
+    );
+
+    const happierServerCount = mcpServersSettings.servers.length;
+    const showCombinedEmptyState = happierServerCount === 0 && showPreviewEmptyState;
+
+    const happierServers = React.useMemo((): readonly McpServerCatalogEntryV1[] => {
+        return mcpServersSettings.servers
+            .slice()
+            .sort((a, b) => (a.title ?? a.name).localeCompare(b.title ?? b.name));
+    }, [mcpServersSettings.servers]);
+
+    const agentDisplayName = t(getAgentCore(props.agentType).displayNameKey);
+    const detectedSectionTitle = t('newSession.mcpDetectedSectionTitleForAgent', { agentName: agentDisplayName });
+
     const handleToggleManagedEnabled = React.useCallback((value: boolean) => {
         props.onSelectionChange(setManagedSessionMcpServersEnabled(props.selection, value));
     }, [props]);
@@ -184,6 +212,14 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
         />
     ), [props]);
 
+    const managedByServerId = React.useMemo(() => {
+        const map = new Map<string, ManagedMcpPreviewEntryV1>();
+        for (const entry of props.preview?.managed ?? []) {
+            map.set(entry.serverId, entry);
+        }
+        return map;
+    }, [props.preview?.managed]);
+
     return (
         <View style={[styles.container, { maxHeight: props.maxHeight }]}>
             <ScrollView
@@ -193,39 +229,81 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                 keyboardShouldPersistTaps="handled"
             >
                 <ItemListStatic style={styles.list}>
-                    {hasManagedEntries ? (
-                        <ItemGroup
-                            title={(
-                                <GroupTitleRow
-                                    title={t('newSession.mcpManagedToggleTitle')}
-                                    actions={(
+                    <ItemGroup
+                        title={(
+                            <GroupTitleRow
+                                title={t('newSession.mcpHappierSectionTitle')}
+                                actions={!showCombinedEmptyState ? (
+                                    <GroupActionButton
+                                        testID="new-session.mcp.happier-open-settings"
+                                        icon="settings-outline"
+                                        onPress={props.onOpenSettings}
+                                    />
+                                ) : undefined}
+                            />
+                        )}
+                    >
+                        {happierServerCount === 0 ? (
+                            <Item
+                                testID="new-session.mcp.happier-empty"
+                                title={t('newSession.mcpHappierEmptyTitle')}
+                                subtitle={t('newSession.mcpHappierEmptySubtitle')}
+                                showChevron={false}
+                                rightElement={showCombinedEmptyState ? (
+                                    <View style={styles.emptyActions}>
                                         <GroupActionButton
-                                            testID="new-session.mcp.open-settings"
+                                            testID="new-session.mcp.refresh"
+                                            icon="refresh-outline"
+                                            loading={props.loading}
+                                            onPress={props.onRefresh}
+                                        />
+                                        <GroupActionButton
+                                            testID="new-session.mcp.happier-open-settings"
                                             icon="settings-outline"
                                             onPress={props.onOpenSettings}
                                         />
-                                    )}
-                                />
-                            )}
-                            footer={t('newSession.mcpManagedToggleSubtitle')}
-                        >
-                            <Item
-                                testID="new-session.mcp.managed-enabled"
-                                title={t('newSession.mcpManagedToggleTitle')}
-                                subtitle={props.selection.managedServersEnabled
-                                    ? t('settings.mcpServersStatusActive')
-                                    : t('settings.mcpServersStatusUnavailable')}
-                                showChevron={false}
-                                onPress={() => handleToggleManagedEnabled(!props.selection.managedServersEnabled)}
-                                rightElement={(
-                                    <Switch
-                                        value={props.selection.managedServersEnabled}
-                                        onValueChange={handleToggleManagedEnabled}
-                                    />
-                                )}
+                                    </View>
+                                ) : null}
                             />
-                        </ItemGroup>
-                    ) : null}
+                        ) : (
+                            <>
+                                {hasManagedEntries ? (
+                                    <Item
+                                        testID="new-session.mcp.managed-enabled"
+                                        title={t('newSession.mcpManagedToggleTitle')}
+                                        subtitle={props.selection.managedServersEnabled
+                                            ? t('settings.mcpServersStatusActive')
+                                            : t('settings.mcpServersStatusUnavailable')}
+                                        showChevron={false}
+                                        onPress={() => handleToggleManagedEnabled(!props.selection.managedServersEnabled)}
+                                        rightElement={(
+                                            <Switch
+                                                value={props.selection.managedServersEnabled}
+                                                onValueChange={handleToggleManagedEnabled}
+                                            />
+                                        )}
+                                    />
+                                ) : null}
+
+                                {happierServers.map((server) => {
+                                    const managedEntry = managedByServerId.get(server.id) ?? null;
+                                    if (managedEntry) return renderManagedItem(managedEntry);
+
+                                    // When preview isn't available (or a server isn't relevant for this context),
+                                    // still show it so users understand what exists in Happier settings.
+                                    return (
+                                        <Item
+                                            key={server.id}
+                                            testID={`new-session.mcp.happier.server.${server.id}`}
+                                            title={server.title ?? server.name}
+                                            subtitle={server.title ? server.name : undefined}
+                                            showChevron={false}
+                                        />
+                                    );
+                                })}
+                            </>
+                        )}
+                    </ItemGroup>
 
                     {props.error ? (
                         <ItemGroup title={t('common.error')}>
@@ -233,16 +311,6 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                 testID="new-session.mcp.error"
                                 title={t('common.error')}
                                 subtitle={props.error}
-                                showChevron={false}
-                            />
-                        </ItemGroup>
-                    ) : null}
-
-                    {props.loading ? (
-                        <ItemGroup title={t('common.loading')}>
-                            <Item
-                                testID="new-session.mcp.loading"
-                                title={t('common.loading')}
                                 showChevron={false}
                             />
                         </ItemGroup>
@@ -259,7 +327,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                         </ItemGroup>
                     ) : null}
 
-                    {showPreviewEmptyState ? (
+                    {showPreviewEmptyState && !showCombinedEmptyState && happierServerCount > 0 ? (
                         <ItemGroup>
                             <Item
                                 testID="new-session.mcp.empty"
@@ -271,6 +339,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                         <GroupActionButton
                                             testID="new-session.mcp.refresh"
                                             icon="refresh-outline"
+                                            loading={props.loading}
                                             onPress={props.onRefresh}
                                         />
                                         <GroupActionButton
@@ -308,11 +377,12 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                 <ItemGroup
                                     title={(
                                         <GroupTitleRow
-                                            title={t('newSession.mcpDetectedSectionTitle')}
+                                            title={detectedSectionTitle}
                                             actions={(
                                                 <GroupActionButton
                                                     testID="new-session.mcp.refresh"
                                                     icon="refresh-outline"
+                                                    loading={props.loading}
                                                     onPress={props.onRefresh}
                                                 />
                                             )}
@@ -327,7 +397,6 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
                                             subtitle={[
                                                 resolvePreviewScopeLabel(entry.scopeKind),
                                                 resolveAuthBadgeLabel(entry.authMode),
-                                                resolveDetectedAvailabilityLabel(entry),
                                             ].filter(Boolean).join(' · ')}
                                             selected={entry.selected}
                                             detail={resolveDetectedAvailabilityLabel(entry)}
@@ -354,8 +423,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginHorizontal: 18,
-        minHeight: 28,
+        width: '100%',
     },
     groupTitleTextWrap: {
         flex: 1,

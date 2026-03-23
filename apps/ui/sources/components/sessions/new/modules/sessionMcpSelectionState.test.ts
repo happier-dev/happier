@@ -38,7 +38,7 @@ function createManagedEntry(overrides?: Partial<ManagedMcpPreviewEntryV1>): Mana
 }
 
 describe('sessionMcpSelectionState', () => {
-    it('counts built-in, managed, and detected preview entries that are selected', () => {
+    it('counts managed and detected preview entries that are selected (excluding built-ins)', () => {
         const preview: Extract<DaemonMcpServersPreviewResponse, { ok: true }> = {
             ok: true,
             builtIn: [{
@@ -55,6 +55,17 @@ describe('sessionMcpSelectionState', () => {
             }],
             managed: [
                 createManagedEntry(),
+                createManagedEntry({
+                    key: 'managed:hidden-builtin',
+                    serverId: 'hidden-builtin',
+                    name: 'happier',
+                    title: 'Happier',
+                    selected: true,
+                    selectable: false,
+                    availability: 'active',
+                    reasonCode: 'active_by_default',
+                    defaultSelected: true,
+                }),
                 createManagedEntry({
                     key: 'managed:server-2',
                     serverId: 'server-2',
@@ -83,7 +94,9 @@ describe('sessionMcpSelectionState', () => {
             }],
         };
 
-        expect(countSelectedSessionMcpPreviewEntries(preview)).toBe(3);
+        expect(countSelectedSessionMcpPreviewEntries(preview, {
+            visibleManagedServerIds: new Set(['server-1', 'server-2']),
+        })).toBe(2);
     });
 
     it('turns off a default-selected server by forcing an exclusion', () => {

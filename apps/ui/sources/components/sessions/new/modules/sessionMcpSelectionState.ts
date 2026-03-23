@@ -11,10 +11,19 @@ function normalizeSelection(selection: SessionMcpSelectionV1 | null | undefined)
     return SessionMcpSelectionV1Schema.parse(selection ?? {});
 }
 
-export function countSelectedSessionMcpPreviewEntries(preview: PreviewSuccess | null | undefined): number {
+export function countSelectedSessionMcpPreviewEntries(
+    preview: PreviewSuccess | null | undefined,
+    params?: Readonly<{
+        visibleManagedServerIds?: ReadonlySet<string> | null;
+    }>,
+): number {
     if (!preview) return 0;
-    return preview.builtIn.filter((entry) => entry.selected).length
-        + preview.managed.filter((entry) => entry.selected).length
+    // Built-in MCP servers (e.g. the default Happier server) are always present and should not
+    // be counted towards the chip badge which is meant to reflect user-relevant session bindings.
+    const visibleManagedServerIds = params?.visibleManagedServerIds ?? null;
+    return preview.managed.filter((entry) =>
+        entry.selected && (visibleManagedServerIds ? visibleManagedServerIds.has(entry.serverId) : true),
+    ).length
         + preview.detected.filter((entry) => entry.selected).length;
 }
 

@@ -95,6 +95,30 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'mcp.servers',
 }));
 
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { installPartialStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return await installPartialStorageModuleMock({
+        useSetting: createUseSettingMock({
+            values: {
+                mcpServersSettingsV1: {
+                    v: 1,
+                    strictMode: false,
+                    servers: [
+                        {
+                            id: 'server-playwright',
+                            name: 'playwright',
+                            title: 'Playwright',
+                            command: 'playwright',
+                        },
+                    ],
+                    bindings: [],
+                    presets: [],
+                } as any,
+            },
+        }),
+    })(importOriginal);
+});
+
 vi.mock('@/sync/ops/machineMcpServers', () => ({
     machineMcpServersPreview: (...args: [string, unknown, unknown?]) => previewSpy(...args),
 }));
@@ -187,7 +211,7 @@ describe('useNewSessionMcpSelection', () => {
         const labelNode = renderedChipChildren[1];
         expect(React.isValidElement(labelNode)).toBe(true);
         expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.label).toBe('MCP');
-        expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.count).toBe(3);
+        expect((labelNode as React.ReactElement<{ label: string; count: number }>).props.count).toBe(2);
 
         await act(async () => {
             renderedChip.props.onPress?.();

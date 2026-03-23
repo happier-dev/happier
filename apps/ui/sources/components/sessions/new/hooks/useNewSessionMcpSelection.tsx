@@ -6,6 +6,8 @@ import { createMcpActionChip } from '@/components/sessions/agentInput/definition
 import { NewSessionMcpSelectionContent } from '@/components/sessions/new/components/NewSessionMcpSelectionContent';
 import { countSelectedSessionMcpPreviewEntries } from '@/components/sessions/new/modules/sessionMcpSelectionState';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useSetting } from '@/sync/domains/state/storage';
+import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { machineMcpServersPreview } from '@/sync/ops/machineMcpServers';
 import { t } from '@/text';
 import type { DaemonMcpServersPreviewResponse, SessionMcpSelectionV1 } from '@happier-dev/protocol';
@@ -32,6 +34,16 @@ export function useNewSessionMcpSelection(params: Readonly<{
     const [mcpPreview, setMcpPreview] = React.useState<PreviewSuccess | null>(null);
     const [mcpPreviewLoading, setMcpPreviewLoading] = React.useState(false);
     const [mcpPreviewError, setMcpPreviewError] = React.useState<string | null>(null);
+
+    const mcpServersSettingsRaw = useSetting('mcpServersSettingsV1');
+    const mcpServersSettings = React.useMemo(
+        () => normalizeMcpServersSettingsV1(mcpServersSettingsRaw),
+        [mcpServersSettingsRaw],
+    );
+    const visibleManagedServerIds = React.useMemo(
+        () => new Set(mcpServersSettings.servers.map((server) => server.id)),
+        [mcpServersSettings.servers],
+    );
 
     const refreshPreview = React.useCallback(async () => {
         if (!mcpServersEnabled || !params.selectedMachineId || params.selectedPath.trim().length === 0) {
@@ -147,7 +159,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
         refreshPreview,
     ]);
 
-    const selectedCount = countSelectedSessionMcpPreviewEntries(mcpPreview);
+    const selectedCount = countSelectedSessionMcpPreviewEntries(mcpPreview, { visibleManagedServerIds });
     const chipLabel = t('newSession.mcpChipLabel');
 
     const mcpChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
