@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react-test-renderer';
+import { pressTestInstanceAsync } from '@/dev/testkit';
 
 import {
   clearPendingExternalAuthMock,
@@ -59,11 +59,9 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       expect(replaceSpy).not.toHaveBeenCalledWith('/');
 
       const choice = tree.root.findByProps({ testID: 'oauth-provisioning-choice-plain' });
-      expect(typeof choice.props.onPress).toBe('function');
+      expect(choice).toBeTruthy();
 
-      await act(async () => {
-        choice.props.onPress();
-      });
+      await pressTestInstanceAsync(choice, 'oauth-provisioning-choice-plain');
       await flushOAuthEffects(2);
 
       expect(fetchMock).toHaveBeenCalled();

@@ -5,56 +5,32 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import {
+    getVoiceSettingsRouteModalMockRef,
+    installVoiceSettingsRouteModuleMocks,
+} from './voiceSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const speakDeviceTextSpy = vi.fn();
 const setVoiceSpy = vi.fn();
-const { modalMockRef } = vi.hoisted(() => ({
-    modalMockRef: { current: null as any },
-}));
+const modalMockRef = getVoiceSettingsRouteModalMockRef();
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+installVoiceSettingsRouteModuleMocks({
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: (key: string) => {
+                if (key === 'voice') return voiceSetting;
+                if (key === 'backendEnabledById') return {};
+                if (key === 'backendEnabledByTargetKey') return {};
+                if (key === 'recentMachinePaths') return [];
+                throw new Error(`unexpected useSetting(${key})`);
+            },
+            useSettings: () => ({}),
+        });
+    },
 });
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMockRef.current = modalMock;
-    return modalMock.module;
-});
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: React.forwardRef((props: any, ref: any) => React.createElement('ItemList', { ...props, ref }, props.children)),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement(
-        'DropdownMenu',
-        props,
-        (typeof props.trigger === 'function'
-            ? props.trigger({ open: false, toggle: () => {}, openMenu: () => {}, closeMenu: () => {} })
-            : props.trigger) ?? null,
-    ),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
 
 vi.mock('@/voice/local/speakDeviceText', () => ({
     speakDeviceText: (...args: any[]) => speakDeviceTextSpy(...args),
@@ -69,20 +45,6 @@ let voiceSetting: any = null;
 vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
     useVoiceSettingsMutable: () => [voiceSetting, (next: any) => setVoiceSpy(next)],
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'voice') return voiceSetting;
-        if (key === 'backendEnabledById') return {};
-        if (key === 'backendEnabledByTargetKey') return {};
-        if (key === 'recentMachinePaths') return [];
-        throw new Error(`unexpected useSetting(${key})`);
-    },
-    useSettings: () => ({}),
-});
-});
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],

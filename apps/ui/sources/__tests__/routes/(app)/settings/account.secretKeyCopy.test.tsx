@@ -9,18 +9,11 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
+import { installAccountSettingsRouteModuleMocks } from './accountSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn(), back: vi.fn() },
-    });
-    return routerMock.module;
-});
 
 vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
@@ -51,11 +44,14 @@ const modalMocks = vi.hoisted(() => ({
     prompt: vi.fn(),
     confirm: vi.fn(),
 }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: modalMocks,
-    }).module;
+
+installAccountSettingsRouteModuleMocks({
+    modalModule: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: modalMocks,
+        }).module;
+    },
 });
 
 describe('Settings → Account (secret key copy)', () => {

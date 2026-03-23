@@ -2,10 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-    renderSettingsView,
-    standardCleanup,
-} from '@/dev/testkit';
+import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,48 +21,64 @@ const shared = vi.hoisted(() => ({
     } as Record<string, unknown>,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                Appearance: { getColorScheme: () => 'light' },
-                            }
-    );
-});
+type MutableSettingHook = (key: string) => [unknown, (next: unknown) => void];
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+const createMutableSettingHook = (settingsState: Record<string, unknown>): MutableSettingHook => {
+    return (key: string) => [
+        Object.prototype.hasOwnProperty.call(settingsState, key) ? settingsState[key] : null,
+        (next: unknown) => {
+            settingsState[key] = next;
+        },
+    ];
+};
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+installSessionSettingsEntryModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Appearance: { getColorScheme: () => 'light' },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    accent: { blue: '#00f', orange: '#f90', indigo: '#6366f1' },
+                    status: { connecting: '#09f' },
+                },
+            },
+            runtime: {
+                setAdaptiveThemes: vi.fn(),
+                setTheme: vi.fn(),
+                setRootViewBackgroundColor: vi.fn(),
+            },
+        });
+    },
+    textModule: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return {
+            ...createTextModuleMock(),
+            getLanguageNativeName: () => 'English',
+            SUPPORTED_LANGUAGES: { en: true },
+        };
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const mutableSetting = createMutableSettingHook(shared.settingsState);
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useSettingMutable'],
+                useLocalSettingMutable: mutableSetting as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
+            },
+        });
+    },
+    useDeviceType: 'desktop',
 });
 
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                accent: { blue: '#00f', orange: '#f90', indigo: '#6366f1' },
-                status: { connecting: '#09f' },
-            },
-        },
-        runtime: {
-            setAdaptiveThemes: vi.fn(),
-            setTheme: vi.fn(),
-            setRootViewBackgroundColor: vi.fn(),
-        },
-    });
-});
-
-vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: ({ children }: any) => React.createElement('ItemList', null, children) }));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: ({ children, ...props }: any) => React.createElement('ItemGroup', props, children) }));
-vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: any) => React.createElement('Item', props) }));
-vi.mock('@/components/ui/forms/Switch', () => ({ Switch: 'Switch' }));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({ DropdownMenu: (props: any) => React.createElement('DropdownMenu', props) }));
-vi.mock('@/utils/platform/responsive', () => ({ useDeviceType: () => 'desktop' }));
 vi.mock('@/theme', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/theme')>();
     return {
@@ -86,36 +100,9 @@ vi.mock('@/theme', async (importOriginal) => {
     };
 });
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return {
-        ...createTextModuleMock(),
-        getLanguageNativeName: () => 'English',
-        SUPPORTED_LANGUAGES: { en: true },
-    };
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            // Boundary mock: this suite only reads and updates a small local settings subset.
-            useSettingMutable: ((key: string) => [
-                shared.settingsState[key] ?? null,
-                (next: unknown) => { shared.settingsState[key] = next; },
-            ]) as any,
-            // Boundary mock: this suite only reads and updates a small local settings subset.
-            useLocalSettingMutable: ((key: string) => [
-                shared.settingsState[key] ?? null,
-                (next: unknown) => { shared.settingsState[key] = next; },
-            ]) as any,
-        },
-    });
-});
-
 afterEach(() => {
     standardCleanup();
+    resetSessionSettingsEntryState();
     shared.settingsState.uiItemDensity = 'comfortable';
 });
 

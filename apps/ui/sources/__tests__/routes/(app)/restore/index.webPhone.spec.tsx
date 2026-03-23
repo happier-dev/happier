@@ -1,26 +1,35 @@
 import * as React from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    installRestoreRouteCommonModuleMocks,
+    resetRestoreRouteTestState,
+} from './restoreRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-                                    },
-                                    Dimensions: {
-                                        get: () => ({ width: 360, height: 800, scale: 2, fontScale: 1 }),
-                                    },
-                                    useWindowDimensions: () => ({ width: 360, height: 800, scale: 2, fontScale: 1 }),
-                                }
-    );
+installRestoreRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: {
+                    web?: unknown;
+                    default?: unknown;
+                    ios?: unknown;
+                    android?: unknown;
+                }) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+            },
+            Dimensions: {
+                get: () => ({ width: 360, height: 800, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 360, height: 800, scale: 2, fontScale: 1 }),
+        });
+    },
 });
 
 vi.mock('@/utils/platform/platform', () => ({
@@ -50,6 +59,7 @@ vi.mock('@/components/account/restore/RestoreScanComputerQrView', () => ({
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    resetRestoreRouteTestState();
 });
 
 describe('/restore (web phone)', () => {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,34 +27,30 @@ function createCommitRouteRouterMock() {
     });
 }
 
-vi.mock('expo-router', async () => {
-    return routerMock.module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'ios',
-                                                select: (value: any) => value?.ios ?? value?.default ?? null,
-                                            },
-                                            View: (props: any) => React.createElement('View', props, props.children),
-                                            useWindowDimensions: () => ({
-                                                    width: 1400,
-                                                    height: 900,
-                                                    scale: 1,
-                                                    fontScale: 1,
-                                                }),
-                                        }
-    );
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: () => false,
-});
+installSessionRouteCommonModuleMocks({
+    router: async () => routerMock.module,
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => value?.ios ?? value?.default ?? null,
+            },
+            View: (props: any) => React.createElement('View', props, props.children),
+            useWindowDimensions: () => ({
+                width: 1400,
+                height: 900,
+                scale: 1,
+                fontScale: 1,
+            }),
+        });
+    },
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: () => false,
+        });
+    },
 });
 
 vi.mock('@/utils/platform/responsive', async (importOriginal) => {

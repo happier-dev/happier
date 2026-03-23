@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -22,46 +23,6 @@ const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: stri
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 let activeServerUrl = 'https://api.happier.dev';
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        pathname: '/',
-        segments: ['(app)'],
-        router: {
-            push: routerPushSpy,
-            replace: routerReplaceSpy,
-            back: vi.fn(),
-            setParams: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: {
-                            OS: 'web',
-                            select: <T,>(choices: { web?: T; default?: T }) => choices?.web ?? choices?.default,
-                        },
-                        AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-                    }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { colors: { surface: '#fff', header: { background: '#fff', tint: '#000' } } },
-    });
-});
-
-vi.mock('expo-notifications', () => ({
-    DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
-    getLastNotificationResponseAsync: vi.fn(),
-    addNotificationResponseReceivedListener: vi.fn(() => ({ remove: () => {} })),
-}));
-
 vi.mock('expo-updates', () => ({
     checkForUpdateAsync: vi.fn(async () => ({ isAvailable: false })),
     fetchUpdateAsync: vi.fn(async () => ({})),
@@ -72,9 +33,40 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
+installRootLayoutRouteCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '/',
+            segments: ['(app)'],
+            router: {
+                push: routerPushSpy,
+                replace: routerReplaceSpy,
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: <T,>(choices: { web?: T; default?: T }) => choices?.web ?? choices?.default,
+            },
+            AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { colors: { surface: '#fff', header: { background: '#fff', tint: '#000' } } },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({

@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,74 +34,55 @@ const AnimatedValue = vi.hoisted(
 const mockResolveAgentIdFromFlavor = vi.fn<(flavor: string | null | undefined) => string | undefined>(() => 'claude');
 const useSessionSpy = vi.fn<(sessionId: string) => any>(() => mockSession);
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            push: routerPushSpy,
-            back: vi.fn(),
-            replace: vi.fn(),
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => ({ id: mockSessionId }),
-    };
+const routerMock = createExpoRouterMock({
+    router: {
+        push: routerPushSpy,
+        back: vi.fn(),
+        replace: vi.fn(),
+        setParams: vi.fn(),
+    },
+    params: () => ({
+        id: mockSessionId,
+    }),
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        Animated: {
-                                            View: 'AnimatedView',
-                                            Value: AnimatedValue,
-                                            loop: vi.fn(() => ({ start: vi.fn() })),
-                                            sequence: vi.fn(() => ({ start: vi.fn() })),
-                                            timing: vi.fn(() => ({ start: vi.fn() })),
-                                        },
-                                    }
-    );
+installSessionRouteCommonModuleMocks({
+    router: async () => routerMock.module,
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Animated: {
+                View: 'AnimatedView',
+                Value: AnimatedValue,
+                loop: vi.fn(() => ({ start: vi.fn() })),
+                sequence: vi.fn(() => ({ start: vi.fn() })),
+                timing: vi.fn(() => ({ start: vi.fn() })),
+            },
+        });
+    },
+    storageModule: async (importOriginal) =>
+        createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: { getState: () => ({}) } as any,
+                useSession: (sessionId: string) => useSessionSpy(sessionId),
+                useIsDataReady: () => isDataReady,
+                useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
+                    if (name === 'devModeEnabled') {
+                        return false as LocalSettings[K];
+                    }
+                    return null as unknown as LocalSettings[K];
+                },
+                useSetting: () => null,
+            },
+        }),
 });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                accent: { blue: '#00f', purple: '#80f' },
-            },
-        },
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: { getState: () => ({}) } as any,
-            useSession: (sessionId: string) => useSessionSpy(sessionId),
-            useIsDataReady: () => isDataReady,
-            useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
-                if (name === 'devModeEnabled') {
-                    return false as LocalSettings[K];
-                }
-                return null as unknown as LocalSettings[K];
-            },
-            useSetting: () => null,
-        },
-    });
-});
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
@@ -123,17 +104,7 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
 vi.mock('@/components/ui/media/CodeView', () => ({ CodeView: 'CodeView' }));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: () => [false, vi.fn()] }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
 vi.mock('@/sync/ops', () => ({ sessionArchiveWithServerScope: vi.fn(), sessionDelete: vi.fn(), sessionRename: vi.fn(), sessionStop: vi.fn() }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
     return {

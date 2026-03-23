@@ -4,41 +4,56 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import {
+    installSessionSettingsEntryModuleMocks,
+    resetSessionSettingsEntryState,
+    sessionSettingsEntryState,
+} from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let windowDimensions: { width: number; height: number } = { width: 1200, height: 800 };
-const { routerMockRef, modalMockRef } = vi.hoisted(() => ({
-    routerMockRef: { current: null as any },
-    modalMockRef: { current: null as any },
-}));
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                View: 'View',
-                                Pressable: 'Pressable',
-                                Dimensions: {
-                                    get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-                                },
-                                useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
-                            }
-    );
+installSessionSettingsEntryModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({
+                width: windowDimensions.width,
+                height: windowDimensions.height,
+                scale: 2,
+                fontScale: 1,
+            }),
+        });
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: () => [false, vi.fn()],
+                useProfile: () => ({
+                    id: 'p',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [],
+                }),
+            },
+        });
+    },
 });
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock();
-    routerMockRef.current = routerMock;
-    return routerMock.module;
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
@@ -47,43 +62,6 @@ vi.mock('expo-clipboard', () => ({
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: 'Switch',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMockRef.current = modalMock;
-    return modalMock.module;
-});
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
@@ -105,27 +83,6 @@ vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: () => [false, vi.fn()],
-            useProfile: () => ({
-                id: 'p',
-                timestamp: 0,
-                firstName: null,
-                lastName: null,
-                username: null,
-                avatar: null,
-                linkedProviders: [],
-                connectedServices: [],
-                connectedServicesV2: [],
-            }),
-        },
-    });
-});
-
 vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: () => vi.fn(),
 }));
@@ -146,19 +103,11 @@ vi.mock('@/components/account/ProviderIdentityItems', () => ({
     ProviderIdentityItems: () => null,
 }));
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
-}));
-
 describe('Settings → Account (grouping)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
-        routerMockRef.current?.spies.push.mockReset();
-        routerMockRef.current?.spies.back.mockReset();
-        routerMockRef.current?.spies.replace.mockReset();
-        routerMockRef.current?.spies.setParams.mockReset();
-        modalMockRef.current = null;
+        resetSessionSettingsEntryState();
         standardCleanup();
     });
 
@@ -171,7 +120,7 @@ describe('Settings → Account (grouping)', () => {
 
         screen.pressByTestId('settings-account-add-your-phone');
 
-        expect(routerMockRef.current.spies.push).toHaveBeenCalledWith('/settings/add-phone');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/add-phone');
     });
 
     it('hides "Add your phone" on phone-sized web', async () => {

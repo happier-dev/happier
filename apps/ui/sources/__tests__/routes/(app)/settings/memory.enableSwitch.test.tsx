@@ -1,84 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
-import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const machineRpcSpy = vi.fn();
 const featureEnabledState: Record<string, boolean> = { 'memory.search': true };
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            View: 'View',
-                            TextInput: 'TextInput',
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => await createUnistylesMock());
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', () => createTextModuleMock());
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createStorageModuleMock({
-    importOriginal,
-    overrides: {
-        // Boundary fixture: only the machine fields exercised by this screen matter here.
-        useAllMachines: (() => ([
-            {
-                id: 'm1',
-                seq: 0,
-                createdAt: 0,
-                updatedAt: 0,
-                active: true,
-                activeAt: 0,
-                metadata: { displayName: 'Machine 1' },
-                metadataVersion: 0,
-                daemonState: null,
-                daemonStateVersion: 0,
-            },
-        ])) as any,
-    },
-}));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'srv_1', generation: 1 }),
@@ -88,12 +17,58 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcSpy,
 }));
 
+function installMemorySettingsEntryMocks() {
+    installSessionSettingsEntryModuleMocks({
+        reactNative: async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                View: 'View',
+                TextInput: 'TextInput',
+            });
+        },
+        featureEnabled: (featureId) => featureEnabledState[featureId] === true,
+        storageModule: async (importOriginal) => {
+            const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+            return createStorageModuleMock({
+                importOriginal,
+                overrides: {
+                    // Boundary fixture: only the machine fields exercised by this screen matter here.
+                    useAllMachines: (() => ([
+                        {
+                            id: 'm1',
+                            seq: 0,
+                            createdAt: 0,
+                            updatedAt: 0,
+                            active: true,
+                            activeAt: 0,
+                            metadata: { displayName: 'Machine 1' },
+                            metadataVersion: 0,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                        },
+                    ])) as any,
+                },
+            });
+        },
+    });
+
+    vi.doMock('@/components/ui/lists/Item', () => ({
+        Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null),
+    }));
+}
+
 afterEach(() => {
     machineRpcSpy.mockReset();
     featureEnabledState['memory.search'] = true;
+    vi.resetModules();
+    resetSessionSettingsEntryState();
 });
 
 describe('Memory settings (enable switch)', () => {
+    beforeEach(() => {
+        installMemorySettingsEntryMocks();
+    });
+
     it('loads daemon.memory.status alongside settings', async () => {
         machineRpcSpy.mockImplementation(async (params: any) => {
             if (params?.method === 'daemon.memory.settings.get') {
@@ -174,11 +149,12 @@ describe('Memory settings (enable switch)', () => {
 
         const screen = await renderScreen(React.createElement(Screen));
 
-        const switches = screen.findAllByType('Switch' as any);
-        const enabledSwitch = switches.find((node: any) => node?.props?.testID == null);
+        const enabledItem = screen.findAllByType('Item' as any).find((node: any) => node?.props?.subtitle === 'memorySearchSettings.enabled.subtitle');
+        expect(enabledItem).toBeTruthy();
+        const enabledSwitch = enabledItem!.props.rightElement;
         expect(enabledSwitch).toBeTruthy();
         await act(async () => {
-            enabledSwitch!.props.onValueChange(true);
+            enabledSwitch.props.onValueChange(true);
         });
 
         expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({

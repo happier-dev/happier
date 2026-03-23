@@ -1,10 +1,10 @@
-import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,27 +14,24 @@ const canGoBackMock = vi.fn(() => false);
 
 let onSuccessCallback: (() => void) | null = null;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            back: backMock,
-            replace: replaceMock,
-        },
-        params: {},
-        pathname: '/terminal/connect',
-    });
-    (
-        routerMock.state.router as typeof routerMock.state.router & {
-            canGoBack?: () => boolean;
-        }
-    ).canGoBack = canGoBackMock;
-    return routerMock.module;
+installTerminalRouteCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: {
+                back: backMock,
+                replace: replaceMock,
+            },
+            params: {},
+            pathname: '/terminal/connect',
+        });
+        (
+            routerMock.state.router as typeof routerMock.state.router & {
+                canGoBack?: () => boolean;
+            }
+        ).canGoBack = canGoBackMock;
+        return routerMock.module;
+    },
 });
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
@@ -72,47 +69,6 @@ vi.mock('@/utils/path/terminalConnectUrl', () => ({
 
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>) => promise,
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: Record<string, unknown>) => options.web ?? options.default ?? options.ios ?? options.android,
-                                    },
-                                }
-    );
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: { testID?: string; onPress?: () => void }) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
 }));
 
 describe('TerminalConnectScreen safe navigation', () => {

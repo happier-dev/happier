@@ -2,13 +2,17 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    createModalModuleMock,
-    createUseSettingMock,
     flushHookEffects,
     renderScreen,
 } from '@/dev/testkit';
 import type { useSettingMutable as useSettingMutableHook } from '@/sync/domains/state/storage';
 import type { Settings } from '@/sync/domains/settings/settings';
+import {
+    createNavigationMock,
+    createRouterMock,
+    enableReactActEnvironment,
+    installPickerCommonModuleMocks,
+} from '../../../../app/new/pick/testHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,10 +41,42 @@ const state = vi.hoisted(() => ({
         { id: 'server-c', serverUrl: 'https://stack-c.example.test', name: 'Server C', lastUsedAt: 800 },
     ],
 }));
+
 type ServerSelectionSettings = Pick<
     Settings,
     'serverSelectionGroups' | 'serverSelectionActiveTargetKind' | 'serverSelectionActiveTargetId'
 >;
+
+const routerMock = createRouterMock();
+const navigationMock = createNavigationMock();
+const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
+const tokenCredsSpy = vi.hoisted(() =>
+    vi.fn<(serverUrl: string) => Promise<{ token: string; secret: string } | null>>(async () => ({ token: 't', secret: 's' }))
+);
+const setActiveServerAndSwitchSpy = vi.hoisted(() => vi.fn(async (_params: any) => true));
+const refreshMachinesThrottledSpy = vi.hoisted(() => vi.fn(async (_params: any) => undefined));
+
+enableReactActEnvironment();
+
+navigationMock.getState = () => ({
+    index: 1,
+    routes: [
+        {
+            key: 'new-route',
+            name: '(app)/new/index',
+            path: '/new',
+            params: {
+                machineId: 'machine-1',
+                spawnServerId: 'server-a',
+            },
+        },
+        {
+            key: 'current-route',
+            name: '(app)/new/pick/server',
+            path: '/new/pick/server',
+        },
+    ],
+});
 
 const useServerSelectionSettingMutableMock = ((key: keyof Settings) => {
     switch (key) {
@@ -70,43 +106,59 @@ const useServerSelectionSettingMutableMock = ((key: keyof Settings) => {
     }
 }) as typeof useSettingMutableHook;
 
-const navigationDispatchSpy = vi.hoisted(() => vi.fn());
-const routerBackSpy = vi.hoisted(() => vi.fn());
-const routerReplaceSpy = vi.hoisted(() => vi.fn());
-const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
-const tokenCredsSpy = vi.hoisted(() =>
-    vi.fn<(serverUrl: string) => Promise<{ token: string; secret: string } | null>>(async () => ({ token: 't', secret: 's' }))
-);
-const setActiveServerAndSwitchSpy = vi.hoisted(() => vi.fn(async (_params: any) => true));
-const refreshMachinesThrottledSpy = vi.hoisted(() => vi.fn(async (_params: any) => undefined));
-
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installPickerCommonModuleMocks({
+    reactNative: async () =>
+        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: {
                 OS: 'web',
             },
             Pressable: 'Pressable',
-        }
-    );
+        }),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+    unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+    expoRouter: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            navigation: navigationMock,
+            router: {
+                push: routerMock.push,
+                back: routerMock.back,
+                replace: routerMock.replace,
+                setParams: routerMock.setParams,
+            },
+        }).module;
+
+        return {
+            ...module,
+            useLocalSearchParams: () => state.localSearchParams,
+        };
+    },
+    modal: async () =>
+        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+            spies: {
+                confirm: modalConfirmSpy,
+            },
+        }).module,
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: createUseSettingMock({
+                    values: state.settings,
+                }),
+                useSettingMutable: useServerSelectionSettingMutableMock,
+            },
+        });
+    },
 });
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
+vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 vi.mock('@react-navigation/native', () => ({
     CommonActions: {
@@ -117,17 +169,6 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: createUseSettingMock({
-                values: state.settings,
-            }),
-            useSettingMutable: useServerSelectionSettingMutableMock,
-        },
-    }));
-
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({
         serverId: state.activeServerId,
@@ -137,55 +178,6 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     }),
     listServerProfiles: () => state.profiles,
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const module = createExpoRouterMock({
-        navigation: {
-            getState: () => ({
-                index: 1,
-                routes: [
-                    {
-                        key: 'new-route',
-                        name: '(app)/new/index',
-                        path: '/new',
-                        params: {
-                            machineId: 'machine-1',
-                            spawnServerId: 'server-a',
-                        },
-                    },
-                    {
-                        key: 'current-route',
-                        name: '(app)/new/pick/server',
-                        path: '/new/pick/server',
-                    },
-                ],
-            }),
-            dispatch: navigationDispatchSpy,
-        },
-        router: {
-            push: vi.fn(),
-            back: routerBackSpy,
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    }).module;
-
-    return {
-        ...module,
-        useLocalSearchParams: () => state.localSearchParams,
-    };
-});
-
-vi.mock('@/modal', () => {
-    const { module } = createModalModuleMock();
-    return {
-        Modal: {
-            ...module.Modal,
-            confirm: modalConfirmSpy,
-        },
-    };
-});
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
@@ -224,9 +216,11 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 beforeEach(() => {
     capture.reset();
-    navigationDispatchSpy.mockReset();
-    routerBackSpy.mockReset();
-    routerReplaceSpy.mockReset();
+    navigationMock.dispatch.mockReset();
+    routerMock.back.mockReset();
+    routerMock.replace.mockReset();
+    routerMock.push.mockReset();
+    routerMock.setParams.mockReset();
     modalConfirmSpy.mockReset();
     modalConfirmSpy.mockResolvedValue(true);
     tokenCredsSpy.mockReset();
@@ -295,7 +289,7 @@ describe('new-session server picker targeting', () => {
             await flushHookEffects();
         });
 
-        expect(navigationDispatchSpy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(navigationMock.dispatch).toHaveBeenCalledWith(expect.objectContaining({
             type: 'SET_PARAMS',
             payload: {
                 params: expect.objectContaining({
@@ -304,7 +298,7 @@ describe('new-session server picker targeting', () => {
             },
         }));
         expect(state.settings).toEqual(before);
-        expect(routerBackSpy).toHaveBeenCalledTimes(1);
+        expect(routerMock.back).toHaveBeenCalledTimes(1);
     });
 
     it('does not change settings or route params when cancelling a signed-out server selection', async () => {
@@ -334,9 +328,9 @@ describe('new-session server picker targeting', () => {
         });
 
         expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
-        expect(navigationDispatchSpy).not.toHaveBeenCalled();
-        expect(routerBackSpy).not.toHaveBeenCalled();
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(navigationMock.dispatch).not.toHaveBeenCalled();
+        expect(routerMock.back).not.toHaveBeenCalled();
+        expect(routerMock.replace).not.toHaveBeenCalled();
         expect(state.settings.serverSelectionActiveTargetKind).toBe('group');
         expect(state.settings.serverSelectionActiveTargetId).toBe('grp-dev');
     });

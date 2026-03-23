@@ -1,7 +1,9 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,25 +17,42 @@ const sessionReadLogTailMock = vi.fn(async (_sessionId?: string, _options?: unkn
 let devModeEnabled = false;
 let sessionLogPath: string | null = null;
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        params: { id: 'session-1' },
-    });
-    return routerMock.module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'ios',
-                                                select: (spec: Record<string, unknown>) =>
-                                                        spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-                                            },
-                                        }
-    );
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: (spec: Record<string, unknown>) =>
+                    spec && Object.prototype.hasOwnProperty.call(spec, 'ios')
+                        ? (spec as Record<string, unknown> & { ios?: unknown }).ios
+                        : (spec as Record<string, unknown> & { default?: unknown }).default,
+            },
+        });
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Boundary fixture: this route only reads `metadata.sessionLogPath` from the session object.
+                useSession: (() =>
+                    (sessionLogPath
+                        ? {
+                              id: 'session-1',
+                              metadata: { sessionLogPath },
+                          }
+                        : {
+                              id: 'session-1',
+                              metadata: null,
+                          }) as unknown) as typeof import('@/sync/domains/state/storage')['useSession'],
+                // Boundary fixture: this route only checks the dev-mode toggle.
+                useLocalSetting: (<K extends keyof LocalSettings>(name: K) =>
+                    (name === 'devModeEnabled' ? devModeEnabled : null) as unknown as LocalSettings[K]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
+                useIsDataReady: () => true,
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', async () => {
@@ -57,32 +76,9 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: { code: string }) => React.createElement('CodeView', { code }),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () =>
-        sessionLogPath
-            ? {
-                id: 'session-1',
-                metadata: { sessionLogPath },
-            }
-            : {
-                id: 'session-1',
-                metadata: null,
-            },
-    useLocalSetting: (name: string) => (name === 'devModeEnabled' ? devModeEnabled : null),
-    useIsDataReady: () => true,
-});
-});
-
 vi.mock('@/sync/ops', () => ({
     sessionReadLogTail: (sessionId: string, options?: unknown) => sessionReadLogTailMock(sessionId, options),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 describe('Session log screen', () => {
     beforeEach(() => {

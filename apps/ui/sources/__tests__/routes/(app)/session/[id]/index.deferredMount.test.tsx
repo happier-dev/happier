@@ -13,17 +13,17 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                            Platform: {
-                                                OS: 'ios',
-                                            },
-                                            InteractionManager: {
-                                                runAfterInteractions: (cb: () => void) => {
-                                                        scheduled.push(cb);
-                                                        return { cancel: cancelSpy };
+                                                    Platform: {
+                                                        OS: 'ios',
                                                     },
-                                            },
-                                            View: (props: any) => React.createElement('View', props, props.children),
-                                        }
+                                                    InteractionManager: {
+                                                        runAfterInteractions: (cb: () => void) => {
+                                                                scheduled.push(cb);
+                                                                return { cancel: cancelSpy };
+                                                            },
+                                                    },
+                                                    View: (props: any) => React.createElement('View', props, props.children),
+                                                }
     );
 });
 

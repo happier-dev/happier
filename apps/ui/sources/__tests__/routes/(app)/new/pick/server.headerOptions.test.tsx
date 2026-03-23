@@ -4,6 +4,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installServerPickerRouteCommonModuleMocks } from './serverPickerRouteTestHelpers';
 
 const stackOptionsCapture = vi.hoisted(() => {
     let currentOptions: Record<string, unknown> | (() => Record<string, unknown>) | null = null;
@@ -29,66 +30,60 @@ const stackOptionsCapture = vi.hoisted(() => {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const module = createExpoRouterMock({
-        params: { selectedId: '' },
-        navigation: {
-            getState: () => ({ index: 1, routes: [{ key: 'prev' }, { key: 'current' }] }),
-            dispatch: vi.fn(),
-        },
-        router: {
-            push: vi.fn(),
-            back: vi.fn(),
-            replace: vi.fn(),
-            setParams: vi.fn(),
-        },
-        stackOptionsCapture,
-    }).module;
+installServerPickerRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'web',
+                select: (options: Record<string, unknown>) => options.web ?? options.default,
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            params: { selectedId: '' },
+            navigation: {
+                getState: () => ({ index: 1, routes: [{ key: 'prev' }, { key: 'current' }] }),
+                dispatch: vi.fn(),
+            },
+            router: {
+                push: vi.fn(),
+                back: vi.fn(),
+                replace: vi.fn(),
+                setParams: vi.fn(),
+            },
+            stackOptionsCapture,
+        }).module;
 
-    return {
-        ...module,
-        useLocalSearchParams: () => ({ selectedId: '' }),
-    };
+        return {
+            ...module,
+            useLocalSearchParams: () => ({ selectedId: '' }),
+        };
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => null,
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    header: { tint: '#000' },
+                    textSecondary: '#666',
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@react-navigation/native', () => ({
     CommonActions: { setParams: (params: any) => ({ type: 'SET_PARAMS', payload: params }) },
 }));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Platform: {
-                    OS: 'web',
-                    select: (options: Record<string, unknown>) => options.web ?? options.default,
-                },
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                textSecondary: '#666',
-            },
-        },
-    });
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: any) => React.createElement('ItemList', props, props.children),
@@ -100,14 +95,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.children),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: () => null,
-        },
-    }));
-
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ generation: 1, serverId: 'server-a' }),
     listServerProfiles: () => [
@@ -116,10 +103,9 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     ],
 }));
 
-import ServerPickerScreen from '@/app/(app)/new/pick/server';
-
 describe('ServerPickerScreen header options', () => {
     it('does not provide a headerTitle function that returns a raw string (RN Web text node error)', async () => {
+        const { default: ServerPickerScreen } = await import('@/app/(app)/new/pick/server');
         stackOptionsCapture.reset();
         await renderScreen(React.createElement(ServerPickerScreen));
 

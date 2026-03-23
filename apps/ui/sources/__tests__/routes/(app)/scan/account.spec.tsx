@@ -1,49 +1,16 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-
+import {
+    installScanRouteCommonModuleMocks,
+} from './scanRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                }
-    );
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-const promptSpy = vi.fn(async (..._args: unknown[]) => null as string | null);
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: (...args: unknown[]) => promptSpy(...args),
-        },
-    }).module;
-});
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: 'RoundButton',
-}));
-
-const routerBackSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: routerBackSpy },
-    });
-    return routerMock.module;
-});
-
 const processAuthUrlSpy = vi.fn(async (_url: string) => true);
+const promptSpy = vi.fn(async (..._args: unknown[]) => null as string | null);
+
 vi.mock('@/hooks/auth/useConnectAccount', () => ({
     useConnectAccount: (_opts?: any) => ({ processAuthUrl: processAuthUrlSpy, isLoading: false }),
 }));
@@ -56,13 +23,25 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
     },
 }));
 
-describe('/scan/account', () => {
-    it('processes scanned account link URLs', async () => {
-        routerBackSpy.mockClear();
-        processAuthUrlSpy.mockClear();
-        promptSpy.mockClear();
-        lastScannerProps = null;
+installScanRouteCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: (...args: unknown[]) => promptSpy(...args),
+            },
+        }).module;
+    },
+});
 
+describe('/scan/account', () => {
+    beforeEach(() => {
+        promptSpy.mockClear();
+        processAuthUrlSpy.mockClear();
+        lastScannerProps = null;
+    });
+
+    it('processes scanned account link URLs', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/account');
 
         await renderScreen(<Screen />);
@@ -78,11 +57,6 @@ describe('/scan/account', () => {
     });
 
     it('supports manually entering an account link URL when the scanner is unavailable', async () => {
-        routerBackSpy.mockClear();
-        processAuthUrlSpy.mockClear();
-        promptSpy.mockClear();
-        lastScannerProps = null;
-
         promptSpy.mockResolvedValueOnce(' happier:///account?manual ');
 
         const { default: Screen } = await import('@/app/(app)/scan/account');
@@ -91,19 +65,24 @@ describe('/scan/account', () => {
 
         const footerElement = lastScannerProps?.footer;
         expect(footerElement).toBeTruthy();
-
-        let footerTree: ReturnType<typeof renderer.create> | undefined;
-        footerTree = (await renderScreen(footerElement)).tree;
-        if (!footerTree) throw new Error('Expected footer renderer');
-
-        const button = footerTree.root.findByType('RoundButton');
+        const footerView = footerElement as React.ReactElement<{ children?: React.ReactNode }>;
+        const footerChildren = React.Children.toArray(footerView.props.children);
+        const roundButton = footerChildren.find(
+            (
+                child,
+            ): child is React.ReactElement<{ action?: () => Promise<void>; testID?: string }> => {
+                if (!React.isValidElement(child)) {
+                    return false;
+                }
+                const button = child as React.ReactElement<{ action?: () => Promise<void>; testID?: string }>;
+                return button.props.testID === 'scan-account-enter-url';
+            },
+        );
+        expect(roundButton).toBeTruthy();
+        if (!roundButton) throw new Error('Expected RoundButton in footer');
 
         await act(async () => {
-            await button.props.action();
-        });
-
-        act(() => {
-            footerTree?.unmount();
+            await roundButton.props.action?.();
         });
 
         expect(promptSpy).toHaveBeenCalledTimes(1);

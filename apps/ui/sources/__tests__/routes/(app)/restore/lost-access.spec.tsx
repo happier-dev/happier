@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createWelcomeFeaturesResponse } from '../index.testHelpers';
+import { installRestoreRouteCommonModuleMocks, resetRestoreRouteTestState } from './restoreRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -17,54 +18,51 @@ const mockState = vi.hoisted(() => ({
     setPendingExternalAuth: vi.fn(async () => true),
 }));
 
-vi.mock('react-native-reanimated', () => ({}));
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default,
-                                    },
-                                    AppState: {
-                                        addEventListener: () => ({ remove: () => {} }),
-                                    },
-                                    Dimensions: {
-                                        get: () => ({ width: 800, height: 600 }),
-                                    },
-                                    ScrollView: 'ScrollView',
-                                    View: 'View',
-                                    Text: 'Text',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    Linking: {
-                                        canOpenURL: mockState.canOpenURL,
-                                        openURL: mockState.openURL,
-                                    },
-                                }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { replace: vi.fn(), back: vi.fn(), push: vi.fn() },
-    });
-    return routerMock.module;
+installRestoreRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+                select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+            Dimensions: {
+                get: () => ({ width: 800, height: 600 }),
+            },
+            ScrollView: 'ScrollView',
+            View: 'View',
+            Text: 'Text',
+            ActivityIndicator: 'ActivityIndicator',
+            Linking: {
+                canOpenURL: mockState.canOpenURL,
+                openURL: mockState.openURL,
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { replace: vi.fn(), back: vi.fn(), push: vi.fn() },
+        });
+        return routerMock.module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: vi.fn(async () => true),
+                alert: vi.fn(async () => {}),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: vi.fn(async () => true),
-            alert: vi.fn(async () => {}),
-        },
-    }).module;
-});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({
@@ -133,6 +131,7 @@ function findProviderButtonAction(tree: renderer.ReactTestRenderer): () => Promi
 
 afterEach(() => {
     vi.restoreAllMocks();
+    resetRestoreRouteTestState();
 });
 
 describe('/restore/lost-access', () => {

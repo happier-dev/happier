@@ -1,15 +1,16 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     collectUnexpectedRawTextNodes,
 } from '@/dev/testkit/render/renderScreen';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
-import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { standardCleanup } from '@/dev/testkit';
 import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import {
+    installSessionSettingsEntryModuleMocks,
+    resetSessionSettingsEntryState,
+    sessionSettingsEntryState,
+} from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,44 +34,27 @@ const settingsState: Record<string, any> = {
     uiMultiPanePanelsEnabled: false,
 };
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                            View: 'View',
-                                                            Text: 'Text',
-                                                            TextInput: 'TextInput',
-                                                            ScrollView: 'ScrollView',
-                                                            Pressable: 'Pressable',
-                                                            ActivityIndicator: 'ActivityIndicator',
-                                                            useWindowDimensions: () => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }),
-                                                            Dimensions: {
-                                                                get: () => ({ width: 1440, height: 900 }),
-                                                            },
-                                                        }
-    );
+installSessionSettingsEntryModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            TextInput: 'TextInput',
+            ScrollView: 'ScrollView',
+            Pressable: 'Pressable',
+            ActivityIndicator: 'ActivityIndicator',
+            useWindowDimensions: () => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }),
+            Dimensions: {
+                get: () => ({ width: 1440, height: 900 }),
+            },
+        });
+    },
+    featureEnabled: (featureId) => featureId === 'execution.runs',
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('expo-router', () => createExpoRouterMock().module);
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
-}));
-
-vi.mock('@/modal', () => createModalModuleMock().module);
-
-vi.mock('@/text', () => createTextModuleMock());
-
-vi.mock('react-native-unistyles', async () => await createUnistylesMock());
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -83,15 +67,6 @@ vi.mock('@/components/ui/popover', () => ({
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: 'Switch',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -118,15 +93,15 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createSt
     importOriginal,
     overrides: {
         useSettingMutable: (key: string) => [
-            key in settingsState ? settingsState[key] : null,
+            key in sessionSettingsEntryState.settingsState ? sessionSettingsEntryState.settingsState[key] : null,
             (next: any) => {
-                settingsState[key] = next;
+                sessionSettingsEntryState.settingsState[key] = next;
             },
         ] as any,
         useLocalSettingMutable: (key: string) => [
-            key in settingsState ? settingsState[key] : null,
+            key in sessionSettingsEntryState.settingsState ? sessionSettingsEntryState.settingsState[key] : null,
             (next: any) => {
-                settingsState[key] = next;
+                sessionSettingsEntryState.settingsState[key] = next;
             },
         ] as any,
         useSetting: (key: string) => {
@@ -134,10 +109,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => await createSt
             return null;
         },
     },
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'execution.runs',
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -154,6 +125,13 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: unknown) => promise,
 }));
+
+sessionSettingsEntryState.settingsState = settingsState;
+
+afterEach(() => {
+    standardCleanup();
+    resetSessionSettingsEntryState();
+});
 
 describe('Session settings (summary runner text-node guard)', () => {
     it('does not emit raw text nodes under non-Text parents when summary runner controls are visible', async () => {

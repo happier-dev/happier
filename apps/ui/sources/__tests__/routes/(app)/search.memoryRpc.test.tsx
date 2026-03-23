@@ -8,6 +8,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSearchRouteCommonModuleMocks } from './searchRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,55 +56,61 @@ const machinesState = [
     },
 ] satisfies Machine[];
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                View: 'View',
-                Text: (props: any) => React.createElement('Text', props, props.children),
-                TextInput: (props: any) => React.createElement('TextInput', props),
-                Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                Platform: {
-                    OS: 'web',
-                    select: (options: any) => (options && 'default' in options ? options.default : undefined),
-                },
-            }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        router: {
-            push: routerPushSpy,
-            replace: vi.fn(),
-            back: vi.fn(),
-            setParams: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#666',
-                shadow: { color: '#000', opacity: 0.2 },
-                input: { placeholder: '#999', background: '#fff' },
-                accent: { blue: '#07f' },
-                success: '#0a0',
+installSearchRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: (props: any) => React.createElement('Text', props, props.children),
+            TextInput: (props: any) => React.createElement('TextInput', props),
+            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Platform: {
+                OS: 'web',
+                select: (options: any) => (options && 'default' in options ? options.default : undefined),
             },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: {
+                push: routerPushSpy,
+                replace: vi.fn(),
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    text: '#111',
+                    textSecondary: '#666',
+                    shadow: { color: '#000', opacity: 0.2 },
+                    input: { placeholder: '#999', background: '#fff' },
+                    accent: { blue: '#07f' },
+                    success: '#0a0',
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    storage: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useAllMachines: () => machinesState,
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -119,16 +126,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useAllMachines: () => machinesState,
-        },
-    });
-});
 
 vi.mock('@/sync/store/hooks', () => ({
     useAllSessions: () => ([

@@ -4,6 +4,7 @@ import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { DeferredPromise } from './testUtils/deferredPromise';
 import { createDeferredPromise } from './testUtils/deferredPromise';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 import {
   flushHookEffects,
   renderScreen,
@@ -44,57 +45,54 @@ const mockTheme = {
   },
 } as const;
 
-vi.mock('expo-router', async () => {
-  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  const routerMock = createExpoRouterMock({
-    router: {
-      back: routerBackSpy,
-      push: vi.fn(),
-      replace: routerReplaceSpy,
-      setParams: vi.fn(),
-      canGoBack: routerCanGoBackSpy,
-    } as any,
-  });
-  return {
-    ...routerMock.module,
-    useLocalSearchParams: () => mockSearchParams,
-    Stack: { Screen: () => null },
-  };
-});
-
-vi.mock('react-native', async () => {
+installSessionRouteCommonModuleMocks({
+  reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    TurboModuleRegistry: { get: () => ({}) },
-                                  }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-  const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock({
-    theme: mockTheme as any,
-  });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-  const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-  return createStorageModuleMock({
-    importOriginal,
-    overrides: {
-      storage: {
-        getState: () => ({
-          sessions: {},
-          sessionListViewDataByServerId: {},
-        }),
+    return createReactNativeWebMock({
+      TurboModuleRegistry: { get: () => ({}) },
+    });
+  },
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+      router: {
+        back: routerBackSpy,
+        push: vi.fn(),
+        replace: routerReplaceSpy,
+        setParams: vi.fn(),
+        canGoBack: routerCanGoBackSpy,
       } as any,
-      useSession: () => mockSession,
-      useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded }),
-      useMessage: (_sessionId: string, messageId: string) => mockMessagesById[messageId] ?? mockMessage,
-      useResolvedSessionMessageRouteId: (_sessionId: string, _routeMessageId: string) => mockResolvedRouteMessageId,
-    },
-  });
+    });
+    return {
+      ...routerMock.module,
+      useLocalSearchParams: () => mockSearchParams,
+      Stack: { Screen: () => null },
+    };
+  },
+  unistyles: async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock({
+      theme: mockTheme as any,
+    });
+  },
+  storageModule: async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+      importOriginal,
+      overrides: {
+        storage: {
+          getState: () => ({
+            sessions: {},
+            sessionListViewDataByServerId: {},
+          }),
+        } as any,
+        useSession: () => mockSession,
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded }),
+        useMessage: (_sessionId: string, messageId: string) => mockMessagesById[messageId] ?? mockMessage,
+        useResolvedSessionMessageRouteId: (_sessionId: string, _routeMessageId: string) => mockResolvedRouteMessageId,
+      },
+    });
+  },
 });
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -114,12 +112,6 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/text', async () => {
-  const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-  return createTextModuleMock({
-    translate: (key: string) => key,
-  });
-});
 vi.mock('@/components/ui/forms/Deferred', () => ({ Deferred: ({ children }: any) => React.createElement(React.Fragment, null, children) }));
 vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
   ToolFullView: (props: any) => {
@@ -156,10 +148,6 @@ vi.mock('@/components/sessions/agentInput', () => ({
     ),
 }));
 vi.mock('@/components/autocomplete/suggestions', () => ({ getSuggestions: () => [] }));
-vi.mock('@/modal', async () => {
-  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-  return createModalModuleMock().module;
-});
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (fn: Promise<any>) => void fn }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => false }));
 vi.mock('@/sync/domains/session/participants/deriveSessionParticipantTargets', () => ({
@@ -206,11 +194,11 @@ describe('Session message route hydration', () => {
     syncOnSessionVisibleSpy.mockClear();
     syncLoadOlderMessagesSpy.mockClear();
     toolFullViewSpy.mockClear();
-	    deriveSessionParticipantTargetsMock.mockReset();
-	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReset();
-	    deriveSessionParticipantTargetsMock.mockReturnValue([]);
-	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(null);
-	  });
+    deriveSessionParticipantTargetsMock.mockReset();
+    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReset();
+    deriveSessionParticipantTargetsMock.mockReturnValue([]);
+    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(null);
+  });
 
   afterEach(() => {
     if (typeof vi.isFakeTimers === 'function' && vi.isFakeTimers()) {
@@ -222,14 +210,6 @@ describe('Session message route hydration', () => {
 
   async function renderMessageScreen(Screen: React.ComponentType<any>) {
     return renderScreen(React.createElement(Screen));
-  }
-
-  async function settleMessageScreen(advanceTimersMs?: number) {
-    await flushHookEffects({
-      cycles: 1,
-      turns: 1,
-      ...(typeof advanceTimersMs === 'number' ? { advanceTimersMs } : {}),
-    });
   }
 
   it('renders invalid link fallback when session id param is missing', async () => {
@@ -248,14 +228,14 @@ describe('Session message route hydration', () => {
     loadOlderDeferred = createDeferredPromise();
 
     const screen = await renderMessageScreen(MessageScreen);
-    await settleMessageScreen();
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(syncOnSessionVisibleSpy).toHaveBeenCalledWith('session-1');
     expect(syncLoadOlderMessagesSpy).toHaveBeenCalledWith('session-1');
     expect(routerBackSpy).not.toHaveBeenCalled();
 
     loadOlderDeferred!.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
-    await settleMessageScreen();
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1');
   });
@@ -374,7 +354,6 @@ describe('Session message route hydration', () => {
   });
 
   it('keeps waiting when older paging is not ready instead of redirecting away from the deep link', async () => {
-    vi.useFakeTimers();
     const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
@@ -382,7 +361,7 @@ describe('Session message route hydration', () => {
     syncLoadOlderMessagesSpy.mockImplementation(async () => ({ loaded: 0, hasMore: true, status: 'not_ready' as const }));
 
     await renderMessageScreen(MessageScreen);
-    await settleMessageScreen(1);
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(routerReplaceSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).not.toHaveBeenCalled();
@@ -415,7 +394,7 @@ describe('Session message route hydration', () => {
     };
 
     await screen.update(React.createElement(MessageScreen));
-    await settleMessageScreen();
+    await flushHookEffects({ cycles: 1, turns: 1 });
   });
 
   it('does not render the focused-tool composer when there are no participant targets', async () => {
@@ -462,16 +441,18 @@ describe('Session message route hydration', () => {
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
 
-	    mockMessage = {
-	      kind: 'tool-call',
-	      id: 'm-run',
-	      localId: null,
+    mockMessage = {
+      kind: 'tool-call',
+      id: 'm-run',
+      localId: null,
       createdAt: 1,
       tool: { name: 'SubAgentRun', input: { runId: 'run_auto_1' }, result: null, state: 'completed' },
-	      children: [],
-	    };
+      children: [],
+    };
 
-	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue({ kind: 'execution_run', runId: 'run_auto_1' } satisfies ParticipantRecipientV1);
+    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(
+      { kind: 'execution_run', runId: 'run_auto_1' } satisfies ParticipantRecipientV1,
+    );
 
     const screen = await renderMessageScreen(MessageScreen);
     expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);

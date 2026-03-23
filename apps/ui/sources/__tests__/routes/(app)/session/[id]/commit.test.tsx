@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,10 +29,10 @@ const diffFilesListSpy = vi.fn();
 const syntaxHookSpy = vi.fn();
 const loadingIndicatorSpy = vi.fn();
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
             ActivityIndicator: (props: any) => {
@@ -43,49 +44,87 @@ vi.mock('react-native', async () => {
             },
             Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
             useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
-        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                text: '#fff',
-                textSecondary: '#aaa',
-                textDestructive: '#f33',
-                warning: '#f80',
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            params: searchParams as any,
+            router: {
+                back: (...args: unknown[]) => routerBack(...args),
+                push: vi.fn(),
+                replace: vi.fn(),
+                setParams: vi.fn(),
             },
-        },
-    });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        params: searchParams as any,
-        router: {
-            back: (...args: unknown[]) => routerBack(...args),
-            push: vi.fn(),
-            replace: vi.fn(),
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => searchParams,
-    };
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
+        });
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => searchParams,
+        };
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#111',
+                    surfaceHigh: '#222',
+                    divider: '#333',
+                    text: '#fff',
+                    textSecondary: '#aaa',
+                    textDestructive: '#f33',
+                    warning: '#f80',
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            confirmResult: true,
+        }).module;
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                storage: {
+                    getState: () => ({
+                        sessions: {
+                            'session-1': {
+                                metadata: {
+                                    path: '/repo',
+                                    host: 'localhost',
+                                },
+                            } as any,
+                        },
+                    }),
+                } as any,
+                useSessions: () => (storageFixture.isStorageDataReady ? [] : null),
+                useSession: (id: string) => storageFixture.sessionById[id] ?? null,
+                useSessionProjectScmInFlightOperation: () => null,
+                // Narrow test fixture: this route only reads repo/branch/totals from the snapshot.
+                useSessionProjectScmSnapshot: (() => ({
+                    projectKey: 'session-1',
+                    fetchedAt: 0,
+                    entries: [],
+                    repo: { isRepo: true, rootPath: '/repo' },
+                    branch: { head: 'main', detached: false },
+                    hasConflicts: false,
+                    totals: { includedFiles: 0, pendingFiles: 0 },
+                })) as any,
+                useSetting: () => true,
+                useLocalSetting: (() => null) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@/components/ui/layout/layout', () => ({
@@ -150,42 +189,6 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     });
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: {
-                getState: () => ({
-                    sessions: {
-                        'session-1': {
-                            metadata: {
-                                path: '/repo',
-                                host: 'localhost',
-                            },
-                        } as any,
-                    },
-                }),
-            } as any,
-            useSessions: () => (storageFixture.isStorageDataReady ? [] : null),
-            useSession: (id: string) => storageFixture.sessionById[id] ?? null,
-            useSessionProjectScmInFlightOperation: () => null,
-            // Narrow test fixture: this route only reads repo/branch/totals from the snapshot.
-            useSessionProjectScmSnapshot: (() => ({
-                projectKey: 'session-1',
-                fetchedAt: 0,
-                entries: [],
-                repo: { isRepo: true, rootPath: '/repo' },
-                branch: { head: 'main', detached: false },
-                hasConflicts: false,
-                totals: { includedFiles: 0, pendingFiles: 0 },
-            })) as any,
-            useSetting: () => true,
-            useLocalSetting: (() => null) as any,
-        },
-    });
-});
-
 vi.mock('@/scm/operations/safety', () => ({
     canRevertFromSnapshot: () => true,
 }));
@@ -221,13 +224,6 @@ vi.mock('@/scm/operations/reporting', () => ({
 vi.mock('@/track', () => ({
     tracking: {},
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        confirmResult: true,
-    }).module;
-});
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {

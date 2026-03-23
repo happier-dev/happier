@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionSettingsEntryModuleMocks } from './sessionSettingsEntryTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,14 +18,6 @@ const useLocalSearchParamsMock = vi.hoisted(() => vi.fn(() => ({
 
 const promptRegistryItemDetailsScreenMock = vi.hoisted(() => vi.fn());
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        params: () => useLocalSearchParamsMock(),
-    });
-    return expoRouterMock.module;
-});
-
 vi.mock('@/components/settings/prompts/registries/PromptRegistryItemDetailsScreen', () => ({
     PromptRegistryItemDetailsScreen: (props: unknown) => {
         promptRegistryItemDetailsScreenMock(props);
@@ -32,11 +25,23 @@ vi.mock('@/components/settings/prompts/registries/PromptRegistryItemDetailsScree
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettingMutable: () => [{ v: 1, sources: [] }, vi.fn()],
-});
+installSessionSettingsEntryModuleMocks({
+    routerModule: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            params: () => useLocalSearchParamsMock(),
+        });
+        return expoRouterMock.module;
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSettingMutable: () => [{ v: 1, sources: [] }, vi.fn()],
+            },
+        });
+    },
 });
 
 describe('PromptRegistryItemDetailsRoute', () => {

@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installRestoreRouteCommonModuleMocks } from './restoreRouteTestHelpers';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -14,23 +15,18 @@ const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const authLoginSpy = vi.hoisted(() => vi.fn(async () => {}));
 const normalizeSecretKeySpy = vi.hoisted(() => vi.fn((input: string) => input.trim()));
 
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
-});
-
 vi.mock('@expo/vector-icons/Ionicons', () => ({
     default: 'Ionicons',
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: routerBackSpy, replace: routerReplaceSpy },
-    });
-    return routerMock.module;
+installRestoreRouteCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { back: routerBackSpy, replace: routerReplaceSpy },
+        });
+        return routerMock.module;
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -56,21 +52,6 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
 
 afterEach(() => {
     vi.restoreAllMocks();

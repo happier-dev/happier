@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,32 +34,42 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => isFocused,
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        ActivityIndicator: 'ActivityIndicator',
-                                    }
-    );
-});
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            ActivityIndicator: 'ActivityIndicator',
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: {
+                back: routerBackSpy,
+                push: routerPushSpy,
+                replace: routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        });
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            back: routerBackSpy,
-            push: routerPushSpy,
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => ({ id: mockSessionId }),
-        useGlobalSearchParams: () => ({ id: mockSessionId }),
-        useNavigation: () => ({ canGoBack: () => canGoBack }),
-    };
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => ({ id: mockSessionId }),
+            useGlobalSearchParams: () => ({ id: mockSessionId }),
+            useNavigation: () => ({ canGoBack: () => canGoBack }),
+        };
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Narrow boundary fixture: this route only reads the embedded-terminal dock setting.
+                useLocalSetting: ((key: string) => (key === 'embeddedTerminalDockLocation' ? terminalDockLocation : null)) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -92,17 +103,6 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => terminalFeatureEnabled,
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            // Narrow boundary fixture: this route only reads the embedded-terminal dock setting.
-            useLocalSetting: ((key: string) => (key === 'embeddedTerminalDockLocation' ? terminalDockLocation : null)) as any,
-        },
-    });
-});
 
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => deviceType,
@@ -213,8 +213,6 @@ describe('/session/[id]/terminal', () => {
         expect(setRightTabSpy).not.toHaveBeenCalled();
     });
 
-
-
     it('pushes the details route again when the session id changes even if the details key is unchanged', async () => {
         scopeState = {
             right: { isOpen: true, activeTabId: 'terminal', tabState: {} },
@@ -249,5 +247,4 @@ describe('/session/[id]/terminal', () => {
             params: { id: 'session-2', details: 'file', path: 'README.md' },
         });
     });
-
 });

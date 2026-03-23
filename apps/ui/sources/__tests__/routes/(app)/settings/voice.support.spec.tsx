@@ -5,6 +5,10 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import {
+    getVoiceSettingsRouteModalMockRef,
+    installVoiceSettingsRouteModuleMocks,
+} from './voiceSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,32 +17,16 @@ const setVoice = vi.fn();
 const decryptSecretValue = vi.fn<(value: unknown) => string | null>(() => null);
 const resetGlobalVoiceAgentPersistenceSpy = vi.fn(async () => {});
 const canAgentResumeSpy = vi.fn<(agentId: string | null | undefined) => boolean>(() => true);
-const { modalMockRef } = vi.hoisted(() => ({
-    modalMockRef: { current: null as any },
-}));
+const modalMockRef = getVoiceSettingsRouteModalMockRef();
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: vi.fn() },
-    });
-    return routerMock.module;
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMockRef.current = modalMock;
-    return modalMock.module;
+installVoiceSettingsRouteModuleMocks({
+    storageModule: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSetting: () => null,
+            useSettings: () => ({}),
+        });
+    },
 });
 
 vi.mock('@/voice/agent/resetGlobalVoiceAgentPersistence', () => ({
@@ -64,51 +52,6 @@ vi.mock('@/constants/Languages', () => ({
     LANGUAGES: [{ code: 'en', name: 'English' }],
     findLanguageByCode: () => ({ code: 'en', name: 'English' }),
     getLanguageDisplayName: () => 'English',
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: React.forwardRef((props: any, ref: any) => React.createElement('ItemList', { ...props, ref }, props.children)),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement('ItemGroup', null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement(
-        'DropdownMenu',
-        props,
-        (() => {
-            const toggle = () => props.onOpenChange?.(!props.open);
-            const openMenu = () => props.onOpenChange?.(true);
-            const closeMenu = () => props.onOpenChange?.(false);
-            if (props.itemTrigger) {
-                return React.createElement(
-                    'Item',
-                    {
-                        title: props.itemTrigger.title,
-                        subtitle: props.itemTrigger.subtitle,
-                        icon: props.itemTrigger.icon,
-                        detail: undefined,
-                        onPress: toggle,
-                        showChevron: false,
-                        selected: false,
-                    },
-                );
-            }
-            return (typeof props.trigger === 'function'
-                ? props.trigger({ open: false, toggle, openMenu, closeMenu, selectedItem: null })
-                : props.trigger) ?? null;
-        })(),
-    ),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -228,14 +171,6 @@ const voiceState: any = {
 vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
     useVoiceSettingsMutable: () => [voiceState, (next: any) => setVoice(next)],
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: () => null,
-    useSettings: () => ({}),
-});
-});
 
 beforeEach(() => {
     setVoice.mockClear();

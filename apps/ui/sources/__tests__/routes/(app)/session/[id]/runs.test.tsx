@@ -13,6 +13,7 @@ import {
     createStackOptionsCapture,
 } from '@/dev/testkit/mocks/router';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,24 +90,22 @@ const routerMock = createExpoRouterMock({
     stackOptionsCapture,
 });
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+installSessionRouteCommonModuleMocks({
+    router: () => ({
+        ...routerMock.module,
+        useFocusEffect: (handler: () => void | (() => void)) => {
+            focusEffectHandler = handler;
+        },
+    }),
+    storageModule: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
+            useSession: (sessionId: string) => useSessionSpy(sessionId),
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-
-vi.mock('expo-router', () => ({
-    ...routerMock.module,
-    useFocusEffect: (handler: () => void | (() => void)) => {
-        focusEffectHandler = handler;
-    },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
 
 vi.mock('@/react-native-unistyles', () => ({}));
 
@@ -151,13 +150,6 @@ vi.mock('@/components/sessions/runs/ExecutionRunList', () => ({
         )
     ),
 }));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSession: (sessionId: string) => useSessionSpy(sessionId),
-    });
-});
 
 const Screen = (await import('@/app/(app)/session/[id]/runs')).default;
 

@@ -88,20 +88,20 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                                Platform: {
-                                                    OS: 'web',
-                                                    select: (values: any) => values?.web ?? values?.default,
-                                                },
-                                                View: 'View',
-                                                Text: 'Text',
-                                                Pressable: 'Pressable',
-                                                ActivityIndicator: 'ActivityIndicator',
-                                                TextInput: 'TextInput',
-                                                AppState: {
-                                                    currentState: 'active',
-                                                    addEventListener: () => ({ remove: () => {} }),
-                                                },
-                                            }
+                                                        Platform: {
+                                                            OS: 'web',
+                                                            select: (values: any) => values?.web ?? values?.default,
+                                                        },
+                                                        View: 'View',
+                                                        Text: 'Text',
+                                                        Pressable: 'Pressable',
+                                                        ActivityIndicator: 'ActivityIndicator',
+                                                        TextInput: 'TextInput',
+                                                        AppState: {
+                                                            currentState: 'active',
+                                                            addEventListener: () => ({ remove: () => {} }),
+                                                        },
+                                                    }
     );
 });
 

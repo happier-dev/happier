@@ -32,17 +32,17 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    View: (props: any) => React.createElement('View', props, props.children),
-                    Text: (props: any) => React.createElement('Text', props, props.children),
-                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                    Platform: {
-                        OS: 'web',
-                        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-                    },
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                }
+                            View: (props: any) => React.createElement('View', props, props.children),
+                            Text: (props: any) => React.createElement('Text', props, props.children),
+                            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+                            Platform: {
+                                OS: 'web',
+                                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+                            },
+                            AppState: {
+                                addEventListener: () => ({ remove: () => {} }),
+                            },
+                        }
     );
 });
 

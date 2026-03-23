@@ -3,61 +3,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { findTestInstanceByTypeWithProps, flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installServerRouteCommonModuleMocks } from './serverRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SLOW_TEST_TIMEOUT_MS = 60_000;
-
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('react-native-typography', () => ({
-    human: {},
-    iOSUIKit: {},
-    material: {},
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                KeyboardAvoidingView: 'KeyboardAvoidingView',
-                Platform: { OS: 'ios' },
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                groupped: { background: '#fff' },
-                text: '#000',
-                textSecondary: '#666',
-                textDestructive: '#f00',
-                input: { background: '#fff', text: '#000', placeholder: '#999' },
-                status: { connecting: '#00f' },
-                divider: '#ccc',
-                switch: {
-                    track: { inactive: '#ddd', active: '#0a0' },
-                    thumb: { active: '#fff' },
-                },
-            },
-        },
-    });
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key: string) => key,
-    });
-});
-
-vi.mock('expo-updates', () => ({
-    reloadAsync: vi.fn(),
-}));
 
 vi.mock('@/hooks/server/useServerRetentionPolicies', () => ({
     useServerRetentionPolicies: () => ({}),
@@ -67,27 +17,68 @@ const routerReplaceMock = vi.fn();
 let localSearchParamsMock: Record<string, any> = {};
 const switchConnectionToActiveServerSpy = vi.fn(async (_params?: unknown) => null);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
-let capturedRowActions: Record<string, any[]> = {};
 let pendingNotificationNavValue: { serverUrl: string; route: string } | null = null;
 const clearPendingNotificationNavSpy = vi.fn();
 const { modalMockRef } = vi.hoisted(() => ({
     modalMockRef: { current: null as any },
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            back: vi.fn(),
-            push: vi.fn(),
-            replace: routerReplaceMock,
-            setParams: vi.fn(),
-        },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => localSearchParamsMock,
-    };
+installServerRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            KeyboardAvoidingView: 'KeyboardAvoidingView',
+            Platform: { OS: 'ios' },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: {
+                back: vi.fn(),
+                push: vi.fn(),
+                replace: routerReplaceMock,
+                setParams: vi.fn(),
+            },
+        });
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => localSearchParamsMock,
+        };
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    surface: '#fff',
+                    groupped: { background: '#fff' },
+                    text: '#000',
+                    textSecondary: '#666',
+                    textDestructive: '#f00',
+                    input: { background: '#fff', text: '#000', placeholder: '#999' },
+                    status: { connecting: '#00f' },
+                    divider: '#ccc',
+                    switch: {
+                        track: { inactive: '#ddd', active: '#0a0' },
+                        thumb: { active: '#fff' },
+                    },
+                },
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock({ confirmResult: true });
+        modalMockRef.current = modalMock;
+        return modalMock.module;
+    },
 });
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
@@ -108,13 +99,6 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock({ confirmResult: true });
-    modalMockRef.current = modalMock;
-    return modalMock.module;
-});
 
 vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
     getPendingNotificationNav: () => pendingNotificationNavValue,
@@ -139,24 +123,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null),
 }));
 
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: ({ title, actions }: any) => {
-        const key = String(title);
-        const existing = capturedRowActions[key] ?? [];
-        const next = Array.isArray(actions) ? actions : [];
-        capturedRowActions[key] = [...existing, ...next];
-        return null;
-    },
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: any) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
-
 describe('ServerConfigScreen', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -165,7 +131,6 @@ describe('ServerConfigScreen', () => {
         switchConnectionToActiveServerSpy.mockReset();
         refreshFromActiveServerSpy.mockReset();
         delete (globalThis as any).fetch;
-        capturedRowActions = {};
         pendingNotificationNavValue = null;
         clearPendingNotificationNavSpy.mockReset();
         modalMockRef.current?.spies.alert.mockReset();
@@ -217,7 +182,7 @@ describe('ServerConfigScreen', () => {
 
         const { getActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 
-        await renderServerScreen();
+        const screen = await renderServerScreen();
 
         expect(getActiveServerId()).toBeTruthy();
         expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/v1/version', expect.any(Object));
@@ -243,7 +208,7 @@ describe('ServerConfigScreen', () => {
         });
         (globalThis as any).fetch = fetchSpy;
 
-        await renderServerScreen();
+        const screen = await renderServerScreen();
 
         expect(fetchSpy).toHaveBeenCalledWith('https://company.example.test/v1/version', expect.any(Object));
         expect(fetchSpy).not.toHaveBeenCalledWith('https://company.example.test', expect.any(Object));
@@ -317,9 +282,11 @@ describe('ServerConfigScreen', () => {
 
         const before = store.getState().settings;
 
-        await renderServerScreen();
+        const screen = await renderServerScreen();
 
-        const actions = capturedRowActions['Group'] ?? [];
+        const rowActions = findTestInstanceByTypeWithProps(screen, 'ItemRowActions' as any, { title: 'Group' });
+        expect(rowActions).toBeTruthy();
+        const actions = Array.isArray(rowActions?.props.actions) ? rowActions.props.actions : [];
         const switchAction = actions.find((action) => action?.id === 'switch');
         expect(switchAction).toBeTruthy();
 

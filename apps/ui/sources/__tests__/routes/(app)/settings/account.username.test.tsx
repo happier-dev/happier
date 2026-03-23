@@ -8,33 +8,19 @@ import {
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest, isUsernameRequest } from './account.testHelpers';
+import {
+    getAccountSettingsRouteModalMockRef,
+    getAccountSettingsRouteRouterMockRef,
+    installAccountSettingsRouteModuleMocks,
+} from './accountSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({}));
-const { routerMockRef, modalMockRef } = vi.hoisted(() => ({
-    routerMockRef: { current: null as any },
-    modalMockRef: { current: null as any },
-}));
+installAccountSettingsRouteModuleMocks();
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock();
-    routerMockRef.current = routerMock;
-    return routerMock.module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    const modalMock = createModalModuleMock();
-    modalMockRef.current = modalMock;
-    return modalMock.module;
-});
+const routerMockRef = getAccountSettingsRouteRouterMockRef();
+const modalMockRef = getAccountSettingsRouteModalMockRef();
 
 vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],

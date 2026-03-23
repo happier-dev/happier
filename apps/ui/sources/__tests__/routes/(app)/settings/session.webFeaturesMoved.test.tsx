@@ -1,109 +1,44 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import {
+    installSessionSettingsEntryModuleMocks,
+    resetSessionSettingsEntryState,
+    sessionSettingsEntryState,
+} from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const shared = vi.hoisted(() => ({
-    settingsState: {
-        agentInputEnterToSend: false,
-        agentInputHistoryScope: 'perSession',
-        sessionMessageSendMode: 'agent_queue',
-        sessionBusySteerSendPolicy: 'steer_immediately',
-        terminalConnectLegacySecretExportEnabled: false,
-        sessionReplayEnabled: false,
-        sessionReplayStrategy: 'recent_messages',
-        sessionReplayRecentMessagesCount: 100,
-        sessionUseTmux: false,
-        sessionTmuxSessionName: null,
-        sessionTmuxIsolated: false,
-        sessionTmuxTmpDir: null,
-        sessionsRightPaneDefaultOpen: false,
-        uiMultiPanePanelsEnabled: true,
-    } as Record<string, unknown>,
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                useWindowDimensions: () => ({ width: 1280, height: 800 }),
-                            }
-    );
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: 'Switch',
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker', () => ({
-    LlmTaskRunnerConfigV1BackendModelPicker: 'LlmTaskRunnerConfigV1BackendModelPicker',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
+installSessionSettingsEntryModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            useWindowDimensions: () => ({ width: 1280, height: 800 }),
+        });
     },
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSettingMutable: ((key: string) => [key in shared.settingsState ? shared.settingsState[key] : null, vi.fn()]) as any,
-            useLocalSettingMutable: ((key: string) => [key in shared.settingsState ? shared.settingsState[key] : null, vi.fn()]) as any,
-        },
-    });
-});
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
-}));
+sessionSettingsEntryState.settingsState = {
+    agentInputEnterToSend: false,
+    agentInputHistoryScope: 'perSession',
+    sessionMessageSendMode: 'agent_queue',
+    sessionBusySteerSendPolicy: 'steer_immediately',
+    terminalConnectLegacySecretExportEnabled: false,
+    sessionReplayEnabled: false,
+    sessionReplayStrategy: 'recent_messages',
+    sessionReplayRecentMessagesCount: 100,
+    sessionUseTmux: false,
+    sessionTmuxSessionName: null,
+    sessionTmuxIsolated: false,
+    sessionTmuxTmpDir: null,
+    sessionsRightPaneDefaultOpen: false,
+    uiMultiPanePanelsEnabled: true,
+};
 
 afterEach(() => {
     standardCleanup();
+    resetSessionSettingsEntryState();
 });
 
 describe('Session settings (web features moved)', () => {

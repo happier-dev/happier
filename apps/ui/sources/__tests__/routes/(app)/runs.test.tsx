@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
 import {
     createExpoRouterMock,
     createStackOptionsCapture,
@@ -19,6 +20,9 @@ const machineExecutionRunsListSpy = vi.fn(async (..._args: MachineExecutionRunsL
     ok: true as const,
     runs: [],
 }));
+const renderChildrenOnly = ({ children }: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children);
+const renderNull = () => null;
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
@@ -63,7 +67,7 @@ vi.mock('react-native-unistyles', async () => {
     });
 });
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -71,15 +75,15 @@ vi.mock('@/text', async () => {
 });
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (_props: any) => null,
+    Item: renderNull,
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemGroup: renderChildrenOnly,
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemList: renderChildrenOnly,
 }));
 
 vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
@@ -88,7 +92,7 @@ vi.mock('@/components/ui/layout/ConstrainedScreenContent', () => ({
 }));
 
 vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
-    ExecutionRunRow: (_props: any) => null,
+    ExecutionRunRow: renderNull,
 }));
 
 vi.mock('@/modal', async () => {

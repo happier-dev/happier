@@ -75,17 +75,17 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                    FlatList: ({ data, renderItem, ItemSeparatorComponent, keyExtractor }: any) => (
-                            <>
-                                {(data ?? []).map((item: any, index: number) => (
-                                    <React.Fragment key={keyExtractor ? keyExtractor(item, index) : String(item?.id ?? index)}>
-                                        {renderItem({ item, index })}
-                                        {ItemSeparatorComponent ? <ItemSeparatorComponent /> : null}
-                                    </React.Fragment>
-                                ))}
-                            </>
-                        ),
-                }
+                            FlatList: ({ data, renderItem, ItemSeparatorComponent, keyExtractor }: any) => (
+                                    <>
+                                        {(data ?? []).map((item: any, index: number) => (
+                                            <React.Fragment key={keyExtractor ? keyExtractor(item, index) : String(item?.id ?? index)}>
+                                                {renderItem({ item, index })}
+                                                {ItemSeparatorComponent ? <ItemSeparatorComponent /> : null}
+                                            </React.Fragment>
+                                        ))}
+                                    </>
+                                ),
+                        }
     );
 });
 

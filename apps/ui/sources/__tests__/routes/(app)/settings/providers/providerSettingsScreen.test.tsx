@@ -3,8 +3,14 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
+import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
+import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
 import {
     flushHookEffects,
     renderScreen,
@@ -81,36 +87,32 @@ let activeServerSnapshot: ActiveServerSnapshot = {
     generation: 1,
 };
 let activeServerSubscriber: ((snapshot: ActiveServerSnapshot) => void) | null = null;
+const passThrough = (componentName: string) => createPassThroughModule([componentName]);
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                View: 'View',
-                                TextInput: 'TextInput',
-                                Easing: {
-                                    bezier: () => 'bezier',
-                                    linear: 'linear',
-                                },
-                                Platform: {
-                                    OS: 'ios',
-                                    select: (value: any) => (value && typeof value === 'object' ? (value.ios ?? value.default) : value),
-                                },
-                            }
+            View: 'View',
+            TextInput: 'TextInput',
+            Easing: {
+                bezier: () => 'bezier',
+                linear: 'linear',
+            },
+            Platform: {
+                OS: 'ios',
+                select: (value: any) => (value && typeof value === 'object' ? (value.ios ?? value.default) : value),
+            },
+        },
     );
 });
 
 vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
 vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const routerMock = createExpoRouterMock({
         router: {
             push: (value) => routerPushSpy(value),
@@ -126,17 +128,11 @@ vi.mock('expo-router', async () => {
     };
 });
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
+vi.mock('@/components/ui/lists/ItemList', () => passThrough('ItemList'));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
+vi.mock('@/components/ui/lists/ItemGroup', () => passThrough('ItemGroup'));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
+vi.mock('@/components/ui/lists/Item', () => passThrough('Item'));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: 'Switch',
@@ -182,7 +178,6 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleMock({
         importOriginal,
         overrides: {
@@ -317,7 +312,6 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
 }));
 
 vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
 });
 
@@ -349,21 +343,16 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     };
 });
 
-vi.mock('@/components/settings/providers/ProviderCliInstallItem', () => ({
-    ProviderCliInstallItem: (props: any) => React.createElement('ProviderCliInstallItem', props),
-}));
+vi.mock('@/components/settings/providers/ProviderCliInstallItem', () => passThrough('ProviderCliInstallItem'));
 
-vi.mock('@/components/contextBar/ContextBar', () => ({
-    ContextBar: (props: any) => React.createElement('ContextBar', props),
-}));
+vi.mock('@/components/contextBar/ContextBar', () => passThrough('ContextBar'));
 
-vi.mock('@/components/ui/layout/BadgeGrid', () => ({
-    BadgeGrid: (props: any) => React.createElement('BadgeGrid', props),
-}));
+vi.mock('@/components/ui/layout/BadgeGrid', () => passThrough('BadgeGrid'));
 
-vi.mock('@/components/settings/providers/authentication/ProviderAuthenticationTerminalPane', () => ({
-    ProviderAuthenticationTerminalPane: (props: any) => React.createElement('ProviderAuthenticationTerminalPane', props),
-}));
+vi.mock(
+    '@/components/settings/providers/authentication/ProviderAuthenticationTerminalPane',
+    () => passThrough('ProviderAuthenticationTerminalPane'),
+);
 
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main),
@@ -647,12 +636,7 @@ describe('ProviderSettingsScreen', () => {
         expect(hostBefore.props.bottomPane).toBeNull();
         expect(hostBefore.props.scopeId).toBe('settings:provider:codex');
 
-        const loginAction = screen.findByTestId('settings-provider-auth-login');
-        expect(loginAction).toBeTruthy();
-
-        await act(async () => {
-            loginAction!.props.onPress();
-        });
+        await screen.pressByTestIdAsync('settings-provider-auth-login');
         await flushHookEffects();
 
         expect(paneApi.openBottom).toHaveBeenCalledWith({ tabId: 'provider-auth-terminal' });
@@ -742,7 +726,7 @@ describe('ProviderSettingsScreen', () => {
 
     it('renders and updates the backend CLI source preference when a managed install exists', async () => {
         const screen = await renderProviderSettingsScreen();
-        const sourceMenu = screen.root
+        const sourceMenu = screen
             .findAllByType('DropdownMenu' as any)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsProviders.cliSourcePreference.title');
         expect(sourceMenu).toBeTruthy();

@@ -6,6 +6,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installNewPickRouteCommonModuleMocks } from './newPickRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -59,47 +60,64 @@ let capturedMachineSelectionContentProps: any = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                Platform: { OS: 'web' },
-            }
-    );
-});
-
-vi.mock('react-native-unistyles', async () =>
-    (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-        theme: {
-            colors: {
-                header: { tint: '#111' },
-                textSecondary: '#666',
-                groupped: { background: '#fff' },
-            },
-        },
-    }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('@react-navigation/native', () => ({
-    CommonActions: {
-        setParams: (params: Record<string, unknown>) => ({
-            type: 'SET_PARAMS',
-            payload: { params },
-        }),
+installNewPickRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { OS: 'web' },
+        });
     },
-}));
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    header: { tint: '#111' },
+                    textSecondary: '#666',
+                    groupped: { background: '#fff' },
+                },
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const module = createExpoRouterMock({
+            navigation: {
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        {
+                            key: 'new-route',
+                            name: '(app)/new/index',
+                            path: '/new',
+                            params: {
+                                machineId: 'machine-1',
+                                spawnServerId: 'server-b',
+                            },
+                        },
+                        {
+                            key: 'current-route',
+                            name: '(app)/new/pick/machine',
+                            path: '/new/pick/machine',
+                        },
+                    ],
+                }),
+                dispatch: navigationDispatchSpy,
+            },
+            router: {
+                push: vi.fn(),
+                back: routerBackSpy,
+                replace: routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        }).module;
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
+        return {
+            ...module,
+            useLocalSearchParams: () => state.localSearchParams,
+        };
+    },
+    storage: async (importOriginal) => (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
         importOriginal,
         overrides: {
             useAllMachines: () => ([
@@ -130,46 +148,17 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
             },
             useSettingMutable: (key: string) => (key === 'favoriteMachines' ? [[], vi.fn()] : [undefined, vi.fn()]),
         },
-    }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const module = createExpoRouterMock({
-        navigation: {
-            getState: () => ({
-                index: 1,
-                routes: [
-                    {
-                        key: 'new-route',
-                        name: '(app)/new/index',
-                        path: '/new',
-                        params: {
-                            machineId: 'machine-1',
-                            spawnServerId: 'server-b',
-                        },
-                    },
-                    {
-                        key: 'current-route',
-                        name: '(app)/new/pick/machine',
-                        path: '/new/pick/machine',
-                    },
-                ],
-            }),
-            dispatch: navigationDispatchSpy,
-        },
-        router: {
-            push: vi.fn(),
-            back: routerBackSpy,
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    }).module;
-
-    return {
-        ...module,
-        useLocalSearchParams: () => state.localSearchParams,
-    };
+    }),
 });
+
+vi.mock('@react-navigation/native', () => ({
+    CommonActions: {
+        setParams: (params: Record<string, unknown>) => ({
+            type: 'SET_PARAMS',
+            payload: { params },
+        }),
+    },
+}));
 
 vi.mock('@/components/sessions/new/components/NewSessionMachineSelectionContent', () => ({
     NewSessionMachineSelectionContent: (props: any) => {

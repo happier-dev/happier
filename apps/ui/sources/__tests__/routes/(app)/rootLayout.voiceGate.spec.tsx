@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -25,46 +26,34 @@ const mockSettings = {
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { replace: vi.fn() },
-        pathname: '/',
-        segments: ['(app)'],
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                            Platform: {
-                                OS: 'ios',
-                            },
-                            TouchableOpacity: 'TouchableOpacity',
-                            Text: 'Text',
-                            AppState: {
-                                addEventListener: () => ({ remove: () => {} }),
-                            },
-                        }
-    );
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: { colors: { surface: '#fff', header: { background: '#fff', tint: '#000' } } },
-    });
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+installRootLayoutRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+            TouchableOpacity: 'TouchableOpacity',
+            Text: 'Text',
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: { colors: { surface: '#fff', header: { background: '#fff', tint: '#000' } } },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key });
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({

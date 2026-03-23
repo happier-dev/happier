@@ -5,6 +5,8 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,34 +15,10 @@ const routerReplaceSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
 let shouldRedirectToPanes = false;
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        params: {
-            id: 'session-1',
-            path: mockFilePathParam,
-        },
-        router: {
-            back: vi.fn(),
-            push: vi.fn(),
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    });
-
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => ({
-            id: 'session-1',
-            path: mockFilePathParam,
-        }),
-    };
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
             Platform: {
                 OS: 'ios',
                 select: (value: any) => value?.ios ?? value?.default ?? null,
@@ -52,13 +30,42 @@ vi.mock('react-native', async () => {
                 scale: 1,
                 fontScale: 1,
             }),
-        }
-    );
-});
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            params: {
+                id: 'session-1',
+                path: mockFilePathParam,
+            },
+            router: {
+                back: vi.fn(),
+                push: vi.fn(),
+                replace: routerReplaceSpy,
+                setParams: vi.fn(),
+            },
+        });
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
+        return {
+            ...routerMock.module,
+            useLocalSearchParams: () => ({
+                id: 'session-1',
+                path: mockFilePathParam,
+            }),
+        };
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                // Boundary fixture: this route only needs falsy local settings while preserving the hook signature.
+                useLocalSetting: (<K extends keyof LocalSettings>(_name: K) =>
+                    false as unknown as LocalSettings[K]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
+            },
+        });
+    },
 });
 
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
@@ -75,13 +82,6 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
         applySelectedLines: vi.fn(),
     }),
 }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useLocalSetting: () => false,
-    });
-});
 
 vi.mock('@/components/ui/panels/shouldRedirectDetailsRouteToPanes', () => ({
     shouldRedirectDetailsRouteToPanes: () => shouldRedirectToPanes,
@@ -140,16 +140,6 @@ vi.mock('@/scm/scmStatusSync', () => ({
         invalidateFromMutationAndAwait: vi.fn(async () => {}),
     },
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 vi.mock('@/encryption/base64', () => ({
     decodeBase64: () => new Uint8Array(),

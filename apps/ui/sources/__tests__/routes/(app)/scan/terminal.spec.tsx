@@ -1,54 +1,41 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import {
+    installScanRouteCommonModuleMocks,
+} from './scanRouteTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                    View: 'View',
-                    Platform: {
-                        OS: 'ios',
-                        select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
-                    },
-                    AppState: {
-                        addEventListener: () => ({ remove: () => {} }),
-                    },
-                }
-    );
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
 const routerBackSpy = vi.fn();
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: routerBackSpy },
-    });
-    return routerMock.module;
+installScanRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: routerBackSpy },
+        }).module;
+    },
 });
 
 const processAuthUrlSpy = vi.fn(async (_url: string) => true);
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: (_opts?: any) => ({ processAuthUrl: processAuthUrlSpy, isLoading: false }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
 
 let lastScannerProps: any = null;
 vi.mock('@/components/qr/QrCodeScannerView', () => ({
@@ -59,11 +46,13 @@ vi.mock('@/components/qr/QrCodeScannerView', () => ({
 }));
 
 describe('/scan/terminal', () => {
-    it('processes scanned terminal URLs', async () => {
+    beforeEach(() => {
         routerBackSpy.mockClear();
         processAuthUrlSpy.mockClear();
         lastScannerProps = null;
+    });
 
+    it('processes scanned terminal URLs', async () => {
         const { default: Screen } = await import('@/app/(app)/scan/terminal');
 
         await renderScreen(<Screen />);

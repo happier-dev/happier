@@ -1,36 +1,49 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    installRestoreRouteCommonModuleMocks,
+    resetRestoreRouteTestState,
+} from './restoreRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+const modalAlertSpy = vi.fn(async () => {});
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Text: 'Text',
-                                    ScrollView: 'ScrollView',
-                                    ActivityIndicator: 'ActivityIndicator',
-                                    Pressable: 'Pressable',
-                                    Dimensions: {
-                                        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-                                    },
-                                    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
-                                    },
-                                    AppState: {
-                                        addEventListener: () => ({ remove: () => {} }),
-                                    },
-                                }
-    );
+installRestoreRouteCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: 'Pressable',
+            Dimensions: {
+                get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+            Platform: {
+                OS: 'ios',
+                select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? options?.android,
+            },
+            AppState: {
+                addEventListener: () => ({ remove: () => {} }),
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                prompt: vi.fn(async () => null),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/utils/platform/platform', () => ({
@@ -75,44 +88,6 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
 
-const modalAlertSpy = vi.fn(async () => {});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            prompt: vi.fn(async () => null),
-        },
-    }).module;
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                overlay: {
-                    scrim: 'rgba(0,0,0,0.3)',
-                    scrimStrong: 'rgba(0,0,0,0.55)',
-                    text: '#fff',
-                    textSecondary: 'rgba(255,255,255,0.85)',
-                },
-                divider: '#ddd',
-                input: { background: '#fff', placeholder: '#999', text: '#000' },
-            },
-        },
-    });
-});
-
 vi.mock('@/auth/flows/qrStart', () => ({
     generateAuthKeyPair: () => ({ publicKey: new Uint8Array([1]), secretKey: new Uint8Array([2]) }),
     authQRStart: vi.fn(async () => true),
@@ -146,6 +121,7 @@ vi.mock('@/auth/pairing/pairingUrl', () => ({
 }));
 
 afterEach(() => {
+    resetRestoreRouteTestState();
     vi.restoreAllMocks();
     standardCleanup();
 });

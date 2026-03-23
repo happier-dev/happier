@@ -2,10 +2,12 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
+import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,6 +23,14 @@ const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve())
 const closeDetailsSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
 let canGoBack = true;
+const routerMock = createExpoRouterMock({
+    router: {
+        back: routerBackSpy,
+        push: vi.fn(),
+        replace: routerReplaceSpy,
+        setParams: vi.fn(),
+    },
+});
 
 type DetailsTab = Readonly<{ key: string }>;
 type MockScopeState = Readonly<{
@@ -36,37 +46,18 @@ type MockScopeState = Readonly<{
 
 let scopeState: MockScopeState = { details: null };
 
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => isFocused,
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                        View: 'View',
-                                        ActivityIndicator: 'ActivityIndicator',
-                                    }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: {
-            back: routerBackSpy,
-            push: vi.fn(),
-            replace: routerReplaceSpy,
-            setParams: vi.fn(),
-        },
-    });
-    return {
+installSessionRouteCommonModuleMocks({
+    router: () => ({
         ...routerMock.module,
         useLocalSearchParams: () => ({ id: mockSessionId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
         useGlobalSearchParams: () => ({ id: mockSessionId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
         useNavigation: () => ({ canGoBack: () => canGoBack }),
-    };
+    }),
 });
+
+vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => isFocused,
+}));
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => {

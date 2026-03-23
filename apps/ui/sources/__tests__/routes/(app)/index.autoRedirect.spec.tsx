@@ -253,7 +253,7 @@ describe('/ (welcome) auto redirect', () => {
             await flushHookEffects();
             expect(shared.openURL).not.toHaveBeenCalled();
 
-            await flushHookEffects({ advanceTimersMs: 1 });
+            await flushHookEffects({ runOnlyPendingTimers: true });
 
             expect(shared.openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
         } finally {

@@ -8,6 +8,7 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -42,8 +43,6 @@ const mockState = await vi.hoisted(async () => {
     };
 });
 
-vi.mock('react-native-reanimated', () => ({}));
-
 vi.mock('expo-notifications', () => ({
     DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
     getLastNotificationResponseAsync: vi.fn(),
@@ -51,10 +50,14 @@ vi.mock('expo-notifications', () => ({
     setBadgeCountAsync: vi.fn(async () => {}),
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return (
-        createExpoRouterMock({
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+installRootLayoutRouteCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
             pathname: '/',
             segments: ['(app)'],
             router: {
@@ -63,33 +66,8 @@ vi.mock('expo-router', async () => {
                 back: vi.fn(),
                 setParams: vi.fn(),
             },
-        }).module
-    );
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: {
-            OS: 'ios',
-            select: <T,>(choices: { ios?: T; default?: T }) => choices?.ios ?? choices?.default,
-        },
-        AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
+        }).module;
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({

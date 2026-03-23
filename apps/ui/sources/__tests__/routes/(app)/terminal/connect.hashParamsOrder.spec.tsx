@@ -3,29 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
+import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerBackMock = vi.fn();
 const getPendingTerminalConnectMock = vi.fn<() => PendingTerminalConnect | null>(() => null);
 const globalWindow = globalThis as unknown as { window?: Window };
 const originalWindow = globalWindow.window;
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: routerBackMock },
-    });
-    return routerMock.module;
-});
+installTerminalRouteCommonModuleMocks();
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
@@ -50,52 +39,9 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
 }));
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Platform: {
-                                        OS: 'web',
-                                        select: (options: Record<string, unknown>) => options.web ?? options.default,
-                                    },
-                                }
-    );
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: 'Item',
-}));
-
 describe('TerminalConnectScreen hash parsing', () => {
     beforeEach(() => {
         vi.resetModules();
-        routerBackMock.mockClear();
         getPendingTerminalConnectMock.mockReset();
         globalWindow.window = {
             location: {
@@ -122,7 +68,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.root.findAll((node) => (node.type as unknown) === 'Item');
+        const renderedItems = screen.findAllByType('Item' as any);
         const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
         expect(publicKeyItem).toBeTruthy();
         expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
@@ -166,7 +112,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         const screen = await renderScreen(<Screen />);
         await act(async () => {});
 
-        const renderedItems = screen.root.findAll((node) => (node.type as unknown) === 'Item');
+        const renderedItems = screen.findAllByType('Item' as any);
         const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
         expect(publicKeyItem).toBeTruthy();
         expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');

@@ -1,5 +1,4 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createWelcomeFeaturesResponse,
@@ -7,7 +6,7 @@ import {
     waitForWelcomeTestId,
     waitForWelcomeText,
 } from './index.testHelpers';
-import { standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
@@ -262,9 +261,7 @@ describe('/ (welcome) signup methods', () => {
 
             expect(screen.findAllByTestId('welcome-server-unavailable')).toHaveLength(0);
 
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(1);
-            });
+            await flushHookEffects({ advanceTimersMs: 1 });
             await waitForWelcomeTestId(screen, 'welcome-server-unavailable');
 
             expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);

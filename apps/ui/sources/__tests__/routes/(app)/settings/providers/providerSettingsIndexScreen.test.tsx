@@ -3,80 +3,62 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import {
+    installSessionSettingsEntryModuleMocks,
+    resetSessionSettingsEntryState,
+    sessionSettingsEntryState,
+} from '../sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.fn();
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({
-        router: {
-            push: (value) => routerPushSpy(value),
-            back: () => undefined,
-            replace: () => undefined,
-            setParams: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#999',
+installSessionSettingsEntryModuleMocks({
+    textModule: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#999',
+                },
             },
-        },
-    });
+        });
+    },
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: (key: string) => {
+                    if (key === 'backendEnabledByTargetKey') return {};
+                    return undefined;
+                },
+            },
+        });
+    },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children, ...props }: any) => React.createElement('ItemList', props, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children, ...props }: any) => React.createElement('ItemGroup', props, children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
 
 vi.mock('@/components/settings/acpCatalog/AcpCatalogSettingsSections', () => ({
     AcpCatalogSettingsSections: () => React.createElement('AcpCatalogSettingsSections'),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex', 'customAcp', 'kiro'],
-    getAgentCore: (agentId: string) => ({
-        displayNameKey: `agent.${agentId}`,
-        availability: { experimental: agentId === 'kiro' },
-        ui: { agentPickerIconName: 'code-slash-outline' },
-    }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'backendEnabledByTargetKey') return {};
-        return undefined;
-    },
-});
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        AGENT_IDS: ['codex', 'customAcp', 'kiro'],
+        getAgentCore: (agentId: string) => ({
+            displayNameKey: `agent.${agentId}`,
+            availability: { experimental: agentId === 'kiro' },
+            ui: { agentPickerIconName: 'code-slash-outline' },
+        }),
+    };
 });
 
 afterEach(() => {
-    routerPushSpy.mockClear();
+    resetSessionSettingsEntryState();
     standardCleanup();
 });
 
@@ -96,6 +78,6 @@ describe('ProviderSettingsIndexScreen', () => {
             screen.pressRowByTitle('agent.codex');
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/codex');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/codex');
     });
 });

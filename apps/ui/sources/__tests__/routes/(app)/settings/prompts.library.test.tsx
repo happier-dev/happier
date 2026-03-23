@@ -1,14 +1,12 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionSettingsEntryModuleMocks } from './sessionSettingsEntryTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
-});
+installSessionSettingsEntryModuleMocks();
 
 describe('legacy prompts library route', () => {
     it('redirects back to the prompts settings home', async () => {

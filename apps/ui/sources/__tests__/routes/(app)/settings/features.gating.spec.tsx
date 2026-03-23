@@ -3,72 +3,12 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createRootLayoutFeaturesResponse, renderSettingsView } from '@/dev/testkit';
+import {
+    installSessionSettingsEntryModuleMocks,
+} from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
-
-vi.mock('react-native-reanimated', () => ({}));
-
-vi.mock('expo-linear-gradient', () => ({
-    LinearGradient: 'LinearGradient',
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                    View: 'View',
-                                    Text: 'Text',
-                                    Platform: {
-                                        OS: 'ios',
-                                        select: (spec: Record<string, unknown>) =>
-                                            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-                                    },
-                                }
-    );
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const Ionicons = Object.assign(
-        (props: any) => React.createElement('Ionicons', props),
-        { glyphMap: {} },
-    );
-    return { Ionicons };
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
 
 const useServerFeaturesMainSelectionSnapshotMock = vi.fn();
 const useEffectiveServerSelectionMock = vi.fn();
@@ -98,20 +38,47 @@ function listTitles(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
 const useSettingMutableMock = vi.fn();
 const useLocalSettingMutableMock = vi.fn();
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSettingMutable: (key: string) => useSettingMutableMock(key),
-    useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
-});
-});
-
 describe('FeaturesSettingsScreen gating', () => {
     beforeEach(() => {
         vi.resetModules();
         delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW;
         delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         delete process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+
+        installSessionSettingsEntryModuleMocks({
+            reactNative: async () => {
+                const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+                return createReactNativeWebMock({
+                    View: 'View',
+                    Text: 'Text',
+                    Platform: {
+                        OS: 'ios',
+                        select: (spec: Record<string, unknown>) =>
+                            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+                    },
+                });
+            },
+            textModule: async () => {
+                const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+                return createTextModuleMock({ translate: (key) => key });
+            },
+            modalModule: async () => {
+                const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+                return createModalModuleMock({
+                    spies: {
+                        confirm: vi.fn(async () => false),
+                    },
+                }).module;
+            },
+            storageModule: async (importOriginal) => {
+                const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+                return createStorageModuleStub({
+                    importOriginal,
+                    useSettingMutable: (key: string) => useSettingMutableMock(key),
+                    useLocalSettingMutable: (key: string) => useLocalSettingMutableMock(key),
+                });
+            },
+        });
 
         useEffectiveServerSelectionMock.mockReturnValue({ serverIds: [] });
         useServerFeaturesMainSelectionSnapshotMock.mockReturnValue({ status: 'ready', serverIds: [], snapshotsByServerId: {} });
