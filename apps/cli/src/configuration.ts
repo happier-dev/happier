@@ -312,15 +312,18 @@ class Configuration {
     // Workspace replication blob-pack sizing (Appendix A).
     this.workspaceReplicationBlobPackTargetBytes = resolveIntEnvWithBounds(
       'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES',
-      { min: 1, default: 128 * 1024 * 1024 },
+      // Defensive max prevents accidentally configuring multi-GB packs that can thrash disk/network.
+      { min: 1, max: 1024 * 1024 * 1024, default: 128 * 1024 * 1024 },
     );
     this.workspaceReplicationBlobPackMaxBlobs = resolveIntEnvWithBounds(
       'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_BLOBS',
-      { min: 1, default: 256 },
+      // Defensive max prevents attacker-controlled transfer id lists / request bodies from becoming huge work multipliers.
+      { min: 1, max: 10_000, default: 256 },
     );
     this.workspaceReplicationBlobPackMaxSingleBlobBytes = resolveIntEnvWithBounds(
       'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_SINGLE_BLOB_BYTES',
-      { min: 1, default: 1024 * 1024 * 1024 },
+      // Large files exist, but avoid unbounded values that can destabilize the daemon.
+      { min: 1, max: 4 * 1024 * 1024 * 1024, default: 1024 * 1024 * 1024 },
     );
 
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');

@@ -115,6 +115,55 @@ function resolveDaemonStopWaitForDeathTimeoutMs(): number {
   return Math.max(DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS, drainGraceMs + 2_000);
 }
 
+type DaemonRunningInspection =
+  | { status: 'not-running' }
+  | { status: 'starting'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> }
+  | { status: 'running'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> };
+
+async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<DaemonRunningInspection> {
+  const state = await readDaemonState();
+  if (!state) {
+    return { status: 'not-running' };
+  }
+
+  if (state.controlToken && (!state.httpPort || typeof state.httpPort !== 'number')) {
+    logger.debug('[DAEMON RUN] Daemon state missing httpPort, cleaning up state');
+    await cleanupDaemonState();
+    return { status: 'not-running' };
+  }
+
+  try {
+    process.kill(state.pid, 0);
+    if (state.controlToken) {
+      const ping = await daemonPost('/ping', undefined, { timeoutMs: resolveDaemonPingTimeoutMs() });
+
+      if (ping && typeof ping === 'object' && (ping as any).success === false) {
+        logger.debug('[DAEMON RUN] Daemon /ping rejected control token, cleaning up state');
+        await cleanupDaemonState();
+        return { status: 'not-running' };
+      }
+
+      if (ping?.error) {
+        const ageMs = resolveDaemonStateAgeMs(state);
+        if (ageMs !== null && ageMs < DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS) {
+          logger.debug('[DAEMON RUN] Daemon /ping unreachable during startup grace window, keeping state');
+          return { status: 'starting', state };
+        }
+
+        logger.debug('[DAEMON RUN] Daemon control server did not respond to /ping, cleaning up state');
+        await cleanupDaemonState();
+        return { status: 'not-running' };
+      }
+    }
+
+    return { status: 'running', state };
+  } catch {
+    logger.debug('[DAEMON RUN] Daemon PID not running, cleaning up state');
+    await cleanupDaemonState();
+    return { status: 'not-running' };
+  }
+}
+
 async function daemonPost(path: string, body?: any, options: DaemonControlRequestOptions = {}): Promise<{ error?: string } | any> {
   const state = await readDaemonState();
   if (!state?.httpPort) {
@@ -245,53 +294,8 @@ export async function stopDaemonHttp(params: { stopSessions?: boolean } = {}): P
  * Returns false and clears stale state when the PID is dead or (when available) the control token cannot /ping.
  */
 export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolean> {
-  const state = await readDaemonState();
-  if (!state) {
-    return false;
-  }
-
-  if (state.controlToken && (!state.httpPort || typeof state.httpPort !== 'number')) {
-    logger.debug('[DAEMON RUN] Daemon state missing httpPort, cleaning up state');
-    await cleanupDaemonState();
-    return false;
-  }
-
-  // Check if the daemon is running
-  try {
-    process.kill(state.pid, 0);
-    // If the daemon state includes a control token, also verify that the control server responds.
-    // This prevents PID reuse + stale port files from being treated as a healthy daemon.
-    if (state.controlToken) {
-      const ping = await daemonPost('/ping', undefined, { timeoutMs: resolveDaemonPingTimeoutMs() });
-
-      // If we can conclusively authenticate and still fail, the token/state is stale and must be removed.
-      if (ping && typeof ping === 'object' && (ping as any).success === false) {
-        logger.debug('[DAEMON RUN] Daemon /ping rejected control token, cleaning up state');
-        await cleanupDaemonState();
-        return false;
-      }
-
-      if (ping?.error) {
-        const ageMs = resolveDaemonStateAgeMs(state);
-        if (ageMs !== null && ageMs < DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS) {
-          // During startup, the daemon may have written state before the control server is accepting connections.
-          // Keeping the state avoids flaking readiness checks that poll /ping in a tight loop.
-          logger.debug('[DAEMON RUN] Daemon /ping unreachable during startup grace window, keeping state');
-          return false;
-        }
-
-        logger.debug('[DAEMON RUN] Daemon control server did not respond to /ping, cleaning up state');
-        await cleanupDaemonState();
-        return false;
-      }
-    }
-
-    return true;
-  } catch {
-    logger.debug('[DAEMON RUN] Daemon PID not running, cleaning up state');
-    await cleanupDaemonState();
-    return false;
-  }
+  const inspection = await inspectDaemonRunningStateAndCleanupStaleState();
+  return inspection.status === 'running';
 }
 
 /**
@@ -305,17 +309,13 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(params: Read
   expectedMachineId?: string | null;
 }> = {}): Promise<boolean> {
   logger.debug('[DAEMON CONTROL] Checking if daemon is running same version');
-  const runningDaemon = await checkIfDaemonRunningAndCleanupStaleState();
-  if (!runningDaemon) {
+  const runningDaemon = await inspectDaemonRunningStateAndCleanupStaleState();
+  if (runningDaemon.status === 'not-running') {
     logger.debug('[DAEMON CONTROL] No daemon running, returning false');
     return false;
   }
 
-  const state = await readDaemonState();
-  if (!state) {
-    logger.debug('[DAEMON CONTROL] No daemon state found, returning false');
-    return false;
-  }
+  const state = runningDaemon.state;
 
   const expectedMachineId = typeof params.expectedMachineId === 'string' ? params.expectedMachineId.trim() : '';
   if (expectedMachineId) {
@@ -335,7 +335,9 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(params: Read
       readFileSyncImpl: readFileSync,
     });
     
-    logger.debug(`[DAEMON CONTROL] Current CLI version: ${currentCliVersion}, Daemon started with version: ${state.startedWithCliVersion}`);
+    logger.debug(
+      `[DAEMON CONTROL] Current CLI version: ${currentCliVersion}, Daemon started with version: ${state.startedWithCliVersion}, status=${runningDaemon.status}`,
+    );
     return currentCliVersion === state.startedWithCliVersion;
   } catch (error) {
     logger.debug('[DAEMON CONTROL] Error checking daemon version', error);

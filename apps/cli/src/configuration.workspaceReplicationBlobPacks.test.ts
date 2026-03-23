@@ -54,4 +54,20 @@ describe('configuration workspace replication blob pack sizing', () => {
     expect(configMod.configuration.workspaceReplicationBlobPackMaxBlobs).toBe(64);
     expect(configMod.configuration.workspaceReplicationBlobPackMaxSingleBlobBytes).toBe(16 * 1024 * 1024);
   });
+
+  it('clamps workspace replication blob pack sizing to defensive maximums', async () => {
+    const homeDir = createTempDirSync('happier-cli-config-');
+    tempDirs.push(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES = String(10 * 1024 * 1024 * 1024);
+    process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_BLOBS = '99999999';
+    process.env.HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_SINGLE_BLOB_BYTES = String(100 * 1024 * 1024 * 1024);
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+
+    expect(configMod.configuration.workspaceReplicationBlobPackTargetBytes).toBe(1024 * 1024 * 1024);
+    expect(configMod.configuration.workspaceReplicationBlobPackMaxBlobs).toBe(10_000);
+    expect(configMod.configuration.workspaceReplicationBlobPackMaxSingleBlobBytes).toBe(4 * 1024 * 1024 * 1024);
+  });
 });

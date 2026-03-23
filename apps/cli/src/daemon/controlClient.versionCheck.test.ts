@@ -103,4 +103,39 @@ describe('daemon control client version check', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it('treats a recent startup-grace daemon as compatible when version and machine id already match', async () => {
+    const realFetch = globalThis.fetch;
+
+    try {
+      await withTempDir('happier-daemon-version-check-', async (tmpHomeDir) => {
+        envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+        reloadConfiguration();
+
+        const daemonPort = 43210;
+        vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+          const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+          if (url.hostname === '127.0.0.1' && Number(url.port) === daemonPort) {
+            throw new TypeError('fetch failed');
+          }
+          return await realFetch(input, init);
+        });
+
+        writeDaemonState({
+          pid: process.pid,
+          httpPort: daemonPort,
+          startedAt: Date.now(),
+          startedWithCliVersion: configuration.currentCliVersion,
+          machineId: 'machine-current',
+          controlToken: 'test-token',
+        });
+
+        await expect(
+          isDaemonRunningCurrentlyInstalledHappyVersion({ expectedMachineId: 'machine-current' }),
+        ).resolves.toBe(true);
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

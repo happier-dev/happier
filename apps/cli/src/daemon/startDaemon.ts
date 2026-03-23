@@ -1570,13 +1570,14 @@ export async function startDaemon(): Promise<void> {
                 ...(directPeerRegistry
                   ? {
                       directPeerTransfer: {
-                        publishTransfer: ({ transferId, payload: _payload, payloadSource }) => {
+                        publishTransfer: ({ transferId, payload: _payload, payloadSource, onDemandScope }) => {
                           if (!payloadSource) {
                             throw new Error('Direct peer handoff publish requires a file-backed payload source');
                           }
                           return directPeerRegistry!.publishTransfer({
                             transferId,
                             payloadSource,
+                            ...(onDemandScope ? { onDemandScope } : {}),
                           }).endpointCandidates;
                         },
                         requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath }) =>
