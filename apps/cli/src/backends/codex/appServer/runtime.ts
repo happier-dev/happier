@@ -255,8 +255,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
         params.onThinkingChange(nextThinking);
     };
 
-    const turnIdWaitTimeoutMs = 150;
-    const turnIdWaitPollMs = 10;
+    // `turn/steer` and `turn/interrupt` require a turn id, but we may not have observed it yet
+    // when the user acts immediately after sending a message (the id can arrive via the
+    // `turn/start` response or the `turn/started` notification). Keep this bounded, but large
+    // enough to survive transient event-loop delays in real runs.
+    const turnIdWaitTimeoutMs = 1_000;
+    const turnIdWaitPollMs = 20;
     const waitForActiveTurnId = async (): Promise<string | null> => {
         let turnId = pendingTurn?.turnId ?? latestPendingTurnId;
         if (turnId) return turnId;
@@ -1006,7 +1010,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 await publishSessionControls(client);
                 return;
             }
-            if (key === 'speed') {
+            if (key === 'service_tier' || key === 'speed') {
                 const nextServiceTier = trimStringValue(value);
                 if (nextServiceTier !== 'fast' && nextServiceTier !== 'standard') {
                     throw new Error(`Unsupported Codex app-server Speed value: ${String(value)}`);

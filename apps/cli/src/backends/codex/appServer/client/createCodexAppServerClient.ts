@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
@@ -91,10 +94,54 @@ function sanitizeCodexAppServerEnv(processEnv: NodeJS.ProcessEnv): NodeJS.Proces
     };
 }
 
+function resolveCodexConfigTomlPath(env: NodeJS.ProcessEnv): string {
+    const codexHome = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
+    if (codexHome) return join(codexHome, 'config.toml');
+    return join(homedir(), '.codex', 'config.toml');
+}
+
+function normalizeCodexMcpServerKeyFromConfigSection(raw: string): string | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+
+    const firstChar = trimmed[0];
+    if (firstChar === '"' || firstChar === "'") {
+        const end = trimmed.indexOf(firstChar, 1);
+        if (end === -1) return null;
+        return trimmed.slice(0, end + 1);
+    }
+
+    const firstSegment = trimmed.split('.')[0]?.trim() ?? '';
+    return firstSegment ? firstSegment : null;
+}
+
+function readCodexMcpServerKeysFromConfigToml(env: NodeJS.ProcessEnv): string[] {
+    const configPath = resolveCodexConfigTomlPath(env);
+    let text: string;
+    try {
+        text = readFileSync(configPath, 'utf8');
+    } catch {
+        return [];
+    }
+
+    const keys = new Set<string>();
+    const re = /^\s*\[mcp_servers\.([^\]]+)\]\s*$/gm;
+    for (;;) {
+        const match = re.exec(text);
+        if (!match) break;
+        const key = normalizeCodexMcpServerKeyFromConfigSection(match[1] ?? '');
+        if (!key) continue;
+        keys.add(key);
+    }
+
+    return Array.from(keys).sort((a, b) => a.localeCompare(b));
+}
+
 export async function createCodexAppServerClient(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
     cwd?: string;
     configOverrides?: ReadonlyArray<string>;
+    disableUserMcpServers?: boolean;
 }>): Promise<DisposableCodexAppServerClient> {
     const processEnv = sanitizeCodexAppServerEnv(params.processEnv ?? process.env);
     const baseInvocation = await resolveCodexCliInvocation({
@@ -103,7 +150,12 @@ export async function createCodexAppServerClient(params: Readonly<{
         overrideEnvVarKeys: ['HAPPIER_CODEX_APP_SERVER_BIN', 'HAPPIER_CODEX_TUI_BIN', 'HAPPY_CODEX_TUI_BIN'],
         targetLabel: 'Codex app-server',
     });
-    const invocation = appendCodexCliConfigOverridesArgs(baseInvocation, [...(params.configOverrides ?? [])]);
+
+    const baseOverrides = params.disableUserMcpServers === true
+        ? readCodexMcpServerKeysFromConfigToml(processEnv).map((key) => `mcp_servers.${key}.enabled=false`)
+        : [];
+
+    const invocation = appendCodexCliConfigOverridesArgs(baseInvocation, [...baseOverrides, ...(params.configOverrides ?? [])]);
     const windowsInvocation = resolveWindowsCommandInvocation({
         command: invocation.command,
         args: invocation.args,

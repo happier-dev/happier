@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -397,6 +397,76 @@ describe('createCodexAppServerClient', () => {
                         'mcp_servers.happier__happier.command="echo"',
                         '-c',
                         'mcp_servers.happier__happier.enabled=true',
+                    ],
+                });
+            } finally {
+                await client.dispose();
+            }
+        });
+    });
+
+    it('can disable user MCP servers from CODEX_HOME/config.toml so app-server startup stays lightweight', async () => {
+        await withTempDir('happier-codex-app-server-client-disable-user-mcp-', async (root) => {
+            const codexHome = join(root, 'codex-home');
+            await mkdir(codexHome, { recursive: true });
+            await writeFile(
+                join(codexHome, 'config.toml'),
+                [
+                    '[mcp_servers.context7]',
+                    'url = "https://mcp.context7.com/mcp"',
+                    '',
+                    '[mcp_servers.context7.env_http_headers]',
+                    'CONTEXT7_API_KEY = "CONTEXT7_API_KEY"',
+                    '',
+                    '[mcp_servers.playwright]',
+                    'command = "npx"',
+                    'args = ["-y", "@playwright/mcp@latest", "--isolated"]',
+                    '',
+                    '[mcp_servers.sequential-thinking]',
+                    'command = "npx"',
+                    'args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]',
+                    '',
+                ].join('\n'),
+                'utf8',
+            );
+
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '  if (msg.method === "state/read") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { argv: process.argv.slice(2) } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
+                    '}',
+                ],
+            });
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer, { CODEX_HOME: codexHome }),
+                disableUserMcpServers: true,
+            } as any);
+
+            try {
+                await expect(client.request('state/read')).resolves.toEqual({
+                    argv: [
+                        'app-server',
+                        '--listen',
+                        'stdio://',
+                        '-c',
+                        'mcp_servers.context7.enabled=false',
+                        '-c',
+                        'mcp_servers.playwright.enabled=false',
+                        '-c',
+                        'mcp_servers.sequential-thinking.enabled=false',
                     ],
                 });
             } finally {

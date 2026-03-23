@@ -2,6 +2,7 @@ import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { checklists } from './cli/checklists';
 import type { AgentCatalogEntry } from '../types';
+import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
 
 export const agent = {
   id: AGENTS_CORE.auggie.id,
@@ -14,6 +15,13 @@ export const agent = {
   getAcpBackendFactory: async () => {
     const { createAuggieBackend } = await import('@/backends/auggie/acp/backend');
     return (opts) => ({ backend: createAuggieBackend(opts as any) });
+  },
+  getPreflightModelsProbeAdapter: async () => {
+    const adapter: PreflightModelsProbeAdapter = {
+      failureCacheStrategy: 'cooldown',
+      cliModelsCommandArgs: ['model', 'list'],
+    };
+    return adapter;
   },
   checklists,
 } satisfies AgentCatalogEntry;

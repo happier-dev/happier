@@ -11,6 +11,8 @@ export const agent = {
   getCliDetect: async () => (await import('@/backends/pi/cli/detect')).cliDetect,
   getCliAuthSpec: async () => (await import('@/backends/pi/cli/auth/piCliAuthSpec')).piCliAuthSpec,
   vendorResumeSupport: AGENTS_CORE.pi.resume.vendorResume,
+  getPreflightModelsProbeAdapter: async () =>
+    (await import('@/backends/pi/preflight/piPreflightModelsProbeAdapter')).piPreflightModelsProbeAdapter,
   getAcpBackendFactory: async () => {
     const { createPiBackend } = await import('@/backends/pi/acp/backend');
     return (opts) => ({ backend: createPiBackend(opts as any) });

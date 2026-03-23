@@ -5,6 +5,7 @@ import type { CommandHandler } from '@/cli/commandRegistry';
 import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import type { DirectSessionsProviderId } from '@happier-dev/protocol';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { DirectSessionProviderOps } from './directSessions/providerOps';
 import type { AcpForkContinuationHandler } from './forking/acpForkContinuationHandler';
 import type { ProviderNativeForkHandler } from './forking/providerNativeForkHandler';
@@ -14,6 +15,7 @@ import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happi
 export type { CatalogAgentId, VendorResumeSupportLevel };
 import type { CodexBackendMode } from '@happier-dev/agents';
 import type { InstallableKey } from '@happier-dev/protocol';
+import type { PreflightModelsProbeAdapter } from '@/capabilities/probes/preflightModelsProbeAdapterTypes';
 import type {
   CliAuthMethod,
   CliAuthReason,
@@ -177,6 +179,31 @@ export type AgentCatalogEntry = Readonly<{
    * through the backend catalog.
    */
   getProviderNativeForkHandler?: () => Promise<ProviderNativeForkHandler>;
+  /**
+   * Whether probe RPC handlers should load account settings before invoking probe methods.
+   *
+   * This is used for providers whose probe behavior depends on account settings even when the
+   * caller is not using a configured ACP backend target.
+   *
+   * Keep this provider-owned by setting it in the backend catalog entry instead of branching
+   * on provider ids in shared handlers.
+   */
+  needsAccountSettingsForProbes?: boolean;
+  /**
+   * Optional cache-variant shaper for the dynamic models probe.
+   *
+   * Use this when the provider has multiple distinct runtime flavors (e.g. Codex app-server vs ACP).
+   */
+  resolveModelsProbeVariant?: (params: Readonly<{
+    backendTarget?: BackendTargetRefV1;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }>) => string | null;
+  /**
+   * Optional provider-owned adapter for probing a dynamic model list without starting a full ACP session.
+   *
+   * Keep provider-specific implementations in the backend folder and expose them via this catalog hook.
+   */
+  getPreflightModelsProbeAdapter?: () => Promise<PreflightModelsProbeAdapter | null>;
   /**
    * Optional capability checklist contributions for agent-specific UX.
    *

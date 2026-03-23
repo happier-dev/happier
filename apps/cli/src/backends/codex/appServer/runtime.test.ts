@@ -356,11 +356,10 @@ describe('createCodexAppServerRuntime', () => {
                 availableModels: expect.arrayContaining([
                     expect.objectContaining({
                         id: 'gpt-5.4',
-                        name: 'GPT-5.4',
                         modelOptions: expect.arrayContaining([
                             expect.objectContaining({ id: 'reasoning_effort', currentValue: 'medium' }),
                             expect.objectContaining({
-                                id: 'speed',
+                                id: 'service_tier',
                                 currentValue: 'standard',
                                 options: expect.arrayContaining([
                                     expect.objectContaining({ value: 'standard', name: 'Standard' }),
@@ -372,7 +371,17 @@ describe('createCodexAppServerRuntime', () => {
                 ]),
             }),
         });
-        expect(updateMetadata.mock.results[1]?.value?.[SESSION_MODES_STATE_KEY]).toBeUndefined();
+        expect(updateMetadata.mock.results[1]?.value).toMatchObject({
+            [SESSION_MODES_STATE_KEY]: expect.objectContaining({
+                v: 1,
+                provider: 'codex',
+                currentModeId: 'default',
+                availableModes: expect.arrayContaining([
+                    expect.objectContaining({ id: 'default', name: 'Default' }),
+                    expect.objectContaining({ id: 'plan', name: 'Plan' }),
+                ]),
+            }),
+        });
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
         expect(requestLog).toEqual(
             expect.arrayContaining([
@@ -1004,7 +1013,7 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.startOrLoad({});
         await runtime.setSessionMode('plan');
-        await runtime.setSessionConfigOption('speed', 'fast');
+        await runtime.setSessionConfigOption('service_tier', 'fast');
         await runtime.setSessionModel('gpt-5.4');
         await runtime.setSessionConfigOption('reasoning_effort', 'high');
         await runtime.sendPrompt('use-overrides');
@@ -1026,7 +1035,7 @@ describe('createCodexAppServerRuntime', () => {
                         modelOptions: expect.arrayContaining([
                             expect.objectContaining({ id: 'reasoning_effort', currentValue: 'high' }),
                             expect.objectContaining({
-                                id: 'speed',
+                                id: 'service_tier',
                                 currentValue: 'fast',
                                 options: expect.arrayContaining([
                                     expect.objectContaining({ value: 'standard', name: 'Standard' }),
@@ -1101,7 +1110,7 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.setSessionModel('gpt-5.4');
-        await runtime.setSessionConfigOption('speed', 'fast');
+        await runtime.setSessionConfigOption('service_tier', 'fast');
         await runtime.startOrLoad({});
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));

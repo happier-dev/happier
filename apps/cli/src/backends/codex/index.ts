@@ -1,4 +1,5 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
+import { resolveCodexSessionBackendMode } from '@happier-dev/agents';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
 
 import { checklists } from './cli/checklists';
@@ -25,6 +26,15 @@ export const agent = {
   },
   getAcpForkContinuationHandler: async () => (await import('@/backends/codex/acp/forkContinuationHandler')).codexAcpForkContinuationHandler,
   getProviderNativeForkHandler: async () => (await import('@/backends/codex/appServer/providerNativeForkHandler')).codexAppServerProviderNativeForkHandler,
+  needsAccountSettingsForProbes: true,
+  resolveModelsProbeVariant: ({ accountSettings }) => {
+    // Keep dynamic model probes cache-partitioned by runtime flavor (appServer vs ACP vs MCP).
+    const backendMode =
+      resolveCodexSessionBackendMode({ metadata: null, accountSettings: accountSettings ?? null }) ?? 'appServer';
+    return `codex:${backendMode}`;
+  },
+  getPreflightModelsProbeAdapter: async () =>
+    (await import('@/backends/codex/preflight/codexPreflightModelsProbeAdapter')).codexPreflightModelsProbeAdapter,
   checklists,
   runtimeInstallableKeys: [INSTALLABLE_KEYS.CODEX_ACP],
 } satisfies AgentCatalogEntry;
