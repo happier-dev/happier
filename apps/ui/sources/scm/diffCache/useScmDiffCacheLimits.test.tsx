@@ -7,15 +7,15 @@ import { describe, expect, it, vi } from 'vitest';
 let maxEntriesSetting: number = 30;
 let maxTotalBytesSetting: number = 20 * 1024 * 1024;
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSetting: (key: string) => {
-        if (key === 'scmDiffCacheMaxEntries') return maxEntriesSetting;
-        if (key === 'scmDiffCacheMaxTotalBytes') return maxTotalBytesSetting;
-        return undefined;
-    },
-});
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+        useSetting: (key: string) => {
+            if (key === 'scmDiffCacheMaxEntries') return maxEntriesSetting;
+            if (key === 'scmDiffCacheMaxTotalBytes') return maxTotalBytesSetting;
+            return undefined;
+        },
+    });
 });
 
 describe('useScmDiffCacheLimits', () => {
