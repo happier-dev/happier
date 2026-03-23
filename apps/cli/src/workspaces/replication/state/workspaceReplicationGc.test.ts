@@ -101,6 +101,7 @@ describe('workspaceReplicationGc', () => {
             // This intentionally does NOT match the current strict enum surface (phase/checkpoint);
             // GC must still normalize legacy persisted values so terminal jobs are cleaned up.
             await writeFile(jobPath, JSON.stringify({
+                schemaVersion: 1,
                 jobId: 'job_legacy_completed',
                 correlationId: 'legacy_corr',
                 createdAtMs: 10,
@@ -140,6 +141,7 @@ describe('workspaceReplicationGc', () => {
             const jobFilePath = join(paths.jobsDirectory, 'job invalid.json');
 
             await writeFile(jobFilePath, JSON.stringify({
+                schemaVersion: 1,
                 jobId,
                 correlationId: 'handoff_invalid_jobid',
                 createdAtMs: 10,
@@ -296,6 +298,7 @@ describe('workspaceReplicationGc', () => {
 
             // Simulate a record where `updatedAtMs` does not reflect the awaiting-recovery transition.
             await writeFile(jobFilePath, JSON.stringify({
+                schemaVersion: 1,
                 jobId,
                 correlationId: 'handoff_awaiting_recovery',
                 createdAtMs: 0,

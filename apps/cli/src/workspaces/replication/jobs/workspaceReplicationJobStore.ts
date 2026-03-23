@@ -73,9 +73,7 @@ export const WorkspaceReplicationJobStatusSchema = z
 
 export const WorkspaceReplicationJobRecordSchema = z
   .object({
-    schemaVersion: z
-      .literal(WORKSPACE_REPLICATION_SCHEMA_VERSION)
-      .default(WORKSPACE_REPLICATION_SCHEMA_VERSION),
+    schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION).optional(),
     jobId: z.string().min(1),
     correlationId: z.string().min(1).optional(),
     relationshipId: z.string().min(1).optional(),
@@ -100,13 +98,18 @@ export const WorkspaceReplicationJobRecordSchema = z
   })
   .strip();
 
-export type WorkspaceReplicationJobRecord = z.output<typeof WorkspaceReplicationJobRecordSchema>;
+// Disk records must always include schemaVersion; in-memory/write inputs may omit it because the store stamps it.
+export const WorkspaceReplicationJobRecordDiskSchema = WorkspaceReplicationJobRecordSchema.extend({
+  schemaVersion: z.literal(WORKSPACE_REPLICATION_SCHEMA_VERSION),
+});
+
+export type WorkspaceReplicationJobRecord = z.output<typeof WorkspaceReplicationJobRecordDiskSchema>;
 export type WorkspaceReplicationJobRecordInput = z.input<typeof WorkspaceReplicationJobRecordSchema>;
 
 export function safeParseWorkspaceReplicationJobRecordFromDiskValue(
   raw: unknown,
 ): WorkspaceReplicationJobRecord | null {
-  const parsed = WorkspaceReplicationJobRecordSchema.safeParse(
+  const parsed = WorkspaceReplicationJobRecordDiskSchema.safeParse(
     normalizeWorkspaceReplicationJobRecordValue(raw),
   );
   return parsed.success ? parsed.data : null;
@@ -274,9 +277,7 @@ function normalizeWorkspaceReplicationJobRecordValue(raw: unknown): Record<strin
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     ...value,
-    // Preserve an explicit schemaVersion so we can fail closed on future incompatible bumps.
-    // Missing schemaVersion remains backwards-compatible via the zod default.
-    ...('schemaVersion' in value ? {} : { schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION }),
+    // Engine-native persistence requires an explicit schemaVersion. Missing schemaVersion is invalid.
     status: normalizeWorkspaceReplicationJobStatusValue(value.status),
   };
 }
@@ -311,7 +312,7 @@ export function createWorkspaceReplicationJobStore(input: Readonly<{
   return {
     async write(record) {
       await mkdir(paths.jobsDirectory, { recursive: true });
-      const parsed = WorkspaceReplicationJobRecordSchema.parse({
+      const parsed = WorkspaceReplicationJobRecordDiskSchema.parse({
         ...record,
         schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
       });
@@ -341,7 +342,10 @@ export function createWorkspaceReplicationJobStore(input: Readonly<{
       const jobPath = resolveJobPath(jobId);
       const current = await readWorkspaceReplicationJobFile(jobPath);
       if (!current) return null;
-      const next = WorkspaceReplicationJobRecordSchema.parse(updater(current));
+      const next = WorkspaceReplicationJobRecordDiskSchema.parse({
+        ...updater(current),
+        schemaVersion: WORKSPACE_REPLICATION_SCHEMA_VERSION,
+      });
       const latest = await readWorkspaceReplicationJobFile(jobPath);
       const merged = mergeWorkspaceReplicationJobRecordsForWrite(latest, next);
       await writeJsonAtomic(jobPath, merged);

@@ -70,7 +70,7 @@ describe('workspaceReplicationJobStore', () => {
     }
   });
 
-  it('normalizes legacy persisted job files into the current engine schema (backwards-safe read)', async () => {
+  it('fails closed when a persisted job file omits schemaVersion (no undeployed compatibility)', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-jobs-'));
 
     try {
@@ -96,15 +96,7 @@ describe('workspaceReplicationJobStore', () => {
       }), 'utf8');
 
       const store = createWorkspaceReplicationJobStore({ activeServerDir });
-      await expect(store.read('job_legacy_1')).resolves.toMatchObject({
-        jobId: 'job_legacy_1',
-        correlationId: 'handoff_legacy',
-        status: {
-          status: 'in_progress',
-          phase: 'planning',
-          checkpoint: 'job_created',
-        },
-      });
+      await expect(store.read('job_legacy_1')).resolves.toBeNull();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }

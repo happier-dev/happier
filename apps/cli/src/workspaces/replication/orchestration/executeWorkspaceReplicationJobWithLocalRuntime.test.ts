@@ -997,7 +997,7 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
         }
     });
 
-    it('bootstraps one_way_safe sync_changes when the baseline is missing (first run)', async () => {
+    it('marks the job awaiting_recovery for one_way_safe sync_changes when the baseline is missing', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-missing-baseline-'));
         const sourceActiveServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-job-runner-missing-baseline-source-'));
         const sourceWorkspaceRoot = await mkdtemp(join(tmpdir(), 'happier-replication-job-missing-baseline-source-workspace-'));
@@ -1005,7 +1005,6 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
 
         try {
             const { createWorkspaceReplicationCasStore } = await import('../cas/workspaceReplicationCasStore');
-            const { createWorkspaceReplicationBaselineStore } = await import('../baseline/workspaceReplicationBaselineStore');
             const { createWorkspaceReplicationJobStore } = await import('../jobs/workspaceReplicationJobStore');
             const { createWorkspaceReplicationRelationshipStore } = await import('../relationships/workspaceReplicationRelationshipStore');
             const { createWorkspaceReplicationBlobPackPayloadSource } = await import('../transport/createWorkspaceReplicationBlobPackPayloadSource');
@@ -1124,26 +1123,21 @@ describe('executeWorkspaceReplicationJobWithLocalRuntime', () => {
                 },
             });
 
-            expect(result.status.status).toBe('completed');
-            expect(requestBlobPackToFile).toHaveBeenCalled();
-            await expect(readFile(join(targetWorkspaceRoot, 'README.md'), 'utf8')).resolves.toBe(sourceContents);
+            expect(result.status).toMatchObject({
+                status: 'awaiting_recovery',
+                phase: 'planning',
+                checkpoint: 'relationship_resolved',
+            });
+            expect(requestBlobPackToFile).not.toHaveBeenCalled();
 
             await expect(jobStore.read('job_missing_baseline_1')).resolves.toMatchObject({
                 jobId: 'job_missing_baseline_1',
-                completedAtMs: 42,
+                awaitingRecoveryAtMs: 42,
                 status: {
-                    status: 'completed',
+                    status: 'awaiting_recovery',
+                    checkpoint: 'relationship_resolved',
                 },
             });
-
-            const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir });
-            const baseline = await baselineStore.load(scope);
-            expect(baseline).toEqual(expect.objectContaining({
-                manifestFingerprint: offer.sourceFingerprint,
-                manifest: expect.objectContaining({
-                    entries: expect.any(Array),
-                }),
-            }));
         } finally {
             await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
             await rm(sourceActiveServerDir, { recursive: true, force: true }).catch(() => undefined);
