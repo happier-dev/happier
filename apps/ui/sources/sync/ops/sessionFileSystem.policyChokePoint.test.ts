@@ -250,4 +250,109 @@ describe('sessionFileSystem policy choke point', () => {
         });
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
+
+    it('sessionCreateDirectory consults shared transfer policy before direct machine rpc', async () => {
+        const { sessionCreateDirectory } = await import('./sessionFileSystem');
+
+        resetPolicyFlags();
+        enforcePolicyConsultedBeforeMachineRpc = true;
+
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    metadata: {
+                        path: '~/repo',
+                        machineId: 'm1',
+                    },
+                },
+            },
+        });
+
+        machineRPCSpy.mockClear();
+        sessionRpcWithServerScopeSpy.mockClear();
+        getReadyServerFeaturesSpy.mockClear();
+
+        const res = await sessionCreateDirectory('s1', 'tmp/new-dir');
+        expect(res).toEqual({ success: true });
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
+        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.CREATE_DIRECTORY, {
+            path: '~/repo/tmp/new-dir',
+        });
+        expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
+    });
+
+    it('sessionListDirectory consults shared transfer policy before direct machine rpc', async () => {
+        const { sessionListDirectory } = await import('./sessionFileSystem');
+
+        resetPolicyFlags();
+        enforcePolicyConsultedBeforeMachineRpc = true;
+
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    metadata: {
+                        path: '~/repo',
+                        machineId: 'm1',
+                    },
+                },
+            },
+        });
+
+        machineRPCSpy.mockClear();
+        sessionRpcWithServerScopeSpy.mockClear();
+        getReadyServerFeaturesSpy.mockClear();
+
+        const response = {
+            success: true,
+            entries: [],
+        } as const;
+        machineRPCSpy.mockResolvedValueOnce(response);
+
+        const res = await sessionListDirectory('s1', 'src');
+        expect(res).toEqual(response);
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
+        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.LIST_DIRECTORY, {
+            path: '~/repo/src',
+        });
+        expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
+    });
+
+    it('sessionStatFile consults shared transfer policy before direct machine rpc', async () => {
+        const { sessionStatFile } = await import('./sessionFileSystem');
+
+        resetPolicyFlags();
+        enforcePolicyConsultedBeforeMachineRpc = true;
+
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    metadata: {
+                        path: '~/repo',
+                        machineId: 'm1',
+                    },
+                },
+            },
+        });
+
+        machineRPCSpy.mockClear();
+        sessionRpcWithServerScopeSpy.mockClear();
+        getReadyServerFeaturesSpy.mockClear();
+
+        const response = {
+            success: true,
+            exists: true,
+            kind: 'file',
+            sizeBytes: 123,
+            modifiedMs: 456,
+        } as const;
+        machineRPCSpy.mockResolvedValueOnce(response);
+
+        const res = await sessionStatFile('s1', 'package.json');
+        expect(res).toEqual(response);
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
+        expect(machineRPCSpy).toHaveBeenCalledWith('m1', RPC_METHODS.STAT_FILE, {
+            path: '~/repo/package.json',
+        });
+        expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
+    });
 });
