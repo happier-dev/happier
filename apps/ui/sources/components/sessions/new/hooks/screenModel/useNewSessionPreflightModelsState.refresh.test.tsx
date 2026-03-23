@@ -1,143 +1,174 @@
-import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
-import { renderScreen } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
 
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { resetDynamicModelProbeCacheForTests, DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS } from '@/sync/domains/models/dynamicModelProbeCache';
+import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabilities';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let call = 0;
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any) => {
-  call++;
-  return {
-    supported: true as const,
+const machineCapabilitiesInvokeMock = vi.fn();
+type DeferredModelProbeResult = {
+    supported: true;
     response: {
-      ok: true as const,
-      result: { availableModels: [{ id: `m${call}`, name: `Model ${call}` }], supportsFreeform: false },
-    },
-  };
-});
-
-vi.mock('@/sync/ops/capabilities', () => ({
-  machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
-}));
-
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-  return {
-    ...actual,
-    getAgentCore: () => ({ model: { supportsSelection: true, allowedModes: [], defaultMode: 'default', supportsFreeform: false } }),
-  };
-});
+        ok: true;
+        result: {
+            availableModels: Array<{ id: string; name: string }>;
+            supportsFreeform: boolean;
+        };
+    };
+};
 
 describe('useNewSessionPreflightModelsState (refresh)', () => {
-  it('forces a refresh probe without clearing existing options', async () => {
-    vi.resetModules();
-    call = 0;
-    machineCapabilitiesInvokeMock.mockClear();
-    resetDynamicModelProbeCacheForTests();
+    it('forces a refresh probe without clearing existing options', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
 
-    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        let call = 0;
+        machineCapabilitiesInvokeMock.mockImplementation(async () => {
+            call++;
+            return {
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { availableModels: [{ id: `m${call}`, name: `Model ${call}` }], supportsFreeform: false },
+                },
+            };
+        });
 
-    let latest: any = null;
-    function Harness() {
-      latest = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: '/repo',
-      });
-      return null;
-    }
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            (props: { cwd: string }) => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: props.cwd,
+            }),
+            { initialProps: { cwd: '/repo' } },
+        );
 
-    let root!: renderer.ReactTestRenderer;
-    root = (await renderScreen(React.createElement(Harness))).tree;
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-    expect((latest.modelOptions ?? []).some((o: any) => o.value === 'm1')).toBe(true);
+        await act(async () => {
+            hook.getCurrent().probe.onRefresh();
+            await Promise.resolve();
+        });
 
-    await act(async () => {
-      latest.probe.onRefresh?.();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm2')).toBe(true);
+
+        await hook.unmount();
     });
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
-    expect((latest.modelOptions ?? []).some((o: any) => o.value === 'm2')).toBe(true);
+    it('keeps the previous model list visible while probing a different cwd', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
 
-    await act(async () => {
-      root.unmount();
-    });
-  });
+        let resolveSecondProbe: ((value: DeferredModelProbeResult) => void) | null = null;
+        machineCapabilitiesInvokeMock
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { availableModels: [{ id: 'm1', name: 'Model 1' }], supportsFreeform: false },
+                },
+            }))
+            .mockImplementationOnce(() => new Promise<DeferredModelProbeResult>((resolve) => {
+                resolveSecondProbe = resolve;
+            }));
 
-  it('keeps the previous Codex model list visible while probing a different cwd', async () => {
-    vi.resetModules();
-    call = 0;
-    machineCapabilitiesInvokeMock.mockClear();
-    resetDynamicModelProbeCacheForTests();
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            (props: { cwd: string }) => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: props.cwd,
+            }),
+            { initialProps: { cwd: '/repo-a' } },
+        );
 
-    let resolveSecondProbe: (value: Awaited<ReturnType<typeof machineCapabilitiesInvokeMock>>) => void = () => {
-      throw new Error('expected deferred second probe resolver');
-    };
-    machineCapabilitiesInvokeMock
-      .mockImplementationOnce(async () => {
-        call++;
-        return {
-          supported: true as const,
-          response: {
-            ok: true as const,
-            result: { availableModels: [{ id: `m${call}`, name: `Model ${call}` }], supportsFreeform: false },
-          },
-        };
-      })
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        resolveSecondProbe = resolve as any;
-      }));
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
 
-    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        await hook.rerender({ cwd: '/repo-b' });
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
 
-    let latest: any = null;
-    function Harness(props: { cwd: string }) {
-      latest = useNewSessionPreflightModelsState({
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        selectedMachineId: 'machine-1',
-        capabilityServerId: 'server-1',
-        cwd: props.cwd,
-      });
-      return null;
-    }
+        if (!resolveSecondProbe) {
+            throw new Error('expected deferred second probe resolver');
+        }
 
-    let root!: renderer.ReactTestRenderer;
-    root = (await renderScreen(React.createElement(Harness, { cwd: '/repo-a' }))).tree;
+        const resolveDeferredSecondProbe = resolveSecondProbe as unknown as (value: DeferredModelProbeResult) => void;
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
-    expect((latest.modelOptions ?? []).some((o: any) => o.value === 'm1')).toBe(true);
+        resolveDeferredSecondProbe({
+            supported: true,
+            response: {
+                ok: true,
+                result: { availableModels: [{ id: 'm2', name: 'Model 2' }], supportsFreeform: false },
+            },
+        });
 
-    await act(async () => {
-      root.update(React.createElement(Harness, { cwd: '/repo-b' }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+        await act(async () => {
+            await Promise.resolve();
+        });
 
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
-    // The core contract: don't flash back to an empty/default-only list while the new probe is in flight.
-    expect((latest.modelOptions ?? []).some((o: any) => o.value === 'm1')).toBe(true);
-
-    resolveSecondProbe({
-      supported: true,
-      response: {
-        ok: true,
-        result: { availableModels: [{ id: 'm2', name: 'Model 2' }], supportsFreeform: false },
-      },
-    } as any);
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm2')).toBe(true);
+        await hook.unmount();
     });
 
-    expect((latest.modelOptions ?? []).some((o: any) => o.value === 'm2')).toBe(true);
+    it('retries after an error cooldown elapses so transient capability errors do not permanently hide model options', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
 
-    await act(async () => {
-      root.unmount();
+        machineCapabilitiesInvokeMock
+            .mockImplementationOnce(async () => ({
+                supported: false as const,
+                reason: 'error' as const,
+            }))
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { availableModels: [{ id: 'm1', name: 'Model 1' }], supportsFreeform: false },
+                },
+            }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(false);
+
+        await act(async () => {
+            vi.advanceTimersByTime(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS + 1);
+            await vi.runOnlyPendingTimersAsync();
+        });
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
+
+        await hook.unmount();
+        vi.useRealTimers();
     });
-  });
 });

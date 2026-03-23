@@ -8,12 +8,14 @@ import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from 
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
 import {
+    DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
     readDynamicModelProbeCache,
     runDynamicModelProbeDedupe,
     writeDynamicModelProbeCacheError,
     writeDynamicModelProbeCacheSuccess,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
     backendTarget: BackendTargetRefV1;
@@ -100,6 +102,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             return;
         }
 
+        let retryTimeout: ReturnType<typeof setTimeout> | null = null;
         const shouldForceProbe = refreshNonce !== 0 && refreshNonce !== lastHandledRefreshNonceRef.current;
         if (shouldForceProbe) {
             lastHandledRefreshNonceRef.current = refreshNonce;
@@ -121,7 +124,12 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         const nowMs = Date.now();
         if (!shouldForceProbe && cacheEntry && nowMs >= 0 && nowMs < cacheEntry.expiresAt) {
             setProbePhase('idle');
-            return;
+            retryTimeout = scheduleProbedResourceRetryAfterExpiry(cacheEntry, nowMs, () => {
+                setRefreshNonce((n) => n + 1);
+            });
+            return () => {
+                if (retryTimeout) clearTimeout(retryTimeout);
+            };
         }
 
         let cancelled = false;
@@ -208,10 +216,16 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
             writeDynamicModelProbeCacheError(preflightModelsKey, commitNowMs);
             setProbePhase('idle');
+            retryTimeout = setTimeout(() => {
+                setRefreshNonce((n) => n + 1);
+            }, DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS);
         };
 
         void run();
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+            if (retryTimeout) clearTimeout(retryTimeout);
+        };
     }, [agentType, backendTarget, preflightModelsKey, probeScopeKey, params.capabilityServerId, params.cwd, params.selectedMachineId, params.probeContext?.capabilityParams, refreshNonce]);
 
     const modelOptions = React.useMemo(

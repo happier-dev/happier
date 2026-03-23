@@ -4,6 +4,7 @@ import { buildBackendTargetKey, isBuiltInAgentTarget, type BackendTargetRefV1 } 
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
+import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 
 function normalizeValueId(value: unknown): string | null {
     if (typeof value === 'string') {
@@ -62,6 +63,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
+    probeContext?: NewSessionCapabilityProbeContext | null;
 }>): Readonly<{
     configOptions: readonly AcpConfigOption[] | null;
     probe: Readonly<{
@@ -101,12 +103,6 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     );
 
     React.useEffect(() => {
-        if (agentType !== 'codex') {
-            setConfigOptions(null);
-            setProbePhase('idle');
-            setRefreshedAt(null);
-            return;
-        }
         if (!params.selectedMachineId) {
             setConfigOptions(null);
             setProbePhase('idle');
@@ -126,6 +122,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                     params: {
                         timeoutMs: 15_000,
                         backendTarget,
+                        ...(params.probeContext?.capabilityParams ? params.probeContext.capabilityParams : {}),
                         ...(cwd ? { cwd } : {}),
                     },
                 },
@@ -147,7 +144,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [agentType, backendTarget, params.capabilityServerId, params.cwd, probeKey, params.selectedMachineId, refreshNonce]);
+    }, [agentType, backendTarget, params.capabilityServerId, params.cwd, params.probeContext?.capabilityParams, probeKey, params.selectedMachineId, refreshNonce]);
 
     return {
         configOptions,

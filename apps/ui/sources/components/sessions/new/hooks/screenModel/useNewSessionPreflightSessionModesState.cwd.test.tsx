@@ -146,4 +146,48 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
     });
     expect((latest?.modeOptions ?? []).map((option: any) => option.id)).toEqual(['default', 'plan']);
   });
+
+  it('forwards probeContext.capabilityParams to capabilities.invoke(cli.* probeModes)', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicSessionModeProbeCacheForTests();
+
+    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+
+    const captured: any[] = [];
+    machineCapabilitiesInvokeMock.mockImplementationOnce(async (_machineId: any, request: any, _options: any) => {
+      captured.push(request);
+      return {
+        supported: true as const,
+        response: { ok: true as const, result: { availableModes: [{ id: 'plan', name: 'Plan' }] } },
+      };
+    });
+
+    function Harness() {
+      useNewSessionPreflightSessionModesState({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+        probeContext: {
+          cacheKeySuffixParts: ['appServer'],
+          capabilityParams: { runtimeKindOverride: 'appServer' },
+        },
+      } as any);
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(captured.length).toBe(1);
+    expect(captured[0]).toMatchObject({
+      id: 'cli.codex',
+      method: 'probeModes',
+      params: expect.objectContaining({ runtimeKindOverride: 'appServer' }),
+    });
+  });
 });
