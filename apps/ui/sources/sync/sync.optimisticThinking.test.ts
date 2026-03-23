@@ -81,15 +81,13 @@ function createSession(params: { sessionId: string }): Session {
 
 describe('sync.sendMessage optimistic thinking', () => {
     beforeEach(() => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-05T00:00:00.000Z'));
         storage.setState(initialStorageState, true);
         kvStore.clear();
         appStateAddListener.mockClear();
     });
 
     afterEach(() => {
-        vi.useRealTimers();
+        vi.restoreAllMocks();
     });
 
     it('preserves optimistic thinking after a successful ACK/commit (until lifecycle clears)', async () => {

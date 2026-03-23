@@ -7,10 +7,24 @@ import { createRpcCallError } from '../runtime/rpcErrors';
 let policyConsulted = false;
 
 const machineRPCSpy = vi.fn();
+const machineRpcWithServerScopeSpy = vi.fn();
 const sessionRpcWithServerScopeSpy = vi.fn();
 const getReadyServerFeaturesSpy = vi.fn(async (_params: unknown): Promise<FeaturesResponse | null> => {
     policyConsulted = true;
-    return null;
+    return {
+        features: {
+            machines: {
+                enabled: true,
+                transfer: {
+                    enabled: true,
+                    serverRouted: {
+                        enabled: true,
+                    },
+                },
+            },
+        },
+        capabilities: {},
+    } as FeaturesResponse;
 });
 const resolvePreferredServerIdForSessionIdSpy = vi.fn((_sessionId: string) => 'server-1');
 const readMachineTargetForSessionSpy = vi.fn();
@@ -36,6 +50,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', (
     sessionRpcWithServerScope: (params: unknown) => sessionRpcWithServerScopeSpy(params),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeSpy(params),
+}));
+
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: (params: unknown) => getReadyServerFeaturesSpy(params),
 }));
@@ -57,6 +75,7 @@ beforeEach(() => {
     delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES;
 
     machineRPCSpy.mockReset();
+    machineRpcWithServerScopeSpy.mockReset();
     sessionRpcWithServerScopeSpy.mockReset();
     getReadyServerFeaturesSpy.mockClear();
     resolvePreferredServerIdForSessionIdSpy.mockClear();
@@ -67,6 +86,10 @@ beforeEach(() => {
     canUseSessionRpcSpy.mockReturnValue(true);
     shouldFallbackToSessionRpcSpy.mockReturnValue(true);
     readMachineTargetForSessionSpy.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
+
+    machineRpcWithServerScopeSpy.mockImplementation(async (params: any) =>
+        machineRPCSpy(params.machineId, params.method, params.payload),
+    );
 });
 
 describe('sessionWriteFile', () => {
@@ -106,10 +129,9 @@ describe('sessionWriteFile', () => {
         const res = await sessionWriteFile('s1', 'src/a.ts', 'hello');
         expect(res.success).toBe(false);
         if (res.success) throw new Error('Expected sessionWriteFile to fail');
-        expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
+        expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
         expect(machineRPCSpy).toHaveBeenCalled();
-        expect(sessionRpcWithServerScopeSpy).toHaveBeenCalled();
     });
 
     it('returns a stable failure response when the RPC returns an unsupported shape', async () => {
@@ -136,5 +158,6 @@ describe('sessionWriteFile', () => {
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         expect(machineRPCSpy).not.toHaveBeenCalled();
         expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
     });
 });

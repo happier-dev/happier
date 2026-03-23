@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
 const {
@@ -90,7 +91,7 @@ describe('sessionFileTransferRpcCaller', () => {
     it('consults shared transfer policy before each allowed direct machine rpc attempt', async () => {
         readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
-        getReadyServerFeaturesMock.mockResolvedValue(null);
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures());
         machineRPC.mockResolvedValue({ success: true, value: 'ok' });
 
         const caller = createSessionFileTransferRpcCaller({ sessionId: 'session-1' });
@@ -98,8 +99,8 @@ describe('sessionFileTransferRpcCaller', () => {
         await expect(
             caller.call({
                 request: { path: 'first.txt' },
-                machineMethod: 'machine.upload',
-                sessionMethod: 'session.upload',
+                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
+                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
                 toMachineRequest: ({ request, machineTarget }) => ({
                     ...request,
                     path: `${machineTarget.basePath}/${request.path}`,
@@ -110,8 +111,8 @@ describe('sessionFileTransferRpcCaller', () => {
         await expect(
             caller.call({
                 request: { path: 'second.txt' },
-                machineMethod: 'machine.upload',
-                sessionMethod: 'session.upload',
+                machineMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
+                sessionMethod: RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT,
                 toMachineRequest: ({ request, machineTarget }) => ({
                     ...request,
                     path: `${machineTarget.basePath}/${request.path}`,
@@ -120,11 +121,14 @@ describe('sessionFileTransferRpcCaller', () => {
         ).resolves.toEqual({ success: true, value: 'ok' });
 
         expect(machineRPC).toHaveBeenCalledTimes(2);
-        expect(machineRPC).toHaveBeenNthCalledWith(1, 'machine-1', 'machine.upload', { path: '/repo/first.txt' });
-        expect(machineRPC).toHaveBeenNthCalledWith(2, 'machine-1', 'machine.upload', { path: '/repo/second.txt' });
-        expect(getReadyServerFeaturesMock).toHaveBeenCalledTimes(2);
+        expect(machineRPC).toHaveBeenNthCalledWith(1, 'machine-1', RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT, { path: '/repo/first.txt' });
+        expect(machineRPC).toHaveBeenNthCalledWith(2, 'machine-1', RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT, { path: '/repo/second.txt' });
+        // Policy is consulted by both the route-selection caller and the guarded direct-route policy check.
+        expect(getReadyServerFeaturesMock).toHaveBeenCalledTimes(4);
         expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(1, { timeoutMs: 500, serverId: 'server-owned' });
         expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(2, { timeoutMs: 500, serverId: 'server-owned' });
+        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(3, { timeoutMs: 500, serverId: 'server-owned' });
+        expect(getReadyServerFeaturesMock).toHaveBeenNthCalledWith(4, { timeoutMs: 500, serverId: 'server-owned' });
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
@@ -157,7 +161,7 @@ describe('sessionFileTransferRpcCaller', () => {
     it('returns non-fallback machine errors instead of relaying through session RPC', async () => {
         readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
-        getReadyServerFeaturesMock.mockResolvedValue(null);
+        getReadyServerFeaturesMock.mockResolvedValue(createServerFeatures());
         shouldFallbackToSessionRpcMock.mockReturnValue(false);
         machineRPC.mockRejectedValue({ message: 'machine exploded', rpcErrorCode: 'custom_error' });
 

@@ -3,7 +3,6 @@ import { readServerEnabledBit } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR } from '@/sync/runtime/sessionMachineRpcFallback';
 import {
-    resolveMachineTransferRoute,
     resolveAppSessionTransferAvailability,
     SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR,
 } from '@happier-dev/transfers';
@@ -167,7 +166,15 @@ export function resolveMachineTransferAvailability(input: Readonly<{
     preferredTransportStrategies: readonly SessionHandoffTransportStrategy[];
 }>): SessionHandoffTransportError | SessionHandoffTransportAvailability {
     const features = resolveServerFeaturesPayload(input.serverFeatures);
-    const handoffEnabled = features ? readServerEnabledBit(features, 'sessions.handoff') === true : false;
+    if (!features) {
+        return {
+            ok: false,
+            errorCode: 'handoff_disabled',
+            errorMessage: 'Session handoff is disabled on the selected server',
+        };
+    }
+
+    const handoffEnabled = readServerEnabledBit(features, 'sessions.handoff') === true;
     if (!handoffEnabled) {
         return {
             ok: false,
@@ -176,13 +183,8 @@ export function resolveMachineTransferAvailability(input: Readonly<{
         };
     }
 
-    const route = resolveMachineTransferRoute({
-        serverFeatures: features,
-        preferredStrategies: input.preferredTransportStrategies,
-        directPeerAvailable: true,
-    });
-
-    if (route.kind === 'unavailable' && route.reasonCode === 'transfer_disabled') {
+    const transferEnabled = readServerEnabledBit(features, 'machines.transfer') === true;
+    if (!transferEnabled) {
         return {
             ok: false,
             errorCode: 'transfer_disabled',
@@ -190,17 +192,44 @@ export function resolveMachineTransferAvailability(input: Readonly<{
         };
     }
 
-    if (route.kind === 'unavailable') {
+    const directPeerEnabled = readServerEnabledBit(features, 'machines.transfer.directPeer') === true;
+    const serverRoutedEnabled = readServerEnabledBit(features, 'machines.transfer.serverRouted') === true;
+    if (!directPeerEnabled && !serverRoutedEnabled) {
         return {
             ok: false,
-            errorCode: 'server_routed_transfer_disabled',
-            errorMessage: 'Direct peer transfer is required because server-routed transfer is disabled',
+            errorCode: 'transfer_disabled',
+            errorMessage: 'Machine transfer is disabled on the selected server',
+        };
+    }
+
+    for (const strategy of input.preferredTransportStrategies) {
+        if (strategy === 'direct_peer' && directPeerEnabled) {
+            return {
+                ok: true,
+                negotiatedTransportStrategy: 'direct_peer',
+                allowServerRoutedFallback: serverRoutedEnabled,
+            };
+        }
+        if (strategy === 'server_routed_stream' && serverRoutedEnabled) {
+            return {
+                ok: true,
+                negotiatedTransportStrategy: 'server_routed_stream',
+                allowServerRoutedFallback: true,
+            };
+        }
+    }
+
+    if (serverRoutedEnabled) {
+        return {
+            ok: true,
+            negotiatedTransportStrategy: 'server_routed_stream',
+            allowServerRoutedFallback: true,
         };
     }
 
     return {
         ok: true,
-        negotiatedTransportStrategy: route.strategy,
-        allowServerRoutedFallback: route.allowServerRoutedFallback,
+        negotiatedTransportStrategy: 'direct_peer',
+        allowServerRoutedFallback: false,
     };
 }

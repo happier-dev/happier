@@ -23,6 +23,10 @@ const sessionRpcWithServerScopeSpy = vi.fn(
     async (_params: unknown) => ({ success: true } as const),
 );
 
+const machineRpcWithServerScopeSpy = vi.fn(
+    async (_params: unknown) => ({ success: true } as const),
+);
+
 const getReadyServerFeaturesSpy = vi.fn(async (_params: unknown): Promise<FeaturesResponse | null> => {
     policyConsulted = true;
     return {
@@ -57,6 +61,10 @@ vi.mock('../api/capabilities/getReadyServerFeatures', () => ({
 
 vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
     sessionRpcWithServerScope: (params: unknown) => sessionRpcWithServerScopeSpy(params),
+}));
+
+vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeSpy(params),
 }));
 
 vi.mock('../runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
@@ -94,6 +102,7 @@ describe('sessionFileSystem policy choke point', () => {
 
         machineRPCSpy.mockClear();
         sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
         getReadyServerFeaturesSpy.mockClear();
         getReadyServerFeaturesSpy.mockImplementationOnce(async (): Promise<FeaturesResponse | null> => {
             policyConsulted = true;
@@ -104,7 +113,42 @@ describe('sessionFileSystem policy choke point', () => {
         expect(res).toEqual({ success: true });
         expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
         expect(machineRPCSpy).not.toHaveBeenCalled();
-        expect(sessionRpcWithServerScopeSpy).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledTimes(1);
+        expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed (no machine_rpc_direct) for guarded methods when server features evaluation throws', async () => {
+        const { sessionRenamePath } = await import('./sessionFileSystem');
+
+        resetPolicyFlags();
+        enforcePolicyConsultedBeforeMachineRpc = true;
+
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    metadata: {
+                        path: '~/repo',
+                        machineId: 'm1',
+                    },
+                },
+            },
+        });
+
+        machineRPCSpy.mockClear();
+        sessionRpcWithServerScopeSpy.mockClear();
+        machineRpcWithServerScopeSpy.mockClear();
+        getReadyServerFeaturesSpy.mockClear();
+        getReadyServerFeaturesSpy.mockImplementationOnce(async (): Promise<FeaturesResponse | null> => {
+            policyConsulted = true;
+            throw new Error('failed to load features');
+        });
+
+        const res = await sessionRenamePath('s1', { from: 'README.md', to: 'README2.md' });
+        expect(res).toEqual({ success: true });
+        expect(getReadyServerFeaturesSpy).toHaveBeenCalledTimes(1);
+        expect(machineRPCSpy).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeSpy).toHaveBeenCalledTimes(1);
+        expect(sessionRpcWithServerScopeSpy).not.toHaveBeenCalled();
     });
 
     it('sessionRenamePath consults shared transfer policy before direct machine rpc', async () => {

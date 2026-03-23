@@ -227,8 +227,6 @@ function readOptionalSessionMetadataString(value: unknown): string | null {
 }
 
 class Sync {
-    // Spawned agents (especially in spawn mode) can take noticeable time to connect.
-    private static readonly SESSION_READY_TIMEOUT_MS = 10000;
 
         encryption!: Encryption;
         serverID!: string;
@@ -901,11 +899,6 @@ class Sync {
                 rawRecord: content,
             });
 
-            const ready = await this.waitForAgentReady(sessionId);
-            if (!ready) {
-                log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
-            }
-
             if (session.active === true) {
                 try {
                     await apiSocket.sessionRPC<{ ok: true }, {
@@ -920,7 +913,7 @@ class Sync {
                             localId,
                             meta: content.meta ?? {},
                         },
-                        { timeoutMs: 7_500 },
+                        { timeoutMs: this.syncTuning.sessionRpcTimeoutMs },
                     );
                     await publishNextPromptPermissionModeIfNeeded();
                     return;
@@ -946,7 +939,7 @@ class Sync {
                 send: (event, payload) => this.messageTransport.send(event, payload),
                 event: 'message',
                 payload,
-                timeoutMs: 7_500,
+                timeoutMs: this.syncTuning.socketAckTimeoutMs,
                 onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
 
@@ -1060,11 +1053,6 @@ class Sync {
                     ? { t: 'plain' as const, v: content }
                     : await sessionEncryption!.encryptRawRecord(content);
 
-            const ready = await this.waitForAgentReady(sessionId);
-            if (!ready) {
-                log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
-            }
-
             const localId = pending.localId;
             const payload = {
                 sid: sessionId,
@@ -1080,7 +1068,7 @@ class Sync {
                 send: (event, payload) => this.messageTransport.send(event, payload),
                 event: 'message',
                 payload,
-                timeoutMs: 7_500,
+                timeoutMs: this.syncTuning.socketAckTimeoutMs,
                 onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
 
@@ -1205,7 +1193,7 @@ class Sync {
             const rawAck = await (async () => {
                 try {
                     return await this.messageTransport.emitWithAck<MessageAckResponse>('message', payload, {
-                        timeoutMs: 7_500,
+                        timeoutMs: this.syncTuning.socketAckTimeoutMs,
                     });
                 } catch {
                     return null;
@@ -3514,38 +3502,6 @@ class Sync {
         }
     }
 
-    /**
-     * Waits for the CLI agent to be ready by watching agentStateVersion.
-     *
-     * When a session is created, agentStateVersion starts at 0. Once the CLI
-     * connects and sends its first state update (via updateAgentState()), the
-     * version becomes > 0. This serves as a reliable signal that the CLI's
-     * WebSocket is connected and ready to receive messages.
-     */
-    private waitForAgentReady(sessionId: string, timeoutMs: number = Sync.SESSION_READY_TIMEOUT_MS): Promise<boolean> {
-        const startedAt = Date.now();
-
-        return new Promise((resolve) => {
-            const done = (ready: boolean, reason: string) => {
-                clearTimeout(timeout);
-                unsubscribe();
-                const duration = Date.now() - startedAt;
-                log.log(`Session ${sessionId} ${reason} after ${duration}ms`);
-                resolve(ready);
-            };
-
-            const check = () => {
-                const s = storage.getState().sessions[sessionId];
-                if (s && s.agentStateVersion > 0) {
-                    done(true, `ready (agentStateVersion=${s.agentStateVersion})`);
-                }
-            };
-
-            const timeout = setTimeout(() => done(false, 'ready wait timed out'), timeoutMs);
-            const unsubscribe = storage.subscribe(check);
-            check(); // Check current state immediately
-        });
-    }
 }
 
 // Global singleton instance

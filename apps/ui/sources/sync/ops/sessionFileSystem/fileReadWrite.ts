@@ -10,12 +10,14 @@ import {
 } from '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionFiles';
 
 import { readRpcErrorCode } from '../../runtime/rpcErrors';
-import {
-  INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
-} from '../../runtime/sessionMachineRpcFallback';
+
+const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
 
 const SESSION_FILE_INLINE_MAX_BYTES_ENV_KEY = 'EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES';
 const DEFAULT_SESSION_FILE_INLINE_MAX_BYTES = 256 * 1024;
+// Inline base64 file read/write is intentionally small-only to avoid OOM and to keep the
+// bulk-byte substrate canonical (`bulkTransferPipeline/**` for large payloads).
+const SESSION_FILE_INLINE_HARD_MAX_BYTES = 10_000_000;
 const SESSION_READ_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file read size limit';
 const SESSION_WRITE_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file write size limit';
 
@@ -30,7 +32,7 @@ function resolveSessionFileInlineMaxBytes(): number {
         return DEFAULT_SESSION_FILE_INLINE_MAX_BYTES;
     }
 
-    return parsed;
+    return Math.min(parsed, SESSION_FILE_INLINE_HARD_MAX_BYTES);
 }
 
 function bytesToHex(bytes: Uint8Array): string {

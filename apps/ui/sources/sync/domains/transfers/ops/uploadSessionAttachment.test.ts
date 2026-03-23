@@ -1,10 +1,8 @@
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type RpcResponse = any;
-const SESSION_ATTACHMENTS_UPLOAD_INIT = 'daemon.sessionAttachments.upload.init';
-const SESSION_ATTACHMENTS_UPLOAD_CHUNK = 'daemon.sessionAttachments.upload.chunk';
-const SESSION_ATTACHMENTS_UPLOAD_FINALIZE = 'daemon.sessionAttachments.upload.finalize';
 const nativeOpenSpy = vi.fn();
 const nativeCloseSpy = vi.fn();
 const sessionRPCSpy = vi.fn(async (_sessionId: string, _method: string, _payload: unknown): Promise<RpcResponse> => ({
@@ -14,7 +12,6 @@ const sessionRPCSpy = vi.fn(async (_sessionId: string, _method: string, _payload
 const getReadyServerFeaturesSpy = vi.fn();
 const uploadBulkPayloadFromFileSpy = vi.fn();
 const uploadDaemonSessionAttachmentFromReaderSpy = vi.fn();
-const resolveBulkTransferPolicyAndRouteSpy = vi.fn();
 const randomUUIDSpy = vi.fn(() => '12345678-0000-4000-8000-123456789abc');
 const isRuntimeFeatureEnabledSpy = vi.fn<(params: unknown) => Promise<boolean>>(async (_params) => true);
 const recipientPublicKeyBase64 = Buffer.alloc(32, 7).toString('base64');
@@ -95,18 +92,16 @@ vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/uploadBulkPayload
     };
 });
 
-vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline', async () => {
-    const daemonSessionAttachments = await import('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments');
-    const resolvePolicy = await import('@/sync/domains/transfers/runtime/bulkTransferPipeline/resolveBulkTransferPolicyAndRoute');
+vi.mock('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments')>(
+        '@/sync/domains/transfers/runtime/bulkTransferPipeline/daemonSessionAttachments',
+    );
 
     return {
-        resolveBulkTransferPolicyAndRoute: (...args: unknown[]) => {
-            resolveBulkTransferPolicyAndRouteSpy(...args);
-            return (resolvePolicy as any).resolveBulkTransferPolicyAndRoute(...args);
-        },
+        ...actual,
         uploadDaemonSessionAttachmentFromReader: (params: unknown) => {
             uploadDaemonSessionAttachmentFromReaderSpy(params);
-            return (daemonSessionAttachments as any).uploadDaemonSessionAttachmentFromReader(params);
+            return (actual as any).uploadDaemonSessionAttachmentFromReader(params);
         },
     };
 });
@@ -180,7 +175,6 @@ afterEach(() => {
     getReadyServerFeaturesSpy.mockReset();
     uploadBulkPayloadFromFileSpy.mockReset();
     uploadDaemonSessionAttachmentFromReaderSpy.mockReset();
-    resolveBulkTransferPolicyAndRouteSpy.mockReset();
     nativeOpenSpy.mockReset();
     nativeCloseSpy.mockReset();
     randomUUIDSpy.mockClear();
@@ -245,7 +239,7 @@ describe('uploadSessionAttachment', () => {
         });
 
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string, payload: any) => {
-            if (method === SESSION_ATTACHMENTS_UPLOAD_INIT) {
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT) {
                 expect(payload).toMatchObject({
                     messageLocalId: 'm1',
                     fileName: 'hello.txt',
@@ -257,8 +251,8 @@ describe('uploadSessionAttachment', () => {
                 });
                 return { success: true, uploadId: 'u1', chunkSizeBytes: 2, recipientPublicKeyBase64 };
             }
-            if (method === SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
-            if (method === SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
                 return {
                     success: true,
                     path: '.happier/uploads/messages/m1/12345678-hello.txt',
@@ -287,7 +281,6 @@ describe('uploadSessionAttachment', () => {
         });
 
         expect(getReadyServerFeaturesSpy).toHaveBeenCalled();
-        expect(resolveBulkTransferPolicyAndRouteSpy).not.toHaveBeenCalled();
         expect(uploadDaemonSessionAttachmentFromReaderSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 's1',
             request: expect.objectContaining({
@@ -302,7 +295,7 @@ describe('uploadSessionAttachment', () => {
         }));
         expect(sessionRPCSpy).toHaveBeenCalledWith(
             'm1',
-            SESSION_ATTACHMENTS_UPLOAD_INIT,
+            RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT,
             expect.objectContaining({
                 messageLocalId: 'm1',
                 fileName: 'hello.txt',
@@ -319,11 +312,11 @@ describe('uploadSessionAttachment', () => {
         expect((res as any).path).toBe('.happier/uploads/messages/m1/12345678-hello.txt');
 
         const calls = sessionRPCSpy.mock.calls.map((c) => ({ method: c[1], payload: c[2] }));
-        expect(calls[0]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_INIT);
-        expect(calls[1]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_CHUNK);
-        expect(calls[2]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_CHUNK);
-        expect(calls[3]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_CHUNK);
-        expect(calls[4]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
+        expect(calls[0]?.method).toBe(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
+        expect(calls[1]?.method).toBe(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+        expect(calls[2]?.method).toBe(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+        expect(calls[3]?.method).toBe(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
+        expect(calls[4]?.method).toBe(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);
 
         expect(calls[0]?.payload).toMatchObject({
             messageLocalId: 'm1',
@@ -358,11 +351,11 @@ describe('uploadSessionAttachment', () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string) => {
-            if (method === SESSION_ATTACHMENTS_UPLOAD_INIT) {
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT) {
                 return { success: true, uploadId: 'u1', chunkSizeBytes: 2, recipientPublicKeyBase64 };
             }
-            if (method === SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
-            if (method === SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
                 return { success: true, path: '.happier/uploads/messages/m1/12345678-hello.txt', sizeBytes: 5, sha256: 'h1' };
             }
             return { success: false, error: `unexpected method ${method}` };
@@ -399,11 +392,11 @@ describe('uploadSessionAttachment', () => {
         const { sessionAttachmentsUploadFile } = await import('./uploadSessionAttachment');
 
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string) => {
-            if (method === SESSION_ATTACHMENTS_UPLOAD_INIT) {
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT) {
                 return { success: true, uploadId: 'u1', chunkSizeBytes: 2, recipientPublicKeyBase64 };
             }
-            if (method === SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
-            if (method === SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK) return { success: true };
+            if (method === RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE) {
                 return { success: true, path: '.happier/uploads/messages/m1/12345678-hello.txt', sizeBytes: 5, sha256: 'h1' };
             }
             return { success: false, error: `unexpected method ${method}` };
@@ -428,7 +421,7 @@ describe('uploadSessionAttachment', () => {
         expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
 
         const calls = sessionRPCSpy.mock.calls.map((c) => ({ method: c[1], payload: c[2] }));
-        expect(calls[0]?.method).toBe(SESSION_ATTACHMENTS_UPLOAD_INIT);
+        expect(calls[0]?.method).toBe(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
         expect(calls[0]?.payload).toMatchObject({
             messageLocalId: 'm1',
             fileName: 'hello.txt',

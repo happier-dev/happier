@@ -53,6 +53,54 @@ export type AcpConfigOptionControl = Readonly<{
     isPending: boolean;
 }>;
 
+export function normalizeAcpConfigOptionsArray(raw: unknown): AcpConfigOption[] | null {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+
+    const parsed: AcpConfigOption[] = [];
+    type RawConfigOptionChoice = Record<string, unknown>;
+    for (const entry of raw) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+        const rec = entry as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+        const type = typeof rec.type === 'string' ? rec.type.trim() : '';
+        if (!id || !name || !type) continue;
+
+        const currentValue = normalizeValueId(rec.currentValue);
+        if (!currentValue) continue;
+
+        const options = Array.isArray(rec.options)
+            ? rec.options
+                .filter((option: unknown): option is RawConfigOptionChoice =>
+                    Boolean(option && typeof option === 'object' && !Array.isArray(option))
+                )
+                .map((option: RawConfigOptionChoice) => {
+                    const value = normalizeValueId(option.value);
+                    const optionName = typeof option.name === 'string' ? option.name.trim() : '';
+                    if (!value || !optionName) return null;
+                    const description = typeof option.description === 'string' ? option.description.trim() : '';
+                    return { value, name: optionName, ...(description ? { description } : {}) };
+                })
+                .filter(
+                    (option: NonNullable<AcpConfigOption['options']>[number] | null): option is NonNullable<AcpConfigOption['options']>[number] =>
+                        option !== null
+                )
+            : undefined;
+
+        const description = typeof rec.description === 'string' ? rec.description.trim() : '';
+        parsed.push({
+            id,
+            name,
+            type,
+            currentValue,
+            ...(description ? { description } : {}),
+            ...(options && options.length > 0 ? { options } : {}),
+        } satisfies AcpConfigOption);
+    }
+
+    return parsed.length > 0 ? parsed : null;
+}
+
 export function isBooleanConfigOptionType(type: string): boolean {
     return type === 'boolean' || type === 'bool' || type === 'toggle';
 }

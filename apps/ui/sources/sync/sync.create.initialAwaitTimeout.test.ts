@@ -62,6 +62,7 @@ vi.mock('@/track', () => ({
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { flushHookEffects } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { Encryption } from '@/sync/encryption/encryption';
@@ -134,7 +135,7 @@ describe('sync.create initial awaits', () => {
         });
 
         // Current behavior (pre-fix) hangs forever; expected behavior resolves via awaitQueue timeouts.
-        await vi.advanceTimersByTimeAsync(10_000);
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 10_000 });
         expect(resolved).toBe(true);
 
         await promise;

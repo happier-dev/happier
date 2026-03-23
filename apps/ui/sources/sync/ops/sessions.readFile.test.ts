@@ -5,10 +5,24 @@ import type { FeaturesResponse } from '@happier-dev/protocol';
 let policyConsulted = false;
 
 const machineRPCSpy = vi.fn();
+const machineRpcWithServerScopeSpy = vi.fn();
 const sessionRpcWithServerScopeSpy = vi.fn();
 const getReadyServerFeaturesSpy = vi.fn(async (_params: unknown): Promise<FeaturesResponse | null> => {
     policyConsulted = true;
-    return null;
+    return {
+        features: {
+            machines: {
+                enabled: true,
+                transfer: {
+                    enabled: true,
+                    serverRouted: {
+                        enabled: true,
+                    },
+                },
+            },
+        },
+        capabilities: {},
+    } as FeaturesResponse;
 });
 const resolvePreferredServerIdForSessionIdSpy = vi.fn((_sessionId: string) => 'server-1');
 const readMachineTargetForSessionSpy = vi.fn();
@@ -34,6 +48,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', (
     sessionRpcWithServerScope: (params: unknown) => sessionRpcWithServerScopeSpy(params),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeSpy(params),
+}));
+
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: (params: unknown) => getReadyServerFeaturesSpy(params),
 }));
@@ -55,6 +73,7 @@ beforeEach(() => {
     delete process.env.EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES;
 
     machineRPCSpy.mockReset();
+    machineRpcWithServerScopeSpy.mockReset();
     sessionRpcWithServerScopeSpy.mockReset();
     getReadyServerFeaturesSpy.mockClear();
     resolvePreferredServerIdForSessionIdSpy.mockClear();
@@ -64,6 +83,10 @@ beforeEach(() => {
 
     canUseSessionRpcSpy.mockReturnValue(true);
     shouldFallbackToSessionRpcSpy.mockReturnValue(true);
+
+    machineRpcWithServerScopeSpy.mockImplementation(async (params: any) =>
+        machineRPCSpy(params.machineId, params.method, params.payload),
+    );
 });
 
 describe('sessionReadFile', () => {
@@ -150,6 +173,49 @@ describe('sessionReadFile', () => {
             expect(typeof res.error).toBe('string');
             expect(res.error.length).toBeGreaterThan(0);
         }
+        expect(machineRPCSpy).not.toHaveBeenCalledWith('m1', RPC_METHODS.READ_FILE, expect.anything());
+    });
+
+    it('fails closed when the inline max-bytes env is misconfigured to an unsafe value (hard clamp)', async () => {
+        const { sessionReadFile } = await import('./sessionFileSystem');
+
+        process.env.EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES = '1000000000';
+        readMachineTargetForSessionSpy.mockReturnValue({ machineId: 'm1', basePath: '/repo' });
+
+        let readChunkCalled = 0;
+
+        machineRPCSpy.mockImplementation(async (_machineId: string, method: string) => {
+            expect(policyConsulted).toBe(true);
+
+            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT) {
+                return {
+                    success: true,
+                    downloadId: 'download-1',
+                    chunkSizeBytes: 4,
+                    sizeBytes: 50 * 1024 * 1024,
+                    name: 'a.ts',
+                };
+            }
+            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_CHUNK) {
+                readChunkCalled += 1;
+                throw new Error('chunk should not be requested when the download is rejected by policy');
+            }
+            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_ABORT) {
+                return { success: true };
+            }
+            if (method === RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_FINALIZE) {
+                return { success: true };
+            }
+
+            return { success: false, error: `unexpected method ${method}` };
+        });
+
+        const res = await sessionReadFile('s1', 'src/a.ts');
+        expect(res.success).toBe(false);
+        if (!res.success) {
+            expect(String(res.error)).toContain('inline');
+        }
+        expect(readChunkCalled).toBe(0);
         expect(machineRPCSpy).not.toHaveBeenCalledWith('m1', RPC_METHODS.READ_FILE, expect.anything());
     });
 

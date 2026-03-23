@@ -28,7 +28,7 @@ type SocketStub = {
 };
 
 async function settleAsyncWork() {
-    await Promise.resolve();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
     if (typeof vi.isFakeTimers === 'function' && vi.isFakeTimers()) {
         await vi.advanceTimersByTimeAsync(0);
     }

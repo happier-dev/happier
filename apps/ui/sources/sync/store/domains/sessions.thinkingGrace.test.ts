@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
 });
 
 function mockSessionsDomainBoundaries() {
@@ -107,23 +108,30 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
 }
 
 describe('sessions domain: thinking grace', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-02-05T00:00:00.000Z'));
-    });
-
-    afterEach(() => {
-        vi.useRealTimers();
-    });
-
     it('keeps thinkingGraceUntil briefly after thinking turns off (prevents UI flicker)', async () => {
         mockSessionsDomainBoundaries();
+
+        const scheduledTimeouts = new Map<number, () => void>();
+        let nextTimeoutId = 1;
+        let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
+
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((((callback: TimerHandler) => {
+            const timeoutId = nextTimeoutId++;
+            if (typeof callback === 'function') {
+                scheduledTimeouts.set(timeoutId, callback as () => void);
+            }
+            return timeoutId as unknown as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout));
+        vi.spyOn(globalThis, 'clearTimeout').mockImplementation((((timeoutId: ReturnType<typeof setTimeout>) => {
+            scheduledTimeouts.delete(timeoutId as unknown as number);
+        }) as typeof clearTimeout));
 
         const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
         const { get, domain } = createHarness(createSessionsDomain, createReducer);
 
-        const t0 = Date.now();
+        const t0 = nowMs;
 
         domain.applySessions([
             {
@@ -146,10 +154,10 @@ describe('sessions domain: thinking grace', () => {
         const graceUntil = get().sessions.s1?.thinkingGraceUntil ?? null;
         expect(typeof graceUntil).toBe('number');
         expect(graceUntil).toBeGreaterThan(t0);
+        expect(scheduledTimeouts.size).toBe(1);
 
-        vi.advanceTimersByTime(250);
-
-        const t1 = Date.now();
+        nowMs += 250;
+        const t1 = nowMs;
         domain.applySessions([
             {
                 id: 's1',
@@ -172,8 +180,10 @@ describe('sessions domain: thinking grace', () => {
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBe(graceUntil);
 
         // Once the grace timer expires, the marker clears without polling.
-        const remainingMs = Math.max(0, (graceUntil as number) - Date.now());
-        vi.advanceTimersByTime(remainingMs + 1);
+        nowMs = (graceUntil as number) + 1;
+        const expireThinkingGrace = scheduledTimeouts.values().next().value;
+        expect(typeof expireThinkingGrace).toBe('function');
+        expireThinkingGrace?.();
 
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
     });

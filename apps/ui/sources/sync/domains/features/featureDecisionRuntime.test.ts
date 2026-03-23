@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
@@ -141,7 +141,7 @@ describe('featureDecisionRuntime', () => {
         }
 
         await renderScreen(React.createElement(Test));
-            await flushHookEffects(6);
+        await flushHookEffects(6);
 
         expect(fetchMock.mock.calls.some((call) => String(call[0] ?? '').includes('server-a.example.test'))).toBe(true);
         expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
@@ -196,9 +196,8 @@ describe('featureDecisionRuntime', () => {
             return React.createElement('View');
         }
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Test))).tree;
-            await flushHookEffects(6);
+        let screen = await renderScreen(React.createElement(Test));
+        await flushHookEffects(6);
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
@@ -209,8 +208,8 @@ describe('featureDecisionRuntime', () => {
         now = 10 * 60 * 1000 + 1;
 
         await act(async () => {
-            tree?.unmount();
-            tree = renderer.create(React.createElement(Test));
+            screen.tree.unmount();
+            screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(6);
         });
 
@@ -261,23 +260,22 @@ describe('featureDecisionRuntime', () => {
             return React.createElement('View');
         }
 
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(Test))).tree;
-            await flushHookEffects(20);
+        let screen = await renderScreen(React.createElement(Test));
+        await flushHookEffects(20);
         expect(fetchMock).toHaveBeenCalledTimes(1);
 
         // Remount within TTL_READY_MS.
         now = 1;
         await act(async () => {
-            tree?.unmount();
-            tree = renderer.create(React.createElement(Test));
+            screen.tree.unmount();
+            screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(20);
         });
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            tree?.unmount();
+            screen.tree.unmount();
             await flushHookEffects(4);
         });
 

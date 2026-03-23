@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -47,199 +47,194 @@ function buildNewMessageUpdate(params: { sessionId: string; messageId: string; m
 
 describe('socket new-message + coalescer: materialized max seq', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         storage.setState(initialStorageState, true);
     });
 
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('marks materializedMaxSeq only when the coalesced batch is applied (and avoids false gap detection while queued)', async () => {
-        vi.useFakeTimers();
-        try {
-            storage.setState((prev) => ({
-                ...prev,
-                sessions: { ...prev.sessions, s1: buildSession('s1') },
-                settings: {
-                    ...prev.settings,
-                    transcriptStreamingCoalesceEnabled: true,
-                    transcriptStreamingCoalesceWindowMs: 50,
-                    transcriptStreamingCoalesceMaxBatchSize: 1_000,
-                },
-            }));
+        storage.setState((prev) => ({
+            ...prev,
+            sessions: { ...prev.sessions, s1: buildSession('s1') },
+            settings: {
+                ...prev.settings,
+                transcriptStreamingCoalesceEnabled: true,
+                transcriptStreamingCoalesceWindowMs: 50,
+                transcriptStreamingCoalesceMaxBatchSize: 1_000,
+            },
+        }));
 
-            const applyMessages = vi.fn();
-            const applySessions = vi.fn();
-            const onMessageGapDetected = vi.fn();
+        const applyMessages = vi.fn();
+        const applySessions = vi.fn();
+        const onMessageGapDetected = vi.fn();
 
-            let materializedMaxSeq = 1;
-            const markSessionMaterializedMaxSeq = vi.fn((sessionId: string, seq: number) => {
-                if (sessionId === 's1') {
-                    materializedMaxSeq = Math.max(materializedMaxSeq, Math.trunc(seq));
-                }
-            });
+        let materializedMaxSeq = 1;
+        const markSessionMaterializedMaxSeq = vi.fn((sessionId: string, seq: number) => {
+            if (sessionId === 's1') {
+                materializedMaxSeq = Math.max(materializedMaxSeq, Math.trunc(seq));
+            }
+        });
 
-            const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-                encryption: {
-                    getSessionEncryption: () => ({
-                        decryptMessage: async (msg: any) => ({
-                            id: msg.id,
-                            localId: null,
-                            createdAt: 1_000,
-                            content: { role: 'user', content: { type: 'text', text: 'hi' } },
-                        }),
+        const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
+            encryption: {
+                getSessionEncryption: () => ({
+                    decryptMessage: async (msg: any) => ({
+                        id: msg.id,
+                        localId: null,
+                        createdAt: 1_000,
+                        content: { role: 'user', content: { type: 'text', text: 'hi' } },
                     }),
-                    getMachineEncryption: () => null,
-                    removeSessionEncryption: () => {},
-                    decryptEncryptionKey: async () => null as Uint8Array | null,
-                    initializeMachines: async () => {},
-                } as any,
-                artifactDataKeys: new Map<string, Uint8Array>(),
-                applySessions,
-                fetchSessions: vi.fn(),
-                applyMessages,
-                onSessionVisible: vi.fn(),
-                isSessionMessagesLoaded: vi.fn(() => true),
-                getSessionMaterializedMaxSeq: vi.fn(() => materializedMaxSeq),
-                markSessionMaterializedMaxSeq,
-                onMessageGapDetected,
-                assumeUsers: vi.fn(async () => {}),
-                applyTodoSocketUpdates: vi.fn(async () => {}),
-                invalidateMachines: vi.fn(),
-                invalidateSessions: vi.fn(),
-                invalidateArtifacts: vi.fn(),
-                invalidateFriends: vi.fn(),
-                invalidateFriendRequests: vi.fn(),
-                invalidateFeed: vi.fn(),
-                invalidateAutomations: vi.fn(),
-                invalidateTodos: vi.fn(),
-                log: { log: vi.fn() },
-            };
+                }),
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey: async () => null as Uint8Array | null,
+                initializeMachines: async () => {},
+            } as any,
+            artifactDataKeys: new Map<string, Uint8Array>(),
+            applySessions,
+            fetchSessions: vi.fn(),
+            applyMessages,
+            onSessionVisible: vi.fn(),
+            isSessionMessagesLoaded: vi.fn(() => true),
+            getSessionMaterializedMaxSeq: vi.fn(() => materializedMaxSeq),
+            markSessionMaterializedMaxSeq,
+            onMessageGapDetected,
+            assumeUsers: vi.fn(async () => {}),
+            applyTodoSocketUpdates: vi.fn(async () => {}),
+            invalidateMachines: vi.fn(),
+            invalidateSessions: vi.fn(),
+            invalidateArtifacts: vi.fn(),
+            invalidateFriends: vi.fn(),
+            invalidateFriendRequests: vi.fn(),
+            invalidateFeed: vi.fn(),
+            invalidateAutomations: vi.fn(),
+            invalidateTodos: vi.fn(),
+            log: { log: vi.fn() },
+        };
 
-            await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2 }) });
-            await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3 }) });
+        await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2 }) });
+        await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3 }) });
 
-            expect(applyMessages).not.toHaveBeenCalled();
-            expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
-            expect(onMessageGapDetected).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
 
-            await vi.runAllTimersAsync();
+        await vi.runAllTimersAsync();
 
-            expect(applyMessages).toHaveBeenCalledTimes(1);
-            expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 3);
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 3);
 
-            const applyOrder = applyMessages.mock.invocationCallOrder[0] ?? 0;
-            const markOrder = markSessionMaterializedMaxSeq.mock.invocationCallOrder[0] ?? 0;
-            expect(applyOrder).toBeGreaterThan(0);
-            expect(markOrder).toBeGreaterThan(0);
-            expect(markOrder).toBeGreaterThan(applyOrder);
-        } finally {
-            vi.useRealTimers();
-        }
+        const applyOrder = applyMessages.mock.invocationCallOrder[0] ?? 0;
+        const markOrder = markSessionMaterializedMaxSeq.mock.invocationCallOrder[0] ?? 0;
+        expect(applyOrder).toBeGreaterThan(0);
+        expect(markOrder).toBeGreaterThan(0);
+        expect(markOrder).toBeGreaterThan(applyOrder);
     });
 
     it('does not let a queued new-message overwrite a newer immediate message-updated payload', async () => {
-        vi.useFakeTimers();
-        try {
-            storage.setState((prev) => ({
-                ...prev,
-                sessions: {
-                    ...prev.sessions,
-                    s1: { ...buildSession('s1'), encryptionMode: 'plain' },
-                },
-                settings: {
-                    ...prev.settings,
-                    transcriptStreamingCoalesceEnabled: true,
-                    transcriptStreamingCoalesceWindowMs: 50,
-                    transcriptStreamingCoalesceMaxBatchSize: 1_000,
-                },
-            }));
+        storage.setState((prev) => ({
+            ...prev,
+            sessions: {
+                ...prev.sessions,
+                s1: { ...buildSession('s1'), encryptionMode: 'plain' },
+            },
+            settings: {
+                ...prev.settings,
+                transcriptStreamingCoalesceEnabled: true,
+                transcriptStreamingCoalesceWindowMs: 50,
+                transcriptStreamingCoalesceMaxBatchSize: 1_000,
+            },
+        }));
 
-            const appliedTexts = new Map<string, string>();
-            const applyMessages = vi.fn((_sessionId: string, messages: Array<{ id: string; content: { type: 'text'; text: string } }>) => {
-                for (const message of messages) {
-                    appliedTexts.set(message.id, message.content.text);
-                }
-            });
+        const appliedTexts = new Map<string, string>();
+        const applyMessages = vi.fn((_sessionId: string, messages: Array<{ id: string; content: { type: 'text'; text: string } }>) => {
+            for (const message of messages) {
+                appliedTexts.set(message.id, message.content.text);
+            }
+        });
 
-            const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-                encryption: {
-                    getSessionEncryption: () => null,
-                    getMachineEncryption: () => null,
-                    removeSessionEncryption: () => {},
-                    decryptEncryptionKey: async () => null as Uint8Array | null,
-                    initializeMachines: async () => {},
-                } as any,
-                artifactDataKeys: new Map<string, Uint8Array>(),
-                applySessions: vi.fn(),
-                fetchSessions: vi.fn(),
-                applyMessages: applyMessages as any,
-                onSessionVisible: vi.fn(),
-                isSessionMessagesLoaded: vi.fn(() => true),
-                getSessionMaterializedMaxSeq: vi.fn(() => 1),
-                markSessionMaterializedMaxSeq: vi.fn(),
-                onMessageGapDetected: vi.fn(),
-                assumeUsers: vi.fn(async () => {}),
-                applyTodoSocketUpdates: vi.fn(async () => {}),
-                invalidateMachines: vi.fn(),
-                invalidateSessions: vi.fn(),
-                invalidateArtifacts: vi.fn(),
-                invalidateFriends: vi.fn(),
-                invalidateFriendRequests: vi.fn(),
-                invalidateFeed: vi.fn(),
-                invalidateAutomations: vi.fn(),
-                invalidateTodos: vi.fn(),
-                log: { log: vi.fn() },
-            };
+        const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
+            encryption: {
+                getSessionEncryption: () => null,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey: async () => null as Uint8Array | null,
+                initializeMachines: async () => {},
+            } as any,
+            artifactDataKeys: new Map<string, Uint8Array>(),
+            applySessions: vi.fn(),
+            fetchSessions: vi.fn(),
+            applyMessages: applyMessages as any,
+            onSessionVisible: vi.fn(),
+            isSessionMessagesLoaded: vi.fn(() => true),
+            getSessionMaterializedMaxSeq: vi.fn(() => 1),
+            markSessionMaterializedMaxSeq: vi.fn(),
+            onMessageGapDetected: vi.fn(),
+            assumeUsers: vi.fn(async () => {}),
+            applyTodoSocketUpdates: vi.fn(async () => {}),
+            invalidateMachines: vi.fn(),
+            invalidateSessions: vi.fn(),
+            invalidateArtifacts: vi.fn(),
+            invalidateFriends: vi.fn(),
+            invalidateFriendRequests: vi.fn(),
+            invalidateFeed: vi.fn(),
+            invalidateAutomations: vi.fn(),
+            invalidateTodos: vi.fn(),
+            log: { log: vi.fn() },
+        };
 
-            await handleUpdateContainer({
-                ...baseParams,
-                updateData: {
-                    id: 'u_new',
-                    seq: 102,
-                    createdAt: 1_002,
-                    body: {
-                        t: 'new-message',
-                        sid: 's1',
-                        message: {
-                            id: 'm2',
-                            seq: 2,
-                            localId: null,
-                            createdAt: 1_002,
-                            updatedAt: 1_002,
-                            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'stale text' } } },
-                        },
+        await handleUpdateContainer({
+            ...baseParams,
+            updateData: {
+                id: 'u_new',
+                seq: 102,
+                createdAt: 1_002,
+                body: {
+                    t: 'new-message',
+                    sid: 's1',
+                    message: {
+                        id: 'm2',
+                        seq: 2,
+                        localId: null,
+                        createdAt: 1_002,
+                        updatedAt: 1_002,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'stale text' } } },
                     },
-                } as ApiUpdateContainer,
-            });
+                },
+            } as ApiUpdateContainer,
+        });
 
-            expect(applyMessages).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
 
-            await handleUpdateContainer({
-                ...baseParams,
-                updateData: {
-                    id: 'u_updated',
-                    seq: 103,
-                    createdAt: 1_003,
-                    body: {
-                        t: 'message-updated',
-                        sid: 's1',
-                        message: {
-                            id: 'm2',
-                            seq: 2,
-                            localId: null,
-                            sidechainId: null,
-                            createdAt: 1_002,
-                            updatedAt: 1_003,
-                            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'fresh text' } } },
-                        },
+        await handleUpdateContainer({
+            ...baseParams,
+            updateData: {
+                id: 'u_updated',
+                seq: 103,
+                createdAt: 1_003,
+                body: {
+                    t: 'message-updated',
+                    sid: 's1',
+                    message: {
+                        id: 'm2',
+                        seq: 2,
+                        localId: null,
+                        sidechainId: null,
+                        createdAt: 1_002,
+                        updatedAt: 1_003,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'fresh text' } } },
                     },
-                } as ApiUpdateContainer,
-            });
+                },
+            } as ApiUpdateContainer,
+        });
 
-            expect(appliedTexts.get('m2')).toBe('fresh text');
+        expect(appliedTexts.get('m2')).toBe('fresh text');
 
-            await vi.runAllTimersAsync();
+        await vi.runAllTimersAsync();
 
-            expect(appliedTexts.get('m2')).toBe('fresh text');
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(appliedTexts.get('m2')).toBe('fresh text');
     });
 });

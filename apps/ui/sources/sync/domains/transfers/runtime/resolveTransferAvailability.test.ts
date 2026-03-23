@@ -217,7 +217,7 @@ describe('resolveTransferAvailability', () => {
         });
     });
 
-    it('fails closed for handoff when direct peer is preferred but server-routed fallback is disabled', async () => {
+    it('fails closed for handoff when all transfer strategies are disabled on the selected server', async () => {
         const { resolveMachineTransferAvailability } = await import('./resolveTransferAvailability');
 
         expect(resolveMachineTransferAvailability({
@@ -249,8 +249,8 @@ describe('resolveTransferAvailability', () => {
             preferredTransportStrategies: ['direct_peer'],
         })).toEqual({
             ok: false,
-            errorCode: 'server_routed_transfer_disabled',
-            errorMessage: 'Direct peer transfer is required because server-routed transfer is disabled',
+            errorCode: 'transfer_disabled',
+            errorMessage: 'Machine transfer is disabled on the selected server',
         });
     });
 });

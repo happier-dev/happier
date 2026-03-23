@@ -21,6 +21,15 @@ export type SyncTuning = Readonly<{
     changesPageLimit: number;
     invalidateSyncBackoffMinDelayMs: number;
     invalidateSyncBackoffMaxDelayMs: number;
+    /**
+     * Timeout for session-scoped RPC calls that the UI uses for active sessions
+     * (e.g. steering-capable send paths).
+     */
+    sessionRpcTimeoutMs: number;
+    /**
+     * Timeout for socket emit-with-ack operations (message commits, etc.).
+     */
+    socketAckTimeoutMs: number;
 }>;
 
 const WEB_STORAGE_KEY = 'HAPPIER_SYNC_TUNING_JSON';
@@ -91,6 +100,8 @@ export function loadSyncTuning(opts?: {
         changesPageLimit: 200,
         invalidateSyncBackoffMinDelayMs: 500,
         invalidateSyncBackoffMaxDelayMs: 30_000,
+        sessionRpcTimeoutMs: 7_500,
+        socketAckTimeoutMs: 7_500,
     };
 
     const webObj = parseJsonObject(readWebStorageValue(opts?.readWebStorage));
@@ -125,6 +136,8 @@ export function loadSyncTuning(opts?: {
         changesPageLimit: readNumber(merged, 'changesPageLimit', { min: 1, max: 10_000 }) ?? defaults.changesPageLimit,
         invalidateSyncBackoffMinDelayMs: readNumber(merged, 'invalidateSyncBackoffMinDelayMs', { min: 50, max: 60_000 }) ?? defaults.invalidateSyncBackoffMinDelayMs,
         invalidateSyncBackoffMaxDelayMs: readNumber(merged, 'invalidateSyncBackoffMaxDelayMs', { min: 50, max: 10 * 60_000 }) ?? defaults.invalidateSyncBackoffMaxDelayMs,
+        sessionRpcTimeoutMs: readNumber(merged, 'sessionRpcTimeoutMs', { min: 250, max: 10 * 60_000 }) ?? defaults.sessionRpcTimeoutMs,
+        socketAckTimeoutMs: readNumber(merged, 'socketAckTimeoutMs', { min: 250, max: 10 * 60_000 }) ?? defaults.socketAckTimeoutMs,
     };
 
     // Normalize: max delay must be >= min delay.

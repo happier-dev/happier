@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 import type { NormalizedMessage } from '@/sync/typesRaw';
@@ -102,6 +102,14 @@ function buildHarness(overrides: Partial<Parameters<typeof handleNewMessageSocke
 }
 
 describe('handleNewMessageSocketUpdate', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('preserves update message seq on normalized messages', async () => {
         const { params, applyMessages } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
@@ -336,7 +344,6 @@ describe('handleNewMessageSocketUpdate', () => {
     });
 
     it('can coalesce socket message applies by passing a coalescer enqueue function', async () => {
-        vi.useFakeTimers();
         const applied: Array<{ sessionId: string; ids: string[] }> = [];
         const applyMessages = vi.fn((sessionId: string, messages: NormalizedMessage[]) => {
             applied.push({ sessionId, ids: messages.map((m) => m.id) });
@@ -376,11 +383,9 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applyMessages).not.toHaveBeenCalled();
         expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
 
-        vi.advanceTimersByTime(16);
+        await vi.runAllTimersAsync();
 
         expect(applied).toEqual([{ sessionId: 's1', ids: ['m2', 'm3'] }]);
         expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
-
-        vi.useRealTimers();
     });
 });
