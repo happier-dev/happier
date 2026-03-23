@@ -51,7 +51,11 @@ export type AgentInputExtraActionChip = Readonly<{
         options: ReadonlyArray<AgentInputChipPickerOption>;
         selectedOptionId?: string | null;
         onSelect: (id: string) => void;
+        applyLabel?: string;
+        railWidth?: number;
+        railMaxWidth?: number | `${number}%`;
         maxHeightCap?: number;
+        maxWidthCap?: number;
     }>;
     collapsedContentPopover?: Readonly<{
         title: string;

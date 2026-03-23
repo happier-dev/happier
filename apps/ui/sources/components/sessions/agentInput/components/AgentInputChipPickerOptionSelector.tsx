@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Typography } from "@/constants/Typography";
 import { Text } from "@/components/ui/text/Text";
+import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
 
 import type {
@@ -60,7 +61,6 @@ export function AgentInputChipPickerOptionSelector(
                   props.onFocusOption(option.id);
                 }}
                 checkColor={theme.colors.button.primary.background}
-                uncheckedColor={theme.colors.textSecondary}
               />
             ))}
           </View>
@@ -76,7 +76,6 @@ type AgentInputChipPickerOptionButtonProps = Readonly<{
   selected: boolean;
   compact: boolean;
   checkColor: string;
-  uncheckedColor: string;
   onPress: () => void;
 }>;
 
@@ -104,16 +103,24 @@ function AgentInputChipPickerOptionButton(
         props.option.disabled ? styles.optionRowDisabled : null,
       ]}
     >
-      <View style={styles.optionTextBlock}>
-        <Text style={styles.optionLabel}>{props.option.label}</Text>
-        {shouldShowSubtitle ? (
-          <Text style={styles.optionSubtitle}>{normalizedSubtitle}</Text>
+      <View style={styles.optionLeft}>
+        {props.option.icon ? (
+          <View style={styles.optionIcon}>
+            {normalizeNodeForView(props.option.icon)}
+          </View>
         ) : null}
+        <View style={styles.optionTextBlock}>
+          <Text style={styles.optionLabel}>{props.option.label}</Text>
+          {shouldShowSubtitle ? (
+            <Text style={styles.optionSubtitle}>{normalizedSubtitle}</Text>
+          ) : null}
+        </View>
       </View>
       <Ionicons
-        name={props.selected ? "checkmark-circle" : "ellipse-outline"}
-        size={16}
-        color={props.selected ? props.checkColor : props.uncheckedColor}
+        name="checkmark-outline"
+        size={14}
+        color={props.checkColor}
+        style={props.selected ? null : { opacity: 0 }}
       />
     </Pressable>
   );
@@ -165,6 +172,18 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   optionRowDisabled: {
     opacity: 0.45,
+  },
+  optionLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  optionIcon: {
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
   optionTextBlock: {
     flex: 1,

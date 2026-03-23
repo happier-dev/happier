@@ -83,9 +83,10 @@ export function AgentInputChipPickerPanel(
     }
     if (option.onSelectImmediate) {
       option.onSelectImmediate();
+      props.onRequestClose();
       return;
     }
-  }, [props.options]);
+  }, [props.onRequestClose, props.options]);
 
   const detailedLayout =
     showDetailedSelector && windowWidth < DETAILED_PICKER_STACKED_WIDTH
@@ -93,6 +94,8 @@ export function AgentInputChipPickerPanel(
       : "split";
   const detailPaneStyle =
     detailedLayout === "split" ? styles.detailPaneSplit : null;
+  const railWidth = props.railWidth ?? styles.railScroll.width;
+  const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
 
   return (
     <View testID="agent-input-chip-picker" style={styles.container}>
@@ -108,6 +111,7 @@ export function AgentInputChipPickerPanel(
                     testID={`agent-input-chip-picker.option:${option.id}`}
                     title={option.label}
                     subtitle={option.subtitle}
+                    icon={option.icon}
                     selected={props.selectedOptionId === option.id}
                     disabled={option.disabled}
                     showChevron={false}
@@ -134,7 +138,9 @@ export function AgentInputChipPickerPanel(
         >
           {showDetailedSelector ? (
             <ScrollView
-              style={detailedLayout === "split" ? styles.railScroll : null}
+              style={detailedLayout === "split"
+                ? [styles.railScroll, { width: railWidth, maxWidth: railMaxWidth }]
+                : null}
               contentContainerStyle={
                 detailedLayout === "split" ? styles.railScrollContent : null
               }
@@ -170,6 +176,10 @@ export function AgentInputChipPickerPanel(
                   props.onRequestClose();
                 }}
                 applyLabel={props.applyLabel ?? t("common.use")}
+                onSelectDetailOption={(id) => {
+                  props.onSelect(id);
+                }}
+                onRequestClose={props.onRequestClose}
               />
             </ScrollView>
           ) : null}

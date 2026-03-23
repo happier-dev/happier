@@ -351,18 +351,24 @@ export function AgentInputOverlayLayer(props: Readonly<{
             ) : null}
 
             {props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (
-                <AgentInputSimpleOptionsPopover
+                <AgentInputChipPickerPopover
                     open
-                    anchorRef={props.actionMenuAnchorRef}
+                    anchorRef={props.activeExtraCollapsedPopoverAnchor === 'chip'
+                        ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)
+                        : props.actionMenuAnchorRef}
                     title={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.title}
                     options={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.options}
                     selectedOptionId={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.selectedOptionId ?? null}
+                    applyLabel={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.applyLabel}
+                    railWidth={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.railWidth}
+                    railMaxWidth={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.railMaxWidth}
                     onSelect={(selectedId) => {
                         props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover?.onSelect(selectedId);
                         props.onActiveExtraCollapsedPopoverChipClose();
                     }}
                     onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}
-                    maxHeightCap={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.maxHeightCap ?? 320}
+                    maxHeightCap={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.maxHeightCap ?? 420}
+                    maxWidthCap={props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover.maxWidthCap ?? 360}
                 />
             ) : null}
 

@@ -1,6 +1,15 @@
+export type AgentInputChipPickerDetailSelectOption = Readonly<{
+    id: string;
+    label: string;
+    subtitle?: string;
+    selected?: boolean;
+    disabled?: boolean;
+}>;
+
 export type AgentInputChipPickerOption = Readonly<{
     id: string;
     label: string;
+    icon?: React.ReactNode;
     subtitle?: string;
     sectionId?: string;
     sectionLabel?: string;
@@ -9,6 +18,7 @@ export type AgentInputChipPickerOption = Readonly<{
     detailBullets?: ReadonlyArray<string>;
     detailContent?: React.ReactNode;
     renderDetailContent?: () => React.ReactNode;
+    detailSelectOptions?: ReadonlyArray<AgentInputChipPickerDetailSelectOption>;
     detailActionLabel?: string;
     onDetailAction?: () => void;
     onSelectImmediate?: () => void;
@@ -24,6 +34,8 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     onRequestClose: () => void;
     applyLabel?: string;
     showCloseButton?: boolean;
+    railWidth?: number;
+    railMaxWidth?: number | `${number}%`;
 }>;
 
 export type AgentInputChipPickerOptionSection = Readonly<{

@@ -14,6 +14,8 @@ export type AgentInputChipPickerPopoverProps = Readonly<{
     onSelect: (id: string) => void;
     onRequestClose: () => void;
     applyLabel?: string;
+    railWidth?: number;
+    railMaxWidth?: number | `${number}%`;
     maxHeightCap?: number;
     maxWidthCap?: number;
 }>;
@@ -36,6 +38,8 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
                     onSelect={props.onSelect}
                     onRequestClose={props.onRequestClose}
                     applyLabel={props.applyLabel}
+                    railWidth={props.railWidth}
+                    railMaxWidth={props.railMaxWidth}
                     maxHeight={maxHeight}
                 />
             )}

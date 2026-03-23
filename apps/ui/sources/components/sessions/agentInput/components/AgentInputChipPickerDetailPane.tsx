@@ -4,6 +4,9 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { Typography } from "@/constants/Typography";
 import { Text } from "@/components/ui/text/Text";
+import { Item } from "@/components/ui/lists/Item";
+import { ItemGroup } from "@/components/ui/lists/ItemGroup";
+import { ItemListStatic } from "@/components/ui/lists/ItemList";
 
 import type { AgentInputChipPickerOption } from "./AgentInputChipPickerTypes";
 
@@ -11,6 +14,8 @@ export type AgentInputChipPickerDetailPaneProps = Readonly<{
   option: AgentInputChipPickerOption;
   onApply: () => void;
   applyLabel: string;
+  onSelectDetailOption: (id: string) => void;
+  onRequestClose: () => void;
   style?: any;
 }>;
 
@@ -21,6 +26,7 @@ export function AgentInputChipPickerDetailPane(
   const detailContent = props.option.renderDetailContent
     ? props.option.renderDetailContent()
     : props.option.detailContent;
+  const detailSelectOptions = props.option.detailSelectOptions ?? [];
 
   return (
     <View style={[styles.detailPane, props.style]}>
@@ -32,6 +38,31 @@ export function AgentInputChipPickerDetailPane(
 
       {detailContent ? (
         <View style={styles.detailCustomContent}>{detailContent}</View>
+      ) : null}
+
+      {detailSelectOptions.length > 0 ? (
+        <ItemListStatic style={styles.detailSelectList}>
+          <ItemGroup title="">
+            {detailSelectOptions.map((entry, index) => (
+              <Item
+                key={entry.id}
+                testID={`agent-input-chip-picker.detailSelectOption:${entry.id}`}
+                title={entry.label}
+                subtitle={entry.subtitle}
+                subtitleLines={0}
+                selected={entry.selected}
+                disabled={entry.disabled}
+                showChevron={false}
+                showDivider={index < detailSelectOptions.length - 1}
+                onPress={() => {
+                  if (entry.disabled) return;
+                  props.onSelectDetailOption(entry.id);
+                  props.onRequestClose();
+                }}
+              />
+            ))}
+          </ItemGroup>
+        </ItemListStatic>
       ) : null}
 
       {(props.option.detailBullets?.length ?? 0) > 0 ? (
@@ -107,6 +138,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   detailCustomContent: {
     gap: 10,
+  },
+  detailSelectList: {
+    backgroundColor: "transparent",
   },
   detailBullets: {
     gap: 8,

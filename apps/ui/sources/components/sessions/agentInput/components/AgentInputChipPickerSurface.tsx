@@ -15,6 +15,8 @@ export type AgentInputChipPickerSurfaceProps = Readonly<{
     onSelect: (id: string) => void;
     onRequestClose: () => void;
     applyLabel?: string;
+    railWidth?: number;
+    railMaxWidth?: number | `${number}%`;
     maxHeight?: number | null;
     testID?: string;
 }>;
@@ -33,6 +35,8 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
             onSelect={props.onSelect}
             onRequestClose={props.onRequestClose}
             applyLabel={props.applyLabel}
+            railWidth={props.railWidth}
+            railMaxWidth={props.railMaxWidth}
         />
     );
 
