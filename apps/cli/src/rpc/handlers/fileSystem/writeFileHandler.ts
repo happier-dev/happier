@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { mkdir, readFile, stat, writeFile } from 'fs/promises';
 import { dirname } from 'path';
 
+import { configuration } from '@/configuration';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -33,10 +34,22 @@ export function registerWriteFileHandler(
 
     const resolvedPath = validation.resolvedPath;
     try {
+      const contentBase64 = typeof data?.content === 'string' ? data.content : '';
+      const decodedByteLength = Buffer.byteLength(contentBase64, 'base64');
+      const maxInlineWriteBytes = Math.min(configuration.filesReadMaxBytes, configuration.filesTransferChunkBytes);
+      if (decodedByteLength > maxInlineWriteBytes) {
+        return { success: false, error: 'File content is too large to write' };
+      }
+
       if (data.expectedHash === undefined) {
         // No expectation: allow best-effort write.
       } else if (data.expectedHash !== null) {
         try {
+          const existingStat = await stat(resolvedPath);
+          if (existingStat.size > maxInlineWriteBytes) {
+            return { success: false, error: 'File is too large to verify hash' };
+          }
+
           const existingBuffer = await readFile(resolvedPath);
           const existingHash = createHash('sha256').update(existingBuffer).digest('hex');
           if (existingHash !== data.expectedHash) {
@@ -61,7 +74,7 @@ export function registerWriteFileHandler(
       }
 
       await mkdir(dirname(resolvedPath), { recursive: true });
-      const buffer = Buffer.from(String(data.content ?? ''), 'base64');
+      const buffer = Buffer.from(contentBase64, 'base64');
       await writeFile(resolvedPath, buffer);
 
       const hash = createHash('sha256').update(buffer).digest('hex');
@@ -72,4 +85,3 @@ export function registerWriteFileHandler(
     }
   });
 }
-

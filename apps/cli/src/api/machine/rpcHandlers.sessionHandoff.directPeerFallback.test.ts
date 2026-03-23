@@ -5,13 +5,29 @@ import os from 'node:os';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { MachineTransferReceiveEnvelope, SessionHandoffResumePlan } from '@happier-dev/protocol';
+import type { MachineTransferReceiveEnvelope, SessionHandoffResumePlan, TransferEndpointCandidate } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createEncryptedTransferChunkEnvelope } from '../../machines/transfer/transferChunkEncryption';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 
 describe('rpcHandlers (session handoff direct-peer fallback)', () => {
+    function buildDirectPeerEndpointCandidate(params: Readonly<{
+        transferId: string;
+        expiresAt: number;
+        port?: number;
+        authorizationToken?: string;
+    }>): TransferEndpointCandidate {
+        const port = params.port ?? 46001;
+        const transferPathKey = Buffer.from(params.transferId, 'utf8').toString('base64url');
+        return {
+            kind: 'http',
+            url: `http://127.0.0.1:${port}/machine-transfers/direct/${transferPathKey}`,
+            authorizationToken: params.authorizationToken ?? 'test-token',
+            expiresAt: params.expiresAt,
+        };
+    }
+
     async function createDirectPeerRequestPayloadFile(params: Readonly<{
         payload: Buffer;
     }>): Promise<Readonly<{
@@ -60,7 +76,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                 envelope: expect.objectContaining({
                     transferId,
                     kind: 'open',
-                    manifestHash: transferId,
+                    manifestHash: expect.any(String),
                     recipientPublicKeyBase64: expect.any(String),
                 }),
             });
@@ -105,7 +121,6 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         registerMachineSessionHandoffRpcHandlers({
             rpcHandlerManager,
             importSessionBundle,
-            importWorkspaceBundle: async () => ({ targetPath: '/repo-target' }),
             machineTransferChannel: {
                 onEnvelope(listener) {
                     listeners.add(listener);
@@ -125,6 +140,17 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates:provider-bundle-file';
+        const serverRoutedPayload = Buffer.from(JSON.stringify({
+            providerId: 'claude',
+            remoteSessionId: 'claude_session_source',
+            transcriptBase64: 'e30K',
+        }), 'utf8');
+        const expiredCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer',
+            expiresAt: Date.now() - 1,
+        });
+
         const preparePromise = prepare!({
             handoffId: 'handoff_direct_peer_expired_candidates',
             sourceMachineId: 'machine_source',
@@ -132,38 +158,33 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                    expiresAt: Date.now() - 1,
+            endpointCandidates: [expiredCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: providerBundleTransferId,
+                    sizeBytes: serverRoutedPayload.byteLength,
+                    manifestHash: computeManifestHash(serverRoutedPayload),
+                    endpointCandidates: [expiredCandidate],
                 },
-            ],
+            },
         });
 
         const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
             sendEnvelope,
-            'session-handoff:handoff_direct_peer_expired_candidates',
+            providerBundleTransferId,
         );
         expect(requestPayloadFile).not.toHaveBeenCalled();
 
-        const serverRoutedPayload = Buffer.from(JSON.stringify({
-            providerBundle: {
-                providerId: 'claude',
-                remoteSessionId: 'claude_session_source',
-                transcriptBase64: 'e30K',
-            },
-        }), 'utf8');
         for (const listener of listeners) {
             listener({
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 envelope: {
-                    transferId: 'session-handoff:handoff_direct_peer_expired_candidates',
+                    transferId: providerBundleTransferId,
                     kind: 'chunk',
                     sequence: 0,
                     ...createEncryptedTransferChunkEnvelope({
-                        transferId: 'session-handoff:handoff_direct_peer_expired_candidates',
+                        transferId: providerBundleTransferId,
                         sequence: 0,
                         payload: serverRoutedPayload,
                         recipientPublicKeyBase64,
@@ -175,7 +196,7 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 envelope: {
-                    transferId: 'session-handoff:handoff_direct_peer_expired_candidates',
+                    transferId: providerBundleTransferId,
                     kind: 'finish',
                     manifestHash: computeManifestHash(serverRoutedPayload),
                 },
@@ -232,6 +253,12 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
         expect(prepare).toBeDefined();
 
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates_no_fallback:provider-bundle-file';
+        const expiredCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer',
+            expiresAt: Date.now() - 1,
+        });
+
         await expect(prepare!({
             handoffId: 'handoff_direct_peer_expired_candidates_no_fallback',
             sourceMachineId: 'machine_source',
@@ -239,13 +266,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                    expiresAt: Date.now() - 1,
+            endpointCandidates: [expiredCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: providerBundleTransferId,
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [expiredCandidate],
                 },
-            ],
+            },
         })).resolves.toEqual({
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
@@ -280,6 +309,12 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
         expect(prepare).toBeDefined();
 
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_legacy_only_adapter:provider-bundle-file';
+        const endpointCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer_legacy_only_adapter',
+            expiresAt: Date.now() + 30_000,
+        });
+
         await expect(prepare!({
             handoffId: 'handoff_direct_peer_legacy_only_adapter',
             sourceMachineId: 'machine_source',
@@ -287,13 +322,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer_legacy_only_adapter?token=test-token',
-                    expiresAt: Date.now() + 30_000,
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: providerBundleTransferId,
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [endpointCandidate],
                 },
-            ],
+            },
         })).resolves.toEqual({
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
@@ -326,6 +363,12 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
         expect(prepare).toBeDefined();
 
+        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_failed_no_fallback:provider-bundle-file';
+        const endpointCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer',
+            expiresAt: Date.now() + 30_000,
+        });
+
         await expect(prepare!({
             handoffId: 'handoff_direct_peer_failed_no_fallback',
             sourceMachineId: 'machine_source',
@@ -333,13 +376,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                    expiresAt: Date.now() + 30_000,
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: providerBundleTransferId,
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [endpointCandidate],
                 },
-            ],
+            },
         })).resolves.toEqual({
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
@@ -372,6 +417,11 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
         expect(prepare).toBeDefined();
 
+        const endpointCandidate = buildDirectPeerEndpointCandidate({
+            transferId: 'handoff_direct_peer',
+            expiresAt: Date.now() + 30_000,
+        });
+
         await expect(prepare!({
             handoffId: 'handoff_direct_peer_cached_retry_a',
             sourceMachineId: 'machine_source',
@@ -379,13 +429,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                    expiresAt: Date.now() + 30_000,
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_cached_retry_a:provider-bundle-file',
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [endpointCandidate],
                 },
-            ],
+            },
         })).resolves.toEqual({
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
@@ -399,13 +451,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             negotiatedTransportStrategy: 'direct_peer',
             sourceSessionStorageMode: 'persisted',
             targetPath: '/repo',
-            endpointCandidates: [
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                    expiresAt: Date.now() + 30_000,
+            endpointCandidates: [endpointCandidate],
+            handoffMetadataV2: {
+                providerBundleTransferPublication: {
+                    transferId: 'session-handoff:handoff_direct_peer_cached_retry_b:provider-bundle-file',
+                    sizeBytes: 0,
+                    manifestHash: `sha256:${'0'.repeat(64)}`,
+                    endpointCandidates: [endpointCandidate],
                 },
-            ],
+            },
         })).resolves.toEqual({
             ok: false,
             errorCode: 'direct_peer_transfer_unavailable',
@@ -448,6 +502,12 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
             const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
             expect(prepare).toBeDefined();
 
+            const providerBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_payload:provider-bundle-file';
+            const endpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: 'handoff_direct_peer',
+                expiresAt: Date.now() + 30_000,
+            });
+
             await expect(prepare!({
                 handoffId: 'handoff_direct_peer_invalid_payload',
                 sourceMachineId: 'machine_source',
@@ -455,13 +515,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
                 negotiatedTransportStrategy: 'direct_peer',
                 sourceSessionStorageMode: 'persisted',
                 targetPath: '/repo',
-                endpointCandidates: [
-                    {
-                        kind: 'http',
-                        url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/handoff_direct_peer?token=test-token',
-                        expiresAt: Date.now() + 30_000,
+                endpointCandidates: [endpointCandidate],
+                handoffMetadataV2: {
+                    providerBundleTransferPublication: {
+                        transferId: providerBundleTransferId,
+                        sizeBytes: 0,
+                        manifestHash: `sha256:${'0'.repeat(64)}`,
+                        endpointCandidates: [endpointCandidate],
                     },
-                ],
+                },
             })).rejects.toThrow('Invalid session handoff transfer payload');
 
             expect(requestPayloadFile).toHaveBeenCalledTimes(1);
@@ -504,6 +566,20 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
       expect(prepare).toBeDefined();
 
+      const providerBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_json_payload:provider-bundle-file';
+      const endpointCandidates = [
+        buildDirectPeerEndpointCandidate({
+          transferId: 'candidate-1',
+          port: 46001,
+          expiresAt: Date.now() + 30_000,
+        }),
+        buildDirectPeerEndpointCandidate({
+          transferId: 'candidate-2',
+          port: 46002,
+          expiresAt: Date.now() + 30_000,
+        }),
+      ];
+
       await expect(prepare!({
         handoffId: 'handoff_direct_peer_invalid_json_payload',
         sourceMachineId: 'machine_source',
@@ -511,18 +587,15 @@ describe('rpcHandlers (session handoff direct-peer fallback)', () => {
         negotiatedTransportStrategy: 'direct_peer',
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
-        endpointCandidates: [
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46001/session-handoffs/direct-transfer/candidate-1?token=test-token',
-            expiresAt: Date.now() + 30_000,
+        endpointCandidates,
+        handoffMetadataV2: {
+          providerBundleTransferPublication: {
+            transferId: providerBundleTransferId,
+            sizeBytes: 0,
+            manifestHash: `sha256:${'0'.repeat(64)}`,
+            endpointCandidates,
           },
-          {
-            kind: 'http',
-            url: 'http://127.0.0.1:46002/session-handoffs/direct-transfer/candidate-2?token=test-token',
-            expiresAt: Date.now() + 30_000,
-          },
-        ],
+        },
       })).rejects.toThrow('Invalid session handoff transfer payload');
 
       expect(requestPayloadFile).toHaveBeenCalledTimes(1);

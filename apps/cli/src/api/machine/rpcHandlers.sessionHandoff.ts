@@ -79,6 +79,12 @@ import {
   type SessionHandoffPrepareTargetJobRecord,
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import {
+  releaseSessionHandoffPrepareTargetJobLease,
+  resolveSessionHandoffPrepareTargetJobLeaseTtlMs,
+  startSessionHandoffPrepareTargetJobLeaseHeartbeat,
+  tryAcquireSessionHandoffPrepareTargetJobLease,
+} from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SessionHandoffProviderBundle } from '../../session/handoff/types';
@@ -627,6 +633,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     activeServerDir: configuration.activeServerDir,
   });
   const activePrepareJobs = new Map<string, Promise<void>>();
+  const prepareTargetJobLeaseOwnerId = `cli-daemon:${process.pid}:${randomUUID()}`;
+  const prepareTargetJobLeaseTtlMs = resolveSessionHandoffPrepareTargetJobLeaseTtlMs();
   type PreparedStartedHandoffState = Awaited<ReturnType<typeof prepareStartedHandoffState>>;
   // When we acknowledge start before source export completes (server-routed cross-daemon),
   // transfer responders must be able to await the eventual prepared state to avoid
@@ -1136,6 +1144,26 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             throw new Error(`Session handoff prepare aborted: ${parsed.data.handoffId}`);
           }
         };
+        const leaseAttempt = await tryAcquireSessionHandoffPrepareTargetJobLease({
+          activeServerDir: configuration.activeServerDir,
+          jobId,
+          ownerId: prepareTargetJobLeaseOwnerId,
+          nowMs: Date.now(),
+          ttlMs: prepareTargetJobLeaseTtlMs,
+        });
+        if (!leaseAttempt.acquired) {
+          // Another daemon instance is responsible for advancing this durable job record.
+          return;
+        }
+
+        const leaseHeartbeat = startSessionHandoffPrepareTargetJobLeaseHeartbeat({
+          activeServerDir: configuration.activeServerDir,
+          jobId,
+          ownerId: prepareTargetJobLeaseOwnerId,
+          ttlMs: prepareTargetJobLeaseTtlMs,
+          nowMs: () => Date.now(),
+        });
+
         try {
           const wasCancelledBeforeWorkspaceImport = await prepareJobStore.read(jobId);
           if (wasCancelledBeforeWorkspaceImport?.cancelRequestedAtMs) {
@@ -1424,6 +1452,12 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             status: failedStatus,
           }));
         } finally {
+          await leaseHeartbeat.stop().catch(() => undefined);
+          await releaseSessionHandoffPrepareTargetJobLease({
+            activeServerDir: configuration.activeServerDir,
+            jobId,
+            ownerId: prepareTargetJobLeaseOwnerId,
+          }).catch(() => undefined);
           activePrepareJobs.delete(jobId);
         }
       })();

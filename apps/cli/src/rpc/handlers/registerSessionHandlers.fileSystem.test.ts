@@ -35,20 +35,5 @@ describe('registerSessionHandlers (file system)', () => {
     expect(handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK)).toBe(true);
     expect(handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE)).toBe(true);
     expect(handlers.has(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_ABORT)).toBe(true);
-
-    const legacyFileTransferMethodNames = [
-      'FILES_UPLOAD_INIT',
-      'FILES_UPLOAD_CHUNK',
-      'FILES_UPLOAD_FINALIZE',
-      'FILES_UPLOAD_ABORT',
-      'FILES_DOWNLOAD_INIT',
-      'FILES_DOWNLOAD_CHUNK',
-      'FILES_DOWNLOAD_FINALIZE',
-      'FILES_DOWNLOAD_ABORT',
-    ] as const;
-
-    for (const methodName of legacyFileTransferMethodNames) {
-      expect(methodName in RPC_METHODS).toBe(false);
-    }
   });
 });

@@ -365,20 +365,41 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
     // If we never triggered the mismatch fallback, use the filled prefix (may be shorter than content-length).
     bytes = fallbackBytes ?? buffer.subarray(0, offset);
   } else {
-    const chunks: Uint8Array[] = [];
-    let receivedBytes = 0;
+    // When the peer doesn't provide content-length, we still want to avoid buffering an extra
+    // array of chunks. Use a bounded growing buffer instead.
+    const initialCapacity = Math.min(16 * 1024, params.maxBodyBytes);
+    let buffer = new Uint8Array(initialCapacity);
+    let offset = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
-      receivedBytes += value.byteLength;
-      if (receivedBytes > params.maxBodyBytes) {
+
+      const nextOffset = offset + value.byteLength;
+      if (nextOffset > params.maxBodyBytes) {
         await cancelBestEffort();
         throw params.onOverLimit();
       }
-      chunks.push(value);
+
+      if (nextOffset > buffer.byteLength) {
+        let nextCapacity = buffer.byteLength;
+        while (nextCapacity < nextOffset) {
+          nextCapacity *= 2;
+        }
+        nextCapacity = Math.min(nextCapacity, params.maxBodyBytes);
+        if (nextCapacity < nextOffset) {
+          nextCapacity = nextOffset;
+        }
+        const nextBuffer = new Uint8Array(nextCapacity);
+        nextBuffer.set(buffer.subarray(0, offset), 0);
+        buffer = nextBuffer;
+      }
+
+      buffer.set(value, offset);
+      offset = nextOffset;
     }
-    bytes = concatUint8Arrays(chunks, receivedBytes);
+
+    bytes = buffer.subarray(0, offset);
   }
 
   const text = decoder.decode(bytes);
@@ -389,10 +410,11 @@ async function readJsonResponseWithBodyLimit(params: Readonly<{
   }
 }
 
-function resolveDirectPeerJsonBodyMaxBytes(maxInMemoryPayloadBytes?: number): number {
-  const maxBytes = typeof maxInMemoryPayloadBytes === 'number' && maxInMemoryPayloadBytes > 0
-    ? maxInMemoryPayloadBytes
-    : resolveInMemoryTransferMaxBytes();
+function resolveDirectPeerJsonBodyMaxBytes(maxInMemoryPayloadBytes: number): number {
+  if (!Number.isFinite(maxInMemoryPayloadBytes) || maxInMemoryPayloadBytes <= 0) {
+    throw new Error(`Invalid direct peer maxInMemoryPayloadBytes: ${String(maxInMemoryPayloadBytes)}`);
+  }
+  const maxBytes = Math.floor(maxInMemoryPayloadBytes);
 
   // The chunk envelope is JSON with two base64 strings (payload + data-key envelope).
   // Bound the entire JSON body so we fail closed before buffering/parsing untrusted bytes.
@@ -882,11 +904,14 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   openBody?: unknown;
   fetchFn?: typeof fetch;
   now?: () => number;
-  maxInMemoryPayloadBytes?: number;
+  maxInMemoryPayloadBytes: number;
   onChunk: (chunk: Buffer) => Promise<void> | void;
   onFinish: (manifestHash: string) => Promise<TPayload>;
   onAbort?: () => Promise<void> | void;
 }>): Promise<TPayload> {
+  if (!Number.isFinite(params.maxInMemoryPayloadBytes) || params.maxInMemoryPayloadBytes <= 0) {
+    throw new Error(`Invalid direct peer maxInMemoryPayloadBytes: ${String(params.maxInMemoryPayloadBytes)}`);
+  }
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? Date.now;
   const expirySkewMs = readDirectPeerExpirySkewMs();
@@ -934,7 +959,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
           resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
         ),
         onInvalidJson: () => createInvalidDirectPeerTransferResponseError(params.transferId),
-        onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes ?? resolveInMemoryTransferMaxBytes()}`),
+        onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
       });
       const parsed = DirectPeerTransferResponseSchema.safeParse(json);
       if (!parsed.success || parsed.data.transferId !== params.transferId) {
@@ -957,7 +982,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
           response: chunkResponse,
           maxBodyBytes: resolveDirectPeerJsonBodyMaxBytes(params.maxInMemoryPayloadBytes),
           onInvalidJson: () => createInvalidDirectPeerTransferResponseError(params.transferId),
-          onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes ?? resolveInMemoryTransferMaxBytes()}`),
+          onOverLimit: () => new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`),
         });
         const parsedChunk = TransferChunkEnvelopeSchema.safeParse(chunkJson);
         if (
@@ -968,23 +993,21 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
         ) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
         }
-        if (typeof params.maxInMemoryPayloadBytes === 'number' && params.maxInMemoryPayloadBytes > 0) {
-          const rawPayloadBase64 = parsedChunk.data.payloadBase64.trim();
-          const rawDataKeyEnvelopeBase64 = parsedChunk.data.encryptedDataKeyEnvelopeBase64.trim();
-          const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(rawPayloadBase64);
-          const estimatedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(rawDataKeyEnvelopeBase64);
+        const rawPayloadBase64 = parsedChunk.data.payloadBase64.trim();
+        const rawDataKeyEnvelopeBase64 = parsedChunk.data.encryptedDataKeyEnvelopeBase64.trim();
+        const estimatedEncryptedPayloadBytes = estimateBase64DecodedBytes(rawPayloadBase64);
+        const estimatedDataKeyEnvelopeBytes = estimateBase64DecodedBytes(rawDataKeyEnvelopeBase64);
 
-          const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
-          // Fail closed before decrypting so untrusted peers can't force huge base64 decodes in "small-only" paths.
-          // Note: decrypting requires decoding both payload bytes and the data-key envelope.
-          const maxEncodedChars = Math.ceil(maxEncryptedBytes / 3) * 4;
-          if (
-            rawPayloadBase64.length > maxEncodedChars
-            || estimatedEncryptedPayloadBytes > maxEncryptedBytes
-            || estimatedDataKeyEnvelopeBytes > ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES
-          ) {
-            throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
-          }
+        const maxEncryptedBytes = params.maxInMemoryPayloadBytes + ENCRYPTED_TRANSFER_CHUNK_OVERHEAD_BYTES;
+        // Fail closed before decrypting so untrusted peers can't force huge base64 decodes.
+        // Note: decrypting requires decoding both payload bytes and the data-key envelope.
+        const maxEncodedChars = Math.ceil(maxEncryptedBytes / 3) * 4;
+        if (
+          rawPayloadBase64.length > maxEncodedChars
+          || estimatedEncryptedPayloadBytes > maxEncryptedBytes
+          || estimatedDataKeyEnvelopeBytes > ENCRYPTED_TRANSFER_DATA_KEY_ENVELOPE_HARD_MAX_BYTES
+        ) {
+          throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
         }
         await params.onChunk(decryptEncryptedTransferChunkEnvelope({
           transferId: params.transferId,

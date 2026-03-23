@@ -22,6 +22,7 @@ import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentCo
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
+import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
 import { BackendTargetRefSchema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/runtime/managedTools/invokeProviderCliInstall';
 
@@ -39,13 +40,12 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
 }> {
     const parsedBackendTarget = BackendTargetRefSchema.safeParse((params ?? {}).backendTarget);
     const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
-    const codexBackendModeOverrideRaw = (params ?? {}).codexBackendModeOverride;
-    const codexBackendModeOverride =
-        typeof codexBackendModeOverrideRaw === 'string' && ['mcp', 'acp', 'appServer'].includes(codexBackendModeOverrideRaw)
-            ? codexBackendModeOverrideRaw
-            : null;
+    const runtimeKindOverride = (params ?? {}).runtimeKindOverride;
 
-    const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || params?.agentId === 'codex';
+    const agentId = typeof params?.agentId === 'string' ? params.agentId : null;
+    const needsAccountSettingsForProbes =
+        agentId && (AGENTS[agentId as keyof typeof AGENTS] as AgentCatalogEntry | undefined)?.needsAccountSettingsForProbes === true;
+    const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || needsAccountSettingsForProbes;
     if (!shouldLoadAccountSettings) {
       return { backendTarget, credentials: null, accountSettings: null };
     }
@@ -62,12 +62,13 @@ async function resolveProbeBackendContext(params?: Record<string, unknown>): Pro
     }).catch(() => null);
 
     const accountSettings = accountSettingsContext?.settings ?? null;
-    const effectiveAccountSettings = params?.agentId === 'codex' && codexBackendModeOverride
-      ? {
-          ...(accountSettings ?? {}),
-          codexBackendMode: codexBackendModeOverride,
-        }
-      : accountSettings;
+    const effectiveAccountSettings = params?.agentId
+        ? applyAgentRuntimeKindOverrideToAccountSettings({
+            agentId: params.agentId as AgentId,
+            accountSettings,
+            runtimeKindOverride,
+        })
+        : accountSettings;
 
     return {
       backendTarget,

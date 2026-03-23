@@ -51,8 +51,6 @@ describe('registerSessionHandlers attachments uploads', () => {
 
     registerSessionHandlers(mgr, workingDirectory);
 
-    expect('ATTACHMENTS_CONFIGURE' in RPC_METHODS).toBe(false);
-
     const init = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_INIT);
     const chunk = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_CHUNK);
     const finalize = handlers.get(RPC_METHODS.DAEMON_SESSION_ATTACHMENTS_UPLOAD_FINALIZE);

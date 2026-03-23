@@ -196,6 +196,28 @@ describe('file transfers (download)', () => {
     });
   });
 
+  it('rejects downloads that exceed the advertised server-routed size limit when registered via registerFileSystemHandlers (no bypass)', async () => {
+    vi.stubEnv('HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES', '4');
+
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
+    writeFileSync(join(workspace, 'file.txt'), 'hello\n', 'utf8');
+
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_DOWNLOAD_INIT);
+    if (!init) throw new Error('expected download init handler');
+    const recipientKeyPair = createTransferRecipientKeyPair();
+
+    await expect(init({
+      path: 'file.txt',
+      recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+    })).resolves.toEqual({
+      success: false,
+      error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+    });
+  });
+
   it('allows downloads from additional allowed read dirs', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-download-'));
     const externalRoot = mkdtempSync(join(tmpdir(), 'happier-files-download-external-'));

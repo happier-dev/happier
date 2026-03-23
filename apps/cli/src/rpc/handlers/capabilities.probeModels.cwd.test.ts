@@ -127,6 +127,64 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     }));
   });
 
+  it('loads account settings for probes when the agent catalog entry requires them', async () => {
+    vi.resetModules();
+
+    const probeSpy = vi.fn(async (_params: any) => ({
+      provider: 'opencode',
+      availableModels: [{ id: 'default', name: 'Default' }],
+      supportsFreeform: false,
+      source: 'static',
+    }));
+    const readCredentialsMock = vi.fn(async () => ({ token: 'token' }));
+    const bootstrapAccountSettingsContextMock = vi.fn(async () => ({
+      settings: { example: true },
+    }));
+
+    vi.doMock('@/capabilities/probes/agentModelsProbe', () => ({
+      probeAgentModelsBestEffort: (params: any) => probeSpy(params),
+    }));
+    vi.doMock('@/persistence', () => ({
+      readCredentials: readCredentialsMock,
+    }));
+    vi.doMock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
+      bootstrapAccountSettingsContext: bootstrapAccountSettingsContextMock,
+    }));
+    vi.doMock('@/backends/catalog', () => ({
+      AGENTS: {
+        opencode: { id: 'opencode', needsAccountSettingsForProbes: true },
+      },
+    }));
+
+    const { registerCapabilitiesHandlers } = await import('./capabilities');
+    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
+
+    const { call } = createEncryptedRpcTestClient({
+      scopePrefix: 'machine-test',
+      encryptionKey: new Uint8Array(32).fill(7),
+      logger: () => undefined,
+      registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
+    });
+
+    await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.opencode',
+      method: 'probeModels',
+      params: { cwd: '/tmp/happier-probe-cwd' },
+    });
+
+    expect(readCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapAccountSettingsContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: { token: 'token' },
+      mode: 'blocking',
+      refresh: 'force',
+    }));
+    expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'opencode',
+      accountSettings: { example: true },
+      credentials: { token: 'token' },
+    }));
+  });
+
   it('loads account settings for cli.codex probes so backend-mode aware probing can run', async () => {
     vi.resetModules();
 
@@ -152,7 +210,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     }));
     vi.doMock('@/backends/catalog', () => ({
       AGENTS: {
-        codex: { id: 'codex' },
+        codex: { id: 'codex', needsAccountSettingsForProbes: true },
       },
     }));
 
@@ -185,7 +243,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     }));
   });
 
-  it('prefers an explicit Codex backend mode override over the cached account settings', async () => {
+  it('prefers an explicit runtime-kind override over the cached account settings', async () => {
     vi.resetModules();
 
     const probeSpy = vi.fn(async (_params: any) => ({
@@ -210,7 +268,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     }));
     vi.doMock('@/backends/catalog', () => ({
       AGENTS: {
-        codex: { id: 'codex' },
+        codex: { id: 'codex', needsAccountSettingsForProbes: true },
       },
     }));
 
@@ -227,7 +285,7 @@ describe('capabilities.invoke(cli.* probeModels)', () => {
     await call(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
       method: 'probeModels',
-      params: { cwd: '/tmp/happier-probe-cwd', codexBackendModeOverride: 'appServer' },
+      params: { cwd: '/tmp/happier-probe-cwd', runtimeKindOverride: 'appServer' },
     });
 
     expect(readCredentialsMock).toHaveBeenCalledTimes(1);

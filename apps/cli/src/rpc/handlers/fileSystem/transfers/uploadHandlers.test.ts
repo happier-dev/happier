@@ -318,4 +318,26 @@ describe('file transfers (upload)', () => {
       error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
     });
   });
+
+  it('rejects uploads that exceed the advertised server-routed size limit when registered via registerFileSystemHandlers (no bypass)', async () => {
+    vi.stubEnv('HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES', '4');
+
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+
+    const init = mgr.handlers.get(RPC_METHODS.DAEMON_SESSION_FILES_UPLOAD_INIT);
+    if (!init) throw new Error('expected upload init handler');
+
+    await expect(
+      init({
+        path: 'too-large.txt',
+        sizeBytes: 5,
+        overwrite: false,
+      }),
+    ).resolves.toEqual({
+      success: false,
+      error: SESSION_RPC_FILE_TRANSFER_SIZE_LIMIT_ERROR,
+    });
+  });
 });
