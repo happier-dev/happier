@@ -7,6 +7,7 @@ import {
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -40,26 +41,38 @@ const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => 
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 
+installAutomationScreensCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerPushSpy },
+        }).module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                confirm: modalConfirmSpy,
+                alert: modalAlertSpy,
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAutomations: () => automationsState.list,
+            useAllMachines: () => machinesState.list,
+        });
+    },
+});
+
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return expoRouterMock.module;
-});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
@@ -73,32 +86,9 @@ vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: (props: any) => React.createElement('SessionGettingStartedGuidance', props),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            confirm: modalConfirmSpy,
-            alert: modalAlertSpy,
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useAutomations: () => automationsState.list,
-        useAllMachines: () => machinesState.list,
-    });
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 describe('AutomationsScreen', () => {
     beforeEach(() => {

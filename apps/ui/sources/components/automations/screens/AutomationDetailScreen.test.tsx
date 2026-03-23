@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,26 +42,60 @@ const machinesState = vi.hoisted(() => ({
     }>,
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy, back: routerBackSpy, replace: routerReplaceSpy },
-        params: { id: 'a1' },
-    });
-    return expoRouterMock.module;
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                textSecondary: '#777',
-                text: '#111',
-                accent: { blue: '#0a84ff' },
+installAutomationScreensCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const expoRouterMock = createExpoRouterMock({
+            router: { push: routerPushSpy, back: routerBackSpy, replace: routerReplaceSpy },
+            params: { id: 'a1' },
+        });
+        return expoRouterMock.module;
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                const labels: Record<string, string> = {
+                    'automations.detail.runNowTitle': 'Run now',
+                    'automations.detail.editAutomation': 'Edit automation',
+                    'automations.detail.deleteAutomation': 'Delete automation',
+                    'automations.detail.machineAssignmentsTitle': 'Machine assignments',
+                    'status.online': 'online',
+                    'status.offline': 'offline',
+                };
+                return labels[key] ?? key;
             },
-        },
-    });
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: vi.fn(async () => {}),
+                confirm: modalConfirmSpy,
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAutomation: () => automationState.automation,
+            useAutomationRuns: () => [],
+            useAllMachines: () => machinesState.list,
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                colors: {
+                    textSecondary: '#777',
+                    text: '#111',
+                    accent: { blue: '#0a84ff' },
+                },
+            },
+        });
+    },
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -101,43 +136,9 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => {
-        const labels: Record<string, string> = {
-            'automations.detail.runNowTitle': 'Run now',
-            'automations.detail.editAutomation': 'Edit automation',
-            'automations.detail.deleteAutomation': 'Delete automation',
-            'automations.detail.machineAssignmentsTitle': 'Machine assignments',
-            'status.online': 'online',
-            'status.offline': 'offline',
-        };
-        return labels[key] ?? key;
-    } });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAutomation: () => automationState.automation,
-    useAutomationRuns: () => [],
-    useAllMachines: () => machinesState.list,
-});
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: vi.fn(async () => {}),
-            confirm: modalConfirmSpy,
-        },
-    }).module;
-});
 
 describe('AutomationDetailScreen', () => {
     beforeEach(() => {

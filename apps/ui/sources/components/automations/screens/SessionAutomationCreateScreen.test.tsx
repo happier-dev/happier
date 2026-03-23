@@ -1,4 +1,5 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,59 +37,13 @@ const latestContextSectionProps = vi.hoisted(() => ({
     value: null as any,
 }));
 
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            dark: false,
-            colors: {
-                groupped: { background: '#fff', chevron: '#777', sectionTitle: '#666' },
-                surface: '#fff',
-                surfaceHigh: '#f7f7f7',
-                surfaceHighest: '#eee',
-                surfacePressed: '#f0f0f0',
-                surfacePressedOverlay: '#ececec',
-                surfaceSelected: '#e6f0ff',
-                surfaceRipple: '#ddd',
-                text: '#111',
-                textSecondary: '#777',
-                textDestructive: '#c00',
-                input: { background: '#eee', placeholder: '#999' },
-                divider: '#ddd',
-                accent: { blue: '#0a84ff' },
-                modal: { border: '#ddd' },
-                shadow: { color: '#000', opacity: 0.2 },
-            },
-        },
-    });
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { back: routerBackSpy, replace: routerReplaceSpy },
-    });
-    return expoRouterMock.module;
-});
-
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
@@ -114,32 +69,77 @@ vi.mock('@/components/automations/shared/ExistingSessionAutomationUnavailableNot
     },
 }));
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => {
-        const labels: Record<string, string> = {
-            'automations.create.defaultName': 'Scheduled message',
-            'automations.create.createButtonTitle': 'Create automation',
-            'automations.create.unavailableGroupTitle': 'Unavailable',
-            'automations.create.cannotCreateForSession': 'Cannot create automation for this session',
-            'automations.create.missingResumeKey': 'This session does not have a resume encryption key loaded yet.',
-            'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
-            'automations.form.toggleEnabledTitle': 'Enabled',
-            'automations.form.toggleEnabledHelp': 'When disabled, no scheduled runs will be executed.',
-        };
-        return labels[key] ?? key;
-    } });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useSession: () => sessionState.session,
-    useSettings: () => ({}),
-    storage: {
-        getState: () => getStateSpy(),
+installAutomationScreensCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({
+            theme: {
+                dark: false,
+                colors: {
+                    groupped: { background: '#fff', chevron: '#777', sectionTitle: '#666' },
+                    surface: '#fff',
+                    surfaceHigh: '#f7f7f7',
+                    surfaceHighest: '#eee',
+                    surfacePressed: '#f0f0f0',
+                    surfacePressedOverlay: '#ececec',
+                    surfaceSelected: '#e6f0ff',
+                    surfaceRipple: '#ddd',
+                    text: '#111',
+                    textSecondary: '#777',
+                    textDestructive: '#c00',
+                    input: { background: '#eee', placeholder: '#999' },
+                    divider: '#ddd',
+                    accent: { blue: '#0a84ff' },
+                    modal: { border: '#ddd' },
+                    shadow: { color: '#000', opacity: 0.2 },
+                },
+            },
+        });
     },
-});
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { back: routerBackSpy, replace: routerReplaceSpy },
+        }).module;
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                confirm: vi.fn(),
+                prompt: vi.fn(),
+            },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useSession: () => sessionState.session,
+            useSettings: () => ({}),
+            storage: {
+                getState: () => getStateSpy(),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                const labels: Record<string, string> = {
+                    'automations.create.defaultName': 'Scheduled message',
+                    'automations.create.createButtonTitle': 'Create automation',
+                    'automations.create.unavailableGroupTitle': 'Unavailable',
+                    'automations.create.cannotCreateForSession': 'Cannot create automation for this session',
+                    'automations.create.missingResumeKey': 'This session does not have a resume encryption key loaded yet.',
+                    'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
+                    'automations.form.toggleEnabledTitle': 'Enabled',
+                    'automations.form.toggleEnabledHelp': 'When disabled, no scheduled runs will be executed.',
+                };
+                return labels[key] ?? key;
+            },
+        });
+    },
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({

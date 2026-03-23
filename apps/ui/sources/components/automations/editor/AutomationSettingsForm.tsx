@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -22,6 +22,8 @@ type Props = Readonly<{
     value: AutomationSettingsValue;
     onChange: (next: AutomationSettingsValue) => void;
     showEnabledToggle?: boolean;
+    /** Visual density for group headers when embedding inside tight surfaces (e.g. popovers). */
+    groupHeaderDensity?: 'default' | 'compact';
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -87,10 +89,19 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
         ? <Ionicons name="calendar-outline" size={18} color={theme.colors.textSecondary} />
         : <Ionicons name="repeat-outline" size={18} color={theme.colors.textSecondary} />;
 
+    const compactHeaderStyle = React.useMemo<ViewStyle | undefined>(() => {
+        if ((props.groupHeaderDensity ?? 'default') !== 'compact') return undefined;
+        return {
+            paddingTop: Platform.select({ ios: 18, default: 16 }),
+            paddingBottom: Platform.select({ ios: 8, default: 8 }),
+            paddingHorizontal: 16,
+        };
+    }, [props.groupHeaderDensity]);
+
     return (
         <>
             {showEnabledToggle ? (
-                <ItemGroup title={t('automations.form.groupAutomationTitle')}>
+                <ItemGroup title={t('automations.form.groupAutomationTitle')} headerStyle={compactHeaderStyle}>
                     <Item
                         title={enableTitle}
                         subtitle={enableSubtitle}
@@ -108,7 +119,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
 
             {showDetailFields ? (
                 <>
-                    <ItemGroup title={automationDetailsGroupTitle}>
+                    <ItemGroup title={automationDetailsGroupTitle} headerStyle={compactHeaderStyle}>
                         <ItemGroupColumns>
                             <ItemGroupColumn>
                                 <FieldItem label={t('automations.form.labels.name')}>
@@ -139,7 +150,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                         </ItemGroupColumns>
                     </ItemGroup>
 
-                    <ItemGroup title={t('automations.form.groupScheduleTitle')}>
+                    <ItemGroup title={t('automations.form.groupScheduleTitle')} headerStyle={compactHeaderStyle}>
                         <DropdownMenu
                             open={scheduleMenuOpen}
                             onOpenChange={setScheduleMenuOpen}

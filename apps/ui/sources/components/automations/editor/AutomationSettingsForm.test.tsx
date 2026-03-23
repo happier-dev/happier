@@ -14,7 +14,6 @@ const popoverBoundaryRefState = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-
     return createReactNativeWebMock({
         View: createPassThroughComponent('View'),
         Platform: {

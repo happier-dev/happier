@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,47 +44,60 @@ const routerPushSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return expoRouterMock.module;
-});
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            confirm: vi.fn(),
-            prompt: vi.fn(),
-        },
-    }).module;
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useAutomations: () => automationsState.list,
-    useSession: () => sessionState.value,
-    useSettings: () => settingsState.value,
-    storage: {
-        getState: () => getStateSpy(),
+installAutomationScreensCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertSpy,
+                confirm: vi.fn(),
+                prompt: vi.fn(),
+            },
+        }).module;
     },
-});
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: { push: routerPushSpy },
+        }).module;
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useAutomations: () => automationsState.list,
+            useSession: () => sessionState.value,
+            useSettings: () => settingsState.value,
+            storage: {
+                getState: () => getStateSpy(),
+            },
+        });
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => {
+                const labels: Record<string, string> = {
+                    'automations.session.emptyTitle': 'No automations yet',
+                    'automations.session.emptyBody': 'Create an automation to trigger work for this session.',
+                    'automations.session.addAutomation': 'Add automation',
+                    'common.actions': 'Actions',
+                    'common.error': 'Error',
+                    'automations.session.failedToLoad': 'Failed to load automations',
+                    'sessionInfo.automationsTitle': 'Automations',
+                    'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
+                };
+                return labels[key] ?? key;
+            },
+        });
+    },
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
