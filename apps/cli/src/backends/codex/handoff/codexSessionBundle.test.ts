@@ -352,7 +352,6 @@ describe('codex session handoff bundle', () => {
       approvedNewDirectoryCreation: true,
       codexBackendMode: 'appServer',
     });
-    expect(result.resume.experimentalCodexAcp).toBeUndefined();
   });
 
   it('preserves ACP backend affinity when importing an ACP handoff bundle', async () => {
@@ -382,7 +381,6 @@ describe('codex session handoff bundle', () => {
     expect(result.resume).toMatchObject({
       codexBackendMode: 'acp',
     });
-    expect(result.resume.experimentalCodexAcp).toBeUndefined();
   });
 
   it('rebuilds connected-service codex source affinity from canonical handoff source data when runtimeDescriptor is omitted', async () => {
@@ -482,7 +480,6 @@ describe('codex session handoff bundle', () => {
     expect(result.resume).toMatchObject({
       codexBackendMode: 'appServer',
     });
-    expect(result.resume.experimentalCodexAcp).toBeUndefined();
     expect(result.agentRuntimeDescriptorV1).toMatchObject({
       v: 1,
       providerId: 'codex',

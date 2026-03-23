@@ -45,7 +45,7 @@ describe('sessionHandoffWorkspaceArtifacts', () => {
         });
 
         expect(exported.workspaceExportArtifacts).toBeDefined();
-        expect(exported.workspaceExportArtifacts).not.toHaveProperty('blobContentsByDigest');
+        expect(Object.keys(exported.workspaceExportArtifacts ?? {}).sort()).toEqual(['manifest']);
         expect(exported.workspaceExportArtifacts?.manifest.entries.length).toBeGreaterThan(0);
         expect(exported.blobProvider).toBeDefined();
     });
