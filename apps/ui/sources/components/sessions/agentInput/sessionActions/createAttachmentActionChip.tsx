@@ -14,6 +14,23 @@ export function createAttachmentActionChip(params: Readonly<{
     disabled?: boolean;
 }>): AgentInputExtraActionChip {
     const showChooser = Platform.OS === 'ios' || Platform.OS === 'android';
+    let pickGuardArmed = false;
+
+    const runPickOncePerTick = (fn: () => void) => {
+        if (pickGuardArmed) return;
+        pickGuardArmed = true;
+        fn();
+        // Avoid triggering `input.click()` twice for one gesture (which can reopen the OS picker on web).
+        if (typeof queueMicrotask === 'function') {
+            queueMicrotask(() => {
+                pickGuardArmed = false;
+            });
+        } else {
+            Promise.resolve().then(() => {
+                pickGuardArmed = false;
+            });
+        }
+    };
 
     return {
         key: 'attachments-add',
@@ -34,7 +51,7 @@ export function createAttachmentActionChip(params: Readonly<{
                                 label: t('common.addImage'),
                                 onPress: () => {
                                     requestClose();
-                                    params.onPickImage();
+                                    runPickOncePerTick(params.onPickImage);
                                 },
                             },
                             {
@@ -43,7 +60,7 @@ export function createAttachmentActionChip(params: Readonly<{
                                 label: t('common.addFile'),
                                 onPress: () => {
                                     requestClose();
-                                    params.onPickFile();
+                                    runPickOncePerTick(params.onPickFile);
                                 },
                             },
                         ]}
@@ -60,7 +77,7 @@ export function createAttachmentActionChip(params: Readonly<{
                 icon: normalizeNodeForView(<Ionicons name="attach-outline" size={16} color={tint} />),
                 onPress: () => {
                     blurInput();
-                    params.onPickFile();
+                    runPickOncePerTick(params.onPickFile);
                     dismiss();
                 },
             }),
@@ -73,7 +90,7 @@ export function createAttachmentActionChip(params: Readonly<{
                     if (showChooser) {
                         ctx.toggleCollapsedPopover?.('attachments-add');
                     } else {
-                        params.onPickFile();
+                        runPickOncePerTick(params.onPickFile);
                     }
                 }}
                 disabled={params.disabled}

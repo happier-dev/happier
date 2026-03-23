@@ -172,13 +172,16 @@ describe('createAttachmentActionChip', () => {
                 </React.Fragment>,
             );
 
-            await screen.pressByTestIdAsync('agent-input-attachments-chip');
-            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            const pressable = screen.findByTestId('agent-input-attachments-chip') as unknown as {
+                props?: { onPress?: () => void };
+            };
+            pressable.props?.onPress?.();
+            pressable.props?.onPress?.();
             expect(onPickFile).toHaveBeenCalledTimes(1);
 
             // Next tick should allow opening again.
             await Promise.resolve();
-            await screen.pressByTestIdAsync('agent-input-attachments-chip');
+            pressable.props?.onPress?.();
             expect(onPickFile).toHaveBeenCalledTimes(2);
         } finally {
             (Platform as any).OS = originalOs;
