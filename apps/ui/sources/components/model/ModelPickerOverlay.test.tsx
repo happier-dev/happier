@@ -113,8 +113,9 @@ describe('ModelPickerOverlay', () => {
         expect(screen.getTextContent()).toContain('No models available');
     });
 
-    it('captures and submits a trimmed inline custom model when enabled', async () => {
+    it('updates the custom model immediately (no Save button) when entering a custom model', async () => {
         const onSubmitCustomModel = vi.fn();
+        const onSelect = vi.fn();
         const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
         const screen = await renderScreen(<ModelPickerOverlay
@@ -129,7 +130,7 @@ describe('ModelPickerOverlay', () => {
                     canEnterCustomModel
                     customLabel="Custom model"
                     onSubmitCustomModel={onSubmitCustomModel}
-                    onSelect={() => {}}
+                    onSelect={onSelect}
                 />);
 
         expect(screen.findByTestId('model-picker-overlay-custom')).toBeTruthy();
@@ -138,10 +139,10 @@ describe('ModelPickerOverlay', () => {
         await act(async () => {
             screen.changeTextByTestId('model-picker-overlay-custom-input', '  custom-model  ');
         });
-        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeTruthy();
-        await screen.pressByTestIdAsync('model-picker-overlay-custom-save');
 
+        expect(screen.findByTestId('model-picker-overlay-custom-save')).toBeNull();
         expect(onSubmitCustomModel).toHaveBeenCalledWith('custom-model');
+        expect(onSelect).not.toHaveBeenCalled();
     });
 
     it('shows a loading indicator when models are being probed', async () => {

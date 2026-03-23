@@ -50,6 +50,7 @@ export function ModelPickerOverlay(props: {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const [query, setQuery] = React.useState('');
+    const lastCommittedCustomModelRef = React.useRef<string | null>(null);
     const optionValues = React.useMemo(() => {
         return new Set(props.options.map((option) => option.value));
     }, [props.options]);
@@ -164,13 +165,22 @@ export function ModelPickerOverlay(props: {
         props.onSelect(nextValue);
     }, [props]);
 
-    const handleSubmitCustomModel = React.useCallback(() => {
-        const normalized = customValue.trim();
-        if (!normalized) {
-            return;
-        }
+    const commitCustomModel = React.useCallback((raw: string) => {
+        const normalized = raw.trim();
+        if (!normalized) return;
+        if (lastCommittedCustomModelRef.current === normalized) return;
+        lastCommittedCustomModelRef.current = normalized;
         void props.onSubmitCustomModel?.(normalized);
-    }, [customValue, props]);
+    }, [props.onSubmitCustomModel]);
+
+    const handleSubmitCustomModel = React.useCallback(() => {
+        commitCustomModel(customValue);
+    }, [commitCustomModel, customValue]);
+
+    const handleCustomValueChange = React.useCallback((next: string) => {
+        setCustomValue(next);
+        commitCustomModel(next);
+    }, [commitCustomModel]);
 
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
 
@@ -329,7 +339,7 @@ export function ModelPickerOverlay(props: {
                             <TextInput
                                 testID="model-picker-overlay-custom-input"
                                 value={customValue}
-                                onChangeText={setCustomValue}
+                                onChangeText={handleCustomValueChange}
                                 placeholder={t('agentInput.model.customPlaceholder')}
                                 placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.textSecondary}
                                 autoCorrect={false}
@@ -337,16 +347,6 @@ export function ModelPickerOverlay(props: {
                                 onSubmitEditing={handleSubmitCustomModel}
                                 style={styles.searchInput as any}
                             />
-                            <Pressable
-                                testID="model-picker-overlay-custom-save"
-                                onPress={handleSubmitCustomModel}
-                                style={({ pressed }) => [
-                                    styles.customSaveButton,
-                                    pressed ? styles.customSaveButtonPressed : null,
-                                ]}
-                            >
-                                <Text style={styles.customSaveButtonText}>{t('common.save')}</Text>
-                            </Pressable>
                         </View>
                     ) : null}
                 </>
@@ -566,21 +566,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowPressed: {
         opacity: 0.85,
-    },
-    customSaveButton: {
-        alignSelf: 'flex-start',
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        backgroundColor: theme.colors.button.primary.background,
-    },
-    customSaveButtonPressed: {
-        opacity: 0.85,
-    },
-    customSaveButtonText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: theme.colors.button.primary.tint,
     },
     emptyText: {
         fontSize: 11,
