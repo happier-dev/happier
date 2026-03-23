@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,30 +11,24 @@ const alertSpy = vi.fn(async () => {});
 const confirmSpy = vi.fn(async () => true);
 const applySettingsSpy = vi.fn(async () => {});
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn() },
-        params: { serviceId: 'claude-subscription' },
-    });
-    return routerMock.module;
+installConnectedServicesCommonModuleMocks({
+    searchParams: { serviceId: 'claude-subscription' },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: vi.fn(async () => null),
+                alert: alertSpy,
+                alertAsync: vi.fn(async () => {}),
+                confirm: confirmSpy,
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(async () => null),
-            alert: alertSpy,
-            alertAsync: vi.fn(async () => {}),
-            confirm: confirmSpy,
-        },
-    }).module;
-});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => true,

@@ -1,13 +1,12 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { t } from '@/text';
 import { renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from '../connectedServicesTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const backSpy = vi.fn();
 const applySettingsSpy = vi.fn(async () => {});
 const routeParams = { serviceId: 'openai-codex', profileId: 'work' };
 const profileState = {
@@ -19,33 +18,12 @@ const profileState = {
   ],
 };
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: backSpy, push: vi.fn() },
-    });
-    return {
-        ...routerMock.module,
-        useLocalSearchParams: () => routeParams,
-        useGlobalSearchParams: () => routeParams,
-    };
-});
+installConnectedServicesCommonModuleMocks({ searchParams: routeParams });
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: stableCredentials }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(async () => null),
-            alert: vi.fn(async () => {}),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureId === 'connectedServices.quotas' || featureId === 'connectedServices',
@@ -106,22 +84,34 @@ describe('ConnectedServiceProfileDetailView', () => {
     applySettingsSpy.mockClear();
   });
 
-  it('renders profile details and quota card when quotas are enabled', async () => {
-    const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
+    it('renders profile details and quota card when quotas are enabled', async () => {
+        const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
+        const { t } = await import('@/text');
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
 
-    expect(tree.findAll((n) => n.props?.children === 'me@example.com').length).toBeGreaterThan(0);
-    expect(tree.findAll((n) => n.props?.title === 'Refresh')).toHaveLength(1);
-  });
+        expect(
+            tree.findAll((n) =>
+                n.props?.title === t('connectedServices.profile.email') &&
+                n.props?.subtitle === 'me@example.com',
+            ),
+        ).toHaveLength(1);
+        expect(
+            tree.findAll((n) =>
+                n.props?.title === t('connectedServices.profile.quotaTitle') ||
+                n.props?.title === 'Refresh',
+            ),
+        ).not.toHaveLength(0);
+    });
 
-  it('renders an unknown-profile guard state for nonexistent profile ids', async () => {
-    routeParams.profileId = 'missing';
-    const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
+    it('renders an unknown-profile guard state for nonexistent profile ids', async () => {
+        routeParams.profileId = 'missing';
+        const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
+        const { t } = await import('@/text');
 
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
 
     expect(tree.findAll((n) => n.props?.title === t('connectedServices.detail.alerts.unknownProfileTitle'))).toHaveLength(1);
     expect(tree.findAll((n) => n.props?.title === t('connectedServices.detail.actionsGroupTitle'))).toHaveLength(0);

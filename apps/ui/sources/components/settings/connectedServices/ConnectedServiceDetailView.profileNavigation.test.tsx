@@ -2,37 +2,33 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import {
+    connectedServicesModuleState,
+    installConnectedServicesCommonModuleMocks,
+} from './connectedServicesTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const backSpy = vi.fn();
-const pushSpy = vi.fn();
 const applySettingsSpy = vi.fn(async () => {});
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: backSpy, push: pushSpy },
-        params: { serviceId: 'openai-codex' },
-    });
-    return routerMock.module;
+installConnectedServicesCommonModuleMocks({
+    searchParams: { serviceId: 'openai-codex' },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: vi.fn(async () => null),
+                alert: vi.fn(async () => {}),
+                confirm: vi.fn(async () => false),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
 }));
-
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            prompt: vi.fn(async () => null),
-            alert: vi.fn(async () => {}),
-            confirm: vi.fn(async () => false),
-        },
-    }).module;
-});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => true,
@@ -90,10 +86,10 @@ describe('ConnectedServiceDetailView profile navigation', () => {
     expect(candidates).toHaveLength(1);
     const profileItem = candidates[0]!;
     await act(async () => {
-      await pressTestInstanceAsync(profileItem);
+        await pressTestInstanceAsync(profileItem);
     });
 
-    expect(pushSpy).toHaveBeenCalledWith(
+    expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         pathname: '/(app)/settings/connected-services/profile',
         params: expect.objectContaining({ serviceId: 'openai-codex', profileId: 'work' }),

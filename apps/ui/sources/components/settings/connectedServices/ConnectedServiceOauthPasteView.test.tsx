@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol';
 import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,14 +45,16 @@ vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: legacySecretB64Url } }),
 }));
 
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: alertSpy,
-            alertAsync: vi.fn(async () => {}),
-        },
-    }).module;
+installConnectedServicesCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: alertSpy,
+                alertAsync: vi.fn(async () => {}),
+            },
+        }).module;
+    },
 });
 
 vi.mock('@/sync/sync', () => ({

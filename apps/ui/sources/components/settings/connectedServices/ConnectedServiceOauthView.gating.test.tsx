@@ -2,28 +2,21 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                    Platform: {
-                                                                        OS: 'ios',
-                                                                    },
-                                                                }
-    );
-});
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { back: vi.fn(), push: vi.fn() },
-        params: { serviceId: 'openai-codex', profileId: 'work' },
-    });
-    return routerMock.module;
+installConnectedServicesCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: {
+                OS: 'ios',
+            },
+        });
+    },
+    searchParams: { serviceId: 'openai-codex', profileId: 'work' },
 });
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => false);
@@ -34,11 +27,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
 
 vi.mock('@/components/ui/navigation/OAuthView', () => ({
   OAuthView: () => React.createElement('OAuthView'),
