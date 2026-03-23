@@ -444,8 +444,26 @@ async function requestServerRoutedTransfer<TPayload>(params: Readonly<{
           }
         })
         .catch((error) => {
+          if (settled) {
+            return;
+          }
+          // Best-effort abort back to the source so responders can drop `activeTransfers` state even
+          // when the recipient fails locally (disk error, policy mismatch, malformed envelope, etc).
+          // This prevents leaked responder state waiting forever on an ack that will never arrive.
+          try {
+            params.machineTransferChannel.sendEnvelope({
+              targetMachineId: params.sourceMachineId,
+              envelope: {
+                transferId: params.transferId,
+                kind: 'abort',
+                reason: 'recipient_error',
+              },
+            });
+          } catch {
+            // Ignore send errors; we'll still tear down local resources and reject.
+          }
           cleanup();
-          void Promise.resolve(params.onAbort?.()).finally(() => {
+          void Promise.resolve(params.onAbort?.()).catch(() => undefined).finally(() => {
             reject(error instanceof Error ? error : new Error(`Machine transfer failed for ${params.transferId}`));
           });
         });

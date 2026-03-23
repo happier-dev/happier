@@ -511,6 +511,44 @@ describe('server routed machine transfer', () => {
     }
   });
 
+  it('closes and cleans up file-backed sinks when the source aborts a server-routed transfer', async () => {
+    const { source, target } = createLoopbackChannels();
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-source-abort-sink-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    const unregister = source.onEnvelope((payload) => {
+      if (payload.envelope.kind !== 'open') return;
+      if (payload.envelope.transferId !== 'transfer_source_abort') return;
+      source.sendEnvelope({
+        targetMachineId: payload.sourceMachineId,
+        envelope: {
+          transferId: payload.envelope.transferId,
+          kind: 'abort',
+          reason: 'source_abort',
+        },
+      });
+    });
+
+    try {
+      await expect(
+        requestServerRoutedTransferToFile({
+          transferId: 'transfer_source_abort',
+          sourceMachineId: 'machine_source',
+          machineTransferChannel: target,
+          destinationPath,
+        }),
+      ).rejects.toThrow('Machine transfer aborted: source_abort');
+
+      const files = await readdir(tempDir);
+      expect(files.filter((entry) => entry.includes('.part'))).toEqual([]);
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('treats the configured timeout as inactivity rather than absolute wall-clock duration while chunks keep flowing', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '30';
     const { source, target } = createLoopbackChannels({
@@ -541,6 +579,83 @@ describe('server routed machine transfer', () => {
         destinationPath,
       });
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      unregister();
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('aborts the source and drops responder state when the recipient fails locally mid-transfer (prevents leaked active transfers)', async () => {
+    const { source, target, sentEnvelopes } = createLoopbackChannels();
+    const payload = Buffer.from('recipient-fails-locally-'.repeat(4), 'utf8');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-recipient-failure-abort-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+
+    const { registerServerRoutedTransferResponder, requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
+
+    // Simulate a config/version mismatch: the responder captures the max-bytes policy at registration
+    // time, while the recipient can enforce a stricter bound mid-transfer.
+    process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES = String(payload.length * 10);
+    const unregister = registerServerRoutedTransferResponder({
+      machineTransferChannel: source,
+      loadTransferPayloadSource: (transferId) => (
+        transferId === 'transfer_recipient_fails_locally'
+          ? { kind: 'buffer', payload, sizeBytes: payload.length }
+          : null
+      ),
+      chunkBytes: 8,
+    });
+
+    // Make the recipient reject the first chunk after the responder has already accepted the transfer.
+    process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES = '1';
+
+    try {
+      await expect(
+        requestServerRoutedTransferToFile({
+          transferId: 'transfer_recipient_fails_locally',
+          sourceMachineId: 'machine_source',
+          machineTransferChannel: target,
+          destinationPath,
+        }),
+      ).rejects.toThrow('Transfer exceeds the server-routed transfer size limit');
+
+      // Give the loopback channel time to deliver the abort envelope back to the responder.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // If the responder kept the transfer state, this ack would trigger sending sequence 1.
+      target.sendEnvelope({
+        targetMachineId: 'machine_source',
+        envelope: {
+          transferId: 'transfer_recipient_fails_locally',
+          kind: 'ack',
+          nextSequence: 1,
+          windowBytes: 1,
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        sentEnvelopes.some(
+          (entry) =>
+            entry.targetMachineId === 'machine_source'
+            && entry.envelope.kind === 'abort'
+            && entry.envelope.transferId === 'transfer_recipient_fails_locally',
+        ),
+      ).toBe(true);
+
+      expect(
+        sentEnvelopes.filter(
+          (entry): entry is MachineTransferSendEnvelope & { envelope: MachineTransferSendChunkEnvelope } =>
+            entry.targetMachineId === 'machine_target'
+            && isChunkTransferEnvelope(entry)
+            && entry.envelope.transferId === 'transfer_recipient_fails_locally',
+        ).map((entry) => entry.envelope.sequence),
+      ).toEqual([0]);
+
+      const files = await readdir(tempDir);
+      expect(files.filter((entry) => entry.includes('.part'))).toEqual([]);
     } finally {
       unregister();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);

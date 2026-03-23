@@ -258,4 +258,103 @@ describe('runWorkspaceReplicationJob', () => {
             await rm(activeServerDir, { recursive: true, force: true });
         }
     });
+
+    it('returns the merged record so concurrent cancellation is visible to callers', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-run-job-merged-cancel-'));
+
+        try {
+            const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+            const { runWorkspaceReplicationJob } = await import('./runWorkspaceReplicationJob');
+            const { abortWorkspaceReplicationJob } = await import('./abortWorkspaceReplicationJob');
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_merge_cancel_1',
+                correlationId: 'handoff_merge_cancel_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'in_progress',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_started',
+                    progressCounters: {},
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const result = await runWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_merge_cancel_1',
+                now: () => 60,
+                run: async (current) => {
+                    await abortWorkspaceReplicationJob({
+                        jobStore,
+                        jobId: 'job_merge_cancel_1',
+                        now: () => 50,
+                    });
+                    return {
+                        ...current,
+                        status: {
+                            ...current.status,
+                            status: 'in_progress',
+                            phase: 'apply',
+                            checkpoint: 'apply_started',
+                        },
+                    };
+                },
+            });
+
+            expect(result.cancelRequestedAtMs).toBe(50);
+            expect(result.status.checkpoint).toBe('apply_started');
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
+
+    it('returns the merged record when the store rejects a checkpoint regression (fail-closed resume semantics)', async () => {
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-run-job-merged-regression-'));
+
+        try {
+            const { createWorkspaceReplicationJobStore } = await import('./workspaceReplicationJobStore');
+            const { runWorkspaceReplicationJob } = await import('./runWorkspaceReplicationJob');
+
+            const jobStore = createWorkspaceReplicationJobStore({ activeServerDir });
+            await jobStore.write({
+                schemaVersion: 1,
+                jobId: 'job_merge_regression_1',
+                correlationId: 'handoff_merge_regression_1',
+                createdAtMs: 10,
+                updatedAtMs: 10,
+                status: {
+                    status: 'in_progress',
+                    phase: 'transfer_missing_blobs_to_target_cas',
+                    checkpoint: 'blob_transfer_completed',
+                    progressCounters: {},
+                    warnings: [],
+                    blockingDivergenceCandidates: [],
+                },
+            });
+
+            const result = await runWorkspaceReplicationJob({
+                jobStore,
+                jobId: 'job_merge_regression_1',
+                now: () => 60,
+                run: async (current) => ({
+                    ...current,
+                    status: {
+                        ...current.status,
+                        status: 'in_progress',
+                        phase: 'negotiate_missing_digests',
+                        checkpoint: 'missing_digests_negotiated',
+                    },
+                }),
+            });
+
+            expect(result.status.checkpoint).toBe('blob_transfer_completed');
+        } finally {
+            await rm(activeServerDir, { recursive: true, force: true });
+        }
+    });
 });

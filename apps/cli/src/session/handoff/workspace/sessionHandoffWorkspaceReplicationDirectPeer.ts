@@ -130,7 +130,10 @@ export async function publishSessionHandoffWorkspaceReplicationDirectPeerTransfe
         if (digestsRaw.length > configuration.workspaceReplicationBlobPackMaxBlobs) {
           throw new Error('Invalid direct-peer blob-pack request body');
         }
-        const digests = digestsRaw.map((value) => String(value ?? '').trim());
+        if (digestsRaw.some((value) => typeof value !== 'string')) {
+          throw new Error('Invalid direct-peer blob-pack request body');
+        }
+        const digests = (digestsRaw as string[]).map((value) => value.trim());
         if (!isSortedUnique(digests)) {
           throw new Error('Invalid direct-peer blob-pack request body');
         }
@@ -151,8 +154,9 @@ export async function publishSessionHandoffWorkspaceReplicationDirectPeerTransfe
         });
       },
       // Worst-case: the target requests one digest per pack (e.g. tiny target bytes budget).
-      // Avoid an arbitrary fixed cap that breaks large manifests while still bounding the scope.
-      maxResolvedTransfers: Math.max(10_000, allowedDigests.size),
+      // Bound to the manifest's digest count: callers should only request the canonical pack ids
+      // derived from the manifest, and in the worst case that is one pack per digest.
+      maxResolvedTransfers: Math.max(1, allowedDigests.size),
     },
   });
   payloadSources.push({

@@ -104,7 +104,7 @@ async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
   jobId: string;
   assertCanContinue?: () => Promise<void>;
 }>): Promise<Awaited<ReturnType<ReturnType<typeof createWorkspaceReplicationEngine>['getJobStatus']>>> {
-  // Short polling loop; job runner persists progress frequently so this converges quickly.
+  // Poll on a coarse interval to avoid hammering the job store while still providing fast convergence.
   while (true) {
     await params.assertCanContinue?.();
     const record = await params.engine.getJobStatus(params.jobId);
@@ -112,7 +112,7 @@ async function waitForTerminalWorkspaceReplicationJob(params: Readonly<{
       return record;
     }
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 10);
+      setTimeout(resolve, 250);
     });
   }
 }
